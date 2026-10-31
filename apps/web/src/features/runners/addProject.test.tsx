@@ -75,7 +75,7 @@ describe("프로젝트 추가 — 둘러보기", () => {
       `/api/v1/runners/${runnerId(1)}/fs?rootId=src&relPath=`,
       `/api/v1/runners/${runnerId(1)}/fs?rootId=src&relPath=dodok`,
     ]);
-    expect(await screen.findByRole("listitem", { name: "dodok" })).toBeInTheDocument();
+    expect(await screen.findByRole("listitem", { name: /^dodok \(/ })).toBeInTheDocument();
   });
 
   it("다른 루트를 고르면 그 루트를 둘러본다", async () => {

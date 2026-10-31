@@ -107,12 +107,35 @@ describe("프로젝트 줄", () => {
       ],
     });
     renderRunnersPage();
-    const row = await within(await card("러너-1")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("러너-1")).findByRole("listitem", { name: /^dodok \(/ });
     expect(row).toHaveTextContent("내 저장소들/dodok · 에이전트 2");
     expect(row).not.toHaveTextContent(ROOT_MISSING);
-    const gone = within(await card("러너-1")).getByRole("listitem", { name: "사라진" });
+    const gone = within(await card("러너-1")).getByRole("listitem", { name: /^사라진 \(/ });
     expect(gone).toHaveTextContent(ROOT_MISSING);
     expect(gone).toHaveTextContent("gone/x");
+  });
+
+  it("라벨이 같은 프로젝트 둘은 줄·버튼의 접근성 이름이 자리로 갈린다(O2) — 화면 글은 라벨 그대로", async () => {
+    stub({
+      projects: [
+        projectOf(1, { label: "dodok", relPath: "dodok" }),
+        projectOf(2, { label: "dodok", relPath: ".config/dodok" }),
+      ],
+    });
+    renderRunnersPage();
+    const runner = await card("러너-1");
+    const a = await within(runner).findByRole("listitem", { name: "dodok (내 저장소들/dodok)" });
+    const b = within(runner).getByRole("listitem", { name: "dodok (내 저장소들/.config/dodok)" });
+    for (const [row, place] of [
+      [a, "내 저장소들/dodok"],
+      [b, "내 저장소들/.config/dodok"],
+    ] as const) {
+      expect(within(row).getByText("dodok", { selector: "span" })).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: `dodok (${place}) 확인` })).toHaveTextContent(/^확인$/);
+      expect(within(row).getByRole("button", { name: `dodok (${place}) 보관` })).toHaveTextContent(/^보관$/);
+      await userEvent.click(within(row).getByRole("button", { name: `dodok (${place}) 이름 바꾸기` }));
+      expect(within(row).getByRole("textbox", { name: `dodok (${place}) 새 이름` })).toBeInTheDocument();
+    }
   });
 
   it("끊긴 러너의 프로젝트는 루트 라벨을 몰라도 「루트 없음」을 달지 않는다(카드에 「끊김」), 「확인」은 잠긴다", async () => {
@@ -121,25 +144,25 @@ describe("프로젝트 줄", () => {
       projects: [projectOf(1, { label: "dodok", rootLabel: null })],
     });
     renderRunnersPage();
-    const row = await within(await card("러너-1")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("러너-1")).findByRole("listitem", { name: /^dodok \(/ });
     expect(row).not.toHaveTextContent(ROOT_MISSING);
-    expect(within(row).getByRole("button", { name: "dodok 확인" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: /^dodok \(.+\) 확인$/ })).toBeDisabled();
   });
 
   it("「확인」 — 결과 한 줄(git 여부), 실패 사유는 고정 문구, 끊김은 그 줄에", async () => {
     let reply = () => json(200, { ok: true, isGitRepo: true });
     stub({ projects: [projectOf(1, { label: "dodok" })], check: () => reply() });
     renderRunnersPage();
-    const row = await within(await card("러너-1")).findByRole("listitem", { name: "dodok" });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 확인" }));
+    const row = await within(await card("러너-1")).findByRole("listitem", { name: /^dodok \(/ });
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 확인$/ }));
     expect(await within(row).findByText("확인됨 · git 저장소")).toBeInTheDocument();
 
     reply = () => json(200, { ok: false, reason: "outside_root" });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 확인" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 확인$/ }));
     expect(await within(row).findByText(CHECK_REASON.outside_root)).toBeInTheDocument();
 
     reply = () => apiErr(503, "ADAPTER_UNAVAILABLE", "runner is not connected");
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 확인" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 확인$/ }));
     expect(await within(row).findByText(/러너가 연결되어 있지 않습니다/)).toBeInTheDocument();
     expect(row).not.toHaveTextContent("runner is not connected");
   });
@@ -147,16 +170,18 @@ describe("프로젝트 줄", () => {
   it("이름 바꾸기 — 빈 이름은 보내지 않고, 저장하면 PATCH { label }", async () => {
     const server = stub({ projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();
-    const row = await within(await card("러너-1")).findByRole("listitem", { name: "dodok" });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 이름 바꾸기" }));
-    const input = within(row).getByRole("textbox", { name: "dodok 새 이름" });
+    const row = await within(await card("러너-1")).findByRole("listitem", { name: /^dodok \(/ });
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 이름 바꾸기$/ }));
+    const input = within(row).getByRole("textbox", { name: /^dodok \(.+\) 새 이름$/ });
     await userEvent.clear(input);
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     expect(input).toHaveAccessibleDescription("이름은 1~64자로 적어 주세요");
     expect(server.calls.filter((c) => c.method === "PATCH")).toEqual([]);
     await userEvent.type(input, " 도독 ");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
-    expect(await within(await card("러너-1")).findByRole("listitem", { name: "도독" })).toBeInTheDocument();
+    expect(
+      await within(await card("러너-1")).findByRole("listitem", { name: /^도독 \(/ }),
+    ).toBeInTheDocument();
     expect(server.calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([{ label: "도독" }]);
   });
 
@@ -164,12 +189,12 @@ describe("프로젝트 줄", () => {
     stub({ projects: [projectOf(1, { label: "dodok", agentCount: 2 })] });
     renderRunnersPage();
     const runner = await card("러너-1");
-    const row = await within(runner).findByRole("listitem", { name: "dodok" });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 보관" }));
+    const row = await within(runner).findByRole("listitem", { name: /^dodok \(/ });
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 보관$/ }));
     const confirm = await screen.findByRole("dialog");
     expect(confirm).toHaveTextContent("이미 있는 에이전트 2개는 남아 계속 답합니다");
     await userEvent.click(within(confirm).getByRole("button", { name: "보관" }));
-    await waitFor(() => expect(within(runner).queryByRole("listitem", { name: "dodok" })).toBeNull());
+    await waitFor(() => expect(within(runner).queryByRole("listitem", { name: /^dodok \(/ })).toBeNull());
     expect(within(runner).getByRole("button", { name: "보관한 프로젝트 1" })).toBeInTheDocument();
     await waitFor(() => expect(within(runner).getByRole("button", { name: "프로젝트 추가" })).toHaveFocus());
   });
@@ -186,7 +211,7 @@ describe("다른 러너로 옮기기", () => {
   it("고를 수 있는 것은 폐기하지 않은 다른 러너 중 붙은 것 — 끊긴 것은 잠기고 폐기한 것은 없다", async () => {
     stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();
-    const row = await within(await card("맥북")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("radio", { name: "데스크톱" })).toBeEnabled();
@@ -211,7 +236,7 @@ describe("다른 러너로 옮기기", () => {
       [a, b],
     );
     renderRunnersPage();
-    const row = await within(await card("맥북")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
@@ -231,7 +256,7 @@ describe("다른 러너로 옮기기", () => {
       move: () => apiErr(503, "RUNNER_UNAVAILABLE", "runner not connected"),
     });
     renderRunnersPage();
-    const row = await within(await card("맥북")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
@@ -243,15 +268,15 @@ describe("다른 러너로 옮기기", () => {
   it("옮기면 줄이 그 러너의 카드로 간다", async () => {
     const server = stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();
-    const row = await within(await card("맥북")).findByRole("listitem", { name: "dodok" });
+    const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
     expect(
-      await within(await card("데스크톱")).findByRole("listitem", { name: "dodok" }),
+      await within(await card("데스크톱")).findByRole("listitem", { name: /^dodok \(/ }),
     ).toBeInTheDocument();
-    expect(within(await card("맥북")).queryByRole("listitem", { name: "dodok" })).toBeNull();
+    expect(within(await card("맥북")).queryByRole("listitem", { name: /^dodok \(/ })).toBeNull();
     expect(server.calls.find((c) => c.url.endsWith("/move"))?.body).toEqual({ runnerId: runnerId(2) });
   });
 });
@@ -268,7 +293,7 @@ describe("줄이 빠진 뒤 초점 — 「프로젝트 추가」가 잠긴 카�
     });
     renderRunnersPage();
     const old = await card("옛것");
-    const row = await within(old).findByRole("listitem", { name: "dodok" });
+    const row = await within(old).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "새것" }));
@@ -285,10 +310,10 @@ describe("줄이 빠진 뒤 초점 — 「프로젝트 추가」가 잠긴 카�
     });
     renderRunnersPage();
     const home = await card("집");
-    const row = await within(home).findByRole("listitem", { name: "dodok" });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 보관" }));
+    const row = await within(home).findByRole("listitem", { name: /^dodok \(/ });
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 보관$/ }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "보관" }));
-    await waitFor(() => expect(within(home).queryByRole("listitem", { name: "dodok" })).toBeNull());
+    await waitFor(() => expect(within(home).queryByRole("listitem", { name: /^dodok \(/ })).toBeNull());
     await waitFor(() => expect(within(home).getByRole("heading", { name: "집" })).toHaveFocus());
   });
 });
