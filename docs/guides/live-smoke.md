@@ -1098,11 +1098,28 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
 
 ## 15. `llms.txt` 안내서 따라 하기
 
-`GET /llms.txt` 의 두 절(「OpenClaw Gateway 호스트」·「Claude 러너 머신」)을 노드 자리에서 **명령 그대로** 돌려 안내서가 맞는지 본다 — 모델 런 금지면 실제 AI 에게 건네지 않고 실연자가 AI 가 할 일을 손으로 대신한다. 사람의 dev 상태와 `.env` 를 건드리지 않게 Gateway 상태(「Gateway 를 여럿 띄울 때」)·노드 홈·서버 DB 를 스크래치에 새로 만든다.
+`GET /llms.txt` 의 두 절(「OpenClaw Gateway 호스트」·「러너 머신」)을 노드 자리에서 **명령 그대로** 돌려 안내서가 맞는지 본다 — 모델 런 금지면 실제 AI 에게 건네지 않고 실연자가 AI 가 할 일을 손으로 대신한다. 사람의 dev 상태와 `.env` 를 건드리지 않게 Gateway 상태(「Gateway 를 여럿 띄울 때」)·노드 홈·서버 DB 를 스크래치에 새로 만든다.
 
 1. **토큰** — owner 로그인(`POST /api/v1/auth/local`, 본문은 `jq --arg` 로) → `POST /api/v1/gateways`(본문은 Gateway 토큰 파일에서 `jq --rawfile`) → `POST /api/v1/gateways/<id>/bridge-tokens` → 원문을 `jq -r .token` 으로 0600 파일에만. 러너 토큰(`POST /api/v1/setup/runner-tokens`)도 같게. owner 세션 토큰은 `curl -K -` 로만 싣는다(「시크릿 규칙」).
-2. **「AI 에게 맡기기」 한 줄** — 웹의 `llmsHandoffLine`(토큰 자리만 바꿔 실행)이 만드는 줄은 `<오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`(러너는 「Claude 러너 머신」·「러너 토큰:」)이다 — 안내서 주소의 오리진은 연결 상태 `bridge.publicUrl` 의 오리진이다.
-3. **두 절** — 각 bash 블록을 글자 그대로 `bash -c` 로 돌린다. 토큰 한 줄은 첫 블록의 표준 입력으로만 넣는다. 사람 몫인 「Gateway 를 내린다·올린다」는 그 호스트의 방식(LISTEN 하는 PID 에 `kill`, 「Gateway 를 여럿 띄울 때」 꼴의 `nohup … gateway run`)으로 한다. 러너 절의 전경 명령은 뒤에서 띄우고 출력의 `연결됨` 을 기다린다.
+2. **「AI 에게 맡기기」 한 줄** — 웹의 `llmsHandoffLine`(토큰 자리만 바꿔 실행)이 만드는 줄은 `<오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`(러너는 「러너 머신」·「러너 토큰:」)이다 — 안내서 주소의 오리진은 연결 상태 `bridge.publicUrl` 의 오리진이다.
+3. **두 절** — 각 bash 블록을 글자 그대로 `bash -c` 로 돌린다. 토큰 한 줄은 첫 블록의 표준 입력으로만 넣는다. 사람 몫인 「Gateway 를 내린다·올린다」는 그 호스트의 방식(LISTEN 하는 PID 에 `kill`, 「Gateway 를 여럿 띄울 때」 꼴의 `nohup … gateway run`)으로 한다. 러너 절의 전경 명령은 뒤에서 띄우고 출력의 `연결됨` 을 기다린다. 블록을 꺼내고 노드 자리에서 돌리는 꼴:
+   ```bash
+   SP=$(mktemp -d); mkdir -p $SP/home $SP/npm-global $SP/blocks
+   curl -fsS http://127.0.0.1:$PORT/llms.txt > $SP/llms.txt
+   # 절 하나의 ```bash 블록을 차례대로 $SP/blocks/<접두>-<n>.sh 로 — 안내서는 블록을 세 칸 들여 쓴다
+   blocks() { awk -v sec="## $1" -v out="$SP/blocks/$2" '
+     /^## / { on = ($0 == sec) }
+     on && /^ *```bash$/ { n++; f = out "-" n ".sh"; inb = 1; next }
+     inb && /^ *```$/ { inb = 0; close(f); next }
+     inb { sub(/^   /, ""); print > f }' $SP/llms.txt; }
+   blocks "OpenClaw Gateway 호스트" gw; blocks "러너 머신" runner; ls $SP/blocks   # 빈 목록이면 절 제목이 바뀐 것이다
+   # 노드 자리 — 안내서의 ~/…·npm install -g·$(npm root -g) 가 고치지 않은 글자 그대로 스크래치를 가리킨다(전역 설치 없음).
+   # OCBIN 은 「절차」 절 머리의 스크래치 설치본, Gateway 쪽에 가짜 claude 를 앞세우려면 PATH 앞에 「가짜 claude CLI 스크립트」의 $SP/fakebin
+   node_sh() { env HOME=$SP/home OPENCLAW_HOME=$SP/home npm_config_prefix=$SP/npm-global \
+     PATH="$SP/npm-global/bin:$OCBIN:$PATH" bash -c "$(cat "$1")"; }
+   node_sh $SP/blocks/gw-1.sh < <0600 브리지 토큰 파일>   # 첫 블록만 표준 입력에 토큰 한 줄
+   node_sh $SP/blocks/gw-2.sh                             # 나머지는 차례대로 — 사람 몫 단계는 위처럼 손으로
+   ```
 4. 판정 — 연결 페이지의 Gateway 카드 「연결됨」·플러그인 「접속됨 · 서버와 같은 빌드입니다」, 러너 카드 「연결됨 · 서버와 같은 빌드입니다」.
 
 ---
