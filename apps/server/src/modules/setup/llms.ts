@@ -108,7 +108,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 }
 
 function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
-  const { origin } = input;
+  const { origin, webOrigin } = input;
   const out = '"${dir:?}/dodok-claude-runner.tgz"';
   // 러너는 천장만 쥔다(러너 일반화 스펙 2장) — 에이전트는 앱에서 만든다. 상한은 낮게: 서버 쪽 admin 이 루트 안 어디서든 이 상한까지 돌릴 수 있다
   const config = {
@@ -162,7 +162,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}
    \`\`\`
 
-5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${origin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
+5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${webOrigin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
 
    \`\`\`bash
    dodok-runner

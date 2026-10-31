@@ -219,6 +219,9 @@ describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
     expect(gateway).not.toContain("http://localhost:3000/settings/connection");
     expect(gateway).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
     expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
+    // 러너 5번의 「러너 탭」 확인 주소도 사람이 여는 웹 페이지다
+    expect(section(body, "러너 머신")).toContain("(http://localhost:5173/settings/runners)");
+    expect(section(body, "러너 머신")).not.toContain("http://localhost:3000/settings/runners");
   });
 });
 
