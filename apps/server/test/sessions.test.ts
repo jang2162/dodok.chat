@@ -220,6 +220,42 @@ describe("sessions service", () => {
       ).toEqual(LONG_AGO);
     });
 
+    it("새 스레드 행은 min(지금, 채널 세션 행 커서) — 스레드를 열기 전 루트 반응을 받는다, 채널 행은 그대로", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const conversationId = channelConversation(db, channelId);
+      const channel = ensureSession(db, adapter, { conversationId, agentId }).session;
+      rewind(db, channel.id);
+      const thread = ensureSession(db, adapter, {
+        conversationId,
+        agentId,
+        threadRootId: "01a09fc9-d204-7551-89d6-38544d07a1aa",
+      }).session;
+      expect(thread.reactionsSeenAt).toEqual(LONG_AGO);
+      expect(cursorOf(db, channel.id)).toEqual(LONG_AGO);
+    });
+
+    it("채널 세션 행이 없거나 커서가 비었으면 새 스레드 행은 지금", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const conversationId = channelConversation(db, channelId);
+      const before = Date.now();
+      const lone = ensureSession(db, adapter, {
+        conversationId,
+        agentId,
+        threadRootId: "01a09fc9-d204-7551-89d6-38544d07a1bb",
+      }).session;
+      expect(lone.reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(before);
+
+      const channel = ensureSession(db, adapter, { conversationId, agentId }).session;
+      db.update(agentSessions).set({ reactionsSeenAt: null }).where(eq(agentSessions.id, channel.id)).run();
+      const after = Date.now();
+      const thread = ensureSession(db, adapter, {
+        conversationId,
+        agentId,
+        threadRootId: "01a09fc9-d204-7551-89d6-38544d07a1cc",
+      }).session;
+      expect(thread.reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(after);
+    });
+
     it("renewSessionOnPromptChange 는 리비전이 바뀌었을 때만 지금으로 올린다", () => {
       const { db, adapter, channelId, agentId } = setup();
       const { session } = ensureSession(db, adapter, {

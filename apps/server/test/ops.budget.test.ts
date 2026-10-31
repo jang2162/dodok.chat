@@ -8,6 +8,7 @@ import type { Db } from "../src/db/client";
 import { opsEvents, runs } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
+import { createUserMessage } from "../src/modules/messages/service";
 import { createRunGate, type RunGate } from "../src/modules/ops/budget";
 import { createOpsService } from "../src/modules/ops/service";
 import { patchOpsSettings } from "../src/modules/ops/settings";
@@ -198,6 +199,23 @@ describe("RunGate", () => {
     ]);
     // 사건은 채널 단위 한 줄 그대로
     expect(events().map((r) => [r.key, r.count])).toEqual([[`channel:${c.id}`, 4]]);
+  });
+
+  it("하루 한 번은 (세션, 스레드) 단위 — 스레드에 먼저 남아도 최상위에 한 번 더, 같은 스레드에는 두 번 남지 않는다", () => {
+    const c = channel({ dailyRunLimit: 1 });
+    const conversationId = channelConversation(db, c.id);
+    const root = createUserMessage(db, new ServerBus(), {
+      conversationId,
+      authorId: userId,
+      bodyMd: "루트",
+      clientMsgId: uuid(),
+    });
+    fill(c.id, 1);
+    expect(gate.check(conversationId, root.id)).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(conversationId, root.id)).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(conversationId)).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(conversationId)).toEqual({ scope: "channel", limit: 1 });
+    expect(limitMessages().map((m) => m.threadRootId ?? null)).toEqual([root.id, null]);
   });
 
   it("없는 대화 id 면 NOT_FOUND — 한도 안으로 통과시키지 않는다", () => {

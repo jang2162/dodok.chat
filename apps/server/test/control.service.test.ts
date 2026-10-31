@@ -424,6 +424,8 @@ describe("제어 서비스", () => {
         const error = errorOf(await call(pat(owner), "update_agent", { agentId: coder.id, ...extra }));
         expect(error.code, JSON.stringify(extra)).toBe("VALIDATION");
       }
+      // 개인 토큰과 owner 가 시킨 에이전트는 한 버킷(쓰기 분당 10)이다 — 위에서 아홉 번 썼으니 분을 넘긴다
+      clock += 60_000;
       const { principal } = openRun(app, owner);
       const before = controlRows().length;
       expect(
@@ -546,6 +548,26 @@ describe("제어 서비스", () => {
       expect(errorOf(await call(pat(mia.id), "archive_channel", { channelId: channel.id })).code).toBe(
         "FORBIDDEN",
       );
+    });
+  });
+
+  describe("보관한 에이전트 — update_agent 는 확인 카드 전에 미리 거절", () => {
+    it("update_agent 는 AGENT_ARCHIVED(에이전트 주체도 카드 없이), 바뀌지 않는다", async () => {
+      const target = newAgent(app);
+      expectOk(await call(pat(owner), "archive_agent", { agentId: target.id }));
+      const { principal } = openRun(app, owner);
+      const before = controlRows().length;
+      expect(errorOf(await call(pat(owner), "update_agent", { agentId: target.id, name: "되살림" }))).toEqual(
+        {
+          code: "AGENT_ARCHIVED",
+          message: "삭제된 에이전트입니다",
+        },
+      );
+      expect(
+        errorOf(await call(principal, "update_agent", { agentId: target.id, name: "되살림" })).code,
+      ).toBe("AGENT_ARCHIVED");
+      expect(controlRows()).toHaveLength(before);
+      expect(app.db.select().from(agents).where(eq(agents.id, target.id)).get()?.name).toBe(target.name);
     });
   });
 
@@ -681,13 +703,26 @@ describe("제어 서비스", () => {
     });
   });
 
-  describe("레이트 — 주체마다", () => {
+  describe("레이트 — 사람마다", () => {
     it(`분당 ${LIMITS.controlPerMin + 1}번째 호출은 RATE_LIMITED`, async () => {
       const rate = await userWithRole(app, "rater", "member");
       for (let i = 0; i < LIMITS.controlPerMin; i++) expectOk(await call(pat(rate.id), "list_agents"));
       expect(errorOf(await call(pat(rate.id), "list_agents")).code).toBe("RATE_LIMITED");
       // 다른 주체는 따로 센다
       expectOk(await call(pat(ada.id), "list_agents"));
+    });
+
+    it("같은 사람의 개인 토큰과 그 사람이 시킨 에이전트들은 한 버킷 — 시킨 사람 없는 사슬은 에이전트마다 따로", async () => {
+      const rate = await userWithRole(app, "rater2", "member");
+      const first = openRun(app, rate.id).principal;
+      const second = openRun(app, rate.id).principal;
+      const half = Math.floor(LIMITS.controlPerMin / 2);
+      for (let i = 0; i < half; i++) expectOk(await call(pat(rate.id), "list_agents"));
+      for (let i = half; i < LIMITS.controlPerMin; i++) expectOk(await call(first, "list_agents"));
+      expect(errorOf(await call(second, "list_agents")).code).toBe("RATE_LIMITED");
+      expect(errorOf(await call(pat(rate.id), "list_agents")).code).toBe("RATE_LIMITED");
+      // 자동화 사슬(시킨 사람 없음)은 사람 버킷에 들지 않는다
+      expectOk(await call(openRun(app, null).principal, "list_agents"));
     });
 
     it(`쓰기 ${LIMITS.controlWritePerMin + 1}번째는 RATE_LIMITED`, async () => {

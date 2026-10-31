@@ -6,11 +6,32 @@
 const MEDIA_LINE_START = /^[ \t]*MEDIA:/i;
 const MEDIA_LINE = new RegExp(`${MEDIA_LINE_START.source}[^\\n]*(?:\\n|$)`, "gim");
 const MEDIA_PREFIX = "MEDIA:";
+/** 경로·URL 꼴 머리 — 따옴표로 감싼 것도 같다 */
+const PATH_LIKE_HEAD = /^["'`]?(?:\/|\.\/|\.\.\/|~\/|file:|https?:\/\/|[A-Za-z]:[\\/])/i;
+/** 확장자 꼴 끝 — 닫는 따옴표는 걷고 본다 */
+const EXTENSION_TAIL = /\.[A-Za-z0-9]{1,8}["'`]?$/;
+
+/**
+ * `MEDIA:` 줄 머리를 가진 줄이 보통 글(산문)인가. 코어는 페이로드가 경로·URL·확장자 있는 파일 이름일 때만 첨부로 뽑고
+ * 나머지 줄은 그대로 둔다 — 우리도 공백을 품고 경로·URL·확장자 꼴이 아닌 페이로드만 산문으로 남긴다.
+ * 그 밖(공백 없는 페이로드·빈 페이로드 포함)은 걷는다: 애매하면 호스트 경로가 새지 않는 쪽.
+ */
+export function isProseMediaLine(line: string): boolean {
+  const payload = line.replace(MEDIA_LINE_START, "").trim();
+  if (!/\s/.test(payload)) return false;
+  return !PATH_LIKE_HEAD.test(payload) && !EXTENSION_TAIL.test(payload);
+}
+
+/** 걷을 MEDIA: 줄인가 — 스트리밍 필터와 폴백이 같은 판정을 쓴다 */
+function isDroppedMediaLine(line: string): boolean {
+  return MEDIA_LINE_START.test(line) && !isProseMediaLine(line);
+}
 
 /** 코어의 MEDIA: 줄을 걷는다 — 폴백 최종본이 호스트 경로를 채널에 저장하지 않게(스펙 4.6) */
 export function stripMediaLines(text: string): { text: string; dropped: number } {
   let dropped = 0;
-  const out = text.replace(MEDIA_LINE, () => {
+  const out = text.replace(MEDIA_LINE, (line) => {
+    if (isProseMediaLine(line)) return line;
     dropped++;
     return "";
   });
@@ -33,7 +54,10 @@ function mayBeMediaLine(head: string): boolean {
   return MEDIA_PREFIX.startsWith(head.replace(/^[ \t]*/, "").toUpperCase());
 }
 
-/** 조각을 넣고 지금 내보낼 텍스트를 돌려준다(빈 문자열일 수 있다). MEDIA: 줄은 줄바꿈까지 버린다 */
+/**
+ * 조각을 넣고 지금 내보낼 텍스트를 돌려준다(빈 문자열일 수 있다). 걷을 MEDIA: 줄은 줄바꿈까지 버린다.
+ * 산문 MEDIA: 줄도 줄이 끝날 때까지 붙잡는다 — 끝에 확장자가 붙으면 걷어야 하기 때문이다.
+ */
 export function feedMediaLineFilter(state: MediaLineFilter, delta: string): string {
   let rest = state.pending + delta;
   state.pending = "";
@@ -49,7 +73,7 @@ export function feedMediaLineFilter(state: MediaLineFilter, delta: string): stri
     }
     if (nl >= 0) {
       const line = rest.slice(0, nl + 1);
-      if (MEDIA_LINE_START.test(line)) state.dropped++;
+      if (isDroppedMediaLine(line)) state.dropped++;
       else out += line;
       rest = rest.slice(nl + 1);
       continue;
@@ -64,12 +88,12 @@ export function feedMediaLineFilter(state: MediaLineFilter, delta: string): stri
   return out;
 }
 
-/** 런(메시지)이 끝났다 — 붙잡은 것이 MEDIA: 줄이면 버리고, 접두였을 뿐이면 내보낸다. 상태는 처음으로 돌아간다 */
+/** 런(메시지)이 끝났다 — 붙잡은 것이 걷을 MEDIA: 줄이면 버리고, 접두였을 뿐이면 내보낸다. 상태는 처음으로 돌아간다 */
 export function endMediaLineFilter(state: MediaLineFilter): string {
   const held = state.pending;
   state.pending = "";
   state.midLine = false;
-  if (!MEDIA_LINE_START.test(held)) return held;
+  if (!isDroppedMediaLine(held)) return held;
   state.dropped++;
   return "";
 }

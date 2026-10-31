@@ -1,5 +1,5 @@
 import type { Run } from "@dodok/shared";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { conversations, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -65,9 +65,15 @@ export function createRunGate(deps: {
 
   /**
    * 「하루 한 번」은 대화(세션)마다다(채널 세션 스펙 「누가 답하나」 절) — 채널 단위로 세면 처음 막힌 세션에만 남고 다른 세션은
-   * 말없이 막힌다. 스레드 알림도 그 대화의 것으로 센다
+   * 말없이 막힌다. 스레드는 그 스레드대로 센다 — 스레드에 먼저 남은 알림만으로 최상위를 조용히 두면 최상위만 보는 사람은
+   * 멘션이 왜 조용한지 모른다
    */
-  function announcedToday(conversationId: string, scope: LimitHit["scope"], at: Date): boolean {
+  function announcedToday(
+    conversationId: string,
+    threadRootId: string | undefined,
+    scope: LimitHit["scope"],
+    at: Date,
+  ): boolean {
     const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
     const row = db
       .select({ id: messages.id })
@@ -75,6 +81,9 @@ export function createRunGate(deps: {
       .where(
         and(
           eq(messages.conversationId, conversationId),
+          threadRootId === undefined
+            ? isNull(messages.threadRootId)
+            : eq(messages.threadRootId, threadRootId),
           gte(messages.createdAt, midnight),
           sql`json_extract(${messages.systemMeta}, '$.kind') = 'run_limit'`,
           sql`json_extract(${messages.systemMeta}, '$.limit.scope') = ${scope}`,
@@ -96,7 +105,7 @@ export function createRunGate(deps: {
     if (channelId === undefined) throw apiError("NOT_FOUND", "conversation not found");
     const hit = hitOf(channelId, at);
     if (!hit) return null;
-    if (!announcedToday(conversationId, hit.scope, at)) {
+    if (!announcedToday(conversationId, threadRootId, hit.scope, at)) {
       const prefix = hit.scope === "channel" ? "이 채널의 " : "";
       createSystemMessage(db, bus, {
         conversationId,

@@ -93,21 +93,32 @@ export function issueResetLink(
     revokedAt: null,
   };
   db.transaction((tx) => {
-    tx.update(invites)
-      .set({ revokedAt: input.now })
-      .where(
-        and(
-          eq(invites.workspaceId, input.workspaceId),
-          eq(invites.kind, "reset"),
-          eq(invites.targetUserId, input.targetUserId),
-          isNull(invites.usedAt),
-          isNull(invites.revokedAt),
-        ),
-      )
-      .run();
+    revokePendingResetLinks(tx, input);
     tx.insert(invites).values(row).run();
   });
   return { invite: toInvite(row), token };
+}
+
+/**
+ * 대상의 쓰이지 않은(폐기도 안 된) 재설정 링크를 모두 폐기한다 — 새 링크 발급과 본인 비밀번호 변경(POST /me/password)이 부른다.
+ * 본인이 비밀번호를 바꾼 뒤에도 관리자가 앞서 낸 링크가 살아 있으면 그 링크로 다시 바꿀 수 있다
+ */
+export function revokePendingResetLinks(
+  db: DbOrTx,
+  input: { workspaceId: string; targetUserId: string; now: Date },
+): void {
+  db.update(invites)
+    .set({ revokedAt: input.now })
+    .where(
+      and(
+        eq(invites.workspaceId, input.workspaceId),
+        eq(invites.kind, "reset"),
+        eq(invites.targetUserId, input.targetUserId),
+        isNull(invites.usedAt),
+        isNull(invites.revokedAt),
+      ),
+    )
+    .run();
 }
 
 /** 대기 중인 초대(kind invite)만 — 재설정 링크는 멤버 줄의 일이라 싣지 않는다 */

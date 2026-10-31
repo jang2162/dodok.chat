@@ -23,7 +23,9 @@ export type EnsureSessionInput = {
 /**
  * 스펙 3.9 — 디스패치 직전에 부른다. 행이 없으면 현재 채널 promptRevision 으로 만든다(첫 턴은 설정 경로가 이미
  * 프롬프트를 담으므로 동봉하지 않는다). 세션 시작 뒤 리비전이 올랐으면 needsPromptContext. 리비전은 스레드 세션 행별로 기억한다(스펙 2.3).
- * 새 행의 리액션 커서는 만든 시각 — 새 세션은 그 전에 달린 리액션을 받지 않는다.
+ * 새 행의 리액션 커서는 만든 시각 — 새 세션은 그 전에 달린 리액션을 받지 않는다. 새 스레드 행만은 min(지금, 같은 대화·에이전트의
+ * 채널 세션 행 커서)다 — 스레드를 열기 전에 루트에 단 반응(채널 세션에 아직 안 알린 것)을 첫 스레드 런이 받는다. 스레드 범위에서
+ * 세션보다 먼저 있을 수 있는 에이전트 글은 루트뿐이라 더해지는 것은 그 반응뿐이다.
  * providerAgentId 가 세션 키 규칙 밖이면 VALIDATION 을 던진다 — 행을 만들지 않는다.
  */
 export function ensureSession(
@@ -45,6 +47,7 @@ export function ensureSession(
         ),
       )
       .get();
+    const now = new Date();
     const session =
       existing ??
       tx
@@ -62,12 +65,36 @@ export function ensureSession(
           ),
           promptRevisionAtStart: promptRevision,
           instructionsRevisionAtStart: currentInstructionsRevision(tx, input.agentId),
-          reactionsSeenAt: new Date(),
+          reactionsSeenAt:
+            input.threadRootId === undefined
+              ? now
+              : earlier(now, channelSessionCursor(tx, input.conversationId, input.agentId)),
         })
         .returning()
         .get();
     return { session, needsPromptContext: session.promptRevisionAtStart !== promptRevision };
   });
+}
+
+/** 같은 대화·에이전트의 채널 세션 행(threadRootId null)의 리액션 커서 — 행이 없거나 커서가 비었으면 null */
+function channelSessionCursor(tx: DbOrTx, conversationId: string, agentId: string): Date | null {
+  return (
+    tx
+      .select({ at: agentSessions.reactionsSeenAt })
+      .from(agentSessions)
+      .where(
+        and(
+          eq(agentSessions.conversationId, conversationId),
+          eq(agentSessions.agentId, agentId),
+          isNull(agentSessions.threadRootId),
+        ),
+      )
+      .get()?.at ?? null
+  );
+}
+
+function earlier(a: Date, b: Date | null): Date {
+  return b !== null && b.getTime() < a.getTime() ? b : a;
 }
 
 /** 대화·에이전트·스레드의 세션 행 — 없으면 undefined(ensureSession 과 달리 만들지 않는다) */

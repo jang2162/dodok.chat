@@ -287,6 +287,46 @@ describe("「내 계정」", () => {
     expect((await local(app, { token: TEST_LOCAL_TOKEN })).statusCode).toBe(200);
   });
 
+  it("me/password — 본인이 바꾸면 관리자가 앞서 낸 쓰이지 않은 재설정 링크가 무효다", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const issued = IssuedInvite.parse(
+      (
+        await app.fastify.inject({
+          method: "POST",
+          url: `/api/v1/members/${joined.user.id}/reset-link`,
+          headers: owner.headers,
+        })
+      ).json(),
+    );
+    const lookup = () =>
+      app!.fastify.inject({
+        method: "POST",
+        url: "/api/v1/invites/lookup",
+        payload: { token: issued.token },
+      });
+    expect((await lookup()).statusCode).toBe(200);
+
+    const ok = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/me/password",
+      headers: bearer(joined.sessionToken),
+      payload: { current: PASSWORD, next: "next-password-123" },
+    });
+    expect(ok.statusCode).toBe(204);
+    expect((await lookup()).statusCode).toBe(404);
+    const reset = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token: issued.token, password: "attacker-password-1" },
+    });
+    expect(reset.statusCode).toBe(404);
+    expect((await local(app, { email: "bee@example.com", password: "next-password-123" })).statusCode).toBe(
+      200,
+    );
+  });
+
   it("me/password — 지운 세션의 열린 wire 소켓만 서버가 끊고, 이 세션의 소켓은 남는다", async () => {
     app = await bootTestApp({}, roomy);
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
