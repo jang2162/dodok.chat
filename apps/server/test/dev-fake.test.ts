@@ -2070,7 +2070,7 @@ describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에�
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("사무실 삭제 → @fin 을 집으로 옮기기 → @fin 멘션에 집 플러그인이 기본 대본(이름표 fin)으로 답한다", async () => {
+  it("사무실 삭제 → @fin 을 집으로 옮기기 → @fin 멘션에 집 플러그인이 기본 대본(이름표 fin)으로 답한다 — 핸들을 바꾸면 이름표도 그 핸들", async () => {
     dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "error" });
     const owner = await loginOwner(dev.url);
     const del = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}`, {
@@ -2126,6 +2126,27 @@ describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에�
       .where(eq(runs.channelId, channel.id))
       .all();
     expect(run?.connectionId).toBe(DEV_FAKE_HOME_GATEWAY_ID);
+
+    // 이름표는 채널 참여자 가운데 자기 핸들이다 — 핸들을 providerAgentId(fin)와 다르게 바꾸면 그 핸들로 답한다
+    const renamed = await fetch(`${dev.url}/api/v1/agents/${finId}`, {
+      method: "PATCH",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify({ handle: "fin-villa" }),
+    });
+    expect(renamed.status).toBe(200);
+    const relabeled = new Promise<string>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.authorType === "agent" && message.bodyMd.includes("다시")) resolve(message.bodyMd);
+      });
+    });
+    const again = await socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      ...sendTarget(dev.app.db, channel.id),
+      clientMsgId: "moved-2",
+      bodyMd: `<@a:${finId}> 다시`,
+    });
+    expect(again.ok).toBe(true);
+    await expect(relabeled).resolves.toMatch(/^\*\*fin-villa\*\*: /);
   }, 30_000);
 });
 
