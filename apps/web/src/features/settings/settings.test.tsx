@@ -257,6 +257,31 @@ describe("채널 프롬프트", () => {
     expect(await within(section).findByRole("status")).toBeInTheDocument();
     expect(box).toHaveValue("");
   });
+
+  it("키보드로 저장하면 저장 중·저장 뒤에도 초점이 저장 버튼에 남는다 — <body> 로 떨어지지 않는다", async () => {
+    const server = stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const section = await region("채널 프롬프트");
+    const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
+    const save = within(section).getByRole("button", { name: "저장" });
+    // 보낼 것이 없을 때도 잠금은 aria-disabled 다 — 탭 차례에 남는다
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).not.toBeDisabled();
+
+    await userEvent.type(box, "간결하게");
+    expect(save).not.toHaveAttribute("aria-disabled");
+    save.focus();
+    await userEvent.keyboard("{Enter}");
+    await within(section).findByRole("status");
+    expect(server.writes().map((c) => c.body)).toEqual([{ prompt: "간결하게" }]);
+    expect(document.activeElement).toBe(save);
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(box).not.toBeDisabled();
+
+    // 잠긴 버튼을 다시 눌러도 보내지 않는다
+    await userEvent.keyboard("{Enter}");
+    expect(server.writes()).toHaveLength(1);
+  });
 });
 
 describe("릴레이 정책", () => {

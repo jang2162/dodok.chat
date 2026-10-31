@@ -62,8 +62,14 @@ export function PromptSection({ channel }: { channel: Channel }) {
           maxLength={PROMPT_MAX}
           rows={8}
           placeholder="없음"
-          disabled={save.isPending || locked}
+          // 저장 중 잠금은 `disabled` 가 아니라 `readOnly` + `aria-disabled` — `disabled` 가 되면 브라우저가 초점을 버려
+          // 키보드로 저장한 사람이 자리를 잃는다(보관 채널 반응 칩·자동화 「지금 실행」과 같은 꼴). 권한 잠금은 그대로 `disabled`
+          disabled={locked}
+          readOnly={save.isPending}
+          aria-disabled={save.isPending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           onChange={(e) => {
+            if (save.isPending) return;
             setDraft(e.target.value);
             setError(undefined);
             setSaved(false);
@@ -80,7 +86,13 @@ export function PromptSection({ channel }: { channel: Channel }) {
         {saved && <Saved>{PROMPT_SAVED_NOTICE}</Saved>}
         {!locked && (
           <div className="flex justify-end">
-            <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
+            {/* 보낼 것이 없거나 저장 중이면 `aria-disabled` 로만 잠근다 — 저장이 끝나 초안이 비어도 초점이 이 버튼에 남게. 누름은 submit 이 거른다 */}
+            <Button
+              type="submit"
+              size="sm"
+              aria-disabled={draft === undefined || save.isPending || undefined}
+              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            >
               {save.isPending ? "저장 중…" : "저장"}
             </Button>
           </div>

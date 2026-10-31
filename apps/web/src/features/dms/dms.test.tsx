@@ -402,6 +402,23 @@ describe("DM 화면", () => {
     await waitFor(() => expect(server.bodies("PATCH", `/channels/${DM}`)).toEqual([{ prompt: "짧게 답해" }]));
   });
 
+  it("「이 DM 의 지시」 를 키보드로 저장해도 초점이 저장 버튼에 남는다(O1)", async () => {
+    const server = stubServer();
+    renderRoute(`/c/${DM}/s/${A}`);
+    await userEvent.click(await screen.findByRole("button", { name: "이 DM 의 지시" }));
+    const dialog = await screen.findByRole("dialog", { name: "이 DM 의 지시" });
+    const box = within(dialog).getByRole("textbox", { name: "이 DM 의 지시" });
+    await userEvent.type(box, "짧게 답해");
+    const save = within(dialog).getByRole("button", { name: "저장" });
+    save.focus();
+    await userEvent.keyboard("{Enter}");
+    await within(dialog).findByRole("status");
+    expect(server.bodies("PATCH", `/channels/${DM}`)).toEqual([{ prompt: "짧게 답해" }]);
+    expect(document.activeElement).toBe(save);
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(box).not.toBeDisabled();
+  });
+
   it("설정·스레드 주소로 와도 패널을 그리지 않고, 활동 패널에는 활동 탭만 있다", async () => {
     stubServer();
     const { router } = renderRoute(`/c/${DM}/s/${A}/settings`);
