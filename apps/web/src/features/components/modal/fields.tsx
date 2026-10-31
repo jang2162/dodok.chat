@@ -1,5 +1,5 @@
 import type { Field } from "@dodok/shared";
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { Checkbox } from "@/ui/checkbox";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
@@ -23,11 +23,12 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 const numberOf = (el: HTMLInputElement) => (el.value === "" ? undefined : Number(el.value));
 
 /**
- * date 칸을 고치는 키 — 조각에 숫자를 치거나(한 글자 키), 지우거나, 위아래로 올리고 내린다.
- * 그 밖의 키를 뗀 것은 고친 것이 아니다: Enter 는 암묵 제출이 방금 띄운 오류를, Tab·Shift 는 들어오기만 한 칸의 오류를 지워 버린다
+ * date 칸이 브라우저 안에서 쥔 상태 — 부분 입력은 value 가 "" 이고 badInput 만 켜지므로 둘을 함께 본다.
+ * 키를 누를 때 적어 두고 뗄 때 견줘 **달라졌을 때만** 칸을 고친 것으로 본다(`ModalField` 의 date).
+ * 키 이름으로 가르면(편집 키 허용 목록) 떼기 전에 Enter 를 누른 롤오버(`202` → 6↓ Enter↓ 6↑)에서 늦게 온 keyup 이
+ * 암묵 제출이 방금 띄운 오류를 지운다. 부분 입력끼리 바뀌는 것(`2026` → `2027`)은 못 보지만 그때의 「날짜 형식」 문구는 여전히 참이다
  */
-const DATE_EDIT_KEYS = new Set(["Backspace", "Delete", "ArrowUp", "ArrowDown"]);
-const editsDate = (key: string) => key.length === 1 || DATE_EDIT_KEYS.has(key);
+const dateState = (el: HTMLInputElement) => `${el.value}|${el.validity.badInput}`;
 
 /**
  * 브라우저가 못 읽는 입력을 쥔 칸(number·date)의 id — 제출하는 순간 칸의 `validity.badInput` 을 읽는다.
@@ -48,6 +49,8 @@ export function unreadableFieldIds(form: HTMLFormElement): string[] {
  */
 export function ModalField({ field, value, error, onChange }: Props) {
   const id = useId();
+  // date 칸: 마지막 keydown 때의 칸 상태(`dateState`). 칸을 떠나면 버린다 — 다른 데서 누른 키의 keyup 을 견주지 않게
+  const keyDownState = useRef<string | undefined>(undefined);
   const errorId = `${id}-error`;
   const invalid = error !== undefined;
   // 오류가 있을 때만 가리킨다 — 빈 오류 자리를 설명으로 읽지 않게
@@ -112,16 +115,25 @@ export function ModalField({ field, value, error, onChange }: Props) {
       widget = (
         <>
           <Label htmlFor={id}>{field.label}</Label>
-          {/* 부분 입력(「2026」만)은 치거나 지워도 input·change 가 안 난다 — 고치는 키를 뗀 것으로 칸을 고친 것을 알고
-              그 칸의 오류를 내린다(`editsDate`) */}
+          {/* 부분 입력(「2026」만)은 치거나 지워도 input·change 가 안 난다 — 키를 누르기 전과 뗀 뒤의 칸 상태가 다르면
+              칸을 고친 것으로 알고 그 칸의 오류를 내린다(`dateState`). Tab·Shift 의 keyup 은 keydown 없이 들어온다 */}
           <Input
             {...control}
             type="date"
             data-field-id={field.id}
             value={text(value)}
             onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              keyDownState.current = dateState(e.currentTarget);
+            }}
             onKeyUp={(e) => {
-              if (editsDate(e.key)) onChange(e.currentTarget.value);
+              const before = keyDownState.current;
+              const now = dateState(e.currentTarget);
+              keyDownState.current = now;
+              if (before !== undefined && before !== now) onChange(e.currentTarget.value);
+            }}
+            onBlur={() => {
+              keyDownState.current = undefined;
             }}
           />
         </>

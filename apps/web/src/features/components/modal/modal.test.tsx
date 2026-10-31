@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { toast } from "sonner";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../../test/fakeSocket";
 import { msg, uid, USER } from "../../../../test/fixtures";
@@ -57,6 +57,27 @@ const sentValues = () => fake?.sentOf("component.interact").map((p) => (p as { v
 /** 브라우저는 못 읽는 입력(number 의 「e」, date 의 「02/31」)에 value 를 "" 로 두고 validity.badInput 을 켠다 — jsdom 은 몰라서 흉내 낸다 */
 function setBadInput(input: HTMLElement, badInput: boolean) {
   Object.defineProperty(input, "validity", { configurable: true, value: { badInput } });
+}
+
+/**
+ * Chrome 의 date 칸이 키의 기본 동작으로 하는 일을 흉내 낸다 — jsdom 은 조각 입력을 몰라 부분 입력에 아무것도 안 바꾼다.
+ * 조각 하나만 본다: 숫자는 그 조각에 쌓이고, Backspace·Delete 는 조각을 비우고, 빈 칸의 ↑·↓ 는 연도를 채운다.
+ * 조각에 무엇이든 있으면 부분 입력이라 value 는 "" 그대로이고 badInput 만 켜진다(완성은 여기서 다루지 않는다).
+ * 기본 동작은 keydown 처리기(React 루트) **뒤**, keyup 앞에 일어난다 — 그래서 document 의 keydown(버블)에서 바꾼다
+ */
+function dateSegment(input: HTMLElement, typed = "") {
+  let segment = typed;
+  const sync = () => setBadInput(input, segment !== "");
+  sync();
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.target !== input) return;
+    if (/^\d$/.test(e.key)) segment += e.key;
+    else if (e.key === "Backspace" || e.key === "Delete") segment = "";
+    else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && segment === "") segment = "2026";
+    sync();
+  };
+  document.addEventListener("keydown", onKeyDown);
+  onTestFinished(() => document.removeEventListener("keydown", onKeyDown));
 }
 
 beforeEach(() => {
@@ -416,12 +437,11 @@ describe("모달 — 제출", () => {
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     const input = within(dialog).getByLabelText("마감");
-    setBadInput(input, true);
+    dateSegment(input);
     await userEvent.type(input, "2026");
     await submit(dialog);
     expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
     // Chrome 은 지울 때도 input·change 를 안 낸다 — keydown·keyup 만
-    setBadInput(input, false);
     await userEvent.type(input, "{Backspace}");
     expect(input).not.toHaveAttribute("aria-describedby");
     expect(input).not.toHaveAttribute("aria-invalid");
@@ -434,26 +454,80 @@ describe("모달 — 제출", () => {
     const input = within(dialog).getByLabelText("마감");
     await submit(dialog);
     expect(input).toHaveAccessibleDescription("필수 항목입니다");
-    setBadInput(input, true);
+    dateSegment(input);
     await userEvent.type(input, "2026");
     expect(input).not.toHaveAttribute("aria-describedby");
   });
 
-  it.each(["{Delete}", "{ArrowUp}", "{ArrowDown}"])(
-    "date 칸을 「%s」로 고쳐도 그 칸의 오류가 내려간다 — 지우기·올리고 내리기도 고친 것",
+  it("date 칸을 「{Delete}」로 지워도 그 칸의 오류가 내려간다", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    dateSegment(input);
+    await userEvent.type(input, "2026");
+    await submit(dialog);
+    expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+    await userEvent.type(input, "{Delete}");
+    expect(input).not.toHaveAttribute("aria-describedby");
+  });
+
+  it.each(["{ArrowUp}", "{ArrowDown}"])(
+    "빈 date 칸을 「%s」로 채워도 그 칸의 오류가 내려간다 — 연도가 채워져 부분 입력이 된다",
     async (key) => {
-      const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+      const message = withModal({ fields: [{ type: "date", id: "d", label: "마감", required: true }] });
       renderWithClient(<Components message={message} />);
       const dialog = await open();
       const input = within(dialog).getByLabelText("마감");
-      setBadInput(input, true);
-      await userEvent.type(input, "2026");
+      dateSegment(input);
       await submit(dialog);
-      expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+      expect(input).toHaveAccessibleDescription("필수 항목입니다");
       await userEvent.type(input, key);
       expect(input).not.toHaveAttribute("aria-describedby");
     },
   );
+
+  /**
+   * 키 롤오버 — 숫자·Backspace 를 떼기 전에 Enter 를 누르면 Enter 의 암묵 제출이 띄운 오류 뒤에 그 키의 keyup 이 온다.
+   * 키 이름으로 고친 것을 가르면 그 keyup 이 방금 뜬 오류를 지워 전송도 문구도 없는 제출이 된다(c2-t4 재리뷰 2 B10·B11)
+   */
+  it("부분 날짜에서 숫자를 떼기 전에 Enter 를 눌러도 형식 오류가 남는다(롤오버)", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    dateSegment(input);
+    await userEvent.click(input);
+    await userEvent.keyboard("202{6>}{Enter}{/6}");
+    expect(sentValues()).toEqual([]);
+    expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+  });
+
+  it("부분 날짜를 Backspace 로 지우며 떼기 전에 Enter 를 눌러도 필수 오류가 남는다(롤오버)", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감", required: true }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    dateSegment(input);
+    await userEvent.click(input);
+    await userEvent.keyboard("2026{Enter}");
+    expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+    await userEvent.keyboard("{Backspace>}{Enter}{/Backspace}");
+    expect(sentValues()).toEqual([]);
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+  });
+
+  it("빈 date 칸에서 칸을 안 바꾸는 키(글자·구분자·Backspace)는 오류를 안 내린다", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감", required: true }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    dateSegment(input);
+    await submit(dialog);
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+    await userEvent.type(input, "a/{Backspace}");
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+  });
 
   it("date 칸에서 Enter 로 제출해도 오류가 남는다 — 그 Enter 를 뗀 것은 칸을 고친 것이 아니다", async () => {
     fake?.onAck("component.interact", () => OK);
