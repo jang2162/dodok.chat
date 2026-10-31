@@ -1,4 +1,4 @@
-import { type ComponentState, ComponentsV1 } from "@dodok/shared";
+import { type ComponentState, ComponentsV1, StoredComponentsV1 } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { findItem, formatInteractionText, validateInteraction } from "../src/modules/components/interact";
 
@@ -170,6 +170,32 @@ describe("validateInteraction — 성공", () => {
       call("details", { fields: { title: "t", priority: ["p1"], notify: true, hours: 3 } }),
     ).toMatchObject({ ok: true });
   });
+  it("checkbox: required 면 켜져야(true) 제출된다, 아니면 false 도 받는다", () => {
+    const card = ComponentsV1.parse({
+      id: "cmp_1",
+      modal: {
+        id: "agree_form",
+        title: "동의",
+        triggerLabel: "열기",
+        fields: [
+          { type: "checkbox", id: "agree", label: "약관 동의", required: true },
+          { type: "checkbox", id: "news", label: "소식 받기" },
+        ],
+      },
+    });
+    const run = (fields: Record<string, unknown>) =>
+      validateInteraction({
+        message: { id: MSG, components: card, componentState: state() },
+        componentId: "cmp_1",
+        itemId: "agree_form",
+        userId: U1,
+        values: { fields },
+        now: NOW,
+      });
+    expect(run({ agree: true, news: false })).toMatchObject({ ok: true });
+    expect(run({ agree: false, news: true })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(run({ news: true })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  });
   it("선택 textarea는 빈 문자열을 허용한다", () => {
     expect(call("details", { fields: { title: "t", desc: "" } })).toMatchObject({ ok: true });
   });
@@ -189,6 +215,31 @@ describe("formatInteractionText", () => {
     if (!found) throw new Error("x");
     expect(formatInteractionText({ ...base, found, values: { values: ["web"] } })).toBe(
       '[dodok interaction] user=@jang kind=select component=cmp_1 item=target values=["web"]\n@jang 님이 "대상 선택"에서 웹을 골랐습니다.',
+    );
+  });
+  it("셀렉트에서 고른 것이 0개면 「아무것도 고르지 않았습니다」", () => {
+    const found = findItem(components, "target");
+    if (!found) throw new Error("x");
+    expect(formatInteractionText({ ...base, found, values: { values: [] } })).toBe(
+      '[dodok interaction] user=@jang kind=select component=cmp_1 item=target values=[]\n@jang 님이 "대상 선택"에서 아무것도 고르지 않았습니다.',
+    );
+  });
+  it("빈 placeholder 인 옛 카드(읽기 스키마만 받는다)는 id 를 이름으로 쓴다", () => {
+    const old = StoredComponentsV1.parse({
+      id: "cmp_old",
+      blocks: [
+        {
+          type: "actions",
+          items: [{ type: "select", id: "fmt", placeholder: "", options: [{ value: "pdf", label: "PDF" }] }],
+        },
+      ],
+    });
+    const found = findItem(old, "fmt");
+    if (!found) throw new Error("x");
+    expect(
+      formatInteractionText({ userHandle: "jang", components: old, found, values: { values: ["pdf"] } }),
+    ).toBe(
+      '[dodok interaction] user=@jang kind=select component=cmp_old item=fmt values=["pdf"]\n@jang 님이 "fmt"에서 PDF을 골랐습니다.',
     );
   });
   it("모달", () => {

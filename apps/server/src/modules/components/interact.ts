@@ -62,7 +62,8 @@ function fieldSchema(f: Field): z.ZodType {
       break;
     }
     case "checkbox":
-      s = z.boolean();
+      // required 인 체크박스는 켜져야 제출된다(「동의 필수」) — 웹 validate.ts 의 checkbox 갈래와 같은 뜻
+      s = f.required ? z.literal(true) : z.boolean();
       break;
     case "radio":
       s = enumOf(f.options);
@@ -164,8 +165,10 @@ export function formatInteractionText(args: {
     case "select": {
       const vals = Array.isArray(values.values) ? values.values.map(String) : [];
       const labels = vals.map((v) => labelOf(found.item.options, v)).join(", ");
-      const name = found.item.placeholder ?? found.item.id;
-      return `${head} values=${JSON.stringify(vals)}\n@${userHandle} 님이 "${name}"에서 ${labels}을 골랐습니다.`;
+      // 빈 placeholder(쓰기 계약이 거절하기 전의 옛 카드)도 이름 자리를 비우지 않게 || — 웹 summarize 와 같은 규칙
+      const name = found.item.placeholder || found.item.id;
+      const said = vals.length > 0 ? `${labels}을 골랐습니다.` : "아무것도 고르지 않았습니다.";
+      return `${head} values=${JSON.stringify(vals)}\n@${userHandle} 님이 "${name}"에서 ${said}`;
     }
     case "modal": {
       const fields = (values.fields ?? {}) as Record<string, unknown>;

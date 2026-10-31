@@ -151,11 +151,17 @@ describe("validateFields — 서버 fieldSchema 와 같은 빡빡함", () => {
     expect(validateFields([f({ type: "radio", options: OPTS })], { x: undefined })).toEqual({});
   });
 
-  it("checkbox 는 required 여도 꺼진 채(false) 낼 수 있다 — 서버는 boolean 인지만 본다", () => {
+  it("checkbox 는 required 면 켜져야 낸다 — 서버는 required 면 true 만 받는다", () => {
     const c = [f({ type: "checkbox", required: true })];
+    expect(validateFields(c, { x: false })).toEqual({ x: "필수 항목입니다" });
+    expect(validateFields(c, { x: true })).toEqual({});
+    expect(validateFields(c, { x: undefined })).toEqual({ x: "필수 항목입니다" });
+  });
+
+  it("required 가 아닌 checkbox 는 꺼진 채(false) 낼 수 있다", () => {
+    const c = [f({ type: "checkbox" })];
     expect(validateFields(c, { x: false })).toEqual({});
     expect(submitValues(c, { x: false })).toEqual({ x: false });
-    expect(validateFields(c, { x: undefined })).toEqual({ x: "필수 항목입니다" });
   });
 
   it("값의 형이 어긋나면 오류 — 서버가 거절할 모양을 보내지 않는다", () => {

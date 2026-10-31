@@ -1,4 +1,4 @@
-import { ComponentsV1, type MessageInteraction } from "@dodok/shared";
+import { ComponentsV1, type MessageInteraction, StoredComponentsV1 } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { uid, USER } from "../../../test/fixtures";
 import { oldestFirst, summarize } from "./interactions";
@@ -75,6 +75,17 @@ describe("summarize — 결과 줄 문구(서버 formatInteractionText 의 사�
     expect(summarize(CMP, { ...IX, itemId: "pick", values: { values: ["md"] } })).toStrictEqual({
       itemLabel: "pick",
       valueText: "마크다운",
+    });
+  });
+
+  it("빈 placeholder 인 옛 카드(읽기 스키마만 받는다)는 id 를 쓴다 — 서버 formatInteractionText 와 같은 규칙", () => {
+    const old = StoredComponentsV1.parse({
+      id: "cmp_1",
+      blocks: [{ type: "actions", items: [{ type: "select", id: "fmt", placeholder: "", options: OPTS }] }],
+    });
+    expect(summarize(old, { ...IX, itemId: "fmt", values: { values: ["pdf"] } })).toStrictEqual({
+      itemLabel: "fmt",
+      valueText: "PDF",
     });
   });
 
