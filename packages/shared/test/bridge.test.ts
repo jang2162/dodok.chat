@@ -3,9 +3,13 @@ import {
   BridgeHello,
   formatDmLine,
   formatSessionLine,
+  INBOUND_REACTIONS_MAX,
+  InboundContext,
   InboundDeliver,
   InboundDeliverResult,
+  InboundReaction,
   OutboundMessage,
+  REACTION_EXCERPT_MAX,
 } from "../src/bridge";
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
@@ -176,5 +180,29 @@ describe("InboundDeliver.dm — 선택 필드", () => {
     expect(InboundDeliver.parse(base).dm).toBeUndefined();
     expect(InboundDeliver.parse({ ...base, dm: { ownerHandle: "mia" } }).dm).toEqual({ ownerHandle: "mia" });
     expect(InboundDeliver.safeParse({ ...base, dm: {} }).success).toBe(false);
+  });
+});
+
+describe("리액션 상한 — 서버가 쓰는 상수가 곧 스키마의 상한", () => {
+  const reaction = (excerpt: string) => ({
+    messageId: ID(1),
+    excerpt,
+    emoji: "👍",
+    by: "owner",
+    at: NOW,
+  });
+  it("excerpt 는 REACTION_EXCERPT_MAX 까지", () => {
+    expect(InboundReaction.safeParse(reaction("a".repeat(REACTION_EXCERPT_MAX))).success).toBe(true);
+    expect(InboundReaction.safeParse(reaction("a".repeat(REACTION_EXCERPT_MAX + 1))).success).toBe(false);
+  });
+  it("reactions 는 INBOUND_REACTIONS_MAX 개까지", () => {
+    const ctx = (n: number) => ({
+      recentMessages: [],
+      participants: [],
+      relayRules: "",
+      reactions: Array.from({ length: n }, () => reaction("x")),
+    });
+    expect(InboundContext.safeParse(ctx(INBOUND_REACTIONS_MAX)).success).toBe(true);
+    expect(InboundContext.safeParse(ctx(INBOUND_REACTIONS_MAX + 1)).success).toBe(false);
   });
 });

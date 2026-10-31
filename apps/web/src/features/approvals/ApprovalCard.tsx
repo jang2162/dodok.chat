@@ -79,8 +79,11 @@ const LOOK: Record<ApprovalSeverity, { Icon: LucideIcon; label: string; tone: st
   critical: { Icon: ShieldAlertIcon, label: "위험", tone: "text-destructive", bar: "bg-destructive" },
 };
 
-/** 긴 인자를 줄였다는 표시 — Gateway 의 `[+N chars hidden]`(설계 3.1)과 러너의 `…(가운데 N자 생략)…`(러너 approvals `elide`) */
-const TRUNCATED = /\[\+\d+ chars hidden\]|…\(가운데 \d+자 생략\)…/;
+/**
+ * 긴 인자를 줄였다는 표시 — Gateway 의 `[+N chars hidden]`(설계 3.1), 러너 요약의 `…(가운데 N자 생략)…`(러너 approvals `elide`),
+ * 러너 전체 인자의 `…(뒤 N자 생략)`(러너 approvals `fullToolArgs`)
+ */
+const TRUNCATED = /\[\+\d+ chars hidden\]|…\(가운데 \d+자 생략\)…|…\(뒤 \d+자 생략\)$/;
 
 function TruncatedNote({ args }: { args: string }) {
   return TRUNCATED.test(args) ? <p className="mt-1 text-xs text-muted-foreground">잘렸습니다.</p> : null;
@@ -118,8 +121,10 @@ export function resolveErrorMessage(e: unknown, kind?: ApprovalKind): string {
  * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」. 확인 카드(`dodok_control`)는 시킨
  * 사람 본인만 결정한다(`canDecideApproval`) — 남에게는 역할과 상관없이 「@<시킨 사람> 의 확인을 기다립니다」, 본문은 바뀔 내용(`description`)과
  * 출처 줄(`detail` — 시킨 사람·릴레이 사슬)을 접지 않고 보인다. 「내가 시킨 일인가」를 누르기 전에 읽어야 해서다.
- * 도구 승인(`kind: "tool"`, 러너 스펙 6장·7장)은 제목이 도구 이름이고 `detail` 이 요약(Bash 명령·작업 디렉터리 상대 경로 등)이다 —
- * 짧은 한 줄이라 접지 않고 코드 글꼴로 바로 보인다. 러너가 이미 앞·뒤를 남겨 줄였으므로 웹은 더 자르지 않는다 — 꼬리가 대개 위험한 부분이다
+ * 도구 승인(`kind: "tool"`, 러너 스펙 6장·7장)은 제목이 도구 이름이고 요약(Bash 명령·작업 디렉터리 상대 경로 등)을 접지 않고 코드
+ * 글꼴로 바로 보인다. 러너가 이미 앞·뒤를 남겨 줄였으므로 웹은 더 자르지 않는다 — 꼬리가 대개 위험한 부분이다. 새 러너는 요약을
+ * `description` 에, 도구 입력 JSON 전체를 `detail` 에 실어 「전체 보기」로 편다(가운데 생략에 묻힌 것을 볼 길). 옛 러너는 `detail` 이
+ * 요약뿐이라 「전체 보기」가 없다
  */
 export function ApprovalCard({
   approvalId,
@@ -169,6 +174,9 @@ export function ApprovalCard({
     approval.status === "pending" ? undefined : OUTCOME[approval.status] + (note ? ` (${note})` : "");
   const tool = approval.kind === "tool";
   const args = approval.detail ?? approval.description;
+  // 도구 승인에 둘 다 있으면 새 러너 — 요약은 description, 입력 전체는 detail(runner-adapter approvals)
+  const toolFull = tool && approval.description !== undefined ? approval.detail : undefined;
+  const toolSummary = toolFull === undefined ? args : approval.description;
   const handleOf = (userId: string | undefined) =>
     userId === undefined ? undefined : author({ authorType: "user", authorId: userId }).handle;
   const requester = handleOf(approval.requestedBy);
@@ -226,18 +234,18 @@ export function ApprovalCard({
 
           {control ? (
             <ControlBody summary={approval.description} origin={approval.detail} />
-          ) : (
-            args &&
-            (tool ? (
+          ) : tool ? (
+            toolSummary && (
               <div>
                 <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
-                  {args}
+                  {toolSummary}
                 </code>
-                <TruncatedNote args={args} />
+                <TruncatedNote args={toolSummary} />
+                {toolFull && <Arguments args={toolFull} showLabel="전체 보기" hideLabel="전체 접기" />}
               </div>
-            ) : (
-              <Arguments args={args} />
-            ))
+            )
+          ) : (
+            args && <Arguments args={args} />
           )}
 
           {answerable && !canDecide && <p className="text-xs text-muted-foreground">{waitingText}</p>}
@@ -298,13 +306,24 @@ function ControlBody({ summary, origin }: { summary?: string; origin?: string })
   );
 }
 
-/** 툴 인자는 접힘이 기본(설계 5.2·5.3). 자른 표시가 있으면 잘렸다고 알린다 */
-function Arguments({ args }: { args: string }) {
+/**
+ * 툴 인자는 접힘이 기본(설계 5.2·5.3). 자른 표시가 있으면 잘렸다고 알린다. 도구 승인의 「전체 보기」도 이것이다 — 펼쳐도 버튼이
+ * 그대로 남아 초점이 제자리에 있다
+ */
+function Arguments({
+  args,
+  showLabel = "인자 보기",
+  hideLabel = "인자 접기",
+}: {
+  args: string;
+  showLabel?: string;
+  hideLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div>
       <Button variant="ghost" size="xs" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? "인자 접기" : "인자 보기"}
+        {open ? hideLabel : showLabel}
       </Button>
       {open && (
         <>

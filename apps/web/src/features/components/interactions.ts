@@ -23,11 +23,12 @@ const summary = (itemLabel: string, valueText: string): InteractionSummary =>
   valueText ? { itemLabel, valueText } : { itemLabel };
 
 /**
- * 상호작용 하나 → 결과 줄 문구(스펙 5.6, 순수). 버튼은 라벨, 셀렉트는 `placeholder ?? id` 와 고른 옵션 라벨들,
+ * 상호작용 하나 → 결과 줄 문구(스펙 5.6, 순수). 버튼은 라벨, 셀렉트는 `placeholder || id`(빈 placeholder 인 옛 카드도 이름이 남게)와 고른 옵션 라벨들,
  * 모달은 제목과 칸별 「라벨: 값」(모달에 적힌 순서, 실려 오지 않은 칸은 건너뜀).
  *
  * 라벨 해석은 서버 `formatInteractionText`(`apps/server/src/modules/components/interact.ts`)의 사람이 읽는 부분과 같다 —
- * 아이템 찾는 순서(actions 블록들 → 모달), `labelOf`, `renderFieldValue`(checkbox 예/아니요 · select·radio 옵션 라벨 · 그 밖 `String`).
+ * 아이템 찾는 순서(actions 블록들 → 모달), 셀렉트 이름 `placeholder || id`, `labelOf`, `renderFieldValue`(checkbox 예/아니요 · select·radio 옵션 라벨 · 그 밖 `String`).
+ * 고른 것이 0개면 서버 본문은 「아무것도 고르지 않았습니다」, 여기는 값 없이 이름만이다.
  * 그쪽은 에이전트용이라 기계가 읽는 머리줄이 붙어 일부러 따로 둔다.
  * 카드에서 그 `itemId` 를 못 찾으면(카드가 편집됐거나 계약이 바뀜) `undefined` — 부르는 쪽은 그 줄을 그리지 않는다
  */
@@ -42,7 +43,7 @@ export function summarize(
       if (item.id !== itemId) continue;
       if (item.type === "button") return { itemLabel: item.label };
       const picked = Array.isArray(values.values) ? values.values.map(String) : [];
-      return summary(item.placeholder ?? item.id, picked.map((v) => labelOf(item.options, v)).join(", "));
+      return summary(item.placeholder || item.id, picked.map((v) => labelOf(item.options, v)).join(", "));
     }
   }
   const modal = components.modal;

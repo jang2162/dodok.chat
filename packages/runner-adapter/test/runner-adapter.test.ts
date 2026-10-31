@@ -1511,6 +1511,7 @@ describe("승인", () => {
     runId: string,
     sessionKey: string,
     canAllowAlways = true,
+    extra: { args?: string } = {},
   ) {
     r.send("approval.requested", {
       providerApprovalId: "perm-1",
@@ -1519,6 +1520,7 @@ describe("승인", () => {
       toolCallId: "toolu_9",
       toolName: "Write",
       summary: "src/a.ts",
+      ...extra,
       canAllowAlways,
     });
     await until(() => approvals(h).length === 1, "approval");
@@ -1555,6 +1557,29 @@ describe("승인", () => {
     expect(resolved).toMatchObject({ status: "allowed", decision: "allow-always", reason: "user" });
     await until(() => r.resolves.length === 1, "resolve");
     expect(r.resolves).toEqual([{ providerApprovalId: "perm-1", decision: "allow-always" }]);
+  });
+
+  it("args 가 있으면(새 러너) description 은 요약·detail 은 입력 전체, 없으면(옛 러너) detail 이 요약", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    const args = '{"file_path":"src/a.ts","content":"x"}';
+    const full = await requestApproval(h, r, runId, sessionKey, true, { args });
+    expect(full).toMatchObject({ description: "src/a.ts", detail: args });
+    const old = await startRun(h, r);
+    r.send("approval.requested", {
+      providerApprovalId: "perm-2",
+      runId: old.runId,
+      sessionKey: old.sessionKey,
+      toolCallId: "toolu_10",
+      toolName: "Write",
+      summary: "src/b.ts",
+      canAllowAlways: false,
+    });
+    await until(() => approvals(h).length === 2, "approval 2");
+    const legacy = approvals(h)[1] as ProviderApproval;
+    expect(legacy.detail).toBe("src/b.ts");
+    expect(legacy).not.toHaveProperty("description");
   });
 
   it("항상 허용을 못 하는 도구는 결정 둘만 보인다", async () => {

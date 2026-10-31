@@ -63,7 +63,9 @@ export class RunnerApprovals {
       toolCallId: req.toolCallId,
       toolName: req.toolName,
       title: req.toolName,
-      detail: req.summary,
+      // 새 러너는 요약과 입력 전체를 따로 보낸다 — 카드는 description(요약)을 보이고 「전체 보기」로 detail 을 편다.
+      // 옛 러너(args 없음)는 지금처럼 detail 이 요약이다
+      ...(req.args === undefined ? { detail: req.summary } : { description: req.summary, detail: req.args }),
       severity: "warning",
       allowedDecisions: req.canAllowAlways ? ["allow-once", "allow-always", "deny"] : ["allow-once", "deny"],
       status: "pending",

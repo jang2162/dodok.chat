@@ -129,8 +129,9 @@ function fieldError(f: Field, v: unknown): string | undefined {
       if (!f.multi && v.length > 1) return "하나만 고를 수 있습니다";
       return undefined;
     case "checkbox":
-      // required 여도 false 를 받는다 — 서버는 boolean 인지만 본다
-      return typeof v === "boolean" ? undefined : BAD_VALUE;
+      // required 면 켜져야 제출된다 — 서버는 required 면 true 만, 아니면 boolean 이면 받는다
+      if (typeof v !== "boolean") return BAD_VALUE;
+      return f.required && v !== true ? REQUIRED : undefined;
     case "radio":
       if (v === "") return PICK_ONE;
       return hasOption(f.options, v) ? undefined : NOT_OPTION;

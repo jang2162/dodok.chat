@@ -292,6 +292,30 @@ describe("검색하기", () => {
     );
   });
 
+  it("작성자 거르개 「자동화」 — authorType=automation 이 요청에 실린다", async () => {
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포");
+    await waitFor(() => expect(searchCalls()).toHaveLength(1));
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "작성자" }), "자동화");
+    await waitFor(() =>
+      expect(params(searchCalls().at(-1)!)).toEqual({ q: "배포", authorType: "automation" }),
+    );
+  });
+
+  it("채널 거르개에 내 DM 이 「DM · <에이전트 이름>」으로 — 고르면 그 DM 채널 id 가 실린다", async () => {
+    const dm = dmChannelOf(uid(9), ME.user.id, DEV.id);
+    routes.set("/api/v1/dms", () => json(200, { dms: [dmOf(dm, DEV)] }));
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포");
+    await waitFor(() => expect(searchCalls()).toHaveLength(1));
+    const channel = within(dialog).getByRole("combobox", { name: "채널" });
+    await within(channel).findByRole("option", { name: `DM · ${DEV.name}` });
+    await userEvent.selectOptions(channel, `DM · ${DEV.name}`);
+    await waitFor(() => expect(params(searchCalls().at(-1)!)).toEqual({ q: "배포", channelId: dm.id }));
+  });
+
   it("더 보기 — 커서로 다음 쪽을 이어 붙인다", async () => {
     search = (u) =>
       u.searchParams.get("cursor") === "c2"

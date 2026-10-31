@@ -10,6 +10,7 @@ import {
   createCanUseTool,
   type ApprovalOutcome,
   elide,
+  fullToolArgs,
   summarizeToolInput,
 } from "../src/drivers/claude/approvals";
 import { OUTSIDE_WORKDIR } from "../src/mask";
@@ -85,6 +86,7 @@ describe("createCanUseTool", () => {
         toolCallId: "toolu_01",
         toolName: "Bash",
         summary: "npm test",
+        args: '{"command":"npm test"}',
         canAllowAlways: true,
       },
     ]);
@@ -191,6 +193,39 @@ describe("createCanUseTool", () => {
     await Promise.all([result, long.result]);
     expect(h.requested[0]!.toolName.length).toBeLessThanOrEqual(128);
     expect(h.requested[1]!.summary.length).toBeLessThanOrEqual(400);
+  });
+
+  it("args 는 입력 JSON 전체 — 요약처럼 호스트 경로를 가리고 숨기는 글자를 드러낸다, 계약을 지난다", async () => {
+    const h = harness();
+    const command = `cat ${WORKDIR}/a /Users/me/.ssh/id_rsa \u202E; echo ${"x".repeat(600)}\u202Eend`;
+    const { result } = h.ask("Bash", { command });
+    await h.decide({ decision: "deny" });
+    await result;
+    const req = h.requested[0]!;
+    expect(RunnerApprovalRequested.parse(req)).toEqual(req);
+    expect(req.args).toContain(`cat a ${OUTSIDE_WORKDIR}`);
+    expect(req.args).not.toContain("/Users/me");
+    expect(req.args).not.toContain("\u202E");
+    expect(req.args).toContain("\\u{202E}");
+    expect(req.args).toContain("x".repeat(600));
+    expect(req.args?.endsWith('end"}')).toBe(true);
+    // 요약은 그대로 줄인 것이다
+    expect(req.summary).toMatch(/ …\(가운데 \d+자 생략\)… /);
+  });
+});
+
+describe("fullToolArgs", () => {
+  it("16,000 을 넘으면 끝을 자르고 표시 — 계약 길이 안", () => {
+    const s = fullToolArgs({ body: "가".repeat(20_000), tail: "END" }, WORKDIR);
+    expect(s.length).toBeLessThanOrEqual(16_000);
+    expect(s.startsWith('{"body":"가가')).toBe(true);
+    expect(s).toMatch(/ …\(뒤 \d+자 생략\)$/);
+    expect(s).not.toContain("END");
+    expect(RunnerApprovalRequested.shape.args.safeParse(s).success).toBe(true);
+  });
+  it("넘지 않으면 그대로, 줄바꿈은 JSON 이 이스케이프한 그대로", () => {
+    expect(fullToolArgs({ a: "x\ny" }, WORKDIR)).toBe('{"a":"x\\ny"}');
+    expect(fullToolArgs(undefined, WORKDIR)).toBe("null");
   });
 });
 

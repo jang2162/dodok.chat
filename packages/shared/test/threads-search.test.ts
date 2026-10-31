@@ -176,6 +176,7 @@ describe("검색 계약", () => {
       cursor: "c",
     });
     expect(ok.authorType).toBe("agent");
+    expect(SearchQuery.parse({ q: "배포", authorType: "automation" }).authorType).toBe("automation");
     expect(SearchQuery.safeParse({ q: "배포", authorType: "system" }).success).toBe(false);
     expect(SearchQuery.safeParse({ q: "배포", from: "2026-09-01T00:00:00Z" }).success).toBe(false);
     expect(SearchQuery.safeParse({ q: "배포", cursor: "c".repeat(201) }).success).toBe(false);

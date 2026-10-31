@@ -738,6 +738,8 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
         toolCallId: "toolu_01",
         toolName: "Bash",
         summary: "npm test --prefix .",
+        // 카드 「전체 보기」의 입력 JSON 전체 — 작업 디렉터리는 요약과 같은 규칙으로 가린다
+        args: '{"command":"npm test --prefix ."}',
         canAllowAlways: true,
       },
     ]);

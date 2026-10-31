@@ -46,10 +46,15 @@ export type InboundAuthor = z.infer<typeof InboundAuthor>;
 
 const InboundContextMessage = z.object({ author: InboundAuthor, text: z.string(), ts: IsoDateTime });
 
+/** 한 런에 싣는 리액션 수의 상한(InboundContext.reactions) — 서버 reactions/service 가 이 값으로 자른다 */
+export const INBOUND_REACTIONS_MAX = 20;
+/** InboundReaction.excerpt 의 길이 상한 — 서버가 발췌를 이 안으로 채운다 */
+export const REACTION_EXCERPT_MAX = 60;
+
 /** 에이전트가 쓴 메시지에 사람이 단 리액션 하나 — 문구는 formatReactionFacts 가 만든다 */
 export const InboundReaction = z.object({
   messageId: Id,
-  excerpt: z.string().max(60), // 그 메시지의 읽는 글 앞 60자
+  excerpt: z.string().max(REACTION_EXCERPT_MAX), // 그 메시지의 읽는 글 앞쪽
   emoji: ReactionEmoji,
   by: z.string(), // 단 사람의 핸들(비활성 멤버도 그 핸들)
   at: IsoDateTime,
@@ -76,9 +81,9 @@ export const InboundContext = z.object({
   relayRules: z.string(), // 사람이 읽는 한 문단
   channelPrompt: z.string().optional(),
   promptOverride: z.string().optional(),
-  /** 지난 턴 뒤 이 에이전트의 메시지에 달린 리액션 — 최근 20개. 없으면 키가 없다 */
-  reactions: z.array(InboundReaction).max(20).optional(),
-  reactionsOmitted: z.int().min(1).optional(), // 20개 밖으로 밀린 수
+  /** 지난 턴 뒤 이 에이전트의 메시지에 달린 리액션 — 최근 INBOUND_REACTIONS_MAX 개. 없으면 키가 없다 */
+  reactions: z.array(InboundReaction).max(INBOUND_REACTIONS_MAX).optional(),
+  reactionsOmitted: z.int().min(1).optional(), // 상한 밖으로 밀린 수
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 

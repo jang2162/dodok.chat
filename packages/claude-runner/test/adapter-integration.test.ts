@@ -329,7 +329,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     });
     expect(sent).toEqual({ admission: "dispatch", providerRunId: RUN_1, connectionId: TOKEN_ID });
 
-    // 승인 카드가 서버에 뜬다 — 요약은 명령, 항상 허용 가능
+    // 승인 카드가 서버에 뜬다 — 요약(description)은 명령, 전체 보기(detail)는 입력 JSON, 항상 허용 가능
     await waitFor(() => approvals(server).some((a) => a.status === "pending"), "승인 요청");
     const pending = approvals(server)[0]!;
     expect(pending).toMatchObject({
@@ -338,7 +338,8 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       sessionKey: dodokSessionKey("coder", CHANNEL_ID),
       toolCallId: "toolu_01",
       toolName: "Bash",
-      detail: "npm test",
+      description: "npm test",
+      detail: '{"command":"npm test"}',
       allowedDecisions: ["allow-once", "allow-always", "deny"],
     });
     const resolved = await server.adapter.resolveApproval(

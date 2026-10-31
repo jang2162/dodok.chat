@@ -16,6 +16,13 @@ describe("componentsJsonSchema", () => {
     expect(Object.keys(properties)).toEqual(expect.arrayContaining(["blocks", "modal", "reusable", "ttlMs"]));
   });
 
+  it("스키마로 못 싣는 제약(refine·checkbox required 의 뜻)을 설명이 적는다 — placeholder 는 minLength 로도 보인다", () => {
+    expect(COMPONENTS_DESCRIPTION).toContain("checkbox with required: true must be checked");
+    expect(COMPONENTS_DESCRIPTION).toContain("minValues ≤ maxValues ≤ options");
+    expect(COMPONENTS_DESCRIPTION).toContain("placeholder non-empty");
+    expect(JSON.stringify(componentsJsonSchema)).toContain('"minLength":1,"maxLength":150');
+  });
+
   it("v1 제약 일부가 스키마에 드러난다 (액션 로우 ≤5, 블록 ≤10)", () => {
     const text = JSON.stringify(componentsJsonSchema);
     expect(text).toContain('"maxItems":5');

@@ -50,8 +50,12 @@ export const FileBlock = z.object({
   size: z.int().optional(),
 });
 
-/** id 를 품는 스키마 묶음 — 쓰기(ItemId)와 읽기(StoredItemId)가 id 한 곳만 다르다 */
-function withItemId(itemId: typeof StoredItemId) {
+/**
+ * id 를 품는 스키마 묶음 — 쓰기(ItemId, strict)와 읽기(StoredItemId)가 다르다.
+ * strict 는 쓰기에만 거는 제약(셀렉트의 빈 placeholder·채울 수 없는 min/max)이다. 읽기에 걸면
+ * 그 제약 전에 저장된 카드 하나가 그 메시지가 든 페이지 전체를 500 으로 만든다(StoredItemId 와 같은 까닭).
+ */
+function withItemId(itemId: typeof StoredItemId, { strict }: { strict: boolean }) {
   const Button = z.object({
     type: z.literal("button"),
     id: itemId,
@@ -62,16 +66,31 @@ function withItemId(itemId: typeof StoredItemId) {
     allowedUsers: AllowedUsers,
   });
 
-  const Select = z.object({
+  const SelectBase = z.object({
     type: z.literal("select"),
     id: itemId,
-    placeholder: z.string().max(150).optional(),
+    // 빈 placeholder 는 결과 문구의 이름 자리를 비운다 — 읽는 쪽은 placeholder || id 로 버틴다
+    placeholder: (strict ? z.string().min(1).max(150) : z.string().max(150)).optional(),
     multi: z.boolean().default(false),
     minValues: z.int().min(0).max(25).optional(),
     maxValues: z.int().min(1).max(25).optional(),
     options: z.array(SelectOption).min(1).max(25),
     allowedUsers: AllowedUsers,
   });
+  // 채울 수 없는 셀렉트(「보내기」가 영영 안 켜진다)를 쓰는 자리에서 곧바로 거절한다.
+  // z.toJSONSchema 는 refine 을 싣지 않으므로 에이전트에게는 도구 설명 문장이 이 규칙을 알린다.
+  const Select = strict
+    ? SelectBase.refine(
+        (s) =>
+          (s.minValues === undefined || s.minValues <= (s.maxValues ?? s.options.length)) &&
+          (s.maxValues === undefined || s.maxValues <= s.options.length) &&
+          (s.multi || s.minValues === undefined || s.minValues <= 1),
+        {
+          message: "select: minValues ≤ maxValues ≤ options 수, 단일 선택이면 minValues ≤ 1",
+          path: ["minValues"],
+        },
+      )
+    : SelectBase;
 
   const ActionsBlock = z
     .object({
@@ -179,8 +198,8 @@ function withItemId(itemId: typeof StoredItemId) {
   };
 }
 
-const write = withItemId(ItemId);
-const stored = withItemId(StoredItemId);
+const write = withItemId(ItemId, { strict: true });
+const stored = withItemId(StoredItemId, { strict: false });
 
 export const Button = write.Button;
 export type Button = z.infer<typeof Button>;

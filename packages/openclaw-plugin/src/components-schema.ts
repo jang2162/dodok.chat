@@ -8,7 +8,8 @@ import { z } from "zod";
 /** 모델에게 보여 줄 설명. 제약은 스키마가 강제하지만 설명에도 적어야 모델이 처음부터 맞춘다 */
 export const COMPONENTS_DESCRIPTION =
   "dodok interactive UI (components v1). Blocks: section, separator, actions (≤5 buttons or 1 select), media, file; " +
-  "optional modal (≤5 fields). Button ids are [a-z0-9_-]. Clicks come back as a normal inbound message.";
+  "optional modal (≤5 fields). Button ids are [a-z0-9_-]. Clicks come back as a normal inbound message. " +
+  "A checkbox with required: true must be checked; select minValues ≤ maxValues ≤ options; placeholder non-empty.";
 
 /** `media` 항목·`file`·링크 버튼의 `url` 설명(스펙 결정 5) — 모델은 첨부 id 를 모르므로 같은 메시지의 파일 이름으로 가리킨다 */
 export const ARTIFACT_URL_DESCRIPTION =
