@@ -63,4 +63,29 @@ describe("ConfirmDialog", () => {
     fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalledTimes(2);
   });
+
+  it("실패로 진행이 끝나 대화상자가 열린 채면, 잠긴 동안 body 로 떨어진 초점을 확인 버튼으로 되돌린다", () => {
+    render(<Harness onConfirm={() => {}} />);
+    const dialog = screen.getByRole("dialog", { name: "토큰 삭제" });
+    const confirm = within(dialog).getByRole("button", { name: "삭제" });
+    fireEvent.click(confirm);
+    expect(within(dialog).getByRole("button", { name: "삭제하는 중…" })).toBeDisabled();
+    expect(confirm).not.toHaveFocus();
+    // 브라우저는 잠긴 버튼의 초점을 body 로 치운다(실제 브라우저에서 잼). jsdom 에서는 대화상자의 초점 가둠이 blur 를 되돌리므로
+    // 진행이 끝나는 순간의 activeElement 를 body 로 흉내 낸다
+    const active = vi.spyOn(document, "activeElement", "get").mockReturnValue(document.body);
+    fireEvent.click(screen.getByRole("button", { name: "finish", hidden: true }));
+    active.mockRestore();
+    expect(within(dialog).getByRole("button", { name: "삭제" })).toHaveFocus();
+  });
+
+  it("진행이 끝났을 때 초점이 다른 곳에 있으면 건드리지 않는다", () => {
+    render(<Harness onConfirm={() => {}} />);
+    const dialog = screen.getByRole("dialog", { name: "토큰 삭제" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "삭제" }));
+    const cancel = within(dialog).getByRole("button", { name: "취소" });
+    act(() => cancel.focus());
+    fireEvent.click(screen.getByRole("button", { name: "finish", hidden: true }));
+    expect(cancel).toHaveFocus();
+  });
 });

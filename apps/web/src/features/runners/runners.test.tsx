@@ -224,6 +224,22 @@ describe("다른 러너로 옮기기", () => {
     expect(dialog).not.toHaveTextContent("permissionMode");
   });
 
+  it("옮기기가 실패하면 초점은 잠기지 않는 오류 줄로 — 「옮기기」는 잠긴 채일 수 있다(옮길 러너 끊김)", async () => {
+    stub({
+      runners,
+      projects: [projectOf(1, { label: "dodok" })],
+      move: () => apiErr(503, "RUNNER_UNAVAILABLE", "runner not connected"),
+    });
+    renderRunnersPage();
+    const row = await within(await card("맥북")).findByRole("listitem", { name: "dodok" });
+    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
+    const alert = await within(dialog).findByRole("alert");
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
   it("옮기면 줄이 그 러너의 카드로 간다", async () => {
     const server = stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();

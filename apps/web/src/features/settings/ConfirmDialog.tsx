@@ -62,6 +62,7 @@ export function ConfirmDialog({
       armMs={escalated ? ESCALATED_ARM_MS : 0}
       destructive={destructive}
       pending={pending}
+      open={open}
       label={pending && pendingLabel ? pendingLabel : confirmLabel}
       onConfirm={onConfirm}
     />
@@ -108,12 +109,14 @@ function ConfirmButton({
   armMs,
   destructive,
   pending,
+  open,
   label,
   onConfirm,
 }: {
   armMs: number;
   destructive: boolean;
   pending: boolean;
+  open: boolean;
   label: string;
   onConfirm: () => void;
 }) {
@@ -128,12 +131,20 @@ function ConfirmButton({
   // 이미 실패한 요청) 그때 푼다 — react-query 는 `mutate` 안에서 진행 알림 타이머를 먼저 걸므로 이 타이머보다 앞서 그려진다
   const sending = useRef(false);
   const pendingNow = useRef(pending);
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
+    const was = pendingNow.current;
     pendingNow.current = pending;
-    if (!pending) sending.current = false;
-  }, [pending]);
+    if (pending) return;
+    sending.current = false;
+    // 진행이 끝났는데 대화상자가 열린 채면(실패) — 기다리는 동안 잠긴 이 버튼에서 브라우저가 초점을 body 로 버렸다. 다시 누를 수 있는
+    // 이 버튼으로 되돌린다. 다른 곳에 초점이 있으면(사람이 옮겼다) 건드리지 않는다
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (was && open && lost) button.current?.focus();
+  }, [pending, open]);
   return (
     <Button
+      ref={button}
       variant={destructive ? "destructive" : "default"}
       disabled={pending || !armed}
       onClick={() => {
