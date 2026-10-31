@@ -397,6 +397,25 @@ describe("결과로 가기", () => {
     );
   });
 
+  it("결과를 고르면 초점이 연 자리가 아니라 도착한 메시지 행으로 간다", async () => {
+    search = () => json(200, { hits: [hitOf(msg(80), { snippet: "여든째 메시지" })], limited: false });
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
+    // 같은 화면의 검색 단추로 연다 — 닫혀도 그 자리가 남아 있어 지금까지는 그리로 돌아갔다
+    const opener = await screen.findByRole("button", { name: /검색/ });
+    await userEvent.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "검색" });
+    await typeQuery("여든째");
+    await userEvent.click(await within(dialog).findByRole("button", { name: /여든째 메시지/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull());
+    const row = () => screen.getByText("본문 80").closest("[data-index]");
+    await waitFor(() => expect(row()).toHaveFocus());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(row()).toHaveFocus();
+    expect(opener).not.toHaveFocus();
+  });
+
   it("같은 채널의 다른 세션 결과 — 줄에 세션 제목, 누르면 그 세션의 그 메시지로(지금 세션이 아니라)", async () => {
     const SIDE = uid(9_001);
     const hit = msg(12, { conversationId: SIDE, bodyMd: "곁 세션 글" });
@@ -464,6 +483,8 @@ describe("결과로 가기", () => {
         "true",
       ),
     );
+    // 초점은 스레드 패널의 그 답글이 받는다 — 채널 목록의 루트가 가져가지 않는다
+    await waitFor(() => expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveFocus());
     // 채널 목록은 루트를 강조한다(이미 가진 루트라 around 를 부르지 않는다)
     const channel = screen.getByRole("region", { name: "메시지" });
     await waitFor(() =>

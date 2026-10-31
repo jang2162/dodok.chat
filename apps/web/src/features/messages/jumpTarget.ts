@@ -3,8 +3,11 @@ import { create } from "zustand";
 /** 결과로 가기가 도착한 메시지를 강조하는 시간(스레드·검색 스펙 5.3) */
 export const HIGHLIGHT_MS = 2_000;
 
-/** 목록 하나가 가야 할 메시지 — `seq` 는 가지지 않았을 때 around 로 받는 자리 */
-export type JumpTarget = { messageId: string; seq: number };
+/**
+ * 목록 하나가 가야 할 메시지 — `seq` 는 가지지 않았을 때 around 로 받는 자리. `focus` 면 도착한 행으로 초점을 옮긴다(검색 대화상자에서
+ * 골랐다 — 닫힌 대화상자가 돌려줄 자리 대신 그 메시지가 초점을 받는다)
+ */
+export type JumpTarget = { messageId: string; seq: number; focus?: boolean };
 
 /** 목록 하나의 이름 — 세션 목록이면 대화 id, 스레드 패널이면 대화 id·루트 id */
 export const listKey = (conversationId: string, threadRootId?: string): string =>
@@ -20,19 +23,32 @@ export const useJumpStore = create<JumpState>(() => ({ targets: {} }));
 
 /**
  * 검색 결과로 간다. 답글이면 세션 목록은 그 루트로(서버 around 가 답글 seq 를 루트 가운데로 둔다), 스레드 패널은 그 답글로.
- * 이전 목표는 버린다 — 마지막으로 누른 결과만 간다
+ * 이전 목표는 버린다 — 마지막으로 누른 결과만 간다. `focus` 면 도착한 행이 초점을 받는다 — 답글이면 스레드 패널의 그 답글만
+ * (두 목록이 서로 가져가지 않게)
  */
-export function requestJump(hit: {
-  conversationId: string;
-  messageId: string;
-  seq: number;
-  threadRootId?: string;
-}): void {
+export function requestJump(
+  hit: {
+    conversationId: string;
+    messageId: string;
+    seq: number;
+    threadRootId?: string;
+  },
+  { focus = false }: { focus?: boolean } = {},
+): void {
+  const inThread = hit.threadRootId !== undefined;
   const targets: Record<string, JumpTarget> = {
-    [listKey(hit.conversationId)]: { messageId: hit.threadRootId ?? hit.messageId, seq: hit.seq },
+    [listKey(hit.conversationId)]: {
+      messageId: hit.threadRootId ?? hit.messageId,
+      seq: hit.seq,
+      ...(focus && !inThread ? { focus } : {}),
+    },
   };
   if (hit.threadRootId !== undefined)
-    targets[listKey(hit.conversationId, hit.threadRootId)] = { messageId: hit.messageId, seq: hit.seq };
+    targets[listKey(hit.conversationId, hit.threadRootId)] = {
+      messageId: hit.messageId,
+      seq: hit.seq,
+      ...(focus ? { focus } : {}),
+    };
   useJumpStore.setState({ targets });
 }
 

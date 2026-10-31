@@ -28,6 +28,7 @@ import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
 import { SystemCard } from "./SystemCard";
+import { HIGHLIGHT_MS } from "./jumpTarget";
 import { useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
@@ -206,6 +207,27 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  // 검색에서 골라 도착한 행으로 초점을 옮긴다 — 대화상자가 닫히기 전에는 그 초점 가두기가 도로 가져가므로 붙을 때까지 프레임마다
+  // 다시 해 본다(강조가 풀릴 때까지). 행은 초점을 받은 뒤에도 `tabIndex` 를 지닌다(`landed`) — 떼면 초점이 body 로 떨어진다
+  const [landed, setLanded] = useState<string>();
+  const { focus: focusId, focused } = jump;
+  useEffect(() => {
+    const el = scrollRef.current;
+    const win = el?.ownerDocument.defaultView;
+    if (focusId === undefined || !el || !win) return;
+    setLanded(focusId);
+    const until = win.performance.now() + HIGHLIGHT_MS;
+    let raf = 0;
+    const tick = () => {
+      const index = rowsRef.current.findIndex((r) => r.kind === "message" && r.message.id === focusId);
+      const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
+      row?.focus({ preventScroll: true });
+      if ((row && el.ownerDocument.activeElement === row) || win.performance.now() > until) focused();
+      else raf = win.requestAnimationFrame(tick);
+    };
+    tick();
+    return () => win.cancelAnimationFrame(raf);
+  }, [focusId, focused]);
   // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다. 받은 창에서 한 번만 찾는다:
   // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다.
   // 구분선이 없으면(그 창의 안 읽은 글이 다 내 글 등) 배너가 물은 첫 루트 행으로 간다 — 이동을 거두면 들어갈 때의 끝 맞추기
@@ -559,6 +581,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
+                tabIndex={row.kind === "message" && row.message.id === landed ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",

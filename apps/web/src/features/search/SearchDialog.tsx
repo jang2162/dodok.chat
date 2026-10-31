@@ -29,16 +29,30 @@ export function SearchDialog({
 }) {
   const narrow = useIsNarrow();
   const opener = useRef<HTMLElement | null>(null);
-  const body = <SearchPanel onDone={() => onOpenChange(false)} />;
+  /** 결과를 골라 닫았다 — 초점은 도착한 메시지 행이 가져간다(`requestJump` 의 `focus`) */
+  const picked = useRef(false);
+  const body = (
+    <SearchPanel
+      onDone={() => {
+        picked.current = true;
+        onOpenChange(false);
+      }}
+    />
+  );
   // `DialogTrigger` 없이 열어 Radix 기본 복귀가 갈 곳이 없다 — 열 때 초점을 가졌던 자리(검색 칸·작성기 등)를 기억해 돌려준다.
-  // 그 자리가 사라졌으면(결과로 가서 화면이 바뀌었다) 기본대로 둔다
+  // 그 자리가 사라졌으면 기본대로 둔다. 결과를 골라 닫았으면 아무 데도 돌려주지 않는다 — 도착한 메시지 행이 초점을 가져간다
   const contentProps = {
     "aria-describedby": undefined,
     [SEARCH_DIALOG_ATTR]: "",
     onOpenAutoFocus: () => {
+      picked.current = false;
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     },
     onCloseAutoFocus: (e: Event) => {
+      if (picked.current) {
+        e.preventDefault();
+        return;
+      }
       if (!opener.current?.isConnected) return;
       e.preventDefault();
       opener.current.focus();
@@ -79,7 +93,7 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
   const short = input.trim() !== "" && tooShort;
 
   const pick = (hit: SearchHit) => {
-    requestJump(hit);
+    requestJump(hit, { focus: true });
     onDone();
     const params = { channelId: hit.channelId, conversationId: hit.conversationId };
     if (hit.threadRootId === undefined) void navigate({ to: "/c/$channelId/s/$conversationId", params });
