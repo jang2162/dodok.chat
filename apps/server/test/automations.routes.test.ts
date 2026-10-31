@@ -4,12 +4,12 @@
  */
 import { type AutomationCreated, type AutomationSchedule, type AutomationSummary } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { agents, automations, channels, conversations, messages } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { nextRunAt } from "../src/modules/automations/schedule";
-import { getAutomation, updateAutomation } from "../src/modules/automations/store";
+import { deleteAutomation, getAutomation, updateAutomation } from "../src/modules/automations/store";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
@@ -365,6 +365,25 @@ describe("자동화 관리 API", () => {
       const res = await call({ method: "POST", url: `/automations/${automation.id}/run` });
       expect(res.statusCode, res.body).toBe(202);
       expect(postsOf(automation.id).map((m) => m.bodyMd)).toEqual(["손으로 실행"]);
+    });
+
+    it("게시하는 동안(라우터를 기다리는 사이) 지워지면 게시는 남고 202 — 결과를 남길 행이 없어도 404 가 아니다", async () => {
+      const { automation } = await schedule(newChannel().id);
+      const route = app.services.router.routeMessage.bind(app.services.router);
+      const spy = vi.spyOn(app.services.router, "routeMessage").mockImplementationOnce(async (message) => {
+        deleteAutomation(app.db, app.workspaceId, automation.id);
+        await route(message);
+      });
+      try {
+        const res = await call({ method: "POST", url: `/automations/${automation.id}/run` });
+        expect(res.statusCode, res.body).toBe(202);
+        expect(postsOf(automation.id).map((m) => m.id)).toEqual([
+          (res.json() as { messageId: string }).messageId,
+        ]);
+        expect(getAutomation(app.db, app.workspaceId, automation.id)).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("보관한 채널이면 409 CHANNEL_ARCHIVED — 게시하지 않는다", async () => {

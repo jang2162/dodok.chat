@@ -179,7 +179,9 @@ export function registerAutomationRoutes(fastify: FastifyInstance, ctx: Automati
   fastify.post("/api/v1/automations/:id/run", admin, async (request, reply) => {
     const { id } = parseParams(AutomationParams, request.params);
     const message = await postAutomationMessage(ctx.post, requireAutomation(ctx.db, id));
-    updateAutomation(ctx.db, ctx.workspaceId, id, { lastRunAt: now(), lastStatus: "ok" });
+    // 게시는 라우터를 기다린다 — 그사이 지워졌으면 결과를 남길 행이 없다(웹훅과 같다). 글은 올랐으니 202 로 답한다
+    if (getAutomation(ctx.db, ctx.workspaceId, id) !== undefined)
+      updateAutomation(ctx.db, ctx.workspaceId, id, { lastRunAt: now(), lastStatus: "ok" });
     const result: AutomationPosted = { messageId: message.id };
     return reply.status(202).send(result);
   });
