@@ -30,8 +30,6 @@ describe("sessions service", () => {
       agentId,
       sessionKey: `agent:dev-main:dodok:channel:${channelConversation(db, channelId)}`,
       promptRevisionAtStart: 1,
-      sessionStartedAt: null,
-      lifecycleRevision: null,
     });
 
     const again = ensureSession(db, adapter, { conversationId: channelConversation(db, channelId), agentId });
@@ -78,20 +76,13 @@ describe("sessions service", () => {
     expect(ensureProviderSessionId(db, session.id)).toBe(id);
   });
 
-  it("renewSessionOnPromptChange — 리비전이 오르면 세션 id 를 비우고 리비전·시작 표지를 맞춘다, 한 번만 true", () => {
+  it("renewSessionOnPromptChange — 리비전이 오르면 세션 id 를 비우고 리비전을 맞춘다, 한 번만 true", () => {
     const { db, adapter, channelId, agentId } = setup();
     const { session } = ensureSession(db, adapter, {
       conversationId: channelConversation(db, channelId),
       agentId,
     });
     const old = ensureProviderSessionId(db, session.id);
-    db.update(agentSessions)
-      .set({
-        sessionStartedAt: new Date("2026-09-15T01:02:03.456Z"),
-        lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
-      })
-      .where(eq(agentSessions.id, session.id))
-      .run();
     updateChannel(db, channelId, { prompt: "짧게 답해" });
 
     expect(renewSessionOnPromptChange(db, session.id)).toBe(true);
@@ -99,8 +90,6 @@ describe("sessions service", () => {
     expect(row).toMatchObject({
       providerSessionId: null,
       promptRevisionAtStart: 2,
-      sessionStartedAt: null,
-      lifecycleRevision: null,
     });
     expect(
       ensureSession(db, adapter, { conversationId: channelConversation(db, channelId), agentId })

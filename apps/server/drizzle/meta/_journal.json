@@ -225,6 +225,13 @@
       "when": 1793277361974,
       "tag": "0031_runner_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1793477933558,
+      "tag": "0032_drop_session_reset_cols",
+      "breakpoints": true
     }
   ]
 }
