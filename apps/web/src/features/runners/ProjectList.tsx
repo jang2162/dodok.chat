@@ -21,6 +21,14 @@ import { useArchiveRunnerProject, useCheckRunnerProject, useRenameRunnerProject 
 import { useRunnerProjects } from "./queries";
 
 /**
+ * 줄·버튼의 접근성 이름 — 라벨에 자리를 붙인다(「dodok (src/dodok)」). 라벨이 같은 프로젝트(`src/dodok`·`src/.config/dodok`)가
+ * 눈에는 자리로 갈리지만 이름이 같으면 화면 읽기·음성 제어가 둘을 못 가른다(t6 보고 O2). 화면 글은 그대로다
+ */
+function a11yName(project: Pick<RunnerProject, "label" | "rootId" | "rootLabel" | "relPath">): string {
+  return `${project.label} (${projectPlace(project)})`;
+}
+
+/**
  * 러너 카드 안의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨·자리·에이전트 수와 「확인」·이름 바꾸기·옮기기·보관, 보관한 것은 아래
  * 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove()`(그 카드의 「프로젝트 추가」, 잠겼으면 카드 머리)로 옮긴다
  */
@@ -107,7 +115,7 @@ function ProjectRow({
   }
 
   return (
-    <li aria-label={project.label} className="flex flex-col gap-2 px-3 py-2.5 text-sm">
+    <li aria-label={a11yName(project)} className="flex flex-col gap-2 px-3 py-2.5 text-sm">
       {renaming ? (
         <RenameForm
           project={project}
@@ -133,7 +141,7 @@ function ProjectRow({
               type="button"
               size="sm"
               variant="outline"
-              aria-label={`${project.label} 확인`}
+              aria-label={`${a11yName(project)} 확인`}
               disabled={check.isPending || !live}
               onClick={runCheck}
             >
@@ -144,7 +152,7 @@ function ProjectRow({
               type="button"
               size="sm"
               variant="outline"
-              aria-label={`${project.label} 이름 바꾸기`}
+              aria-label={`${a11yName(project)} 이름 바꾸기`}
               onClick={() => setRenaming(true)}
             >
               이름 바꾸기
@@ -195,7 +203,7 @@ function RenameForm({ project, onClose }: { project: RunnerProject; onClose: () 
     <form onSubmit={submit} className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          aria-label={`${project.label} 새 이름`}
+          aria-label={`${a11yName(project)} 새 이름`}
           aria-invalid={error !== undefined}
           aria-describedby={error ? `${id}-error` : undefined}
           className="h-8 max-w-xs"
@@ -260,7 +268,7 @@ function ArchiveProjectButton({
         type="button"
         size="sm"
         variant="outline"
-        aria-label={`${project.label} 보관`}
+        aria-label={`${a11yName(project)} 보관`}
         onClick={() => {
           returnFocus.current = trigger.current;
           setOpen(true);
@@ -307,7 +315,7 @@ function ArchivedProjects({ projects }: { projects: readonly RunnerProject[] }) 
       {open && (
         <ul id={listId} className="flex flex-col gap-1 pl-2 text-sm text-muted-foreground">
           {projects.map((p) => (
-            <li key={p.id} aria-label={p.label}>
+            <li key={p.id} aria-label={a11yName(p)}>
               {p.label} · <code className="font-mono text-xs">{projectPlace(p)}</code>
             </li>
           ))}

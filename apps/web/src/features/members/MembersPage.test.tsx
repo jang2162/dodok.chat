@@ -79,6 +79,8 @@ describe("멤버 표", () => {
     const select = mina.getByRole("combobox", { name: "@mina 역할" });
     expect(select).toHaveValue("member");
     await userEvent.selectOptions(select, "admin");
+    // 승격은 확인 없이 곧바로
+    expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() =>
       expect(server.writes()).toEqual([
         { method: "PATCH", url: `/api/v1/members/${MINA_ID}`, body: { role: "admin" } },
@@ -89,6 +91,39 @@ describe("멤버 표", () => {
     const owner = await rowOf("owner");
     expect(owner.queryByRole("combobox")).toBeNull();
     expect(owner.queryByRole("button")).toBeNull();
+  });
+
+  it("강등(admin → member)만 확인을 거친다 — 취소하면 요청 없이 원래 값·셀렉트로 초점, 확인하면 PATCH", async () => {
+    const server = stubMembersServer();
+    renderRoute("/settings/members");
+    const select = (await rowOf("sora")).getByRole("combobox", { name: "@sora 역할" });
+    expect(select).toHaveValue("admin");
+
+    await userEvent.selectOptions(select, "member");
+    const dialog = await screen.findByRole("dialog", { name: "@sora 을 멤버로 바꿀까요?" });
+    expect(dialog).toHaveTextContent(
+      "이 사람이 만든 쓰이지 않은 초대·재설정 링크는 쓸 수 없게 되고, 다시 관리자로 올려도 살아나지 않습니다.",
+    );
+    expect(server.writes()).toEqual([]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(select).toHaveValue("admin");
+    expect(select).toHaveFocus();
+    expect(server.writes()).toEqual([]);
+
+    await userEvent.selectOptions(select, "member");
+    await userEvent.click(
+      within(await screen.findByRole("dialog", { name: "@sora 을 멤버로 바꿀까요?" })).getByRole("button", {
+        name: "멤버로 바꾸기",
+      }),
+    );
+    await waitFor(() =>
+      expect(server.writes()).toEqual([
+        { method: "PATCH", url: `/api/v1/members/${ADMIN_ID}`, body: { role: "member" } },
+      ]),
+    );
+    await waitFor(() => expect(select).toHaveValue("member"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("admin 은 역할을 바꾸지 못하고, 줄 동작은 member 줄에만", async () => {
@@ -381,6 +416,8 @@ describe("역할 바꾸기·비활성화 뒤 대기 중인 초대", () => {
       (await rowOf("sora")).getByRole("combobox", { name: "@sora 역할" }),
       "member",
     );
+    const dialog = await screen.findByRole("dialog", { name: "@sora 을 멤버로 바꿀까요?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "멤버로 바꾸기" }));
     await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(1));
   });
 

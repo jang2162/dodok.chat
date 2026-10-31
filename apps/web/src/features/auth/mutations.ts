@@ -1,5 +1,5 @@
 import type { AcceptInviteBody, LocalLoginBody, ResetPasswordBody } from "@dodok/shared";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -80,9 +80,35 @@ export function useLogout() {
     },
     meta: { silent: true },
     onSettled: () => {
-      resetClientState(qc);
-      // 401(이미 끊긴 세션)이면 onUnauthorized 가 먼저 로그인으로 보냈다 — 두 번 가지 않는다
-      if (router.latestLocation.pathname !== "/login") void router.navigate({ to: "/login", replace: true });
+      // 401(이미 끊긴 세션)이면 onUnauthorized 가 먼저 비우고 로그인으로 보냈다 — 두 번 가지 않는다
+      if (router.latestLocation.pathname === "/login") {
+        resetClientState(qc);
+        return;
+      }
+      leaveThenReset(qc, router);
     },
   });
+}
+
+/**
+ * 화면을 `/login` 으로 바꾸는 **그 커밋 안에서** 상태를 비운다(plan.md 이월 D11). 먼저 비우고 이동하면, 이동이 끝나기 전까지 마운트돼 있는
+ * 셸의 관찰자(채널·에이전트·DM·어댑터 상태)가 정리(`resets`)가 바꾼 스토어로 다시 그려지며 빈 캐시에서 새로 받아 끊긴 세션으로 401 이
+ * 몇 건 더 났다. 라우터가 새 매치를 넣은 직후(`onBeforeRouteMount`) 비우면 스토어 변화와 화면 교체가 한 번에 그려져 셸은 다시 그려지지
+ * 않고 내려간다. 그 전에는 me 가 남아 있어도 로그인 화면은 아직 그려지지 않았으니 「이미 로그인」으로 되돌아가지 않는다.
+ * 진행 중인 조회는 먼저 끊는다 — 응답이 비운 캐시에 다시 들어오지 않게
+ */
+function leaveThenReset(qc: QueryClient, router: ReturnType<typeof useRouter>) {
+  void qc.cancelQueries();
+  let done = false;
+  const reset = () => {
+    if (done) return;
+    done = true;
+    off();
+    resetClientState(qc);
+  };
+  const off = router.subscribe("onBeforeRouteMount", (e) => {
+    if (e.toLocation.pathname === "/login") reset();
+  });
+  // 실패해도 상태는 비운다 — 세션은 이미 끝났다. 이동 막기(useBlocker)는 무시한다: 막힌 이동의 약속은 풀리지도 거절되지도 않아 정리가 영영 안 돈다
+  router.navigate({ to: "/login", replace: true, ignoreBlocker: true }).then(reset, reset);
 }

@@ -1,15 +1,14 @@
-import type { RunState } from "@dodok/shared";
-import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { qk, useChannelRuns } from "@/api/queries";
+import { useChannelRuns } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { RunList } from "./RunList";
 import { RunTimeline } from "./RunTimeline";
 import { freezeDurations, mergeRuns } from "./timeline";
+import { useSettledRuns } from "./useSettledRuns";
 
 /**
  * 활동 탭(`/c/$channelId/s/$conversationId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
@@ -26,49 +25,18 @@ function ActivityBody({ channelId }: { channelId: string }) {
   const rest = useChannelRuns(channelId);
   const live = useRunStore(useShallow(selectChannelRuns(channelId)));
 
-  /**
-   * 종료 상태를 한 번이라도 본 런은 여기 적어 두고 목록에 계속 싣는다(브라우저 검증 D2·D9).
-   * 끝난 런은 몇 초 뒤 런 스토어에서 빠지는데(버블 정리, 스펙 4.5) REST 재조회는 그보다 늦다 —
-   * 그 사이 목록에서 사라지면 고른 런이 옛 런으로 넘어가고 타임라인이 새로 서서 펼침·스크롤이 날아간다.
-   * 종료는 마지막 사실이라(더 바뀌지 않는다) 남겨 둬도 낡지 않는다. 목록 조회가 실패해도 남는다.
-   * 렌더 중에 적는다 — 효과로 미루면 한 프레임 동안 목록에서 빠져 선택이 튄다. 채널을 옮기면 통째로 버린다(`key`)
-   */
-  const ended = useRef(new Map<string, RunState>());
-  for (const v of live) if (TERMINAL.has(v.state.status)) ended.current.set(v.state.id, v.state);
-
-  /**
-   * 종료를 **못 본 채** 런 스토어에서 빠진 런(브라우저 검증 D12). 재접속 스냅샷은 「이 런은 더는 진행 중이
-   * 아니다」만 말해 주고(`subscriptions.applySubscribed`), 무엇으로 언제 끝났는지(status·endedAt)는 REST 가 안다.
-   * 그래서 마지막으로 본 상태를 **REST 밑에** 깔아 둔다: 줄이 한 프레임도 비지 않아 선택이 옛 런으로 튀지 않고,
-   * 아래 재조회가 서버 사실을 받아 오면 그쪽이 이 자리를 덮는다(`ended` 는 반대로 REST 위다 — 이미 본 종료가 정본).
-   * 종료를 본 런(버블 정리로 빠진 것)은 `ended` 가 맡으므로 여기 넣지 않는다. 채널을 옮기면 통째로 버린다(`key`)
-   *
-   * 빠진 것을 안 시각도 적는다(`stopped`) — 끝난 시각을 모르는 동안 그 줄의 소요를 거기서 멈춘다(`freezeDurations`).
-   * 재조회가 실패하면 자리값(또는 끊기기 전에 받아 둔 REST 줄)이 그대로 남는데, 소요까지 흐르면 「아직 기다리는 중」이라는
-   * 지어낸 사실이 되고 1초 틱도 영원히 돈다(p2-t14 리뷰 §A.2). 다시 실시간으로 오면 더는 멈춘 줄이 아니다
-   */
-  const vanished = useRef(new Map<string, RunState>());
-  const stopped = useRef(new Map<string, string>());
-  const wasLive = useRef(new Map<string, RunState>());
-  const liveIds = new Set(live.map((v) => v.state.id));
-  for (const [id, state] of wasLive.current)
-    if (!liveIds.has(id) && !ended.current.has(id)) {
-      vanished.current.set(id, state);
-      stopped.current.set(id, new Date().toISOString());
-    }
-  for (const id of liveIds) stopped.current.delete(id);
-  wasLive.current = new Map(live.map((v) => [v.state.id, v.state]));
+  const liveStates = useMemo(() => live.map((v) => v.state), [live]);
+  // 끝난 런 기억(ended·vanished·stopped)과 그 상한·빠진 런 타임라인 재조회는 훅 한곳에 있다
+  const { ended, vanished, stopped, settledKey } = useSettledRuns(liveStates);
 
   const runs = useMemo(
     () =>
       freezeDurations(
-        mergeRuns(
-          [...vanished.current.values(), ...(rest.data ?? [])],
-          [...ended.current.values(), ...live.map((v) => v.state)],
-        ),
-        stopped.current,
+        mergeRuns([...vanished.values(), ...(rest.data ?? [])], [...ended.values(), ...liveStates]),
+        stopped,
       ),
-    [rest.data, live],
+    // ended·vanished·stopped 는 늘 같은 Map 이다(훅이 렌더 중에 고쳐 쓴다) — 다시 셈하는 때는 live·REST 가 바뀔 때다
+    [rest.data, liveStates, ended, vanished, stopped],
   );
   /**
    * 끝난 것으로 판정된 런이 늘면 REST 목록을 다시 받아 둔다. 몫이 둘이다 — ① `ended` 는 **캐시**를 위해서다:
@@ -76,7 +44,6 @@ function ActivityBody({ channelId }: { channelId: string }) {
    * 남아 다음 마운트(탭·채널 복귀)가 첫 프레임에 그 런 없이 선다. ② `vanished` 는 **화면**을 위해서다:
    * 자리값을 서버 사실로 바꿔 줄 곳이 이 재조회뿐이다(D12)
    */
-  const settledKey = [...ended.current.keys(), ...vanished.current.keys()].sort().join(",");
   const seenSettled = useRef(settledKey);
   const refetchRuns = rest.refetch;
   useEffect(() => {
@@ -84,22 +51,6 @@ function ActivityBody({ channelId }: { channelId: string }) {
     seenSettled.current = settledKey;
     void refetchRuns();
   }, [settledKey, refetchRuns]);
-
-  /**
-   * 빠진 런의 타임라인(`qk.runEvents`)도 다시 받는다 — 끊긴 사이에 온 이벤트(승인 확정·결과)는 재생되지 않아
-   * (`runReplay` 는 ack 의 `activeRuns` 만 재생한다) 그대로 두면 행이 「대기 중」으로 남는다. **새로 빠진 id 만**
-   * 무효화한다: 전부 무효화하면 옛 런 타임라인까지 다시 받는다
-   */
-  const queryClient = useQueryClient();
-  const vanishedKey = [...vanished.current.keys()].sort().join(",");
-  const seenVanished = useRef(new Set<string>());
-  useEffect(() => {
-    for (const id of vanishedKey ? vanishedKey.split(",") : []) {
-      if (seenVanished.current.has(id)) continue;
-      seenVanished.current.add(id);
-      void queryClient.invalidateQueries({ queryKey: qk.runEvents(id) });
-    }
-  }, [vanishedKey, queryClient]);
 
   // 고르지 않았으면 가장 최근 런. 고른 런이 목록에서 사라지면(채널을 옮긴 뒤 등) 다시 최근 런으로 돌아간다
   const [picked, setPicked] = useState<string>();

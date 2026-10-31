@@ -95,6 +95,45 @@ it("로그아웃은 등록된 정리·Query 캐시를 비우고 /login 으로 �
   expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
 });
 
+/**
+ * plan.md 이월 D11 — 로그아웃 직후 마운트돼 있던 셸 쿼리(채널·에이전트·DM·어댑터 상태)가 비운 캐시를 다시 받아 401 이 몇 건 더 났다.
+ * 화면을 먼저 /login 으로 내리고 그다음에 비운다 — 로그아웃 뒤 나가는 요청은 로그인 화면의 me 확인뿐이다
+ */
+it("로그아웃 뒤 셸 쿼리를 다시 받지 않는다 — 나가는 요청은 로그인 화면의 me 확인뿐(D11)", async () => {
+  const { app, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+  const reset = vi.fn();
+  unregisters.push(registerSessionReset(reset));
+
+  act(() => logout.current.mutate());
+
+  expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  const after = requests.slice(requests.indexOf("POST /api/v1/auth/logout") + 1);
+  expect(after.filter((r) => r !== "GET /api/v1/auth/me")).toEqual([]);
+  expect(reset).toHaveBeenCalledTimes(1);
+  expect(
+    app.queryClient
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey),
+  ).toEqual([qk.me]);
+});
+
+it("이동 막기가 걸려 있어도 로그아웃은 상태를 비우고 /login 으로 간다(ignoreBlocker)", async () => {
+  const { app, history, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+  const reset = vi.fn();
+  unregisters.push(registerSessionReset(reset));
+  const unblock = app.router.history.block({ blockerFn: () => true, enableBeforeUnload: false });
+  unregisters.push(unblock);
+
+  act(() => logout.current.mutate());
+
+  expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+  expect(history.location.pathname).toBe("/login");
+  expect(reset).toHaveBeenCalledTimes(1);
+  expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
+});
+
 it("세션이 이미 끊겨 로그아웃이 401 이어도 로그인 화면으로 한 번만 간다", async () => {
   const { history, moves, logout } = await loggedInAt("/settings/agents", () =>
     json(401, { code: "UNAUTHORIZED", message: "x" }),

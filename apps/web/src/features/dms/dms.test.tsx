@@ -21,7 +21,7 @@ import { AGENT, approval, CH, msg, uid } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import { renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
-import { agentOf } from "../../../test/settingsServer";
+import { agentOf, gate } from "../../../test/settingsServer";
 import { ME, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { type DmView, DmViewContext } from "./context";
 import { DM_FIRST_NOTICE } from "./DmNotices";
@@ -61,7 +61,15 @@ function stubServer({
   dms = [dmOf(dmChannel(), DEV)],
   agents = [DEV, FIN],
   conversations = [conv(A)],
-}: { role?: string; dms?: DmSummary[]; agents?: Agent[]; conversations?: Conversation[] } = {}) {
+  patchGate,
+}: {
+  role?: string;
+  dms?: DmSummary[];
+  agents?: Agent[];
+  conversations?: Conversation[];
+  /** 주면 채널 PATCH 응답을 이 약속이 풀릴 때까지 붙잡는다(저장 중 상태를 본다) */
+  patchGate?: Promise<void>;
+} = {}) {
   const calls: Call[] = [];
   const state = {
     dms: [...dms],
@@ -96,6 +104,7 @@ function stubServer({
       }
       if (url === `/api/v1/channels/${DM}` && method === "GET") return json(200, { channel: state.channel });
       if (url === `/api/v1/channels/${DM}` && method === "PATCH") {
+        await patchGate;
         state.channel = { ...state.channel, ...(body as Partial<Channel>) };
         return json(200, { channel: state.channel });
       }
@@ -400,6 +409,46 @@ describe("DM 화면", () => {
     await userEvent.type(within(dialog).getByRole("textbox", { name: "이 DM 의 지시" }), "짧게 답해");
     await userEvent.click(within(dialog).getByRole("button", { name: "저장" }));
     await waitFor(() => expect(server.bodies("PATCH", `/channels/${DM}`)).toEqual([{ prompt: "짧게 답해" }]));
+  });
+
+  it("「이 DM 의 지시」 를 키보드로 저장해도 초점이 저장 버튼에 남는다(O1)", async () => {
+    const server = stubServer();
+    renderRoute(`/c/${DM}/s/${A}`);
+    await userEvent.click(await screen.findByRole("button", { name: "이 DM 의 지시" }));
+    const dialog = await screen.findByRole("dialog", { name: "이 DM 의 지시" });
+    const box = within(dialog).getByRole("textbox", { name: "이 DM 의 지시" });
+    await userEvent.type(box, "짧게 답해");
+    const save = within(dialog).getByRole("button", { name: "저장" });
+    save.focus();
+    await userEvent.keyboard("{Enter}");
+    await within(dialog).findByRole("status");
+    expect(server.bodies("PATCH", `/channels/${DM}`)).toEqual([{ prompt: "짧게 답해" }]);
+    expect(document.activeElement).toBe(save);
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(box).not.toBeDisabled();
+  });
+
+  it("「이 DM 의 지시」 저장 중에는 Enter 다시·글 입력이 먹지 않는다 — PATCH 1회, 값 그대로, readonly", async () => {
+    const hold = gate();
+    const server = stubServer({ patchGate: hold.opened });
+    renderRoute(`/c/${DM}/s/${A}`);
+    await userEvent.click(await screen.findByRole("button", { name: "이 DM 의 지시" }));
+    const dialog = await screen.findByRole("dialog", { name: "이 DM 의 지시" });
+    const box = within(dialog).getByRole("textbox", { name: "이 DM 의 지시" });
+    await userEvent.type(box, "짧게 답해");
+    const save = within(dialog).getByRole("button", { name: "저장" });
+    save.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(box).toHaveAttribute("readonly"));
+
+    await userEvent.keyboard("{Enter}");
+    await userEvent.type(box, "추가");
+    expect(box).toHaveValue("짧게 답해");
+    expect(server.bodies("PATCH", `/channels/${DM}`)).toEqual([{ prompt: "짧게 답해" }]);
+
+    hold.open();
+    await within(dialog).findByRole("status");
+    expect(server.bodies("PATCH", `/channels/${DM}`)).toHaveLength(1);
   });
 
   it("설정·스레드 주소로 와도 패널을 그리지 않고, 활동 패널에는 활동 탭만 있다", async () => {

@@ -23,7 +23,7 @@ import { RunnerDefinitionForm } from "./RunnerAgentForm";
 const PROMPT_MAX = 20_000;
 
 /**
- * 목록 한 줄: 이름·핸들(OpenClaw 면 「@핸들 · Gateway 이름」)·제공자별 id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만
+ * 목록 한 줄: 이름·핸들(OpenClaw 면 「@핸들 · Gateway 이름」)·제공자별 id·사용 토글·메모(OpenClaw)·지시(러너). 토글은 낙관적 갱신 없이 요청 중에만
  * 잠근다(실패는 전역 토스트). `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만.
  * OpenClaw 에이전트의 「Gateway 옮기기」는 owner 에게만(멀티 Gateway 스펙 「권한」 절) — 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
  * 연결이 빈 줄의 안내도 역할에 맞춘다 — 옮길 수 없는 admin·member 에게 옮기라고 권하지 않는다.
@@ -324,8 +324,19 @@ function RunnerDefinition({
   );
 }
 
+/**
+ * 같은 `basePrompt` 칸을 제공자에 맞는 이름으로 부른다. 러너 에이전트에게는 매 런 지시로 가므로 만들 때와 같은 「지시」,
+ * OpenClaw 에이전트에게는 인바운드에 실리지 않아(서버 코어 스펙 에이전트 항목 — 의도) 규칙을 적는 자리로 읽히지 않게 「메모」다
+ */
+function promptCopy(agent: Pick<Agent, "provider">) {
+  return agent.provider === "runner"
+    ? { name: "지시", empty: "지시 없음", note: undefined }
+    : { name: "메모", empty: "메모 없음", note: "에이전트에게 전달되지 않음" };
+}
+
 /** 접힌 채로는 미리보기, 펼치면 편집. 비워 저장하면 null(지움). VALIDATION·CONFLICT 만 폼 안에 — 그 밖은 전역 토스트 */
 function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  const copy = promptCopy(agent);
   const save = usePatchAgent();
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
   const [error, setError] = useState<string>();
@@ -337,23 +348,30 @@ function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean
   if (draft === undefined || readOnly) {
     return (
       <div className="flex items-start justify-between gap-3">
-        <p
-          className={cn(
-            "line-clamp-2 min-w-0 text-sm whitespace-pre-wrap",
-            agent.basePrompt === undefined && "text-muted-foreground",
+        <div className="flex min-w-0 flex-col gap-0.5">
+          {copy.note && (
+            <p className="text-xs text-muted-foreground">
+              {copy.name}({copy.note})
+            </p>
           )}
-        >
-          {agent.basePrompt ?? "기본 프롬프트 없음"}
-        </p>
+          <p
+            className={cn(
+              "line-clamp-2 min-w-0 text-sm whitespace-pre-wrap",
+              agent.basePrompt === undefined && "text-muted-foreground",
+            )}
+          >
+            {agent.basePrompt ?? copy.empty}
+          </p>
+        </div>
         {!readOnly && (
           <Button
             variant="outline"
             size="sm"
-            aria-label={`${handle} 기본 프롬프트 편집`}
+            aria-label={`${handle} ${copy.name} 편집`}
             autoFocus={refocus}
             onClick={() => setDraft(agent.basePrompt ?? "")}
           >
-            기본 프롬프트 편집
+            {copy.name} 편집
           </Button>
         )}
       </div>
@@ -376,13 +394,20 @@ function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean
     );
   }
 
-  const describedBy = [`${id}-count`, error && `${id}-error`].filter(Boolean).join(" ");
+  const describedBy = [copy.note && `${id}-note`, `${id}-count`, error && `${id}-error`]
+    .filter(Boolean)
+    .join(" ");
   return (
     <form onSubmit={submit} className="flex flex-col gap-2">
-      <Label htmlFor={id}>기본 프롬프트</Label>
+      <Label htmlFor={id}>{copy.name}</Label>
+      {copy.note && (
+        <p id={`${id}-note`} className="-mt-1 text-xs text-muted-foreground">
+          {copy.note}
+        </p>
+      )}
       <Textarea
         id={id}
-        aria-label={`${handle} 기본 프롬프트`}
+        aria-label={`${handle} ${copy.name}`}
         aria-describedby={describedBy}
         aria-invalid={error !== undefined}
         value={draft}

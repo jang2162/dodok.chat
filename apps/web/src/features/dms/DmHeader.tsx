@@ -190,8 +190,14 @@ function DmInstructionDialog({ channel, readOnly }: { channel: Channel; readOnly
             maxLength={PROMPT_MAX}
             rows={8}
             placeholder="없음"
-            disabled={save.isPending || readOnly}
+            // 저장 중 잠금은 `readOnly` + `aria-disabled` — `disabled` 면 초점이 body 로 떨어진다(채널 설정 `PromptSection` 과 같은 꼴).
+            // 읽기 전용 DM 은 그대로 `disabled`
+            disabled={readOnly}
+            readOnly={save.isPending}
+            aria-disabled={save.isPending || undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             onChange={(e) => {
+              if (save.isPending) return;
               setDraft(e.target.value);
               setSaved(false);
             }}
@@ -208,7 +214,13 @@ function DmInstructionDialog({ channel, readOnly }: { channel: Channel; readOnly
             <ReadOnlyLine channelId={channel.id} />
           ) : (
             <DialogFooter>
-              <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
+              {/* `aria-disabled` 로만 잠근다 — 저장이 끝나 초안이 비어도 초점이 이 버튼에 남게. 누름은 submit 이 거른다 */}
+              <Button
+                type="submit"
+                size="sm"
+                aria-disabled={draft === undefined || save.isPending || undefined}
+                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              >
                 {save.isPending ? "저장 중…" : "저장"}
               </Button>
             </DialogFooter>

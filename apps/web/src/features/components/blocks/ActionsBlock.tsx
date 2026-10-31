@@ -6,7 +6,7 @@ import { attachmentHref } from "@/features/attachments/url";
 import { Button } from "@/ui/button";
 import { CARD_BUTTON_WRAP } from "../cardButton";
 import { ReasonHint } from "../DisabledHint";
-import { DISABLED_REASON_TEXT, itemState } from "../state";
+import { itemState, reasonText } from "../state";
 import type { Interact } from "../useInteract";
 import { ATTACHMENT_MISSING, LINK_BLOCKED } from "./artifact";
 import { SelectItem } from "./SelectItem";
@@ -60,13 +60,14 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
       hasSocket: io.hasSocket,
       archived: io.archived,
       closed: io.closed,
+      dmReadOnly: io.dmReadOnly,
       meId,
       expired,
       busy: io.busy,
       allowedUsers: item.allowedUsers,
       itemId: item.id,
     });
-    const why = state.reason ? DISABLED_REASON_TEXT[state.reason] : undefined;
+    const why = reasonText(state);
     return { item, label, kind: "button" as const, state, why };
   });
 
