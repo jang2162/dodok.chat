@@ -362,6 +362,31 @@ it("넓은 화면에서 「활동 닫기」를 누르면 초점이 헤더의 「
   expect(opener).toHaveFocus();
 });
 
+/**
+ * 수정자 클릭은 라우터가 옮기지 않는다(새 탭·새 창은 브라우저 몫) — 패널이 그대로 남는데 초점만 헤더로 가면
+ * 사람이 보던 자리를 잃는다(plan.md 이월 「넓은 화면 「닫기」의 수정자 클릭」)
+ */
+it.each(["Meta", "Control", "Shift", "Alt"])(
+  "넓은 화면에서 「활동 닫기」를 %s 와 함께 누르면 패널도 초점도 그대로다",
+  async (key) => {
+    stubMedia(false);
+    stubServer({ runs: [] });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
+    const aside = await panel();
+    const close = within(aside).getByRole("link", { name: "활동 닫기" });
+
+    // 같은 인스턴스여야 누른 수정자가 클릭까지 이어진다
+    const user = userEvent.setup();
+    await user.keyboard(`{${key}>}`);
+    await user.click(close);
+    await user.keyboard(`{/${key}}`);
+
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`);
+    expect(screen.getByTestId("page-channel-panel")).toBe(aside);
+    expect(close).toHaveFocus();
+  },
+);
+
 it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
   renderRoute(`/c/${CH}/s/${CH}/activity`);
