@@ -194,7 +194,7 @@ openclaw config patch --file "${dir:?}/dodok.patch.json5"; rm -rf "${dir:?}"
 docker compose logs app | grep -E 'bridge plugin hello|bridge connection rejected'
 ```
 
-`"bridge plugin hello"` 줄이 있으면 플러그인이 `wss://<도메인>/bridge` 로 붙었다(Socket.IO `/socket.io/` 의 `/bridge` 네임스페이스 — 프록시가 WebSocket 업그레이드를 넘겨야 한다). 그 줄의 `gatewayVersion` 은 플러그인이 보낸 Gateway 런타임 버전이다. 같은 줄의 `pluginBuiltWithSdk` 는 플러그인 빌드 때 박힌 SDK 버전이라 Gateway 버전이 아니다.
+`"bridge plugin hello"` 줄이 있으면 플러그인이 `wss://<도메인>/bridge` 로 붙었다(Socket.IO `/socket.io/` 의 `/bridge` 네임스페이스 — 프록시가 WebSocket 업그레이드를 넘겨야 한다). 그 줄의 `gatewayVersion` 은 플러그인이 보낸 Gateway 런타임 버전이다. 같은 줄의 `pluginBuiltWithSdk` 는 플러그인 빌드 때 박힌 SDK 버전이라 Gateway 버전이 아니다. 같은 줄에 `tokenId`(붙은 브리지 토큰의 id — 원문이 아니다)와 `capabilities`(플러그인이 아는 능력 — `threads` 가 없으면 스레드를 모르는 옛 플러그인이다)도 실린다.
 안 붙으면: [B] 계정 설정의 `bridgeUrl` 이 카드 「브리지 토큰」 설명의 브리지 주소(`wss://`, 경로 `/bridge`)와 같은지, [B] 에서 `https://<도메인>/healthz` 가 닿는지. `"bridge connection rejected"` 의 `token mismatch from <주소>` 는 토큰이 켜진 Gateway 의 활성 토큰 어느 것과도 맞지 않는다는 뜻이다(틀린 값·폐기된 토큰·꺼졌거나 지운 Gateway 의 토큰 — 마지막 것은 아래 「운영 화면」 레이트리밋 표의 `bridgeFail` 에 세지 않는다. 재접속이 되풀이돼도 주소마다 1분에 한 줄, 넘친 수는 `(N more suppressed)`). 로그의 주소가 모두 프록시 주소 하나면 `TRUST_PROXY` 가 그 프록시와 맞지 않는다(「신뢰 주소 — `TRUST_PROXY`」).
 첨부 바이트는 같은 오리진의 HTTP `/bridge/attachments` 로 오간다 — 서버 라우트라 프록시가 모든 경로를 앱에 넘기면 된다. 폐기된 토큰과 꺼진 Gateway 의 토큰은 첨부 HTTP 에서도 401 이다.
 
