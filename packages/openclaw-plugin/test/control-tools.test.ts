@@ -119,6 +119,13 @@ describe("제어 도구 실행 — control.call", () => {
     });
   });
 
+  it("객체가 아닌 params(배열·null·원시값)는 args {} 로 보낸다 — 서버 Zod 가 그 도구의 필드로 거른다", async () => {
+    setCorrelation(CHANNEL_KEY, { runId: RUN_1, replyToInboundId: ROOT });
+    const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
+    for (const params of [[1], null, "x", 7]) await tool.execute("tc1", params as never);
+    expect(sent.map((call) => call.args)).toEqual([{}, {}, {}, {}]);
+  });
+
   const callWith = async (tool: ControlAgentTool, hostRunId: string | undefined, id = "tc1") => {
     await tool.prepareBeforeToolCallParams(
       {},
