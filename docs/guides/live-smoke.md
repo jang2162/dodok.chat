@@ -163,7 +163,9 @@ T=$(jq -r '."http://127.0.0.1:'$PORT'"' data/wire-cli-session.json)   # 출력�
 GW=$(jq -n --rawfile t data/dev-gateway.token '{name: "dev", url: "ws://127.0.0.1:19001", token: ($t | rtrimstr("\n"))}' \
   | curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d @- http://127.0.0.1:$PORT/api/v1/gateways \
   | jq -r .id)
-curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways | jq --arg id "$GW" '.[] | select(.id == $id) | {id, name, url, tokenSet}'   # tokenSet: true 인지
+# 목록에 이 Gateway 가 있는지 — 없으면(POST 가 실패해 GW=null 등) jq -e 가 0 이 아닌 값으로 끝나 경고가 찍힌다(tokenSet 은 늘 true 라 보지 않는다)
+curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways \
+  | jq -e --arg id "$GW" '.[] | select(.id == $id) | {id, name, url}' || echo "Gateway '$GW' 가 목록에 없다 — 위 POST 응답을 다시 본다"
 ( umask 077; curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"label":"live-smoke"}' \
     http://127.0.0.1:$PORT/api/v1/gateways/$GW/bridge-tokens | jq .pluginConfig > data/bridge-token.patch.json )
 oc --dev config patch --file data/bridge-token.patch.json && rm data/bridge-token.patch.json   # 9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드)
@@ -214,7 +216,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 | `watch <channelId> [--watch-ms 60000]` | 구독만 하고 이벤트(재접속 때 `adapter.status` 관찰용) |
 | `runs <channelId>` | `GET /channels/:id/runs` 를 한 줄씩(상태·트리거·depth·providerRunId·error·usage·시각) |
 
-- **`wire-cli` 는 스레드를 모른다.** `send` 는 `threadRootId` 를 싣지 못하고, `interact` 는 세션 최상위 200개에서만 메시지를 찾아 스레드 안 카드를 못 누른다. 스레드를 재려면 `scripts/wire-cli.ts` 를 `data/`(ignored)에 복사해 고쳐 쓰거나(env 로 루트 id 를 받아 `message.send` 에 `threadRootId` 를 싣고 `interact` 는 `/channels/:id/threads/:rootId/messages` 에서 찾게), 「재는 것별 메모」의 사람 쪽 드라이버를 쓴다 — 고친 사본은 커밋하지 않고 끝나면 지운다.
+- **`wire-cli` 의 스레드는 보내기만이다.** `send … --thread <rootId>` 는 그 루트의 스레드 답글로 보낸다(세션은 루트의 세션이어야 한다 — 최근 열린 세션이 아니면 `--conversation` 으로 준다). `interact` 는 세션 최상위 200개에서만 메시지를 찾아 스레드 안 카드를 못 누른다. 스레드 안 카드를 누르려면 `scripts/wire-cli.ts` 를 `data/`(ignored)에 복사해 고쳐 쓰거나(`interact` 가 `/channels/:id/threads/:rootId/messages` 에서 찾게), 「재는 것별 메모」의 사람 쪽 드라이버를 쓴다 — 고친 사본은 커밋하지 않고 끝나면 지운다.
 - `--conversation <id>` 를 셸 함수에서 한 인자로 묶어 넘기면(`"--conversation $CV"`) 무시되고 「열린 첫 세션」으로 간다 — 두 인자로 넘긴다. 보낸 세션은 ack 줄의 `conversation=` 으로 확인한다.
 - `W send` 두 개를 같이 띄우면 두 연결이 같은 채널을 구독해 **양쪽 시간표에 두 런이 다 찍힌다** — 판정은 `runs` 의 `startedAt`·`endedAt` 으로 한다.
 시간표 형식: 첫 줄 `# t0 <ISO> (epoch <ms>)` — 서버 pino `time`(epoch ms)·Gateway 로그 시각과 맞춰 볼 때 쓴다. `TEXT_MESSAGE_CONTENT` 는 런별 첫 델타만 바로 찍고,
@@ -1021,7 +1023,7 @@ await page.evaluate(async () =>
 | 릴레이 한도 | `@dev @fin 시작` | 채널에 dev·fin 둘 다. 채널 설정에서 릴레이 턴 상한을 1 로(`PATCH /channels/:id {relayPolicy:{maxRelayTurns:1, allowPairs:"all"}}`) 하면 곧바로 닿는다 |
 
 도착은 `registration.getNotifications()` 로 본다. 알림 본문에 메시지 본문·툴 인자가 없는 것, 서버 로그에 `p256dh`·비밀 키·알림 문구·`fcm/send` 가 없는 것도 같이 본다.
-**걸렀다·보냈다·보냈는데 안 왔다를 가르는 법** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`transport`·`result`)를 한 줄씩 남긴다(HTTP 상태는 디스패처 줄에 없다 — 통로가 거절·실패를 받았을 때만 그 통로가 `statusCode` 와 고정 문구 `reason` 을 warn 으로 남긴다: `push send failed`(warn)·`push rejected`(error)). 이 두 줄과 `chrome://gcm-internals` 의 Receive Message Log 로 가른다. `dev:fake` 진입점은 로그 수준을 `info` 로 고정하므로 debug 줄을 보려면 `startDevFake({ logLevel: "debug" })` 로 감싸 띄운다.
+**걸렀다·보냈다·보냈는데 안 왔다를 가르는 법** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`transport`·`result`)를 한 줄씩 남긴다(HTTP 상태는 디스패처 줄에 없다 — 통로가 거절·실패를 받았을 때만 그 통로가 `statusCode` 와 고정 문구 `reason` 을 warn 으로 남긴다: `push send failed`(warn)·`push rejected`(error)). 이 두 줄과 `chrome://gcm-internals` 의 Receive Message Log 로 가른다. `dev:fake` 도 `LOG_LEVEL` 을 따른다(없으면 `info`) — `LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`.
 **탭을 닫으면** 브라우저가 웹소켓을 곧바로 닫고(vite preview 프록시도 늦추지 않는다), 웹은 `pagehide` 에서도 「안 보임」을 보낸다 — 닫은 직후의 트리거도 걸러지지 않는다. 남는 최대 45초 창(engine.io 핑 25s+20s)은 close 가 서버에 가지 않는 경우 — 네트워크 단절·절전·프로세스 멈춤 — 뿐이다(스펙 10장 트레이드오프).
 ⚠ 자동화 브라우저를 강제 종료(kill)하며 여러 번 붙으면, 죽은 소켓이 ping 제한까지 presence 에 남아 「보고 있음」으로 한 번 더 걸러질 수 있다. 헷갈리면 서버를 `--keep` 으로 다시 띄워 presence 만 비운다.
 
@@ -1096,11 +1098,28 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
 
 ## 15. `llms.txt` 안내서 따라 하기
 
-`GET /llms.txt` 의 두 절(「OpenClaw Gateway 호스트」·「Claude 러너 머신」)을 노드 자리에서 **명령 그대로** 돌려 안내서가 맞는지 본다 — 모델 런 금지면 실제 AI 에게 건네지 않고 실연자가 AI 가 할 일을 손으로 대신한다. 사람의 dev 상태와 `.env` 를 건드리지 않게 Gateway 상태(「Gateway 를 여럿 띄울 때」)·노드 홈·서버 DB 를 스크래치에 새로 만든다.
+`GET /llms.txt` 의 두 절(「OpenClaw Gateway 호스트」·「러너 머신」)을 노드 자리에서 **명령 그대로** 돌려 안내서가 맞는지 본다 — 모델 런 금지면 실제 AI 에게 건네지 않고 실연자가 AI 가 할 일을 손으로 대신한다. 사람의 dev 상태와 `.env` 를 건드리지 않게 Gateway 상태(「Gateway 를 여럿 띄울 때」)·노드 홈·서버 DB 를 스크래치에 새로 만든다.
 
 1. **토큰** — owner 로그인(`POST /api/v1/auth/local`, 본문은 `jq --arg` 로) → `POST /api/v1/gateways`(본문은 Gateway 토큰 파일에서 `jq --rawfile`) → `POST /api/v1/gateways/<id>/bridge-tokens` → 원문을 `jq -r .token` 으로 0600 파일에만. 러너 토큰(`POST /api/v1/setup/runner-tokens`)도 같게. owner 세션 토큰은 `curl -K -` 로만 싣는다(「시크릿 규칙」).
-2. **「AI 에게 맡기기」 한 줄** — 웹의 `llmsHandoffLine`(토큰 자리만 바꿔 실행)이 만드는 줄은 `<오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`(러너는 「Claude 러너 머신」·「러너 토큰:」)이다 — 안내서 주소의 오리진은 연결 상태 `bridge.publicUrl` 의 오리진이다.
-3. **두 절** — 각 bash 블록을 글자 그대로 `bash -c` 로 돌린다. 토큰 한 줄은 첫 블록의 표준 입력으로만 넣는다. 사람 몫인 「Gateway 를 내린다·올린다」는 그 호스트의 방식(LISTEN 하는 PID 에 `kill`, 「Gateway 를 여럿 띄울 때」 꼴의 `nohup … gateway run`)으로 한다. 러너 절의 전경 명령은 뒤에서 띄우고 출력의 `연결됨` 을 기다린다.
+2. **「AI 에게 맡기기」 한 줄** — 웹의 `llmsHandoffLine`(토큰 자리만 바꿔 실행)이 만드는 줄은 `<오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`(러너는 「러너 머신」·「러너 토큰:」)이다 — 안내서 주소의 오리진은 연결 상태 `bridge.publicUrl` 의 오리진이다.
+3. **두 절** — 각 bash 블록을 글자 그대로 `bash -c` 로 돌린다. 토큰 한 줄은 첫 블록의 표준 입력으로만 넣는다. 사람 몫인 「Gateway 를 내린다·올린다」는 그 호스트의 방식(LISTEN 하는 PID 에 `kill`, 「Gateway 를 여럿 띄울 때」 꼴의 `nohup … gateway run`)으로 한다. 러너 절의 전경 명령은 뒤에서 띄우고 출력의 `연결됨` 을 기다린다. 블록을 꺼내고 노드 자리에서 돌리는 꼴:
+   ```bash
+   SP=$(mktemp -d); mkdir -p $SP/home $SP/npm-global $SP/blocks
+   curl -fsS http://127.0.0.1:$PORT/llms.txt > $SP/llms.txt
+   # 절 하나의 ```bash 블록을 차례대로 $SP/blocks/<접두>-<n>.sh 로 — 안내서는 블록을 세 칸 들여 쓴다
+   blocks() { awk -v sec="## $1" -v out="$SP/blocks/$2" '
+     /^## / { on = ($0 == sec) }
+     on && /^ *```bash$/ { n++; f = out "-" n ".sh"; inb = 1; next }
+     inb && /^ *```$/ { inb = 0; close(f); next }
+     inb { sub(/^   /, ""); print > f }' $SP/llms.txt; }
+   blocks "OpenClaw Gateway 호스트" gw; blocks "러너 머신" runner; ls $SP/blocks   # 빈 목록이면 절 제목이 바뀐 것이다
+   # 노드 자리 — 안내서의 ~/…·npm install -g·$(npm root -g) 가 고치지 않은 글자 그대로 스크래치를 가리킨다(전역 설치 없음).
+   # OCBIN 은 「절차」 절 머리의 스크래치 설치본, Gateway 쪽에 가짜 claude 를 앞세우려면 PATH 앞에 「가짜 claude CLI 스크립트」의 $SP/fakebin
+   node_sh() { env HOME=$SP/home OPENCLAW_HOME=$SP/home npm_config_prefix=$SP/npm-global \
+     PATH="$SP/npm-global/bin:$OCBIN:$PATH" bash -c "$(cat "$1")"; }
+   node_sh $SP/blocks/gw-1.sh < <0600 브리지 토큰 파일>   # 첫 블록만 표준 입력에 토큰 한 줄
+   node_sh $SP/blocks/gw-2.sh                             # 나머지는 차례대로 — 사람 몫 단계는 위처럼 손으로
+   ```
 4. 판정 — 연결 페이지의 Gateway 카드 「연결됨」·플러그인 「접속됨 · 서버와 같은 빌드입니다」, 러너 카드 「연결됨 · 서버와 같은 빌드입니다」.
 
 ---

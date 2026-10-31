@@ -122,6 +122,13 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
   });
 
+  it("로그 레벨은 LOG_LEVEL(debug 로 푸시 건너뜀 줄을 본다), 없거나 비었으면 info, 모르는 이름이면 시작하지 않는다", () => {
+    expect(devFakeCliOptions({ LOG_LEVEL: "debug" }, []).logLevel).toBe("debug");
+    expect(devFakeCliOptions({}, []).logLevel).toBe("info");
+    expect(devFakeCliOptions({ LOG_LEVEL: "" }, []).logLevel).toBe("info");
+    expect(() => devFakeCliOptions({ LOG_LEVEL: "verbose" }, [])).toThrow(/LOG_LEVEL/);
+  });
+
   it("리슨 주소는 DEV_FAKE_HOST(컨테이너면 0.0.0.0), 없거나 비었으면 127.0.0.1", () => {
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "0.0.0.0" }, []).host).toBe("0.0.0.0");
     expect(devFakeCliOptions({}, []).host).toBe("127.0.0.1");
@@ -469,6 +476,24 @@ describe("fakeAgentScript", () => {
       for (const keyword of DEV_FAKE_KEYWORDS)
         expect(text, `${JSON.stringify(text)} ⊃ ${keyword}`).not.toContain(keyword);
     }
+  });
+  it("대본 소스의 text.includes 리터럴은 모두 DEV_FAKE_KEYWORDS 의 키워드를 담는다 — 인라인 조건에 새 키워드를 더하면 위 전수 검사가 따라가게", () => {
+    const source = readFileSync(join(import.meta.dirname, "../scripts/dev-fake.ts"), "utf8");
+    // 에이전트 대본(fakeAgentScript)과 그것이 부르는 조건 함수들 — 러너 대본(fakeRunnerScript)은 따로다
+    const bodyOf = (name: string): string => {
+      const start = source.search(new RegExp(`function ${name}\\(`));
+      expect(start, name).toBeGreaterThanOrEqual(0);
+      return source.slice(start, source.indexOf("\n}\n", start));
+    };
+    const body = ["fakeAgentScript", "approvalScript", "componentsScript"].map(bodyOf).join("\n");
+    const literals = [...body.matchAll(/text\.includes\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1] ?? "");
+    // 표에서 읽는 것(COMPONENT_CARDS·ATTACHMENT_REPLIES·CALL_ME)은 리터럴이 아니다 — 인라인 다섯 이상이 실제로 잡혔는지
+    expect(literals).toEqual(expect.arrayContaining(["드롭", "실패", "느리게", "오래", "도구", "승인"]));
+    for (const literal of literals)
+      expect(
+        DEV_FAKE_KEYWORDS.some((keyword) => literal.includes(keyword)),
+        `${literal} 은 DEV_FAKE_KEYWORDS 의 어떤 키워드도 담지 않는다`,
+      ).toBe(true);
   });
 });
 
@@ -1438,6 +1463,30 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
       expect(charset.status).not.toBe(415);
     }, 20_000);
 
+    it("쿼리가 붙은 경로(?x=1)도 같은 훅이다 — 쿼리 없을 때와 같은 상태", async () => {
+      const plain = await post(path, body);
+      const withQuery = await post(`${path}?x=1`, body);
+      expect(withQuery.status).not.toBe(404);
+      expect(withQuery.status).toBe(plain.status);
+    });
+
+    it("본문 상한 16 KB — 딱 16 KB(뒤를 공백으로 채운 JSON)는 받고, 1바이트 넘으면 400 VALIDATION", async () => {
+      const send = (bytes: number) => {
+        const json = JSON.stringify(body);
+        return fetch(`${dev.url}${path}`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: json + " ".repeat(bytes - Buffer.byteLength(json)),
+        });
+      };
+      const plain = await post(path, body);
+      const atCap = await send(16 * 1024);
+      expect(atCap.status).toBe(plain.status);
+      const over = await send(16 * 1024 + 1);
+      expect(over.status).toBe(400);
+      await expect(over.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    });
+
     it("경로는 정확히 일치해야 한다 — 꼬리·접미·대소문자·GET 은 앱의 404", async () => {
       for (const variant of [`${path}X`, `${path}/`, path.toUpperCase()])
         expect((await post(variant, body)).status).toBe(404);
@@ -2021,7 +2070,7 @@ describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에�
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("사무실 삭제 → @fin 을 집으로 옮기기 → @fin 멘션에 집 플러그인이 기본 대본(이름표 fin)으로 답한다", async () => {
+  it("사무실 삭제 → @fin 을 집으로 옮기기 → @fin 멘션에 집 플러그인이 기본 대본(이름표 fin)으로 답한다 — 핸들을 바꾸면 이름표도 그 핸들", async () => {
     dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "error" });
     const owner = await loginOwner(dev.url);
     const del = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}`, {
@@ -2077,6 +2126,27 @@ describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에�
       .where(eq(runs.channelId, channel.id))
       .all();
     expect(run?.connectionId).toBe(DEV_FAKE_HOME_GATEWAY_ID);
+
+    // 이름표는 채널 참여자 가운데 자기 핸들이다 — 핸들을 providerAgentId(fin)와 다르게 바꾸면 그 핸들로 답한다
+    const renamed = await fetch(`${dev.url}/api/v1/agents/${finId}`, {
+      method: "PATCH",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify({ handle: "fin-villa" }),
+    });
+    expect(renamed.status).toBe(200);
+    const relabeled = new Promise<string>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.authorType === "agent" && message.bodyMd.includes("다시")) resolve(message.bodyMd);
+      });
+    });
+    const again = await socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      ...sendTarget(dev.app.db, channel.id),
+      clientMsgId: "moved-2",
+      bodyMd: `<@a:${finId}> 다시`,
+    });
+    expect(again.ok).toBe(true);
+    await expect(relabeled).resolves.toMatch(/^\*\*fin-villa\*\*: /);
   }, 30_000);
 });
 

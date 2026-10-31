@@ -28,7 +28,7 @@ export type WireFanoutOptions = {
  * adapter.status 는 전체, system.notice 는 userId 가 있으면 그 사람의 user 룸·없으면 전체, setup.status 는 owner·ops.event 는 owner·admin
  * 사용자 룸에만(설정 마법사 결정 6·팀 스펙 「역할과 권한」 표).
  * message.created·updated 는 여기서 상호작용 기록·리액션 집계를 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
- * wire 경계에서 한 번 하이드레이션한다(설계 4.2 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
+ * wire 경계에서 한 번 하이드레이션한다(components 설계 「붙이는 자리」 절 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
  * run.event 만 백프레셔를 본다: 소켓의 미전송 큐가 maxPending 이상이면 그 소켓엔 델타를 버리고
  * 런별로 한 번 run.state { resync: true } 를 보낸다. 큐가 풀리면 다시 델타를 보내고, 다음 막힘에 또 resync 한다.
  */
@@ -120,11 +120,23 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 
   const offs = [
-    on("message.created", ({ message }) =>
-      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) }),
-    ),
+    on("message.created", ({ message }) => {
+      // 하이드레이션(상호작용·리액션 질의)이 던지면 원본으로 낸다 — 방금 저장한 글에는 붙일 행이 아직 없어 잃는 것이 없고, 안 내면
+      // 채널 룸 구독자는 그 글을 다시 불러오기 전까지 못 본다
+      let hydrated: Message;
+      try {
+        hydrated = hydrate(message);
+      } catch (err) {
+        opts.logger.warn(
+          { err, messageId: message.id },
+          "message.created hydration failed — sent unhydrated",
+        );
+        hydrated = message;
+      }
+      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrated });
+    }),
     // 구독하지 않은 채널의 새 글을 사이드바가 알도록 본문 없는 신호를 channelAudience 로 낸다. silent 메시지도 저장된 것이라 안 읽은 것이다.
-    // 위와 따로 등록한다 — 하이드레이션(새 글마다 리액션 질의)이 던져도 이 신호는 나가게. 버스는 등록 순서대로 부르므로 순서는 위가 먼저다
+    // 위와 따로 등록한다 — 위 처리기의 다른 예외(룸 emit 등)가 이 신호를 막지 않게. 버스는 등록 순서대로 부르므로 순서는 위가 먼저다
     on("message.created", ({ message }) => {
       const { authorType } = message;
       if (

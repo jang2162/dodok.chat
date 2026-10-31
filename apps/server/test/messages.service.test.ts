@@ -181,6 +181,32 @@ describe("messages service", () => {
     expect(listMessages(db, channelId, { limit: 10 }).messages).toEqual([]);
   });
 
+  it("에이전트 글의 리터럴 사람 토큰은 채널 참여자만 멘션이 된다 — 채널 밖 사람은 본문에만 남고 mentions·푸시 대상이 아니다", () => {
+    const { db, bus, created, userId, workspaceId, channelId, devId } = setup();
+    const outsider = uuid();
+    db.insert(users)
+      .values({
+        id: outsider,
+        workspaceId,
+        handle: "kai",
+        displayName: "kai",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    const bodyMd = `<@u:${userId}> <@u:${outsider}> @dev 확인`;
+    const m = createAgentMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      agentId: devId,
+      externalId: "literal-1",
+      bodyMd,
+    });
+    expect(m.bodyMd).toBe(`<@u:${userId}> <@u:${outsider}> <@a:${devId}> 확인`);
+    expect(m.mentions).toEqual({ users: [userId], agents: [devId] });
+    expect(created.at(-1)?.mentions.users).toEqual([userId]);
+    expect(getMessage(db, m.id)?.mentions.users).toEqual([userId]);
+  });
+
   describe("첨부 묶기(스펙 4.4)", () => {
     it("사람: 첨부 둘을 보낸 순서대로 싣고 행의 message_id 를 채운다", () => {
       const { db, bus, created, userId, channelId } = setup();

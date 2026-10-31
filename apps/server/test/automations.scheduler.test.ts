@@ -369,7 +369,7 @@ describe("rescheduleAll", () => {
       createdBy: other.userId,
     });
 
-    rescheduleAll(t.db, t.seed.workspaceId, "America/New_York", NOW);
+    rescheduleAll(t.db, t.seed.workspaceId, "America/New_York", NOW, { warn: vi.fn() });
 
     // NOW = 2026-10-06 20:05 EDT → 다음 09:00 EDT 는 2026-10-07 13:00Z
     expect(t.row(on.id)?.nextRunAt).toEqual(new Date("2026-10-07T13:00:00.000Z"));
@@ -381,8 +381,25 @@ describe("rescheduleAll", () => {
   it("다음 시각이 비어 있던 켜진 예약(셀 수 없어 멈춘 것)도 다시 센다", () => {
     const t = setup();
     const stalled = t.add({ nextRunAt: null });
-    rescheduleAll(t.db, t.seed.workspaceId, SEOUL, NOW);
+    rescheduleAll(t.db, t.seed.workspaceId, SEOUL, NOW, { warn: vi.fn() });
     expect(t.row(stalled.id)?.nextRunAt).toEqual(kst("2026-10-08T09:00"));
+  });
+
+  it("다음 시각을 셀 수 없는 예약(DB 를 직접 고친 것)은 null + warn — 던지지 않고 같은 워크스페이스의 다른 예약은 다시 센다", () => {
+    const t = setup();
+    // weekday 가 빠진 weekly — 맞는 날이 없어 nextRunAt 이 던진다
+    const broken = t.add({
+      scheduleJson: { repeat: "weekly", time: "09:00" } as unknown as AutomationSchedule,
+    });
+    const fine = t.add();
+    const warn = vi.fn();
+    expect(() => rescheduleAll(t.db, t.seed.workspaceId, "America/New_York", NOW, { warn })).not.toThrow();
+    expect(t.row(broken.id)?.nextRunAt).toBeNull();
+    expect(t.row(fine.id)?.nextRunAt).toEqual(new Date("2026-10-07T13:00:00.000Z"));
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ automationId: broken.id }),
+      "automation next run uncountable — stopped",
+    );
   });
 });
 

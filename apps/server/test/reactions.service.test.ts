@@ -66,6 +66,7 @@ type Post = {
   threadRootId?: string;
   bodyMd?: string;
   mentionUsers?: string[];
+  mentionAgents?: string[];
 };
 function post(db: Db, p: Post): string {
   return db.transaction((tx) => {
@@ -80,7 +81,7 @@ function post(db: Db, p: Post): string {
         authorType: p.authorType ?? "agent",
         authorId: p.authorType === "system" ? null : p.authorId,
         bodyMd: p.bodyMd ?? "답",
-        mentions: { agents: [], users: p.mentionUsers ?? [] },
+        mentions: { agents: p.mentionAgents ?? [], users: p.mentionUsers ?? [] },
         threadRootId: p.threadRootId ?? null,
         createdAt: T0,
       })
@@ -212,6 +213,18 @@ describe("withReactions", () => {
     ]);
     expect(out[1]?.reactions).toEqual([]);
     expect(REACTION_EMOJIS.indexOf("👍")).toBeLessThan(REACTION_EMOJIS.indexOf("❓"));
+  });
+
+  it("같은 시각에 단 것은 넣은 순서다(rowid) — 사람 id 순도, 거꾸로도 아니다", () => {
+    const c = setup();
+    const m = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    // mia 의 id 가 owner 보다 크다(uuid v7, 나중에 만듦) — mia 를 먼저 넣어 id 순과 넣은 순서를 가른다
+    react(c.db, m, c.mia, "👍", at(1));
+    react(c.db, m, c.userId, "👍", at(1));
+    const row = c.db.select().from(messages).where(eq(messages.id, m)).get()!;
+    expect(withReactions(c.db, [rowToMessage(row)])[0]?.reactions).toEqual([
+      { emoji: "👍", count: 2, userIds: [c.mia, c.userId] },
+    ]);
   });
 
   it("hydrateForClient 가 리액션을 붙인다", () => {
@@ -410,6 +423,20 @@ describe("pendingReactionsFor", () => {
     const excerpt = pendingReactionsFor(c.db, channelScope(c, at(0))).reactions[0]?.excerpt;
     expect(excerpt?.startsWith("@mia 님, 가가")).toBe(true);
     expect(excerpt?.length).toBe(60);
+  });
+
+  it("excerpt 는 에이전트 멘션 토큰도 @핸들로 푼다", () => {
+    const c = setup();
+    const m = post(c.db, {
+      channelId: c.channelId,
+      authorId: c.agentId,
+      bodyMd: `<@a:${c.agentId}> 에게 넘깁니다`,
+      mentionAgents: [c.agentId],
+    });
+    react(c.db, m, c.userId, "👍", at(5));
+    expect(pendingReactionsFor(c.db, channelScope(c, at(0))).reactions[0]?.excerpt).toBe(
+      "@dev 에게 넘깁니다",
+    );
   });
 
   it("excerpt 는 UTF-16 60 안에서 글자 단위로 자른다 — 서로게이트 쌍을 가르지 않고 계약 스키마를 지난다", () => {

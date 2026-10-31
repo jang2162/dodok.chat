@@ -8,7 +8,7 @@
  * 재발급·삭제됐으면 404 — 본문을 받는 데는 시한이 없다).
  * 404 는 모두 같은 본문이다 — 토큰이 맞았는지·꺼졌는지를 응답으로 드러내지 않는다(막힌 주소에서는 둘 다 같은 429)
  */
-import type { AutomationPosted, BridgeAuthGuard } from "@dodok/shared";
+import type { AutomationPosted, BridgeAuthGuard, Message } from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -17,7 +17,7 @@ import type { Limits } from "../ops/limits";
 import { KeyedLimiter } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
 import { webhookBlock } from "./body";
-import { type PostDeps, postAutomationMessage } from "./post";
+import { type PostDeps, storeAutomationMessage } from "./post";
 import { markFailed } from "./scheduler";
 import { type AutomationRow, getAutomation, updateAutomation } from "./store";
 import { findWebhookByToken } from "./tokens";
@@ -101,21 +101,31 @@ export function registerWebhookRoute(fastify: FastifyInstance, ctx: WebhookRoute
           throw notFound();
         // 게시는 라우터를 기다린다 — 그사이 지워졌으면 결과를 남길 행이 없다(updateAutomation 이 NOT_FOUND 로 던진다)
         const stillThere = () => getAutomation(ctx.db, automation.workspaceId, automation.id) !== undefined;
-        let messageId: string;
-        try {
-          messageId = (await postAutomationMessage(ctx.post, automation, block)).id;
-        } catch (err) {
-          // 보낸 쪽 말고는 아무도 이 응답을 보지 않는다 — 목록의 마지막 결과와 운영 사건으로 남긴다
+        // 보낸 쪽 말고는 아무도 이 응답을 보지 않는다 — 실패는 목록의 마지막 결과와 운영 사건으로 남긴다
+        const failed = (err: unknown) => {
           if (stillThere())
             markFailed({ db: ctx.db, ops: ctx.ops, logger: ctx.post.logger }, automation, err);
+        };
+        let message: Message;
+        try {
+          message = storeAutomationMessage(ctx.post, automation, block);
+        } catch (err) {
+          failed(err);
           throw err;
+        }
+        const result: AutomationPosted = { messageId: message.id };
+        try {
+          await ctx.post.route(message);
+        } catch (err) {
+          // 글은 이미 올랐다 — 오류로 답하면 보낸 쪽이 다시 보내 같은 글이 두 번 오른다. 받은 것으로 답하고 결과만 error 로
+          failed(err);
+          return reply.status(202).send(result);
         }
         if (stillThere())
           updateAutomation(ctx.db, automation.workspaceId, automation.id, {
             lastRunAt: new Date(),
             lastStatus: "ok",
           });
-        const result: AutomationPosted = { messageId };
         return reply.status(202).send(result);
       },
     );

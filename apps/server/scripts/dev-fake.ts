@@ -357,7 +357,7 @@ export type DevFakeOptions = {
   dataDir?: string;
   /** true 면 dev-fake.sqlite 를 지우지 않는다 */
   keep?: boolean;
-  logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+  logLevel?: DevFakeLogLevel;
   /** 웹 오리진(wire 핸드셰이크 Origin 검사). 기본 http://localhost:5173 */
   appOrigin?: string;
   /** 리슨 주소. 기본 127.0.0.1 — 컨테이너 안에서 띄워 바깥에서 닿게 하려면 0.0.0.0 */
@@ -367,6 +367,18 @@ export type DevFakeOptions = {
   /** 끊김 사건 임계(기본 운영과 같은 DISCONNECT_EVENT_MS) — 브라우저 검증이 60초를 기다리지 않게 줄인다 */
   disconnectEventMs?: number;
 };
+
+const DEV_FAKE_LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const;
+type DevFakeLogLevel = (typeof DEV_FAKE_LOG_LEVELS)[number];
+
+/** LOG_LEVEL — 없거나 비었으면 info, 모르는 이름이면 시작하지 않는다(운영 설정 config.ts 와 같은 이름들) */
+function logLevelFromEnv(raw: string | undefined): DevFakeLogLevel {
+  if (!raw) return "info";
+  const level = DEV_FAKE_LOG_LEVELS.find((l) => l === raw);
+  if (level === undefined)
+    throw new Error(`LOG_LEVEL must be one of ${DEV_FAKE_LOG_LEVELS.join("|")}: ${raw}`);
+  return level;
+}
 
 /** DODOK_DEVFAKE_DISCONNECT_MS — 없거나 비었으면 운영 기본, 양의 정수가 아니면 시작하지 않는다 */
 function disconnectMsFromEnv(raw: string | undefined): number {
@@ -379,7 +391,7 @@ function disconnectMsFromEnv(raw: string | undefined): number {
 /**
  * 진입점이 startDevFake 에 넘길 옵션 — 포트는 PORT(기본 3000), 웹 오리진은 APP_ORIGIN(없거나 비었으면 http://localhost:5173),
  * 리슨 주소는 DEV_FAKE_HOST(없거나 비었으면 127.0.0.1), 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지,
- * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(없으면 60초).
+ * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(없으면 60초), 로그 레벨은 LOG_LEVEL(없거나 비었으면 info — debug 로 푸시 건너뜀 줄을 본다).
  * 리슨 주소가 HOST 가 아닌 까닭: HOST 는 운영 서버 설정 이름이라, 셸에 남은 값이 개발 서버를 모든 주소에 여는 일이 없게 따로 둔다
  */
 export function devFakeCliOptions(
@@ -393,6 +405,7 @@ export function devFakeCliOptions(
     dataDir: resolve(import.meta.dirname, "../../../data"),
     keep: argv.includes("--keep"),
     disconnectEventMs: disconnectMsFromEnv(env.DODOK_DEVFAKE_DISCONNECT_MS),
+    logLevel: logLevelFromEnv(env.LOG_LEVEL),
   };
 }
 export type DevFake = {
@@ -1338,18 +1351,21 @@ function seedDevFakeGateway(
 
 /**
  * 고정 짝의 가짜 플러그인이 못 붙을 만한, 사람이 바꾼 것 — 고정 Gateway 를 껐거나 고정 토큰을 폐기했으면(`--keep` 으로 이어받은 것)
- * 다시 붙이는 안내를, 아니면 undefined 를 돌려준다. 시드가 시작마다 행을 되살리므로 새 DB 는 늘 undefined 다
+ * 다시 붙이는 안내를, 아니면 undefined 를 돌려준다. 시드가 시작마다 행을 되살리므로 새 DB 는 늘 undefined 다.
+ * 시작 때 못 붙은 짝은 가짜 플러그인이 없어 plugin-token 훅이 「fake plugin not started」로 거절한다 — 그래서 안내는 다시 띄우기다
+ * (켠 Gateway 는 `--keep` 으로 이어받아도 붙고, 폐기한 고정 토큰은 `--keep` 으로는 그대로라 새 DB 로만 붙는다)
  */
 function changedByHand(db: DbOrTx, workspaceId: string, spec: DevFakeGatewaySpec): string | undefined {
   if (getGatewayRow(db, workspaceId, spec.id)?.enabled === false)
-    return "enable the Gateway on the connection page";
+    return "enable the Gateway on the connection page, then restart dev:fake (--keep keeps the DB)";
   const hash = createHash("sha256").update(spec.bridgeToken).digest("hex");
   const token = db
     .select({ revokedAt: bridgeTokens.revokedAt })
     .from(bridgeTokens)
     .where(eq(bridgeTokens.hash, hash))
     .get();
-  if (token?.revokedAt != null) return "POST /__devfake/plugin-token { gatewayId, token } with a new token";
+  if (token?.revokedAt != null)
+    return "the fixed bridge token is revoked — restart dev:fake without --keep (new DB); POST /__devfake/plugin-token cannot start a fake plugin";
   return undefined;
 }
 

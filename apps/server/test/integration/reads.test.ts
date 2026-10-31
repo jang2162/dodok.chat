@@ -14,7 +14,7 @@ import {
   createSystemMessage,
   createUserMessage,
 } from "../../src/modules/messages/service";
-import { bootTestApp, userWithRole } from "../helpers/app";
+import { bootTestApp, login, userWithRole } from "../helpers/app";
 import { connectWire, recordEvents, type WireClient, waitFor } from "../helpers/wire";
 import { channelConversation, sendTarget } from "../helpers/seed";
 
@@ -152,7 +152,8 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       expect(authorsOf(seen)).toEqual([controlId]);
     });
 
-    // 시스템 메시지는 작성자가 없어 authorId 거름이 대신 막는다 — kind·authorType 거름은 작성자가 있는 꼴로 따로 잠근다
+    // 시스템 메시지는 kind·authorType·authorId 거름 셋이 모두 막는다(위 사례는 셋을 다 빼야 실패한다) — kind·authorType 거름은
+    // 작성자가 있는 꼴로 하나씩 따로 잠근다
     it("kind 가 normal 이 아니면 작성자가 있어도 activity 를 내지 않는다", async () => {
       await ready();
       const ch = channel();
@@ -203,7 +204,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       await ready();
       const ch = channel();
       const agentId = uuid();
-      const failed = vi.spyOn(app.logger, "error");
+      const failed = vi.spyOn(app.logger, "warn");
       try {
         const seen = waitFor(a1, "channel.activity");
         // reactions 가 없는 꼴 — withReactions 가 그것을 읽다 던진다
@@ -221,10 +222,10 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           } as never,
         });
         expect(await seen).toMatchObject({ channelId: ch.id, authorType: "agent", authorId: agentId });
-        // 전제 — 하이드레이션이 실제로 던졌다(아니면 이 사례는 아무것도 보지 않는다)
+        // 전제 — 하이드레이션이 실제로 던졌다(아니면 이 사례는 아무것도 보지 않는다). 채널 룸에는 원본으로 냈다(realtime.events.test.ts)
         expect(failed).toHaveBeenCalledWith(
-          expect.objectContaining({ event: "message.created" }),
-          "wire fanout failed",
+          expect.objectContaining({ messageId: expect.any(String) }),
+          "message.created hydration failed — sent unhydrated",
         );
       } finally {
         failed.mockRestore();
@@ -319,6 +320,32 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       await roundTrip(bs);
       expect(seenB).toEqual([]);
     });
+
+    it.each(["owner", "admin"] as const)(
+      "%s 소켓도 같다 — ack 에 저장된 위치, 같은 사람의 다른 소켓이 받고 B 는 받지 않는다(역할 매트릭스)",
+      async (role) => {
+        const token =
+          role === "owner"
+            ? (await login(app)).token
+            : (await userWithRole(app, `reads-${role}-${++n}`, "admin")).token;
+        const [s1, s2] = [await wire(token), await wire(token)];
+        bs = await wire(b.token);
+        const ch = channel();
+        const sent = unwrap(await send(bs, ch.id)).message;
+        const seenB = recordEvents(bs, ["conversation.read"]);
+        const got = waitFor(s2, "conversation.read");
+        expect(
+          await s1.emitWithAck("conversation.read", { conversationId: sent.conversationId, seq: sent.seq }),
+        ).toEqual({ ok: true, data: { lastReadSeq: sent.seq } });
+        expect(await got).toEqual({
+          conversationId: sent.conversationId,
+          channelId: ch.id,
+          lastReadSeq: sent.seq,
+        });
+        await roundTrip(bs);
+        expect(seenB).toEqual([]);
+      },
+    );
 
     it("그 대화의 last_seq 보다 큰 seq 는 깎이고(같은 채널 다른 세션의 뒤 글 자리가 아니라), 낮은 seq 는 위치를 내리지 않는다", async () => {
       await ready();
