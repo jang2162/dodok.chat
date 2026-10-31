@@ -42,8 +42,8 @@ RUN pnpm -F @dodok/openclaw-plugin run pack:plugin
 # 러너 스펙 5장 「같은 빌드」 — 서버가 GET /api/v1/setup/runner.tgz 로 내려 줄 파일. 러너 번들은 Claude Agent SDK 를 품지 않는다
 # (esbuild external — 사람 머신에서 설치할 때 npm 이 받는다). SDK 는 pnpm fetch 가 스토어에 받아 두었고 이 단계에서만 링크된다
 FROM build AS runner
-RUN pnpm install --offline --frozen-lockfile --filter "@dodok/claude-runner..."
-RUN pnpm -F @dodok/claude-runner run pack:runner
+RUN pnpm install --offline --frozen-lockfile --filter "@dodok/runner..."
+RUN pnpm -F @dodok/runner run pack:runner
 
 # build 가 아니라 source 에서 가르는 까닭: 서버 설치가 packages/shared 아래에 node_modules 를 만들어 아래 해시 입력에 섞인다
 FROM source AS web

@@ -35,6 +35,8 @@ const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
  * UUID 를 `***` 로 가려 찍어 깨진다. docker-deploy.md 「러너 설치」 3번이 같은 식을 쓴다(setup.llms.test 가 대조한다)
  */
 export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
+/** 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 — 옛 판이 남은 머신이 사라지면 걷는다 */
+export const RUNNER_LEGACY_UNINSTALL = "npm uninstall -g @dodok/claude-runner >/dev/null 2>&1";
 const NO_FILE =
   "서버에 파일이 없습니다. 이 절의 설치를 멈추고 사람에게 알린다(서버 관리자가 파일을 만든 뒤 서버를 재시작해야 한다).";
 
@@ -145,6 +147,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${MKTEMP_DIR}
    ${download(RUNNER_TOKEN_FILE, `${origin}/api/v1/setup/runner.tgz`, out).replaceAll("\n", "\n   ")}
    shasum -a 256 ${out}   # Linux 는 sha256sum
+   ${RUNNER_LEGACY_UNINSTALL}   # 옛 이름이 dodok-runner 를 쥐고 있으면 설치가 EEXIST 로 실패한다. 없으면 아무 일도 안 한다
    npm install -g ${out}; rm -rf "\${dir:?}"
    shasum -a 256 "${RUNNER_PKG_DIR}/dist/main.js"
    \`\`\`

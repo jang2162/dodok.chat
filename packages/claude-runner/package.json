@@ -1,18 +1,42 @@
 {
-  "name": "@dodok/claude-runner",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@dodok/runner",
+  "version": "0.1.0",
   "description": "dodok local runner — runs Claude Code agents via the Claude Agent SDK and connects to the dodok server",
+  "keywords": [
+    "agent",
+    "claude-agent-sdk",
+    "claude-code",
+    "cli",
+    "dodok",
+    "runner"
+  ],
+  "homepage": "https://github.com/jang2162/dodok.chat/tree/main/packages/claude-runner#readme",
+  "bugs": {
+    "url": "https://github.com/jang2162/dodok.chat/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jang2162/dodok.chat.git",
+    "directory": "packages/claude-runner"
+  },
   "bin": {
     "dodok-runner": "dist/main.js"
   },
   "files": [
-    "dist/main.js"
+    "dist/main.js",
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "pack:runner": "pnpm build && pnpm pack --pack-destination dist",
+    "prepublishOnly": "pnpm build && node scripts/check-pack.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
@@ -29,5 +53,8 @@
     "socket.io": "4.8.3",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

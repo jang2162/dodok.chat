@@ -8,5 +8,6 @@
 | 코드를 어디에 둘지 정하거나, 패키지·모듈의 책임을 확인할 때 | `docs/guides/project-structure.md` |
 | 배포·설치 절차, `.env`, 백업·복원·업데이트를 다루거나 바꿀 때 | `docs/guides/docker-deploy.md` |
 | 실제 Gateway·모델·러너로 실연하거나 런 0회 하네스를 돌릴 때 | `docs/guides/live-smoke.md` |
+| 러너 npm 패키지(`@dodok/runner`)의 판본을 올리거나 배포하거나, 그 워크플로를 고칠 때 | `docs/guides/runner-release.md` |
 | 에이전트가 채널에서 받는 헤더·도구·components 를 바꾸거나 설명할 때 | `docs/guides/agent-guide.md` |
 | 웹 화면의 사용 흐름을 바꾸거나 설명할 때 | `docs/manual/user-guide.md` |

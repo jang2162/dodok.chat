@@ -61,5 +61,6 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | `docs/manual/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·세션·다이렉트 메시지·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·자동화·멤버·알림·연결 페이지, 역할별 권한 표, 자주 겪는 문제 |
 | `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(헤더·반응·자동화가 게시한 글·릴레이·components·파일·승인·러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·러너·모델로 돌려 보는 절차, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·러너) |
+| `docs/guides/runner-release.md` | 러너 npm 패키지 `@dodok/runner` 를 배포하는 법 — 판본 올리기·`runner-v*` 태그·GitHub Actions·npm 쪽 사전 준비·실패할 때 볼 것 |
 | `docs/guides/worktree-workflow.md` | 이 저장소의 작업 방식(워크트리·Orca 워커·커밋 규칙) |
 | `.ruler/AGENTS.md` | 코딩 에이전트가 이 저장소에서 따르는 지침의 소스 — `CLAUDE.md` 는 `pnpm exec ruler apply` 가 만드는 생성물이다 |

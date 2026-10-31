@@ -16,7 +16,7 @@ dodok.chat/
 │  ├─ openclaw-plugin/        # @dodok/openclaw-plugin — OpenClaw 채널 플러그인 (원격 Gateway 안에서 실행)
 │  ├─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
 │  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 러너 어댑터 (/runner 네임스페이스·러너 hello 메모리·둘러보기·승인 기한·AgentAdapter 구현)
-│  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (천장 설정·둘러보기·재접속·프로그램 드라이버 — 지금 Claude Code·post 도구·승인·첨부)
+│  └─ claude-runner/          # @dodok/runner — 사람의 머신에서 도는 러너 CLI dodok-runner (천장 설정·둘러보기·재접속·프로그램 드라이버 — 지금 Claude Code·post 도구·승인·첨부)
 ├─ Dockerfile                # 배포 이미지(앱 컨테이너 하나) — 단계 source(pnpm fetch·소스) → build(서버 번들) → deploy(런타임 의존성 닫힘) ·
 │                            # plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만) · runner(pack:runner) · web(웹 빌드, ARG VITE_BUILD_ID —
 │                            # 비면 웹 빌드 입력의 내용 해시, 끝에 precompress-web 으로 .br·.gz) → runtime(node:24.21.0-bookworm-slim, 비루트 —
