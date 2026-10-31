@@ -1,8 +1,9 @@
 import type { RunState } from "@dodok/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useChannelRuns } from "@/api/queries";
+import { qk, useChannelRuns } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
@@ -83,6 +84,22 @@ function ActivityBody({ channelId }: { channelId: string }) {
     seenSettled.current = settledKey;
     void refetchRuns();
   }, [settledKey, refetchRuns]);
+
+  /**
+   * 빠진 런의 타임라인(`qk.runEvents`)도 다시 받는다 — 끊긴 사이에 온 이벤트(승인 확정·결과)는 재생되지 않아
+   * (`runReplay` 는 ack 의 `activeRuns` 만 재생한다) 그대로 두면 행이 「대기 중」으로 남는다. **새로 빠진 id 만**
+   * 무효화한다: 전부 무효화하면 옛 런 타임라인까지 다시 받는다
+   */
+  const queryClient = useQueryClient();
+  const vanishedKey = [...vanished.current.keys()].sort().join(",");
+  const seenVanished = useRef(new Set<string>());
+  useEffect(() => {
+    for (const id of vanishedKey ? vanishedKey.split(",") : []) {
+      if (seenVanished.current.has(id)) continue;
+      seenVanished.current.add(id);
+      void queryClient.invalidateQueries({ queryKey: qk.runEvents(id) });
+    }
+  }, [vanishedKey, queryClient]);
 
   // 고르지 않았으면 가장 최근 런. 고른 런이 목록에서 사라지면(채널을 옮긴 뒤 등) 다시 최근 런으로 돌아간다
   const [picked, setPicked] = useState<string>();

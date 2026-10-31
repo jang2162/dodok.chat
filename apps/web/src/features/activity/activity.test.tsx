@@ -968,6 +968,25 @@ it("끊긴 사이 끝난 런은 재접속 뒤에도 목록에 남고 선택·타
   );
 });
 
+it("끊긴 사이 끝난 런의 타임라인은 재접속 뒤 다시 받는다 — 새로 빠진 런만(plan.md 이월)", async () => {
+  const { aside, state, queryClient } = await awaitingRun();
+  // 옛 런 타임라인도 캐시에 있다 — 이것까지 무효화하면 옛 런을 다시 받는다
+  queryClient.setQueryData(qk.runEvents(RUN), OTHER_RUN);
+  state.runs = [runOf(RUN2, { status: "done" }), runOf(RUN)];
+  // 끊긴 사이 그 런이 도구를 하나 더 썼다 — 실시간으로는 못 받았고 서버 기록에만 있다
+  const later = [
+    ...TOOL_EVENTS,
+    runEvent({ type: "TOOL_CALL_START", seq: 6, toolCallId: "t2", toolCallName: "Write" }),
+    runEvent({ type: "TOOL_CALL_END", seq: 7, toolCallId: "t2" }),
+  ];
+  stubServer({ runs: state.runs, events: { [RUN]: OTHER_RUN, [RUN2]: later } });
+
+  await reconnect(queryClient);
+
+  expect(await within(aside).findByText("Write")).toBeInTheDocument();
+  expect(queryClient.getQueryState(qk.runEvents(RUN))?.isInvalidated).toBe(false);
+});
+
 it("재접속 목록 조회가 실패해도 끊긴 사이 끝난 런은 사라지지 않는다(D12)", async () => {
   const { aside, queryClient } = await awaitingRun();
   // 다시 붙자마자 조회가 또 실패하는 판 — 재접속은 바로 그런 때에 일어난다
