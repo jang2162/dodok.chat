@@ -23,18 +23,16 @@ import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-// startDevFake 가 createApp 에 넘긴 gatewayBackoff 를 값으로 단언하려고 호출 인자를 모은다(동작은 그대로 통과).
-const createAppDeps = vi.hoisted(
-  () => [] as Array<{ gatewayBackoff?: { initialMs: number; maxMs: number } }>,
-);
-vi.mock("../src/app", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/app")>();
+// startDevFake → createApp → createOpenClawAdapter 로 닿은 backoff 를 값으로 단언하려고 어댑터가 받은 옵션을 모은다(동작은 그대로 통과).
+const adapterOptions = vi.hoisted(() => [] as Array<{ backoff?: { initialMs?: number; maxMs?: number } }>);
+vi.mock("@dodok/openclaw-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dodok/openclaw-adapter")>();
   return {
     ...actual,
-    createApp: ((...args: Parameters<typeof actual.createApp>) => {
-      createAppDeps.push((args[1] ?? {}) as never);
-      return actual.createApp(...args);
-    }) as typeof actual.createApp,
+    createOpenClawAdapter: ((...args: Parameters<typeof actual.createOpenClawAdapter>) => {
+      adapterOptions.push(args[0] as never);
+      return actual.createOpenClawAdapter(...args);
+    }) as typeof actual.createOpenClawAdapter,
   };
 });
 import {
@@ -1626,7 +1624,9 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
 
   it("gateway — dev:fake 는 재접속 백오프 상한을 줄여 createApp 에 넘긴다(운영 기본 30초면 오래 끊긴 뒤 connected 가 늦는다)", () => {
     expect(DEV_FAKE_GATEWAY_BACKOFF.maxMs).toBeLessThanOrEqual(1_000);
-    expect(createAppDeps.some((d) => d.gatewayBackoff === DEV_FAKE_GATEWAY_BACKOFF)).toBe(true);
+    // createApp → 어댑터 전달 고리까지 닫는다(app.ts 의 backoff 전달 줄이 빠지면 운영 기본 상한으로 붙는다)
+    expect(adapterOptions.length).toBeGreaterThan(0);
+    expect(adapterOptions.every((o) => o.backoff === DEV_FAKE_GATEWAY_BACKOFF)).toBe(true);
   });
 
   it("gateway — state 가 down·connected 가 아니거나 gatewayId 가 없거나 사무실·집이 아니면 400", async () => {

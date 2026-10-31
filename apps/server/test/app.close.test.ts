@@ -25,6 +25,27 @@ afterEach(async () => {
 const CLOSE_TIMEOUT_MS = 10_000;
 
 describe("app.close() 와 keep-alive", () => {
+  it("종료 전에는 응답이 끝나도 쉬는 keep-alive 연결을 닫지 않아 다시 쓸 수 있다", async () => {
+    app = await bootTestApp({}, { closeTimeoutMs: CLOSE_TIMEOUT_MS });
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const { port } = app.fastify.server.address() as { port: number };
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    agents.push(agent);
+    const get = () =>
+      new Promise<boolean>((resolve, reject) => {
+        const req = httpRequest({ host: "127.0.0.1", port, path: "/healthz", agent }, (r) => {
+          r.resume();
+          r.on("end", () => resolve(req.reusedSocket));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await get()).toBe(false);
+    // onResponse 의 setImmediate 가 도는 틈을 준다 — 종료 중이 아닌데 닫았다면 두 번째 요청은 새 소켓이다
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await get()).toBe(true);
+  });
+
   it("close 가 시작될 때 아직 보내던 응답이 그 뒤 끝나 쉬는 keep-alive 연결로 남아도 close 는 상한에 걸리지 않고 끝난다", async () => {
     const lines: Array<{ msg?: string }> = [];
     const logger = pino({ level: "warn" }, { write: (line: string) => void lines.push(JSON.parse(line)) });

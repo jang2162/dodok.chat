@@ -260,7 +260,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     let shuttingDown = false;
     // server.close()(io.close() 가 부른다)는 쉬는 keep-alive 연결을 그 순간 한 번만 닫고, 응답이 아직 안 끝난 연결은 건너뛴다.
     // 그 응답(예: 첨부 내려받기 마지막 조각)이 조금 뒤 끝나면 연결은 쉬는 keep-alive 로 남아 keepAliveTimeout(Fastify 기본 72초)까지
-    // close 를 붙잡는다 — 종료 중에는 응답이 끝날 때마다 다시 닫는다. setImmediate: Node 가 finish 에서 소켓을 응답에서 떼어 낸 뒤
+    // close 를 붙잡는다 — 종료 중에는 응답이 끝날 때마다 다시 닫는다. setImmediate: 한 틱 뒤 — 같은 finish 의 다른 리스너가 끝난 뒤
     fastify.addHook("onResponse", (_request, _reply, done) => {
       if (shuttingDown) setImmediate(() => fastify.server.closeIdleConnections());
       done();
