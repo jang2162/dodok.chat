@@ -17,6 +17,11 @@ import { CopyBlock, Section } from "./sections";
 export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/claude-runner run pack:runner";
 /** 러너 전용 로그인(러너 스펙 5장 설치 안내) — 사람의 `~/.claude` 와 섞지 않는다 */
 export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
+/**
+ * `claude` 가 PATH 에 없을 때 — 러너가 품은 번들 CLI 로 같은 로그인(docker-deploy.md 「러너 설치」와 같은 명령).
+ * 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다 — 그 문서가 확인하는 법을 적는다
+ */
+export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
 /** 러너 토큰 파일의 권장 자리 — 서버 RUNNER_TOKEN_FILE 과 같다 */
 const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
 
@@ -96,6 +101,10 @@ function InstallSteps({ status }: { status: SetupStatus }) {
         <li className="flex flex-col gap-1.5">
           <p>러너 전용 Claude 계정으로 로그인합니다. 로그인을 마치면 나옵니다.</p>
           <CopyBlock text={RUNNER_LOGIN_COMMAND} label="로그인 명령 복사" />
+          <p className="text-muted-foreground">
+            <code className="font-mono">claude</code> 명령이 없으면 러너가 품은 번들 CLI 로 로그인합니다.
+          </p>
+          <CopyBlock text={RUNNER_LOGIN_BUNDLED_COMMAND} label="번들 CLI 로그인 명령 복사" />
         </li>
         <li className="flex flex-col gap-1.5">
           <p>
