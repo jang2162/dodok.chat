@@ -1266,6 +1266,23 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
       expect(sender.request).not.toHaveBeenCalled();
     });
 
+    it("결과로 가기 목표를 안고 열리면 묻지 않고 그 메시지로 간다 — 구분선·끝으로 가지 않는다", async () => {
+      answer(51);
+      onTestFinished(() => useJumpStore.setState({ targets: {} }));
+      requestJump({ conversationId: CH, messageId: msg(70).id, seq: 70 });
+      const { scroller, sender } = open(timelineOf(range(51, 100), true), 11);
+      const row = () => screen.getByText("본문 70").closest("[data-index]");
+      await waitFor(() => expect(row()).toHaveAttribute("data-highlighted", "true"));
+      await settle();
+      expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(firstRootUrl);
+      // 본문 70 행이 뷰포트 가운데에 온다
+      expect(scroller().scrollTop).toBe(
+        Number(row()?.getAttribute("data-index")) * ROW + ROW / 2 - RECT.height / 2,
+      );
+      expect(separator()).toBeNull();
+      expect(sender.request).not.toHaveBeenCalled();
+    });
+
     it("받은 목록에 구분선이 있으면 묻지 않는다", async () => {
       answer(51);
       open(timelineOf(range(1, 100), true), 11);
