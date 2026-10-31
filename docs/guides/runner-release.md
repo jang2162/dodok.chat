@@ -10,7 +10,7 @@
 2. **인증 — 둘 중 하나.**
    - **trusted publisher(권함)** — 패키지가 한 번 올라간 뒤 npmjs.com 의 `@dodok/runner` → Settings → Trusted Publisher 에 GitHub Actions 로 저장소 `jang2162/dodok.chat`, 워크플로 파일 `runner-publish.yml` 을 등록한다(environment 는 비운다 — 워크플로가 쓰지 않는다). 그러면 워크플로의 OIDC 토큰(`id-token: write`)으로 올라가고 시크릿이 필요 없다. 등록한 뒤에는 `NPM_TOKEN` 시크릿을 지워도 된다. 패키지가 아직 없으면 등록할 자리가 없으니 첫 판은 아래 토큰으로 올린다.
    - **`NPM_TOKEN` 시크릿** — npmjs.com 에서 `@dodok` 스코프에 쓰기 권한이 있는 granular access token 을 만들고(2FA 를 우회하는 「Bypass 2FA」를 켜야 CI 에서 OTP 없이 올라간다), GitHub 저장소 Settings → Secrets and variables → Actions 에 `NPM_TOKEN` 으로 넣는다. 워크플로가 `NODE_AUTH_TOKEN` 으로 넘긴다.
-3. 저장소가 **공개**여야 provenance 가 붙는다(`publishConfig.provenance: true`). 비공개 저장소면 publish 가 provenance 에서 실패한다 — 그때는 `package.json` 의 `publishConfig.provenance` 를 빼는 결정을 먼저 한다.
+3. 저장소가 **공개**여야 provenance 가 붙는다. provenance 는 워크플로의 `pnpm publish --provenance` 플래그가 건다 — pnpm 11 은 `package.json` 의 `publishConfig.provenance` 를 읽지 않는다(그 칸은 `npm publish` 로 올릴 때를 위한 것). 비공개 저장소면 publish 가 provenance 에서 실패한다 — 그때는 워크플로의 `--provenance` 와 `publishConfig.provenance` 를 함께 빼는 결정을 먼저 한다.
 
 ## 배포 절차
 
@@ -24,7 +24,7 @@
    git tag runner-v0.2.0
    git push origin runner-v0.2.0
    ```
-4. **CI** — `runner-publish` 워크플로가 돈다: Node·pnpm 판이 `mise.toml` 과 같은지 → 태그가 `runner-v<package.json version>` 과 같은지(다르면 실패) → `pnpm install --frozen-lockfile`(러너와 그 의존 패키지만) → 러너 typecheck·test·build → `pnpm -F @dodok/runner publish`(`prepublishOnly` 가 다시 빌드하고 `scripts/check-pack.mjs` 로 꾸러미를 확인한다).
+4. **CI** — `runner-publish` 워크플로가 돈다: 태그 커밋이 `origin/main` 에 있는지(아니면 실패) → Node·pnpm 판이 `mise.toml` 과 같은지 → 태그가 `runner-v<package.json version>` 과 같은지(다르면 실패) → `pnpm install --frozen-lockfile`(러너와 그 의존 패키지만) → 러너 typecheck·test·build → `pnpm -F @dodok/runner publish`(`prepublishOnly` 가 다시 빌드하고 `scripts/check-pack.mjs` 로 꾸러미를 확인한다).
 5. **확인** — `npm view @dodok/runner version` 이 새 판본이고, npmjs.com 패키지 화면에 provenance 표시가 붙는다. 다른 머신에서 `npm i -g @dodok/runner && dodok-runner --version`.
 
 올라간 판본은 지울 수 없다(72시간 안 unpublish 는 되지만 같은 판본 번호는 다시 못 쓴다). 잘못 올렸으면 판본을 올려 다시 배포하고, 필요하면 `npm deprecate @dodok/runner@<판본> "<사유>"`.
@@ -40,6 +40,7 @@
 
 | 증상 | 원인·할 일 |
 | --- | --- |
+| `tag commit is not on main` | 태그를 `main` 에 병합되지 않은 커밋에 달았다. 병합한 커밋에 다시 단다 |
 | `tag runner-vX != runner-vY` | 태그와 `package.json` 의 `version` 이 다르다. 태그를 지우고(`git push origin :refs/tags/runner-vX`, `git tag -d runner-vX`) 판본을 맞춘 커밋에 다시 단다 |
 | `node … != mise.toml …`·`pnpm … != mise.toml …` | `mise.toml` 핀을 바꾸고 워크플로의 `node-version`(또는 `package.json` 의 `packageManager`)을 함께 안 바꿨다. 둘을 맞춘다 |
 | `ERR_PNPM_OUTDATED_LOCKFILE` | 태그 커밋의 `pnpm-lock.yaml` 이 `package.json` 과 다르다. 로컬에서 `pnpm install` 한 lockfile 을 커밋한다 |

@@ -18,6 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag commit is not on main"; exit 1; }
 
       - uses: pnpm/action-setup@v4
 
@@ -50,6 +55,6 @@ jobs:
       # prepublishOnly 가 다시 빌드하고 꾸러미를 확인한다. 인증은 NPM_TOKEN 시크릿 — npm 의 trusted publisher 로 이 워크플로를
       # 등록했으면 시크릿 없이 OIDC 로 올라간다(docs/guides/runner-release.md 「npm 쪽 사전 준비」)
       - name: Publish
-        run: pnpm -F @dodok/runner publish --no-git-checks --access public
+        run: pnpm -F @dodok/runner publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

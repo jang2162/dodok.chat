@@ -854,6 +854,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **옛 러너 에이전트의 핸들은 보관된 그 에이전트가 쥔다** — 0031 이 보관한 에이전트의 핸들(`coder` 등)로 새 러너 에이전트를 만들 수 없고 화면에 핸들 바꾸기가 없다(REST `PATCH /agents/:id { handle }` 는 된다). 출처: t7 문서 작업. 결정(2026-11-01): 미룬다 — REST 로 된다.
 - **러너 탭의 로그인 상태는 로그인한 머신에서도 「로그인 모름」이다** — Claude Code 드라이버의 `detect` 가 자격 증명을 읽지 않고 로그인 디렉터리가 있으면 `unknown` 이다(없으면 「로그인 안 됨」). 출처: t7 실연(`docs/superpowers/reports/2026-10-30-runner-generalization-live-smoke-report.md` 「28.3 새로 찾은 것 (코드는 고치지 않았다)」).
 - **실물로 못 본 것** — 실제 모델이 `<agent-instructions>` 틀을 따르는지, 실제 로그인 머신의 hello `auth`, 원격 서버에서의 「러너」 탭(실연은 로컬 서버 소스 실행).
+- **러너 npm 배포(2026-11-01) — 이름을 `@dodok/claude-runner` 에서 `@dodok/runner` 로 바꾸면서 연결 페이지·llms.txt 설치 줄 앞에 `npm uninstall -g @dodok/claude-runner` 를 붙였다** — 옛 이름이 깔린 머신에서 새 이름을 `npm install -g` 하면 bin `dodok-runner` 가 겹쳐 `EEXIST` 로 실패하기 때문이다(실측). 기존 설치가 다 옮겨 갔다고 볼 수 있으면 걷는다(자리: `apps/server/src/modules/setup/llms.ts`·`apps/web/src/features/setup/RunnerSection.tsx`). 첫 publish 는 사람 몫이다 — npm 조직 `dodok`, `NPM_TOKEN` 또는 trusted publisher, `runner-v0.1.0` 태그(`docs/guides/runner-release.md`). `engines.node >=22` 는 번들 target 에 맞춘 값이고 Node 22 에서 돌려 본 적은 없다. 연결 페이지·사용자 안내서에 「npm 에서 설치」 길을 더할지는 정하지 않았다. 출처: `.superpowers/sdd/2026-11-01-runner-npm/review-report.md`.
 - **`files.test.ts` 의 대소문자 사례는 macOS 에서만 돈다** — `it.skipIf(!caseInsensitiveTmp)` 라 대소문자를 가리는 볼륨(Linux CI 등)에서는 건너뛰어, 그곳에서는 `files.ts` 의 `realpathSync.native` 회귀를 못 잡는다. 출처: `.superpowers/sdd/2026-10-31-carryover/adapter-plugin-runner-review.md` 낮음 2.
 
 **실물 확인**
