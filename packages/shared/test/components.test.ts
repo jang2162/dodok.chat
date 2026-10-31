@@ -252,6 +252,45 @@ describe("ComponentsV1", () => {
     });
     expect(r.error?.issues ?? []).toEqual([]);
   });
+  describe("셀렉트 제약은 쓰기만 — 저장된 옛 카드는 읽는다", () => {
+    const card = (select: Record<string, unknown>) => ({
+      blocks: [
+        {
+          type: "actions",
+          items: [
+            {
+              type: "select",
+              id: "pick",
+              options: [
+                { value: "a", label: "A" },
+                { value: "b", label: "B" },
+                { value: "c", label: "C" },
+              ],
+              ...select,
+            },
+          ],
+        },
+      ],
+    });
+    it.each([
+      ["minValues > maxValues", { multi: true, minValues: 3, maxValues: 2 }],
+      ["minValues > options 수", { multi: true, minValues: 4 }],
+      ["maxValues > options 수", { multi: true, maxValues: 4 }],
+      ["단일인데 minValues > 1", { minValues: 2 }],
+      ["빈 placeholder", { placeholder: "" }],
+    ])("%s: 쓰기는 거절, StoredComponentsV1 은 같은 카드를 받는다", (_name, select) => {
+      expect(ComponentsV1.safeParse(card(select)).success).toBe(false);
+      expect(StoredComponentsV1.safeParse(card(select)).error?.issues ?? []).toEqual([]);
+    });
+    it.each([
+      ["경계: minValues = maxValues = options 수", { multi: true, minValues: 3, maxValues: 3 }],
+      ["경계: minValues = options 수(maxValues 없음)", { multi: true, minValues: 3 }],
+      ["단일에 minValues 1", { minValues: 1 }],
+      ["placeholder 한 글자", { placeholder: "x" }],
+    ])("%s: 쓰기도 받는다", (_name, select) => {
+      expect(ComponentsV1.safeParse(card(select)).error?.issues ?? []).toEqual([]);
+    });
+  });
   it("블록 11개 거부, 10개 허용", () => {
     const blocks11 = Array.from({ length: 11 }, () => ({ type: "separator" }));
     expect(ComponentsV1.safeParse({ blocks: blocks11 }).success).toBe(false);
