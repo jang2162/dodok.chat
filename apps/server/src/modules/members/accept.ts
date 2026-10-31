@@ -249,6 +249,12 @@ export async function resetPassword(
   const adapter = ctx.internalAdapter;
   const passwordHash = await ctx.password.hash(body.password);
   if (!claimInvite(deps.db, invite.id, deps.now())) throw inviteNotFound();
+  // 위 검사와 claim 사이의 await(hash) 동안 발급자·대상의 역할이 바뀌었을 수 있다 — claim 과 같은 동기 구간에서 다시 보고,
+  // 이제 못 쓰는 링크면 잡은 것을 되돌린다(링크는 소비하지 않는다)
+  if (!resetLinkUsable(deps.db, deps.workspaceId, invite)) {
+    unclaimInvite(deps.db, invite.id);
+    throw inviteNotFound();
+  }
   try {
     if (await adapter.findCredentialAccount(userId)) await adapter.updatePassword(userId, passwordHash);
     else
