@@ -172,12 +172,13 @@ openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"
 **AI 에게 맡기는 길** — [B] 에서 셸을 쓰는 AI 에이전트(Claude Code 등)가 돌면 위 받기·설치·계정 설정을 그 AI 에게 맡길 수 있다. 브리지 토큰 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [B] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`. 이 줄에는 원문이 들어 있어 원문과 같은 규칙이다(이 대화상자에서 한 번만 보인다). AI 의 대화 기록에도 원문이 남는다 — 믿는 AI 에게만 건넨다.
 
 - **`llms.txt`** — 서버가 로그인 없이 내주는 평문 안내서다(`GET /llms.txt`, `text/plain`, IP 당 분당 30 — 아래 「운영 화면」 레이트리밋 표). 서버가 자기 공개 오리진(`BRIDGE_PUBLIC_URL` 의 오리진, 없으면 `APP_ORIGIN`)·계정 설정의 `bridgeUrl`·서버가 품은 플러그인과 러너 파일의 파일 sha256·번들 sha256 을 채운다. 토큰·Gateway 목록·사람 이름은 싣지 않는다. 서버에 파일이 없으면 그 절은 「서버에 파일이 없습니다」 한 줄이고 AI 는 거기서 멈춘다. 본문 틀의 정본은 `apps/server/src/modules/setup/llms.ts` 다.
-- **「OpenClaw Gateway 호스트」 절이 하는 일** — 이 체크리스트 4·5 와 같은 순서를 명령으로 적는다. ① 토큰을 0600 파일 `~/.dodok-bridge-token` 에 둔다 ② 그 토큰으로 `plugin.tgz` 를 받아 파일 sha256 을 대조한다 ③ Gateway 를 내리고 설치한 뒤 `loaded` 와 번들 sha256(`~/.openclaw/extensions/dodok/dist/index.js` — 기본 상태 디렉터리일 때)을 대조한다 ④ 계정 설정 패치 파일을 `mktemp -d` 자리에 0600 으로 만들어 적용하고, 성공·실패와 상관없이 패치 파일과 토큰 파일을 지운다 ⑤ Gateway 를 올린다. 토큰은 어떤 명령의 인자에도 싣지 않는다 — curl 은 표준 입력의 설정(`-K -`)으로 머리를 받는다.
+- **「OpenClaw Gateway 호스트」 절이 하는 일** — 이 체크리스트 4·5 와 같은 순서를 명령으로 적는다. ① 토큰을 0600 파일 `~/.dodok-bridge-token` 에 둔다 ② 그 토큰으로 `plugin.tgz` 를 `mktemp -d` 자리에 받아(설치한 뒤 지운다) 파일 sha256 을 대조한다 ③ Gateway 를 내리고 설치한 뒤 `loaded` 와 번들 sha256(`~/.openclaw/extensions/dodok/dist/index.js` — 기본 상태 디렉터리일 때)을 대조한다 ④ 계정 설정 패치 파일을 `mktemp -d` 자리에 0600 으로 만들어 적용하고, 성공·실패와 상관없이 패치 파일과 토큰 파일을 지운다 ⑤ Gateway 를 올린다. 토큰은 어떤 명령의 인자에도 싣지 않는다 — curl 은 표준 입력의 설정(`-K -`)으로 머리를 받는다.
 - **AI 가 멈추고 사람에게 묻는 자리** — Gateway 를 어떻게 내리고 올리는지 모를 때, sha256 이 다를 때, 계정 설정 패치가 실패했을 때(토큰 파일이 이미 지워졌다 — 새로 발급해 다시 건네고, 쓰지 않은 토큰은 「폐기」한다), 그리고 마지막 확인: 사람이 이 연결 페이지 그 Gateway 카드의 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 본다(위 5). 카드에 페어링 대기가 보이면 요청 id 를 AI 에게 준다(`openclaw devices approve <요청 id>`).
-- **노드에서 토큰으로 설치 파일 받기** — `GET /api/v1/setup/plugin.tgz` 는 owner 세션 **또는** `Authorization: Bearer <브리지 토큰>`(폐기되지 않았고 묶인 Gateway 가 켜져 있을 것)으로 받는다. 폐기된 토큰·러너 토큰·틀린 값은 401 이고 브리지 실패 카운터(`bridgeFail`)에 센다. 꺼진 Gateway 의 토큰과 Bearer 없는 요청은 401 이되 세지 않는다. 로그인한 owner 아닌 사람은 403 이다. 손으로 받을 때도 토큰을 명령 인자에 넣지 않는다:
+- **노드에서 토큰으로 설치 파일 받기** — `GET /api/v1/setup/plugin.tgz` 는 owner 세션 **또는** `Authorization: Bearer <브리지 토큰>`(폐기되지 않았고 묶인 Gateway 가 켜져 있을 것)으로 받는다. 폐기된 토큰·러너 토큰·틀린 값은 401 이고 브리지 실패 카운터(`bridgeFail`)에 센다. 꺼진 Gateway 의 토큰과 Bearer 없는 요청은 401 이되 세지 않는다. 로그인한 owner 아닌 사람은 403 이다. 손으로 받을 때도 토큰을 명령 인자에 넣지 않고, 받는 자리는 고정 `/tmp` 이름이 아니라 `mktemp -d` 자리로 둔다(공유 `/tmp` 의 같은 이름은 다른 사용자가 미리 만들거나 바꿔치기할 수 있다). 설치한 뒤 `rm -rf "$dir"` 로 지운다:
   ```bash
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/dodok.XXXXXX")" && echo "$dir"
   printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.dodok-bridge-token)" \
-    | curl -fsS -K - https://<도메인>/api/v1/setup/plugin.tgz -o /tmp/dodok-openclaw-plugin.tgz
+    | curl -fsS -K - https://<도메인>/api/v1/setup/plugin.tgz -o "$dir/dodok-openclaw-plugin.tgz"
   ```
 
 ### 5. [웹] 브리지 접속 확인

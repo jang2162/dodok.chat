@@ -350,6 +350,97 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     );
   });
 
+  describe("설치 파일 받기·설치 명령을 bash 로 그대로 돌린다 — mktemp 자리에 받고 설치한 뒤 지운다", () => {
+    let root: string;
+    let tmp: string;
+    let log: string;
+    const fake = (bin: string, name: string, body: string[]) => {
+      writeFileSync(join(bin, name), ["#!/bin/sh", ...body, ""].join("\n"), { mode: 0o755 });
+    };
+
+    /** 가짜 curl(-o 자리에 쓰고 그 경로를 남긴다)·openclaw·npm(받은 파일이 아직 있는지 남긴다)·shasum·jq 와 설치된 러너 링크 */
+    const setup = () => {
+      root = mkdtempSync(join(tmpdir(), "dodok-llms-dl-"));
+      tmp = join(root, "tmp");
+      mkdirSync(tmp);
+      log = join(root, "log");
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      fake(bin, "curl", [
+        'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done',
+        'cat > /dev/null; printf tgz > "$out"; printf "curl %s\\n" "$out" >> "$LOG"',
+      ]);
+      fake(bin, "shasum", ['printf "shasum %s\\n" "$3" >> "$LOG"']);
+      fake(bin, "jq", ["cat > /dev/null"]);
+      fake(bin, "openclaw", [
+        '[ "$1 $2" = "plugins install" ] && { [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"; }',
+        "exit 0",
+      ]);
+      fake(bin, "npm", [
+        '[ "$1 $2" = "install -g" ] && [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"',
+      ]);
+      const pkgDir = join(root, "lib", "node_modules", "@dodok", "claude-runner");
+      mkdirSync(join(pkgDir, "dist"), { recursive: true });
+      writeFileSync(join(pkgDir, "dist", "main.js"), "", { mode: 0o755 });
+      symlinkSync("../lib/node_modules/@dodok/claude-runner/dist/main.js", join(bin, "dodok-runner"));
+      mkdirSync(join(root, "home", ".dodok-runner"), { recursive: true });
+      writeFileSync(join(root, "home", ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
+      writeFileSync(join(root, "home", ".dodok-runner", "token"), "drn_secret\n", { mode: 0o600 });
+      return { bin, pkgDir };
+    };
+    const run = (bin: string, script: string) =>
+      spawnSync("bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          HOME: join(root, "home"),
+          TMPDIR: tmp,
+          LOG: log,
+          PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+        },
+      });
+    const logLines = () => readFileSync(log, "utf8").trim().split("\n");
+
+    it("Gateway 2·3번 — 같은 셸에서 이어 돌리면 받은 파일을 설치하고 임시 디렉터리가 남지 않는다", () => {
+      const { bin } = setup();
+      try {
+        const steps = bashBlocks(gateway);
+        const res = run(
+          bin,
+          [blockWith(steps, "setup/plugin.tgz"), blockWith(steps, "plugins install")].join("\n"),
+        );
+        expect(res.status, res.stderr).toBe(0);
+        const [got = "", sum = "", install = ""] = logLines();
+        const file = got.replace(/^curl /, "");
+        expect(file.startsWith(`${tmp}/`), file).toBe(true);
+        expect(file.endsWith("/dodok-openclaw-plugin.tgz")).toBe(true);
+        expect(sum).toBe(`shasum ${file}`);
+        expect(install).toBe(`install ${file}`);
+        expect(readdirSync(tmp)).toEqual([]);
+        expect(gateway).not.toContain("/tmp/dodok-openclaw-plugin.tgz");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("러너 2번 — 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
+      const { bin, pkgDir } = setup();
+      try {
+        const res = run(bin, blockWith(bashBlocks(runner), "setup/runner.tgz"));
+        expect(res.status, res.stderr).toBe(0);
+        const [got = "", sum = "", install = "", bundle = ""] = logLines();
+        const file = got.replace(/^curl /, "");
+        expect(file.startsWith(`${tmp}/`), file).toBe(true);
+        expect(sum).toBe(`shasum ${file}`);
+        expect(install).toBe(`install ${file}`);
+        expect(bundle).toBe(`shasum ${realpathSync(pkgDir)}/dist/main.js`);
+        expect(readdirSync(tmp)).toEqual([]);
+        expect(runner).not.toContain("/tmp/dodok-claude-runner.tgz");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("토큰·패치 파일 명령을 bash 로 그대로 돌린다", () => {
     let home: string;
     let tmp: string;
