@@ -23,7 +23,7 @@ import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
-import { jumpToFirstRootAfter, loadLatest } from "./jump";
+import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
@@ -108,9 +108,20 @@ function ChannelMessages({
     [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
+  /**
+   * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
+   * 페이지 경계가 우연히 맞았으면 배너 대신 구분선에서 연다. `done` 이 되기 전에는 첫 위치를 잡지 않고 자리표시를 그린다.
+   * `first` 는 답의 seq(없음·실패·시간 초과면 undefined)
+   */
+  const [probe, setProbe] = useState<{ done: boolean; first?: number }>({ done: false });
+  const firstSeq = timeline?.items[0]?.seq;
+  const settledReadSeq = probe.first !== undefined && probe.first === firstSeq ? probe.first - 1 : undefined;
   const rows = useMemo(
-    () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me }) : []),
-    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me],
+    () =>
+      timeline
+        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me, settledReadSeq })
+        : [],
+    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq],
   );
   // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게.
   // 읽은 자리가 0 인 채널(새 멤버가 처음 여는 채널 등)은 끝에서 연다(사용자 결정) — 기록 전체가 안 읽음이라 구분선에서 열면
@@ -207,6 +218,35 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  // 묻는 것은 처음 위치를 잡기 전 한 번 — 배너가 뜰 경계(`showBanner` 와 같은 조건)이고 받은 목록에 구분선이 없을 때만.
+  // 결과로 가기 목표를 안고 열렸으면 그리로 가므로 묻지 않는다
+  const probing =
+    !probe.done &&
+    !positioned.current &&
+    entryTracked &&
+    !jump.pending &&
+    timeline?.hasOlder === true &&
+    firstSeq !== undefined &&
+    entryReadSeq !== undefined &&
+    entryReadSeq + 1 < firstSeq &&
+    !rows.some((r) => r.kind === "unread");
+  const probeStarted = useRef(false);
+  useEffect(() => {
+    if (!probing || probeStarted.current || entryReadSeq === undefined) return;
+    probeStarted.current = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 오류·시간 초과면 지금처럼 끝에서 열고 배너 — 오류 토스트는 내지 않는다(배너가 대신한다).
+    // 한 번만 묻는다 — 기다리는 동안 목록이 바뀌어도 다시 묻지 않는다(답은 그릴 때의 맨 앞과 견준다)
+    const late = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), AWAIT_UNREAD_MAX_MS);
+    });
+    void Promise.race([firstRootAfter(conversationId, entryReadSeq).then((m) => m?.seq), late])
+      .then(
+        (first) => setProbe({ done: true, first }),
+        () => setProbe({ done: true }),
+      )
+      .finally(() => clearTimeout(timer));
+  }, [probing, conversationId, entryReadSeq]);
   // 검색에서 골라 도착한 행으로 초점을 옮긴다 — 대화상자가 닫히기 전에는 그 초점 가두기가 도로 가져가므로 붙을 때까지 프레임마다
   // 다시 해 본다(강조가 풀릴 때까지). 행은 초점을 받은 뒤에도 `tabIndex` 를 지닌다(`landed`) — 떼면 초점이 body 로 떨어진다
   const [landed, setLanded] = useState<string>();
@@ -406,7 +446,8 @@ function ChannelMessages({
     raf = win.requestAnimationFrame(tick);
     for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
     return stop;
-  }, [rows.length, virtualizer, jumpPending, aimNonce]);
+    // 질의가 끝나면 스크롤 영역이 붙는다 — 행 수가 그대로여도(경계가 안 맞았다) 다시 돌아 첫 위치를 잡는다
+  }, [rows.length, virtualizer, jumpPending, aimNonce, probing]);
 
   // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로. 떨어진 창이면 먼저 최신으로 — 보내는 중 항목은 늘 목록 끝이라
   // 창 뒤에 곧바로 붙으면 그 사이의 받지 않은 메시지가 보이지 않은 채 이어진 것처럼 보인다
@@ -442,8 +483,8 @@ function ChannelMessages({
   // 뷰포트가 줄면(연결 배너가 생기거나 창이 작아지면) 브라우저는 scrollTop 을 그대로 둬 끝에서 그만큼 떨어진다 —
   // 붙어 있는 동안에만 다시 겨눈다. 스스로 위로 올린 사람은 끌어내리지 않는다(스펙 5.5, 태스크 13 수정 라운드 규칙).
   // 반영은 한 프레임 미룬다 — ResizeObserver 콜백 안에서 배치를 또 바꾸면 「loop completed with undelivered notifications」 가 난다
-  // 타임라인을 받기 전에는 스크롤 영역 대신 자리표시를 그린다 — 붙을 때 다시 건다
-  const mounted = timeline !== undefined;
+  // 타임라인을 받기 전(과 처음 안 읽은 곳을 묻는 동안)에는 스크롤 영역 대신 자리표시를 그린다 — 붙을 때 다시 건다
+  const mounted = timeline !== undefined && !probing;
   useEffect(() => {
     const el = scrollRef.current;
     const win = el?.ownerDocument.defaultView;
@@ -518,7 +559,8 @@ function ChannelMessages({
     ready &&
     timeline?.hasOlder === true &&
     oldestSeq !== undefined &&
-    entryReadSeq + 1 < oldestSeq;
+    entryReadSeq + 1 < oldestSeq &&
+    settledReadSeq === undefined;
   const toFirstUnread = async () => {
     if (entryReadSeq === undefined) return;
     let found: boolean;
@@ -533,7 +575,8 @@ function ChannelMessages({
     else toEnd();
   };
 
-  if (!timeline) return <Skeleton />;
+  // 질의가 끝날 때까지는 타임라인이 없을 때와 같은 자리표시 — 스크롤 영역이 없으니 첫 위치도 잡지 않는다
+  if (!timeline || probing) return <Skeleton />;
   const items = virtualizer.getVirtualItems();
   return (
     <div data-slot="messages" className="relative flex min-h-0 flex-1 flex-col">

@@ -33,21 +33,34 @@ function continues(prev: Message, m: Message): boolean {
 }
 
 /** 구분선이 서는 메시지 — 읽음 위치 뒤의 남의 최상위 보통 메시지. 에이전트 글은 id 가 같아도 내 글이 아니다 */
-function isNewForMe(m: Message, opts: { entryReadSeq?: number; me?: string }): boolean {
+function isNewForMe(m: Message, opts: GroupOpts): boolean {
   if (opts.entryReadSeq === undefined || m.seq <= opts.entryReadSeq) return false;
   if (m.kind !== "normal" || m.threadRootId !== undefined) return false;
   return !(m.authorType === "user" && m.authorId === opts.me);
 }
 
 /**
+ * `entryReadSeq` 가 있으면 「새 메시지」 행을 둔다. `settledReadSeq` 는 서버에 물어 확정한 진입 위치다 — 받은 목록의 맨 앞이 바로 읽음
+ * 위치 뒤 첫 루트였을 때(페이지 경계가 우연히 맞았다) 「맨 앞 seq − 1」. 그 사이는 답글뿐이라 칩 수·`isNewForMe` 는 `entryReadSeq` 로 잰
+ * 것과 같다
+ */
+type GroupOpts = { entryReadSeq?: number; me?: string; settledReadSeq?: number };
+
+/**
  * 첫 안 읽은 곳이 불러온 목록 안에서 정해졌는가. 목록이 일부(`hasOlder`)이고 그 맨 앞이 이미 `entryReadSeq + 1` 보다 뒤면
  * 그곳은 아직 안 불러온 쪽에 있다 — 배너가 맡는다(`hasOlder` 일 때 배너 조건의 정확한 반대다). 그래도 두면 맨 위 행이 되어,
- * 과거 페이지를 붙일 때 맨 위 날짜 구분선처럼 스크롤 기준 행이 되고 안 읽은 글을 따라 올라가 위치가 튄다
+ * 과거 페이지를 붙일 때 맨 위 날짜 구분선처럼 스크롤 기준 행이 되고 안 읽은 글을 따라 올라가 위치가 튄다.
+ * 서버가 맨 앞이 바로 그 자리라고 확정했으면(`settledReadSeq`) 정해진 것이다
  */
-function unreadSettled(timeline: Timeline, entryReadSeq: number | undefined): boolean {
-  if (entryReadSeq === undefined) return false;
+function unreadSettled(timeline: Timeline, opts: GroupOpts): boolean {
+  if (opts.entryReadSeq === undefined) return false;
   const first = timeline.items[0];
-  return !timeline.hasOlder || (first !== undefined && first.seq <= entryReadSeq + 1);
+  if (!timeline.hasOlder) return true;
+  if (first === undefined) return false;
+  return (
+    first.seq <= opts.entryReadSeq + 1 ||
+    (opts.settledReadSeq !== undefined && first.seq <= opts.settledReadSeq + 1)
+  );
 }
 
 const NO_APPROVALS: readonly Approval[] = [];
@@ -72,14 +85,14 @@ const byPlace = (a: Approval, b: Approval): number => {
  * 더 옛 메시지가 남아 있으면(`hasOlder`) 맨 위 구분선은 두지 않는다 — 그 날의 첫 메시지인지 아직 모르고,
  * 과거 페이지를 붙일 때 구분선이 맨 위에 남아 있으면 스크롤 기준 행이 되어 위치가 튄다.
  * `entryReadSeq` 가 있으면 그 뒤의 첫 남의 최상위 보통 메시지 앞(같은 자리의 날짜 구분선 뒤)에 「새 메시지」 행을 한 번 둔다 — 그 메시지는 머리.
- * 그 자리가 불러온 목록 안에서 정해졌을 때만이다(`unreadSettled`)
+ * 그 자리가 불러온 목록 안에서 정해졌을 때만이다(`unreadSettled` — 서버에 물어 확정한 `settledReadSeq` 포함)
  */
 export function groupRows(
   timeline: Timeline,
   bubbleRunIds: readonly string[],
   approvals: readonly Approval[] = NO_APPROVALS,
   tz?: string,
-  opts: { entryReadSeq?: number; me?: string } = {},
+  opts: GroupOpts = {},
 ): Row[] {
   const rows: Row[] = [];
   const sorted = [...approvals].sort(byPlace);
@@ -89,7 +102,7 @@ export function groupRows(
   let next = 0;
   let prev: Message | undefined;
   let prevDay: string | undefined;
-  let unreadPlaced = !unreadSettled(timeline, opts.entryReadSeq);
+  let unreadPlaced = !unreadSettled(timeline, opts);
   for (const message of timeline.items) {
     // 이 메시지보다 먼저 만들어진 확정 승인을 여기에 끼운다 — 승인 행은 시스템 카드처럼 묶음을 끊는다(prev 를 버린다)
     for (let a = settled[next]; a && placedAt(a) <= message.createdAt; a = settled[next]) {

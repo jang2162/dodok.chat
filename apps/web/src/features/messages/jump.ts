@@ -1,3 +1,4 @@
+import type { Message } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { qk } from "@/api/queries";
 import { fetchThreadPage } from "@/features/threads/queries";
@@ -83,13 +84,21 @@ export async function jumpToFirstRootAfter(
   conversationId: string,
   readSeq: number,
 ): Promise<boolean> {
-  const first = (await restFetchPage(conversationId, { afterSeq: readSeq, limit: 1 })).messages[0];
+  const first = await firstRootAfter(conversationId, readSeq);
   if (first === undefined) {
     await loadLatest(qc, channelId, conversationId);
     return false;
   }
   await jumpToSeq(qc, channelId, conversationId, first.seq);
   return true;
+}
+
+/**
+ * 읽음 위치 뒤 그 세션의 첫 루트(없으면 undefined) — 위치를 바꾸지 않고 묻기만 한다. 배너의 「처음 안 읽은 곳으로」와 처음 열 때
+ * 받은 목록의 맨 앞이 바로 그 루트인지(페이지 경계가 맞았는지) 가르는 데 쓴다
+ */
+export async function firstRootAfter(conversationId: string, readSeq: number): Promise<Message | undefined> {
+  return (await restFetchPage(conversationId, { afterSeq: readSeq, limit: 1 })).messages[0];
 }
 
 /** 떨어진 창(`hasNewer`)의 아래로 이어 받기 — 가장 새 항목 뒤를 한 쪽. 더 없으면 창이 끝에 닿는다 */
