@@ -252,7 +252,7 @@ describe("/mcp", () => {
       .result;
     expect(Object.keys(failed ?? {}).sort()).toEqual(["content", "isError"]);
     expect(failed?.isError).toBe(true);
-    const text = (failed?.content as Array<{ text: string }>)[0]?.text ?? "";
+    const text = (failed?.content as Array<{ text: string }> | undefined)?.[0]?.text ?? "";
     expect(Object.keys(JSON.parse(text) as object)).toEqual(["code", "message"]);
   });
 
