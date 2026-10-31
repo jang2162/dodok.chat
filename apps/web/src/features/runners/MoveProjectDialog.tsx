@@ -14,7 +14,7 @@ import {
 } from "@/ui/dialog";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
-import { CHECK_REASON, runnerRequestError } from "./copy";
+import { CHECK_REASON, projectPlace, runnerRequestError } from "./copy";
 import { useMoveRunnerProject } from "./mutations";
 
 /**
@@ -120,12 +120,13 @@ export function MoveProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* 줄의 다른 버튼과 같은 이름 꼴(ProjectList a11yName) — 라벨이 같은 두 줄을 자리로 가른다 */}
       <Button
         ref={trigger}
         type="button"
         size="sm"
         variant="outline"
-        aria-label={`${project.label} 옮기기`}
+        aria-label={`${project.label} (${projectPlace(project)}) 옮기기`}
         onClick={() => onOpenChange(true)}
       >
         옮기기

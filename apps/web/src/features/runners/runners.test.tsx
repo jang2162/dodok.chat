@@ -133,6 +133,9 @@ describe("프로젝트 줄", () => {
       expect(within(row).getByText("dodok", { selector: "span" })).toBeInTheDocument();
       expect(within(row).getByRole("button", { name: `dodok (${place}) 확인` })).toHaveTextContent(/^확인$/);
       expect(within(row).getByRole("button", { name: `dodok (${place}) 보관` })).toHaveTextContent(/^보관$/);
+      expect(within(row).getByRole("button", { name: `dodok (${place}) 옮기기` })).toHaveTextContent(
+        /^옮기기$/,
+      );
       await userEvent.click(within(row).getByRole("button", { name: `dodok (${place}) 이름 바꾸기` }));
       expect(within(row).getByRole("textbox", { name: `dodok (${place}) 새 이름` })).toBeInTheDocument();
     }
@@ -212,7 +215,7 @@ describe("다른 러너로 옮기기", () => {
     stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();
     const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("radio", { name: "데스크톱" })).toBeEnabled();
     expect(within(dialog).getByRole("radio", { name: "집 (끊김)" })).toBeDisabled();
@@ -237,7 +240,7 @@ describe("다른 러너로 옮기기", () => {
     );
     renderRunnersPage();
     const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
@@ -257,7 +260,7 @@ describe("다른 러너로 옮기기", () => {
     });
     renderRunnersPage();
     const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
@@ -269,7 +272,7 @@ describe("다른 러너로 옮기기", () => {
     const server = stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
     renderRunnersPage();
     const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
@@ -294,7 +297,7 @@ describe("줄이 빠진 뒤 초점 — 「프로젝트 추가」가 잠긴 카�
     renderRunnersPage();
     const old = await card("옛것");
     const row = await within(old).findByRole("listitem", { name: /^dodok \(/ });
-    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "새것" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
