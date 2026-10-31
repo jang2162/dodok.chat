@@ -1,6 +1,7 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownIcon } from "lucide-react";
 import {
+  type FocusEvent,
   memo,
   type ReactNode,
   useCallback,
@@ -138,12 +139,28 @@ function ChannelMessages({
   // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
   const hasNewer = timeline?.hasNewer === true;
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  /**
+   * 초점이 든 행의 key — 범위 밖으로 밀려나도 그 행은 늘 그린다. 지우면 그 안의 초점이 body 로 떨어진다(새 글이 몰려 들어오거나
+   * 스크롤해도). 행은 절대 위치라 범위 밖에 하나 더 그려도 자리가 맞다
+   */
+  const focusedKey = useRef<string | undefined>(undefined);
+  const rangeExtractor = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    const key = focusedKey.current;
+    if (key === undefined) return indexes;
+    const index = rowsRef.current.findIndex((r) => r.key === key);
+    if (index < 0 || indexes.includes(index)) return indexes;
+    return [...indexes, index].sort((a, b) => a - b);
+  }, []);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 64,
     overscan: 8,
     getItemKey,
+    rangeExtractor,
     // 채팅 모드: 앞에 붙는 행(과거 페이지)은 보던 행을 기준으로 자리를 지키고, 끝에 붙어 있으면 새 행·자라는 행을 따라간다
     anchorTo: "end",
     // 떨어진 창에서는 따라가지 않는다 — 아래로 이어 받은 행을 따라 내려가면 또 아래 끝이라 다음 쪽이 연달아 불린다.
@@ -174,8 +191,6 @@ function ChannelMessages({
   const aimUnread = useRef(false);
   /** 다시 겨눌 때 올린다 — 행 수가 그대로여도(이어 받기 기다림이 시간으로 끝날 때) 첫 붙임 효과를 다시 돌린다 */
   const [aimNonce, setAimNonce] = useState(0);
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
 
   const positioned = useRef(false);
   /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
@@ -439,6 +454,20 @@ function ChannelMessages({
     newer.onScrollBottom(fromBottom);
   };
 
+  // 초점이 든 행을 기억한다(`rangeExtractor`). 영역을 떠나면 잊는다 — 떠나는 순간(focusout)에는 아직 새 자리가 정해지지 않았으므로
+  // 한 틱 뒤에 본다. 창이 초점을 잃을 때(다른 앱·탭)는 초점이 그 요소에 그대로 남으므로 잊지 않는다
+  const onFocusCapture = (e: FocusEvent) => {
+    const row = (e.target as Element).closest<HTMLElement>("[data-index]");
+    const key = row ? rowsRef.current[Number(row.dataset.index)]?.key : undefined;
+    focusedKey.current = key;
+  };
+  const onBlurCapture = () => {
+    queueMicrotask(() => {
+      const el = scrollRef.current;
+      if (!el?.contains(el.ownerDocument.activeElement)) focusedKey.current = undefined;
+    });
+  };
+
   // 칩은 누르면 사라진다 — 초점을 목록으로 옮겨 잃지 않게
   const toEnd = () => {
     // 첫 붙임이 아직 구분선을 겨누고 있어도 그만둔다 — 끝으로 간 사람을 되끌지 않는다
@@ -515,6 +544,8 @@ function ChannelMessages({
         aria-label={threadRootId === undefined ? "메시지" : "스레드 메시지"}
         tabIndex={0}
         onScroll={onScroll}
+        onFocus={onFocusCapture}
+        onBlur={onBlurCapture}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>

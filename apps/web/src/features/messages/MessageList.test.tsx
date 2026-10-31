@@ -1,5 +1,5 @@
 import type { Message } from "@dodok/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { useMemo } from "react";
@@ -411,6 +411,48 @@ describe("MessageList", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull());
     // 이 경로는 jsdom 에서 고치기 전에도 0 이다 — 회귀 방지용(실물 확인은 태스크 13)
     await waitFor(() => expect(gap()).toBe(0));
+  });
+
+  it("초점이 든 행은 새 글에 밀려 범위 밖으로 나가도 그대로 그린다 — 초점이 body 로 떨어지지 않는다", async () => {
+    const { qc, atEnd, container } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    const row = () =>
+      [...container.querySelectorAll<HTMLElement>("[data-index]")].find((el) =>
+        el.textContent?.includes("본문 40"),
+      );
+    const button = within(row() as HTMLElement).getByRole("button", { name: "반응 추가" });
+    act(() => button.focus());
+    expect(document.activeElement).toBe(button);
+
+    // 끝에 붙은 채 새 글 40개가 몰려 들어온다 — 따라 내려가면 「본문 40」 은 보이는 범위·overscan 밖이다
+    act(() => updateTimeline(qc, CH, CH, (t) => range(41, 80).reduce((acc, m) => upsert(acc, m), t)));
+    await waitFor(() => expect(screen.getByText("본문 80")).toBeInTheDocument());
+    await waitFor(() => expect(atEnd()).toBe(true));
+    // 범위 밖 다른 행(본문 39)은 그리지 않는다 — 초점 행 하나만 더 그린다
+    expect(screen.queryByText("본문 39")).toBeNull();
+    expect(row()).toBeDefined();
+    expect(document.activeElement).toBe(button);
+    expect(button.isConnected).toBe(true);
+  });
+
+  it("초점이 목록을 떠나면 그 행을 더 붙잡지 않는다", async () => {
+    const { qc, atEnd, container } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    const row = [...container.querySelectorAll<HTMLElement>("[data-index]")].find((el) =>
+      el.textContent?.includes("본문 40"),
+    ) as HTMLElement;
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    onTestFinished(() => outside.remove());
+    act(() => within(row).getByRole("button", { name: "반응 추가" }).focus());
+    await act(async () => {
+      outside.focus();
+      await Promise.resolve();
+    });
+
+    act(() => updateTimeline(qc, CH, CH, (t) => range(41, 80).reduce((acc, m) => upsert(acc, m), t)));
+    await waitFor(() => expect(screen.getByText("본문 80")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("본문 40")).toBeNull());
   });
 
   it("채널을 옮기면 칩·스크롤 상태를 새로 시작한다", async () => {
