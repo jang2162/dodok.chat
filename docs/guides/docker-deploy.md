@@ -146,13 +146,13 @@ scp <받은 파일> <B>:/tmp/
 - 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「플러그인 설정」 아래의 「복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다. 파일은 고정 `/tmp` 경로가 아니라 `mktemp -d` 가 만든 자리(0700)에 둔다 — 공유 `/tmp` 의 고정 이름은 다른 사용자가 미리 만들어 둘 수 있다. 아래 [B] 설치까지 **같은 셸**에서 한다(`$dir` 를 쓴다).
   ```bash
   dir="$(mktemp -d "${TMPDIR:-/tmp}/dodok.XXXXXX")"     # [B] — 템플릿을 줘야 macOS 도 TMPDIR 을 따른다
-  ( umask 077; cat > "$dir/dodok.patch.json5" )     # [B] — 조각을 붙여 넣고 Ctrl-D
+  ( umask 077; cat > "${dir:?}/dodok.patch.json5" )     # [B] — 조각을 붙여 넣고 Ctrl-D
   ```
 - 파일을 둔 뒤 「복사했습니다」.
 
 **[B] 설치** — 「플러그인 받기」의 설치 명령 상자 아래 「복사」(「설치 명령 복사」)가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
 
-처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"` 를 돌린다 — 아래 블록이 그 순서다. 성공·실패와 상관없이 토큰이 든 패치 파일을 지운다. 패치가 실패하면(`openclaw config patch` 가 오류를 찍는다 — 뒤의 `rm` 이 있어 줄 전체의 종료 코드로는 가를 수 없다) 그 Gateway 카드에서 토큰을 새로 발급해 붙여 넣기부터 다시 하고, 쓰지 않은 토큰은 「폐기」한다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
+처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file "${dir:?}/dodok.patch.json5"; rm -rf "${dir:?}"` 를 돌린다 — 아래 블록이 그 순서다. 성공·실패와 상관없이 토큰이 든 패치 파일을 지운다. 패치가 실패하면(`openclaw config patch` 가 오류를 찍는다 — 뒤의 `rm` 이 있어 줄 전체의 종료 코드로는 가를 수 없다) 그 Gateway 카드에서 토큰을 새로 발급해 붙여 넣기부터 다시 하고, 쓰지 않은 토큰은 「폐기」한다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
 
 [B] — **Gateway 를 먼저 내리고** 설치한다(2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다 실패하면서 파일도 안 바꾼다 — `docs/guides/live-smoke.md` 「절차」 절 (b)). 계정 설정을 넣은 뒤 올린다.
 
@@ -161,7 +161,7 @@ scp <받은 파일> <B>:/tmp/
 openclaw plugins install /tmp/dodok-openclaw-plugin-0.0.0.tgz --force --accept-capabilities
 openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
 sha256sum ~/.openclaw/extensions/dodok/dist/index.js      # 기본 상태 디렉터리일 때. 연결 페이지의 「번들 sha256」과 같아야 한다(macOS 는 shasum -a 256)
-openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"
+openclaw config patch --file "${dir:?}/dodok.patch.json5"; rm -rf "${dir:?}"
 # Gateway 를 올린다
 ```
 
@@ -174,11 +174,11 @@ openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"
 - **`llms.txt`** — 서버가 로그인 없이 내주는 평문 안내서다(`GET /llms.txt`, `text/plain`, IP 당 분당 30 — 아래 「운영 화면」 레이트리밋 표). 서버가 자기 공개 오리진(`BRIDGE_PUBLIC_URL` 의 오리진, 없으면 `APP_ORIGIN`)·계정 설정의 `bridgeUrl`·서버가 품은 플러그인과 러너 파일의 파일 sha256·번들 sha256 을 채운다. 토큰·Gateway 목록·사람 이름은 싣지 않는다. 서버에 파일이 없으면 그 절은 「서버에 파일이 없습니다」 한 줄이고 AI 는 거기서 멈춘다. 본문 틀의 정본은 `apps/server/src/modules/setup/llms.ts` 다.
 - **「OpenClaw Gateway 호스트」 절이 하는 일** — 이 체크리스트 4·5 와 같은 순서를 명령으로 적는다. ① 토큰을 0600 파일 `~/.dodok-bridge-token` 에 둔다 ② 그 토큰으로 `plugin.tgz` 를 `mktemp -d` 자리에 받아(설치한 뒤 지운다) 파일 sha256 을 대조한다 ③ Gateway 를 내리고 설치한 뒤 `loaded` 와 번들 sha256(`~/.openclaw/extensions/dodok/dist/index.js` — 기본 상태 디렉터리일 때)을 대조한다 ④ 계정 설정 패치 파일을 `mktemp -d` 자리에 0600 으로 만들어 적용하고, 성공·실패와 상관없이 패치 파일과 토큰 파일을 지운다 ⑤ Gateway 를 올린다. 토큰은 어떤 명령의 인자에도 싣지 않는다 — curl 은 표준 입력의 설정(`-K -`)으로 머리를 받는다.
 - **AI 가 멈추고 사람에게 묻는 자리** — Gateway 를 어떻게 내리고 올리는지 모를 때, sha256 이 다를 때, 계정 설정 패치가 실패했을 때(토큰 파일이 이미 지워졌다 — 새로 발급해 다시 건네고, 쓰지 않은 토큰은 「폐기」한다), 그리고 마지막 확인: 사람이 이 연결 페이지 그 Gateway 카드의 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 본다(위 5). 카드에 페어링 대기가 보이면 요청 id 를 AI 에게 준다(`openclaw devices approve <요청 id>`).
-- **노드에서 토큰으로 설치 파일 받기** — `GET /api/v1/setup/plugin.tgz` 는 owner 세션 **또는** `Authorization: Bearer <브리지 토큰>`(폐기되지 않았고 묶인 Gateway 가 켜져 있을 것)으로 받는다. 폐기된 토큰·러너 토큰·틀린 값은 401 이고 브리지 실패 카운터(`bridgeFail`)에 센다. 꺼진 Gateway 의 토큰과 Bearer 없는 요청은 401 이되 세지 않는다. 로그인한 owner 아닌 사람은 403 이다. 손으로 받을 때도 토큰을 명령 인자에 넣지 않고, 받는 자리는 고정 `/tmp` 이름이 아니라 `mktemp -d` 자리로 둔다(공유 `/tmp` 의 같은 이름은 다른 사용자가 미리 만들거나 바꿔치기할 수 있다). 설치한 뒤 `rm -rf "$dir"` 로 지운다:
+- **노드에서 토큰으로 설치 파일 받기** — `GET /api/v1/setup/plugin.tgz` 는 owner 세션 **또는** `Authorization: Bearer <브리지 토큰>`(폐기되지 않았고 묶인 Gateway 가 켜져 있을 것)으로 받는다. 폐기된 토큰·러너 토큰·틀린 값은 401 이고 브리지 실패 카운터(`bridgeFail`)에 센다. 꺼진 Gateway 의 토큰과 Bearer 없는 요청은 401 이되 세지 않는다. 로그인한 owner 아닌 사람은 403 이다. 손으로 받을 때도 토큰을 명령 인자에 넣지 않고, 받는 자리는 고정 `/tmp` 이름이 아니라 `mktemp -d` 자리로 둔다(공유 `/tmp` 의 같은 이름은 다른 사용자가 미리 만들거나 바꿔치기할 수 있다). 설치한 뒤 `rm -rf "${dir:?}"` 로 지운다:
   ```bash
   dir="$(mktemp -d "${TMPDIR:-/tmp}/dodok.XXXXXX")" && echo "$dir"
   printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.dodok-bridge-token)" \
-    | curl -fsS -K - https://<도메인>/api/v1/setup/plugin.tgz -o "$dir/dodok-openclaw-plugin.tgz"
+    | curl -fsS -K - https://<도메인>/api/v1/setup/plugin.tgz -o "${dir:?}/dodok-openclaw-plugin.tgz"
   ```
 
 ### 5. [웹] 브리지 접속 확인
@@ -385,7 +385,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 1. **발급** — 그 Gateway 카드의 「브리지 토큰」에서 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 에서 체크리스트 4 「브리지 토큰 발급」의 붙여 넣기 블록대로(`mktemp -d` 자리의 `$dir/dodok.patch.json5`) 두고 「복사했습니다」.
 2. **[B] 설정 교체** — 플러그인은 다시 설치하지 않는다.
    ```bash
-   openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"     # 1번과 같은 셸 — 성공·실패와 상관없이 지운다
+   openclaw config patch --file "${dir:?}/dodok.patch.json5"; rm -rf "${dir:?}"     # 1번과 같은 셸 — 성공·실패와 상관없이 지운다
    # Gateway 를 재시작한다(호스트가 Gateway 를 돌리는 방식대로)
    ```
 3. **접속 이동 확인** — 같은 카드의 「브리지 토큰」에서 「지금 접속 중」이 새 줄로 옮겨 가고, 옛 줄에 「이제 폐기해도 됩니다 — 플러그인이 새 토큰으로 접속해 있습니다」가 뜬다. 옮겨 가지 않으면 [B] 의 설정·재시작을 다시 본다 — 이 단계 전에는 옛 토큰을 폐기하지 않는다.

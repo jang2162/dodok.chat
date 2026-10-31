@@ -50,7 +50,7 @@ const download = (tokenFile: string, url: string, out: string) =>
 
 function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
   const { origin, webOrigin, bridgeUrl } = input;
-  const out = '"$dir/dodok-openclaw-plugin.tgz"';
+  const out = '"${dir:?}/dodok-openclaw-plugin.tgz"';
   return `설치할 것: dodok OpenClaw 채널 플러그인. 이 호스트의 OpenClaw Gateway 안에서 돌며 dodok 서버로 나가는 연결 하나를 연다(호스트 쪽 포트는 열지 않는다).
 
 - 파일 sha256: ${file.sha256}
@@ -64,7 +64,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    chmod 600 ${BRIDGE_TOKEN_FILE}
    \`\`\`
 
-2. 플러그인 파일을 \`mktemp -d\` 로 만든 임시 디렉터리에 받아 파일 sha256 을 대조한다. 다르면 멈추고 \`rm -rf "$dir"\` 로 지운다. 3번까지 같은 셸에서 이어 간다(셸이 바뀌면 첫 줄이 찍은 경로를 dir 에 다시 둔다).
+2. 플러그인 파일을 \`mktemp -d\` 로 만든 임시 디렉터리에 받아 파일 sha256 을 대조한다. 다르면 멈추고 \`rm -rf "\${dir:?}"\` 로 지운다. 3번까지 같은 셸에서 이어 간다(셸이 바뀌면 첫 줄이 찍은 경로를 dir 에 다시 둔다).
 
    \`\`\`bash
    ${MKTEMP_DIR}
@@ -75,7 +75,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 3. Gateway 를 내린다(호스트가 Gateway 를 돌리는 방식대로 — 모르면 사람에게 묻는다). 떠 있는 Gateway 에 설치하면 파일이 바뀌지 않을 수 있다. 설치하고(받은 파일은 설치한 뒤 지운다), 로드됐는지와 번들 sha256 을 확인한다. 다르면 멈춘다.
 
    \`\`\`bash
-   openclaw plugins install ${out} --force --accept-capabilities; rm -rf "$dir"
+   openclaw plugins install ${out} --force --accept-capabilities; rm -rf "\${dir:?}"
    openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
    shasum -a 256 ~/.openclaw/extensions/dodok/dist/index.js   # 기본 상태 디렉터리일 때
    \`\`\`
@@ -86,8 +86,8 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    (
      token="$(cat ${BRIDGE_TOKEN_FILE})" && [ -n "$token" ] || exit 1
      dir="$(mktemp -d "\${TMPDIR:-/tmp}/dodok.XXXXXX")" || exit 1
-     trap 'rm -rf "$dir" ${BRIDGE_TOKEN_FILE}' EXIT
-     patch="$dir/dodok.patch.json5"
+     trap 'rm -rf "\${dir:?}" ${BRIDGE_TOKEN_FILE}' EXIT
+     patch="\${dir:?}/dodok.patch.json5"
      ( umask 077; printf '{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}\\n' \\
          '${bridgeUrl}' "$token" > "$patch" ) && chmod 600 "$patch" && openclaw config patch --file "$patch"
    )
@@ -109,7 +109,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 
 function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
   const { origin } = input;
-  const out = '"$dir/dodok-claude-runner.tgz"';
+  const out = '"${dir:?}/dodok-claude-runner.tgz"';
   // 러너는 천장만 쥔다(러너 일반화 스펙 2장) — 에이전트는 앱에서 만든다. 상한은 낮게: 서버 쪽 admin 이 루트 안 어디서든 이 상한까지 돌릴 수 있다
   const config = {
     serverUrl: origin,
@@ -145,7 +145,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${MKTEMP_DIR}
    ${download(RUNNER_TOKEN_FILE, `${origin}/api/v1/setup/runner.tgz`, out).replaceAll("\n", "\n   ")}
    shasum -a 256 ${out}   # Linux 는 sha256sum
-   npm install -g ${out}; rm -rf "$dir"
+   npm install -g ${out}; rm -rf "\${dir:?}"
    shasum -a 256 "${RUNNER_PKG_DIR}/dist/main.js"
    \`\`\`
 

@@ -443,6 +443,41 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       }
     });
 
+    it("$dir 이 비면(셸이 바뀜) 받기·설치·지우기가 루트 경로를 건드리지 않고 멈춘다", () => {
+      const { bin } = setup();
+      try {
+        const without = (block: string) =>
+          block
+            .split("\n")
+            .filter((l) => !l.includes("mktemp -d"))
+            .join("\n");
+        const gSteps = bashBlocks(gateway);
+        const rSteps = bashBlocks(runner);
+        for (const block of [
+          blockWith(gSteps, "setup/plugin.tgz"),
+          blockWith(gSteps, "plugins install"),
+          blockWith(rSteps, "setup/runner.tgz"),
+        ]) {
+          // 앞선 셸이 만든 dir 을 잃은 것처럼 dir 없이 돌린다 — 받기(curl)·설치가 한 번도 실행되지 않아야 한다
+          const res = run(bin, `unset dir\n${without(block)}`);
+          expect(res.status, block).not.toBe(0);
+          // bash 는 비어 있는 `${dir:?}` 에서 스크립트를 통째로 끝낸다 — 오류 문구가 그 원인이다
+          expect(res.stderr, block).toContain("dir: parameter null or not set");
+          expect(without(block), block).not.toMatch(/\$dir\b/); // 막지 않는 맨 $dir 이 남지 않았다
+          // 설치 줄 뒤의 지우기도 빈 값으로 돌지 않는다(앞 줄이 먼저 끝내므로 그 줄만 따로 돌린다)
+          const rm = /rm -rf "\$\{dir:\?\}"/.exec(block);
+          if (block.includes("rm -rf")) {
+            expect(rm, block).not.toBeNull();
+            const alone = run(bin, `unset dir\n${rm?.[0]}`);
+            expect(alone.status, alone.stderr).not.toBe(0);
+          }
+        }
+        expect(() => readFileSync(log, "utf8")).toThrow(); // 가짜 curl·openclaw·npm 이 아무것도 남기지 않았다
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it("러너 2번 — 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
       const { bin, pkgDir } = setup();
       try {
