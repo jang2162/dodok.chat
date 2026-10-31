@@ -6,6 +6,7 @@ import {
   type MessageInteraction,
   neutralizeMentionTokens,
   parseMentions,
+  type Participant,
   type SystemKind,
   type SystemMeta,
   type ThreadSummary,
@@ -35,6 +36,20 @@ import { assertConversationWritable, getConversation, touchConversation } from "
 import { isDmChannel } from "../dms/service";
 import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
+
+/**
+ * 에이전트 글의 멘션 — tokenize 뒤 본문의 리터럴 사람 토큰(`<@u:…>`)은 모델이 그대로 쓴 것일 수 있다. 채널 참여자가 아닌 사람은
+ * 멘션에서 뺀다(본문은 그대로) — 푸시 대상(push/triggers.ts)이 채널 밖 사람에게 닿지 않게. 에이전트 멘션은 걸러내지 않는다 —
+ * 라우터가 멤버가 아닌 에이전트를 막힘(disabled)으로 따로 다룬다
+ */
+function agentMentions(
+  text: string,
+  participants: Participant[],
+): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
+  const { bodyMd, mentions } = tokenize(text, participants);
+  const people = new Set(participants.filter((p) => p.type === "user").map((p) => p.id));
+  return { bodyMd, mentions: { ...mentions, users: mentions.users.filter((id) => people.has(id)) } };
+}
 
 /**
  * DM 의 본문 — 멘션을 토큰으로 바꾸지 않는다(에이전트 DM 스펙 2장). 토큰이 되면 멘션된 사람이 자동 참여(joinChannelIfAbsent)로 DM 멤버가
@@ -405,7 +420,7 @@ export function createAgentMessage(
       const now = new Date();
       const { bodyMd, mentions } = isDmChannel(tx, channelId)
         ? plainInDm(input.bodyMd)
-        : tokenize(input.bodyMd, channelParticipants(tx, channelId));
+        : agentMentions(input.bodyMd, channelParticipants(tx, channelId));
       return {
         kind: "normal",
         authorType: "agent",
