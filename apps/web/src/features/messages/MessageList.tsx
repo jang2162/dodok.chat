@@ -192,15 +192,19 @@ function ChannelMessages({
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
   // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다. 받은 창에서 한 번만 찾는다:
-  // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다
+  // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다.
+  // 구분선이 없으면(그 창의 안 읽은 글이 다 내 글 등) 배너가 물은 첫 루트 행으로 간다 — 이동을 거두면 들어갈 때의 끝 맞추기
+  // (virtual-core 가 5초 동안 끝을 다시 겨눈다)가 살아 있는 동안 받은 목록의 끝까지 끌려 내려간다
   const [toUnread, setToUnread] = useState(false);
   const [bannerGone, setBannerGone] = useState(false);
   useEffect(() => {
     if (!toUnread) return;
     setToUnread(false);
-    const index = rows.findIndex((r) => r.kind === "unread");
+    let index = rows.findIndex((r) => r.kind === "unread");
+    if (index < 0 && entryReadSeq !== undefined)
+      index = rows.findIndex((r) => r.kind === "message" && r.message.seq > entryReadSeq);
     if (index >= 0) arrive(index);
-  }, [toUnread, rows, arrive]);
+  }, [toUnread, rows, arrive, entryReadSeq]);
   // 「끝이 보임」은 붙어 있음(`stuck`)이다. 그 처음 값(true)은 스크롤하기 전 값이라 떨어진 창과 결과로 가기 목표를 따로 뺀다 —
   // 떨어진 창의 아래 끝은 진짜 끝이 아니고(`lastSeq` 는 창이 아니라 채널의 끝이라 보내면 받지 않은 메시지까지 읽음이 된다),
   // 목표를 안고 열린 목록은 끝으로 가지 않는다

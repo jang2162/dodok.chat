@@ -932,8 +932,8 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(fromEnd()).toBe(0);
   });
 
-  it("받은 창에 구분선이 없었으면 뒤에 이어 받은 쪽에 구분선이 생겨도 보던 자리를 끌고 가지 않는다", async () => {
-    // 첫 루트 뒤가 내 글뿐인 창 — 받은 창의 아래 끝에 머물러 다음 쪽을 이어 받고, 거기서 처음 남의 글(61)이 나온다
+  /** 첫 루트(31) 뒤가 내 글뿐인 창 — 구분선이 없다. 다음 쪽(56~)에서 처음 남의 글(61)이 나온다 */
+  const mineAfterFirstRoot = () =>
     serve({
       [firstRootUrl(30)]: { messages: mine(31, 31), hasMore: true },
       [aroundUrl(31)]: { messages: [...range(6, 30), ...mine(31, 55)], hasMore: true, hasMoreAfter: true },
@@ -942,10 +942,45 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
         hasMore: true,
       },
     });
+  /** 받은 창(6~55)에서 첫 루트(31)의 행 — 가운데에 둔 scrollTop */
+  const firstRootTop = 25 * ROW + ROW / 2 - RECT.height / 2;
+
+  it("받은 창에 구분선이 없으면 배너가 물은 첫 루트 행으로 간다", async () => {
+    mineAfterFirstRoot();
     const { qc, scroller } = setupEntry(timelineOf(range(61, 100), true), 30);
     await screen.findByText("본문 100");
     await pastVirtualizerReconcile();
     await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(6));
+    await waitFor(() => expect(scroller().scrollTop).toBe(firstRootTop));
+    expect(separator()).toBeNull();
+  });
+
+  /**
+   * 들어간 지 5초 안 — 들어갈 때의 끝 맞추기(virtual-core 가 `scrollToEnd` 뒤 5초 동안 끝을 다시 겨눈다)가 살아 있다.
+   * 구분선이 없다고 이동을 거두면 그 겨누기가 받은 목록의 끝까지 끌고 가 다음 쪽까지 이어 받는다(plan.md 이월)
+   */
+  it("들어간 지 5초 안에 배너를 눌러도 구분선 없는 창에서 끝으로 끌려가지 않는다 — 첫 루트 행에 선다", async () => {
+    mineAfterFirstRoot();
+    const { qc, scroller, fromEnd } = setupEntry(timelineOf(range(61, 100), true), 30);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(6));
+    await act(() => new Promise((r) => setTimeout(r, 100)));
+    expect(scroller().scrollTop).toBe(firstRootTop);
+    expect(fromEnd()).toBeGreaterThan(0);
+    expect(urls()).not.toContain(`/api/v1/conversations/${CH}/messages?limit=50&afterSeq=55`);
+  });
+
+  it("받은 창에 구분선이 없었으면 뒤에 이어 받은 쪽에 구분선이 생겨도 보던 자리를 끌고 가지 않는다", async () => {
+    mineAfterFirstRoot();
+    const { qc, scroller, scrollTo } = setupEntry(timelineOf(range(61, 100), true), 30);
+    await screen.findByText("본문 100");
+    await pastVirtualizerReconcile();
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(scroller().scrollTop).toBe(firstRootTop));
+    // 받은 창의 아래 끝까지 내려 다음 쪽을 이어 받는다 — 거기서 처음 남의 글(61)이 나온다
+    await scrollTo(50 * ROW - RECT.height);
     await waitFor(() => expect(items(qc)?.at(-1)?.seq).toBe(100));
     expect(items(qc)?.[0]?.seq).toBe(6);
     await act(() => new Promise((r) => setTimeout(r, 50)));
