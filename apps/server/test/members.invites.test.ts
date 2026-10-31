@@ -148,6 +148,7 @@ describe("invites REST", () => {
       headers,
     });
     expect(again.statusCode).toBe(404);
+    expect(again.json()).toEqual({ code: "NOT_FOUND", message: "대기 중인 초대를 찾을 수 없습니다" });
     expect((await app.fastify.inject({ method: "GET", url: "/api/v1/invites", headers })).json()).toEqual({
       invites: [],
     });

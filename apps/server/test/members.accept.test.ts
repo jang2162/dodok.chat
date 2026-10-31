@@ -48,7 +48,7 @@ function counts(a: App) {
   };
 }
 
-/** 로그인 버킷(5회/분)을 넉넉히 — 수락·재설정·로그인이 같은 IP 버킷을 쓴다 */
+/** 로그인 버킷(5회/분)을 넉넉히 — 이 파일은 로그인을 여러 번 한다. 수락·재설정은 초대 경로 버킷(invitePublicPerMin)이라 따로다 */
 const roomy = { limits: { localLoginPerMin: 100 } };
 
 describe("POST /api/v1/invites/lookup·accept", () => {

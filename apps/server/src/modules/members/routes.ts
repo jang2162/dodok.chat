@@ -117,10 +117,11 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     const me = sessionUser(request);
     const at = now();
     const pending = getPendingInvite(ctx.db, ctx.workspaceId, id, at);
-    if (!pending) throw apiError("NOT_FOUND", "invite not found");
+    if (!pending) throw apiError("NOT_FOUND", "대기 중인 초대를 찾을 수 없습니다");
     if (pending.role === "admin" && me.role !== "owner")
       throw apiError("FORBIDDEN", "admin 초대는 owner 만 폐기할 수 있다");
-    if (!revokeInvite(ctx.db, ctx.workspaceId, id, at)) throw apiError("NOT_FOUND", "invite not found");
+    if (!revokeInvite(ctx.db, ctx.workspaceId, id, at))
+      throw apiError("NOT_FOUND", "대기 중인 초대를 찾을 수 없습니다");
     ctx.logger.info({ inviteId: id, by: me.id }, "invite revoked");
     return reply.status(204).send();
   });
