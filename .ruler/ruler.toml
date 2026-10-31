@@ -1,5 +1,5 @@
 # ruler 설정 — 에이전트 지침 소스는 .ruler/, CLAUDE.md 는 생성물이다(pnpm exec ruler apply)
-default_agents = ["claude"]
+default_agents = ["claude", "opencode"]
 
 [backup]
 enabled = false
@@ -23,4 +23,7 @@ args = [
 ]
 
 [agents.claude]
+output_path = "AGENTS.md"
+
+[agents.opencode]
 output_path = "AGENTS.md"
