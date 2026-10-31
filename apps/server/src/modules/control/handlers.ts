@@ -150,6 +150,8 @@ const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set(["agentId", "name
 function assertControlPatchable(ctx: HandlerContext, input: Record<string, unknown>, agentId: string): void {
   const agent = getAgent(ctx.db, agentId, ctx.workspaceId);
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
+  // 보관한 에이전트는 제어 도구로 바꾸지 않는다(REST PATCH 는 그대로) — 확인 카드 전에 거절한다
+  if (agent.archivedAt !== null) throw apiError("AGENT_ARCHIVED", "삭제된 에이전트입니다", { agentId });
   if (agent.provider !== "runner") return;
   const field = Object.keys(input).find((key) => !RUNNER_AGENT_CONTROL_KEYS.has(key));
   if (field !== undefined)

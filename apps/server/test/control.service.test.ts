@@ -551,6 +551,26 @@ describe("제어 서비스", () => {
     });
   });
 
+  describe("보관한 에이전트 — update_agent 는 확인 카드 전에 미리 거절", () => {
+    it("update_agent 는 AGENT_ARCHIVED(에이전트 주체도 카드 없이), 바뀌지 않는다", async () => {
+      const target = newAgent(app);
+      expectOk(await call(pat(owner), "archive_agent", { agentId: target.id }));
+      const { principal } = openRun(app, owner);
+      const before = controlRows().length;
+      expect(errorOf(await call(pat(owner), "update_agent", { agentId: target.id, name: "되살림" }))).toEqual(
+        {
+          code: "AGENT_ARCHIVED",
+          message: "삭제된 에이전트입니다",
+        },
+      );
+      expect(
+        errorOf(await call(principal, "update_agent", { agentId: target.id, name: "되살림" })).code,
+      ).toBe("AGENT_ARCHIVED");
+      expect(controlRows()).toHaveLength(before);
+      expect(app.db.select().from(agents).where(eq(agents.id, target.id)).get()?.name).toBe(target.name);
+    });
+  });
+
   describe("그 런을 시킨 사람", () => {
     it("시킨 사람 없음(자동화 사슬) — 쓰기 FORBIDDEN 「사람이 시킨 런에서만…」, 읽기는 된다", async () => {
       const { channel, principal } = openRun(app, null);
