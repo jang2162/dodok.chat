@@ -232,6 +232,14 @@ describe("syncPushSubscription", () => {
     expect(pushOnThisDevice()).toBe(true);
   });
 
+  it("키가 바뀌어 다시 구독할 때도 userVisibleOnly: true — 실제 Chrome 은 false 구독을 거부한다", async () => {
+    stub = stubPush({ permission: "granted", subscription: fakeSubscription(OTHER_KEY) });
+    localStorage.setItem(FLAG, "u1");
+    await syncPushSubscription("u1");
+    expect(pushStub.subscribed).toHaveLength(1);
+    expect(pushStub.subscribed[0]).toMatchObject({ userVisibleOnly: true });
+  });
+
   it("구독이 없는데 플래그가 있으면 플래그를 지운다", async () => {
     stub = stubPush({ permission: "granted" });
     localStorage.setItem(FLAG, "u1");

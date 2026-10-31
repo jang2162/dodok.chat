@@ -62,6 +62,7 @@ export function ConfirmDialog({
       armMs={escalated ? ESCALATED_ARM_MS : 0}
       destructive={destructive}
       pending={pending}
+      open={open}
       label={pending && pendingLabel ? pendingLabel : confirmLabel}
       onConfirm={onConfirm}
     />
@@ -108,12 +109,14 @@ function ConfirmButton({
   armMs,
   destructive,
   pending,
+  open,
   label,
   onConfirm,
 }: {
   armMs: number;
   destructive: boolean;
   pending: boolean;
+  open: boolean;
   label: string;
   onConfirm: () => void;
 }) {
@@ -123,11 +126,35 @@ function ConfirmButton({
     const timer = setTimeout(() => setArmed(true), armMs);
     return () => clearTimeout(timer);
   }, [armMs]);
+  // 같은 틱의 두 번째 누름을 거른다 — `pending` 은 다시 그린 뒤에야 참이라 그 사이 누름이 요청을 한 번 더 보낸다(AgentRow 꼴).
+  // 진행이 끝나면(`pending` 이 거짓으로) 다시 받는다. 누른 뒤 한 틱이 지나도 진행 중이 아니면(진행 없이 닫는 확인, 그려지기 전에
+  // 이미 실패한 요청) 그때 푼다 — react-query 는 `mutate` 안에서 진행 알림 타이머를 먼저 걸므로 이 타이머보다 앞서 그려진다
+  const sending = useRef(false);
+  const pendingNow = useRef(pending);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const was = pendingNow.current;
+    pendingNow.current = pending;
+    if (pending) return;
+    sending.current = false;
+    // 진행이 끝났는데 대화상자가 열린 채면(실패) — 기다리는 동안 잠긴 이 버튼에서 브라우저가 초점을 body 로 버렸다. 다시 누를 수 있는
+    // 이 버튼으로 되돌린다. 다른 곳에 초점이 있으면(사람이 옮겼다) 건드리지 않는다
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (was && open && lost) button.current?.focus();
+  }, [pending, open]);
   return (
     <Button
+      ref={button}
       variant={destructive ? "destructive" : "default"}
       disabled={pending || !armed}
-      onClick={onConfirm}
+      onClick={() => {
+        if (sending.current) return;
+        sending.current = true;
+        onConfirm();
+        setTimeout(() => {
+          if (!pendingNow.current) sending.current = false;
+        }, 0);
+      }}
     >
       {label}
     </Button>

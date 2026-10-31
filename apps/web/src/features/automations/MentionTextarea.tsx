@@ -83,11 +83,23 @@ export function MentionTextarea({
     );
   }, []);
 
+  // 고른 후보가 늘 보이게 — 낮은 화면(화상 키보드)에서 목록이 대화상자 스크롤 상자 아래로 잘려도 ↑↓ 로 고른 줄은 들어온다(D3)
+  useLayoutEffect(() => {
+    if (!open || !active.option) return;
+    document.getElementById(active.option)?.scrollIntoView?.({ block: "nearest" });
+  }, [open, active.option]);
+
+  const { maxLength } = props;
+
   function pick({ label }: MentionNodeAttrs) {
     if (query === undefined) return;
     const start = caret - query.length - 1;
-    const inserted = `@${label ?? ""} `;
-    const next = value.slice(0, start) + inserted + value.slice(caret);
+    const before = value.slice(0, start);
+    const after = value.slice(caret);
+    // 프로그램으로 넣는 글자는 textarea 의 maxLength 를 지나지 않는다 — 넘칠 만큼은 자른다
+    const room = maxLength === undefined ? Infinity : Math.max(0, maxLength - before.length - after.length);
+    const inserted = `@${label ?? ""} `.slice(0, room);
+    const next = before + inserted + after;
     pendingCaret.current = start + inserted.length;
     setCaret(start + inserted.length);
     onChange(next);

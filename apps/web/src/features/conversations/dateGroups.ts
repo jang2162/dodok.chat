@@ -1,4 +1,5 @@
 import type { Conversation } from "@dodok/shared";
+import { useEffect, useState } from "react";
 
 export type DateGroup = "today" | "yesterday" | "week" | "older";
 
@@ -42,4 +43,22 @@ export function groupByDate(
     else out.push({ group, conversations: [c] });
   }
   return out;
+}
+
+/** 다음 자정(브라우저 시간대)까지 남은 ms */
+export function msUntilNextDay(now: Date): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
+}
+
+/**
+ * 묶음을 셀 「지금」 — 다음 자정에 한 번 다시 그린다. 렌더 시각으로만 세면 자정을 넘겨도 다시 그리기 전까지 「오늘」에 머문다.
+ * 타이머는 늘 하나이고, 일찍 깨면(시계 조정) 남은 만큼 다시 건다
+ */
+export function useToday(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setTimeout(() => setNow(new Date()), msUntilNextDay(now));
+    return () => clearTimeout(timer);
+  }, [now]);
+  return now;
 }

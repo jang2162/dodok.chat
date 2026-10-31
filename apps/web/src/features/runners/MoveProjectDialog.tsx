@@ -1,5 +1,5 @@
 import type { Agent, RunnerProject, RunnerSummary } from "@dodok/shared";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -73,7 +73,13 @@ export function MoveProjectDialog({
   const [error, setError] = useState<string>();
   const sending = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const submitButton = useRef<HTMLButtonElement>(null);
+  const errorLine = useRef<HTMLDivElement>(null);
+  const focusError = useRef(false);
+  useEffect(() => {
+    if (error === undefined || !focusError.current) return;
+    focusError.current = false;
+    errorLine.current?.focus();
+  }, [error]);
   const moved = useRef(false);
   const id = useId();
   const others = runners.filter((r) => r.id !== runner.id && !r.revoked);
@@ -95,7 +101,8 @@ export function MoveProjectDialog({
     sending.current = true;
     setError(undefined);
     // 옮긴 목록이 다시 오면 이 줄(과 대화상자)이 먼저 사라진다 — 언마운트된 컴포넌트에는 mutate 의 콜백이 불리지 않으므로
-    // mutateAsync 로 이어 초점을 직접 옮긴다. 실패면 누른 「옮기기」가 기다리는 동안 잠겨 초점이 body 로 떨어졌으니 그 버튼으로 되돌린다
+    // mutateAsync 로 이어 초점을 직접 옮긴다. 실패면 누른 「옮기기」가 기다리는 동안 잠겨 초점이 body 로 떨어졌다 — 그 버튼은 실패 뒤에도
+    // 잠겨 있을 수 있으므로(옮길 러너가 끊겨 고른 것이 사라짐) 잠기지 않는 오류 줄로 옮긴다(아래 효과 — 오류가 그려진 뒤)
     move.mutateAsync({ id: project.id, runnerId: picked.id }).then(
       () => {
         sending.current = false;
@@ -105,8 +112,8 @@ export function MoveProjectDialog({
       },
       (err: unknown) => {
         sending.current = false;
+        focusError.current = true;
         setError(moveError(err, agents));
-        requestAnimationFrame(() => submitButton.current?.focus());
       },
     );
   }
@@ -167,12 +174,12 @@ export function MoveProjectDialog({
             </fieldset>
           )}
           {error !== undefined && (
-            <Alert variant="destructive">
+            <Alert ref={errorLine} tabIndex={-1} variant="destructive" className="outline-none">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
           <DialogFooter>
-            <Button ref={submitButton} type="submit" disabled={!picked || move.isPending}>
+            <Button type="submit" disabled={!picked || move.isPending}>
               {move.isPending ? "옮기는 중…" : "옮기기"}
             </Button>
           </DialogFooter>

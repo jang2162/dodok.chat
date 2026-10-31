@@ -264,7 +264,8 @@ export function IssueTokenDialog({
           <p className="text-xs text-muted-foreground">
             Gateway 호스트에서 이 조각을 파일로 저장해{" "}
             <code className="font-mono">openclaw config patch --file</code> 로 적용하고 저장한 파일은
-            지우세요. 옛 토큰도 계속 통하므로 에이전트는 멈추지 않습니다.
+            지우세요. 옛 토큰도 계속 통하므로 토큰 때문에 에이전트가 멈추지는 않습니다(설정을 바꾸는 순간 짧게
+            끊깁니다).
           </p>
           <CopyBlock
             text={JSON.stringify(issued.pluginConfig, null, 2)}

@@ -67,8 +67,13 @@ export const resetApprovalNotices = (): void => notified.clear();
  * 조사는 앞말의 받침을 따른다(`@dev 가` · `@fin 이`). 로마자 낱말과 조사 사이는 띄운다 —
  * 모르는 자리를 메운 우리말(「에이전트」·「도구」)은 붙여 쓴다
  */
-export function approvalNotifyTitle(a: Pick<Approval, "toolName">, handle?: string): string {
+export function approvalNotifyTitle(
+  a: Pick<Approval, "toolName"> & { kind?: Approval["kind"] },
+  handle?: string,
+): string {
   const who = handle ? `@${handle} ${josa(`@${handle}`, "이", "가")}` : "에이전트가";
+  // 확인 카드(`dodok_control`, ApprovalCard 와 같은 판별)는 도구 이름 대신 고정 문구 — 바꾸려는 값도 싣지 않는다
+  if (a.kind === "dodok_control") return `확인 필요 — ${who} 채널 설정을 바꾸려 합니다`;
   const what = a.toolName ? `${a.toolName} ${josa(a.toolName, "을", "를")}` : "도구를";
   return `승인 필요 — ${who} ${what} 실행하려 합니다`;
 }

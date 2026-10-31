@@ -74,6 +74,9 @@ describe("shouldPersist", () => {
     expect(yes(["recentChannels"])).toBe(true);
     expect(yes(["recentConversations"])).toBe(true);
   });
+  it("내 DM 목록은 늘 — 오프라인 사이드바의 「다이렉트 메시지」 절이 비지 않게", () => {
+    expect(yes(qk.dms)).toBe(true);
+  });
   it("사람 목록은 늘 — 오프라인에서도 작성자 이름이 풀린다. 멤버 관리(team)는 담지 않는다", () => {
     expect(yes(qk.people)).toBe(true);
     expect(yes(qk.teamMembers)).toBe(false);

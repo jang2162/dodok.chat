@@ -48,7 +48,8 @@ export function touchRecentConversation(qc: QueryClient, channelId: string, conv
  * 하나만(`threads` — 채널 id → 세션·루트, 스레드·검색 스펙 4.2).
  * 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
  * 연결 설정(`setup`)·운영(`ops`)은 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다.
- * 사람 목록(`people` — 오프라인에서도 작성자가 풀리게)은 담고, 멤버 관리(`team` — 이메일이 든다)는 목록에 없어 빠진다
+ * 사람 목록(`people` — 오프라인에서도 작성자가 풀리게)은 담고, 멤버 관리(`team` — 이메일이 든다)는 목록에 없어 빠진다.
+ * 내 DM 목록(`dms`)도 늘 — 오프라인 사이드바의 「다이렉트 메시지」 절이 비지 않게(채널 목록과 캐시가 따로다)
  */
 export function shouldPersist(
   query: { queryKey: readonly unknown[] },
@@ -61,6 +62,7 @@ export function shouldPersist(
   if (
     head === "me" ||
     head === "channels" ||
+    head === "dms" ||
     head === "agents" ||
     head === "people" ||
     head === "recentChannels" ||

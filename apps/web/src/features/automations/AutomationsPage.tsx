@@ -63,7 +63,10 @@ function AutomationList({ createButton }: { createButton: RefObject<HTMLButtonEl
   const [deleting, setDeleting] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
   const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
-  const timeZone = useOpsStatus().data?.timeZone;
+  const ops = useOpsStatus();
+  const timeZone = ops.data?.timeZone;
+  // 운영 상태를 못 받으면 시각을 「…」(받는 중)로 두지 않고 모른다고 말한다
+  const zoneUnknown = timeZone === undefined && ops.isError;
   const channels = useChannels().data;
   // 보관된 채널은 사이드바 목록에 없다 — 그런 줄이 있을 때만 보관 목록에서 이름을 찾는다
   const needsArchived =
@@ -132,6 +135,7 @@ function AutomationList({ createButton }: { createButton: RefObject<HTMLButtonEl
                 automation={a}
                 channel={channelName.get(a.channelId)}
                 {...(timeZone ? { timeZone } : {})}
+                zoneUnknown={zoneUnknown}
                 deleteRef={(el) => {
                   if (el) deleteButtons.current.set(a.id, el);
                   else deleteButtons.current.delete(a.id);
@@ -162,12 +166,15 @@ function AutomationRow({
   automation: a,
   channel,
   timeZone,
+  zoneUnknown = false,
   deleteRef,
   onDelete,
 }: {
   automation: AutomationSummary;
   channel: string | undefined;
   timeZone?: string;
+  /** 운영 상태 조회가 실패해 시간대를 모른다 — 시각 자리에 「알 수 없음」 */
+  zoneUnknown?: boolean;
   deleteRef: Ref<HTMLButtonElement>;
   /** 누른 「삭제」 단추 — 확인을 닫으면 초점이 그리로 돌아온다 */
   onDelete: (button: HTMLButtonElement) => void;
@@ -175,7 +182,7 @@ function AutomationRow({
   const nameId = useId();
   const run = useRunAutomation();
   const toggle = useUpdateAutomation();
-  const at = (iso: string) => (timeZone ? formatAt(iso, timeZone) : "…");
+  const at = (iso: string) => (timeZone ? formatAt(iso, timeZone) : zoneUnknown ? "알 수 없음" : "…");
   return (
     <li aria-labelledby={nameId} className="flex flex-col gap-2 px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -223,13 +230,27 @@ function AutomationRow({
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
+        {/* 잠금은 `disabled` 가 아니라 `aria-disabled` + 누름 무시 — `disabled` 가 되면 브라우저가 초점을 버려
+            키보드로 누른 사람이 자리를 잃는다(보관 채널 반응 칩과 같은 꼴) */}
         <Switch
           aria-label={`${a.name} 켜기`}
           checked={a.enabled}
-          disabled={toggle.isPending}
-          onCheckedChange={(enabled) => toggle.mutate({ id: a.id, patch: { enabled } })}
+          aria-disabled={toggle.isPending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onCheckedChange={(enabled) => {
+            if (!toggle.isPending) toggle.mutate({ id: a.id, patch: { enabled } });
+          }}
         />
-        <Button type="button" size="sm" variant="outline" disabled={run.isPending} onClick={() => run.run(a)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-disabled={run.isPending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onClick={() => {
+            if (!run.isPending) run.run(a);
+          }}
+        >
           {run.isPending ? "게시하는 중…" : "지금 실행"}
         </Button>
         <AutomationDialog automation={a}>

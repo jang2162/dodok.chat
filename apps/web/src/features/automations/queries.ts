@@ -30,7 +30,8 @@ type Authored = Pick<Message, "authorType" | "authorId" | "createdAt">;
  * 보이는 글 가운데 자동화 글이 있으면 그 작성자 이름(「⚙ 자동화 · <이름>」)을 풀 목록을 받아 둔다 — admin 이상만. member 는 부르지
  * 않는다(목록 API 가 403, 계획 판정 PA6). 받아 둔 목록이 그 글보다 먼저 받은 것이고 그 글의 자동화가 없으면 다시 받는다 — 다른 탭·
  * 다른 관리자가 만든 자동화의 글을 「⚙ 지운 자동화」로 보이지 않게(`useAuthors` 가 같은 시각 비교로 「⚙ 자동화」에 머문다).
- * 효과는 보이는 자동화 글이 바뀔 때만 돈다 — 다시 받은 뒤에도 없으면 지운 것이고, 다시 부르지 않는다
+ * 효과는 보이는 자동화 글이 바뀔 때만 돈다 — 다시 받은 뒤에도 없으면 지운 것이고, 다시 부르지 않는다.
+ * 자동화 글이 보이는 동안 탭이 다시 보이면(`visibilitychange`) 한 번 더 받는다 — 다른 곳에서 바꾼 이름을 맞춘다
  */
 export function useLoadAutomationAuthors(items: readonly Authored[]): void {
   const canManage = useCanManage();
@@ -53,5 +54,15 @@ export function useLoadAutomationAuthors(items: readonly Authored[]): void {
         return !list.some((a) => a.id === id) && fetchedAt < Date.parse(createdAt);
       });
     if (stale) void qc.fetchQuery({ ...automationsQuery, staleTime: 0 }).catch(() => undefined);
+  }, [key, qc]);
+  // 이름 바뀜은 wire 로 오지 않는다 — 다른 탭·기기에서 바꾼 이름은 이 탭이 다시 보일 때 맞춘다(보고만 있는 동안은 옛 이름)
+  useEffect(() => {
+    if (key === "") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void qc.fetchQuery({ ...automationsQuery, staleTime: 0 }).catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [key, qc]);
 }

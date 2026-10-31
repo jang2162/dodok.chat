@@ -10,7 +10,11 @@ import { TooltipProvider } from "@/ui/tooltip";
 
 export const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 /** 로그인한 owner — 관리 화면이 열려 있다. member·admin 을 재는 테스트는 `{ ...ME, role: "member" }` 로 덮는다 */
-export const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" };
+export const ME = {
+  user: { id: "u", handle: "owner", displayName: "주인" },
+  workspaceId: "w",
+  role: "owner",
+};
 /** 테스트 서버의 Gateway 하나 — 셸 테스트는 이것 하나로 붙어 있다 */
 export const TEST_GATEWAY: OpenClawGatewayStatus = {
   id: "01a00000-0000-7000-8000-0000000000a1",
