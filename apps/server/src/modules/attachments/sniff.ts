@@ -8,6 +8,7 @@ export type Sniffed = { kind: "image" | "file"; mime: string; width?: number; he
 
 const TEXT_HINTS = new Set(["text/plain", "application/json", "text/csv", "application/zip"]);
 const OCTET = "application/octet-stream";
+const WEBP_MIN_BYTES = 30;
 
 function startsWith(buf: Uint8Array, sig: readonly number[], offset = 0): boolean {
   if (buf.length < offset + sig.length) return false;
@@ -26,6 +27,8 @@ function imageMime(buf: Uint8Array): string | undefined {
 export function sniff(bytes: Uint8Array, hint?: string): Sniffed {
   const img = imageMime(bytes);
   if (img) {
+    // image-size 는 잘린 VP8L(16바이트)의 끝 밖 인덱스를 0 으로 읽어 1×1 을 낸다. 가장 짧은 WebP 머리(RIFF 12 + 청크 8 + 치수)도 30바이트를 안 넘으니 그 밑은 file
+    if (img === "image/webp" && bytes.length < WEBP_MIN_BYTES) return { kind: "file", mime: OCTET };
     try {
       // image-size 는 길이 없는 DataView 로 바탕 ArrayBuffer 를 읽는다 — Buffer 풀 위 뷰면 이웃 바이트가 치수가 된다.
       // 뷰가 버퍼 전체가 아니면 제 길이만큼 복사해 넘긴다(잘린 이미지는 RangeError → file)

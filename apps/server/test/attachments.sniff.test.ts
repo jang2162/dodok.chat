@@ -85,6 +85,11 @@ describe("sniff — 매직 바이트가 힌트를 이긴다", () => {
       mime: "application/octet-stream",
     });
   });
+  it("잘린 16바이트 WebP(VP8L)는 1×1 이 아니라 file", () => {
+    const bytes = Buffer.from("RIFF\0\0\0\0WEBPVP8L", "latin1");
+    expect(bytes.length).toBe(16);
+    expect(sniff(new Uint8Array(bytes))).toEqual({ kind: "file", mime: "application/octet-stream" });
+  });
   it("잘린 이미지를 담은 뷰 밖(바탕 ArrayBuffer 의 이웃 바이트)을 치수로 읽지 않는다", () => {
     const truncated = [
       Buffer.from("RIFF\0\0\0\0WEBPVP8 ", "latin1"),
