@@ -86,6 +86,9 @@ describe("역할 매트릭스(스펙 2장)", () => {
         adapters: [adapter],
         runnerAdapter: true,
         pushTransports: { apns: noExternalTransport("apns"), fcm: noExternalTransport("fcm") },
+        // 제어 레이트는 사람마다 한 버킷이다 — 매트릭스는 한 사람이 개인 토큰·여러 에이전트로 한 분 안에 많이 부른다(레이트는
+        // control.service.test 가 잰다)
+        limits: { controlPerMin: 10_000, controlWritePerMin: 10_000 },
       },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
