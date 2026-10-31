@@ -93,6 +93,21 @@ describe("[F2] err 의 Buffer 속성 — redact 가 걷다 던지지 않게 뗀�
     expect(lines[0]?.err).not.toHaveProperty("rawPacket");
   });
 
+  it("cause 키도 같은 직렬화를 지난다 — 오류 처리기의 { err, cause } 줄이 던지지 않고 Buffer 만 뗀다", () => {
+    const { lines, log } = capture("trace");
+    // app.ts 오류 처리기·realtime/socket.ts 와 같은 꼴
+    expect(() =>
+      log.error({ err: new Error("internal"), cause: parseError() }, "internal error"),
+    ).not.toThrow();
+    expect(lines[0]?.cause).toMatchObject({
+      type: "Error",
+      code: "HPE_INVALID_HEADER_TOKEN",
+      bytesParsed: 40,
+    });
+    expect(lines[0]?.cause).not.toHaveProperty("rawPacket");
+    expect(JSON.stringify(lines[0])).not.toContain(hookToken);
+  });
+
   it("실제 소켓 — LOG_LEVEL=trace 앱이 잘못된 머리 하나에 400 을 내고 다음 요청도 받는다", async () => {
     const lines: string[] = [];
     const app = await bootTestApp(

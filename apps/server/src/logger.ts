@@ -34,7 +34,13 @@ const REDACT_PATHS = [...SECRET_KEYS].flatMap((k) =>
 /** destination 은 테스트가 줄을 모을 때만 준다(기본 stdout) */
 export function createLogger(level: string, destination?: DestinationStream): Logger {
   return pino(
-    { level, redact: { paths: REDACT_PATHS, censor: "***" }, serializers: { err: serializeErr } },
+    {
+      level,
+      redact: { paths: REDACT_PATHS, censor: "***" },
+      // cause 키(app.ts 오류 처리기·realtime/socket.ts 의 「internal error」 줄)도 같은 직렬화를 지난다 — 최상위 Buffer 가 든 cause 면
+      // redact 가 걷다 던지고, 깊은 Buffer 는 그 키를 통째로 잃는다
+      serializers: { err: serializeErr, cause: serializeErr },
+    },
     destination,
   );
 }
@@ -42,8 +48,8 @@ export function createLogger(level: string, destination?: DestinationStream): Lo
 /**
  * pino 기본 err 직렬화에서 Buffer 값 속성을 뗀다. redact 의 와일드카드 경로가 로그 객체 깊이 1~2 의 Buffer 안을 걷다 던져 로그 호출이
  * 예외가 된다 — Node HTTP 파서 오류의 rawPacket(받은 요청 바이트 — URL 속 웹훅 토큰 포함)이 그 꼴이고, Fastify 기본
- * clientErrorHandler 가 그 오류를 trace 로 남기므로, 떼지 않으면 LOG_LEVEL=trace 에서 잘못된 요청 하나가 서버를 죽인다. err 밖의
- * 키에는 Buffer 를 싣지 않는다. Fastify 는 이 로거의 직렬화기를 자기 기본보다 앞세운다(loggerInstance)
+ * clientErrorHandler 가 그 오류를 trace 로 남기므로, 떼지 않으면 LOG_LEVEL=trace 에서 잘못된 요청 하나가 서버를 죽인다. err·cause
+ * 밖의 키에는 Buffer 를 싣지 않는다. Fastify 는 이 로거의 직렬화기를 자기 기본보다 앞세운다(loggerInstance)
  */
 function serializeErr(err: Error): unknown {
   const out: unknown = pino.stdSerializers.err(err);
