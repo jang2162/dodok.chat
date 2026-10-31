@@ -11,6 +11,7 @@ import {
   createDiskMonitor,
   DISCONNECT_EVENT_MS,
   DISK_CHECK_INTERVAL_MS,
+  DISK_CHECK_TIMEOUT_MS,
   diskLevel,
   observeGatewayVersion,
   startRunState,
@@ -356,6 +357,41 @@ describe("createDiskMonitor", () => {
     await vi.advanceTimersByTimeAsync(DISK_CHECK_INTERVAL_MS);
     expect(statfs).toHaveBeenCalledTimes(2);
     expect(disk.current()).toEqual({ level: "unknown" });
+    disk.close();
+  });
+
+  it("statfs 가 상한을 넘기면 unknown + warn(code timeout)으로 ready 가 풀리고, 멈춘 statfs 가 끝날 때까지 새로 부르지 않는다", async () => {
+    const { logger, lines: logged } = captureLogger();
+    let release: (v: { bavail: bigint; bsize: bigint; blocks: bigint }) => void = () => {};
+    // 끝나지 않는 statfs — 네트워크 파일 시스템에서 멈춘 것
+    const statfs = vi.fn(
+      () => new Promise<{ bavail: bigint; bsize: bigint; blocks: bigint }>((r) => (release = r)),
+    );
+    const disk = createDiskMonitor({ dataDir: "/data", ops, statfs, logger });
+    let ready = false;
+    void disk.ready.then(() => (ready = true));
+    await vi.advanceTimersByTimeAsync(DISK_CHECK_TIMEOUT_MS - 1);
+    expect(ready).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ready).toBe(true);
+    expect(disk.current()).toEqual({ level: "unknown" });
+    expect(logged).toContainEqual(
+      expect.objectContaining({ level: 40, msg: "disk check failed", code: "timeout" }),
+    );
+
+    // 다음 주기·check() 모두 멈춘 statfs 위에 또 부르지 않는다(스레드 풀 한 칸을 쥐고 있다)
+    await vi.advanceTimersByTimeAsync(3 * DISK_CHECK_INTERVAL_MS);
+    expect(statfs).toHaveBeenCalledTimes(1);
+    const checked = disk.check();
+    await vi.advanceTimersByTimeAsync(DISK_CHECK_TIMEOUT_MS);
+    await checked;
+    expect(statfs).toHaveBeenCalledTimes(1);
+
+    // 멈췄던 statfs 가 끝나면 그 자리에서 다시 잰다
+    release({ bavail: 1n, bsize: 4096n, blocks: 1_000_000n });
+    await vi.waitFor(() => expect(statfs).toHaveBeenCalledTimes(2));
+    release({ bavail: 100n, bsize: 4096n, blocks: 1_000_000n });
+    await vi.waitFor(() => expect(disk.current().level).toBe("error"));
     disk.close();
   });
 

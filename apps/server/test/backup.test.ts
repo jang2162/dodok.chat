@@ -75,6 +75,7 @@ describe("runBackup", () => {
        while (Atomics.load(workerData.shared, 0) === 0) {
          insert.run(pad);
          Atomics.add(workerData.shared, 1, 1);
+         Atomics.notify(workerData.shared, 1);
        }
        db.close();`,
       { eval: true, workerData: { sqlitePath, file: dbPath(), shared } },
@@ -83,18 +84,29 @@ describe("runBackup", () => {
     while (Atomics.load(shared, 1) < 200) await new Promise((r) => setTimeout(r, 5));
 
     const before = 4000 + Atomics.load(shared, 1);
-    const result = await runBackup({ dataDir });
+    // 「백업이 도는 동안 쓰기가 있었다」를 시간이 아니라 순서로 보장한다 — 백업이 시작되면(임시 디렉터리를 만든 직후, 복사 전) 워커가
+    // 한 행을 더 커밋할 때까지 백업을 세운다. 시간에만 맡기면 부하에서 워커가 짧은 백업 창 안에 한 번도 돌지 못해 during 이 0 이었다
+    const result = await runBackup({
+      dataDir,
+      onPartial: () => {
+        const seen = Atomics.load(shared, 1);
+        if (Atomics.wait(shared, 1, seen, 10_000) === "timed-out")
+          throw new Error("쓰기 워커가 백업 시작 뒤 10초 안에 커밋하지 않았다");
+      },
+    });
     const during = 4000 + Atomics.load(shared, 1) - before;
     Atomics.store(shared, 0, 1);
     await exited;
     const after = 4000 + Atomics.load(shared, 1);
 
     // 백업이 도는 동안 쓰기가 실제로 있었다 — 없었다면 이 테스트는 「쓰는 중」을 재지 않은 것이다
+    // onPartial 문이 커밋 한 번을 보장하므로(못 하면 던진다) 늘 참이다 — 문이 깨지지 않았음을 가리키는 보험일 뿐, 아래 rows 단언이 본체다
     expect(during).toBeGreaterThan(0);
     const copy = new Database(join(result.dir, "dodok.sqlite"), { readonly: true });
     expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
     const rows = (copy.prepare("SELECT count(*) AS n FROM probe").get() as { n: number }).n;
-    expect(rows).toBeGreaterThanOrEqual(before);
+    // 백업 시작 뒤·복사 전에 커밋된 행(문이 보장)이 사본에 있다
+    expect(rows).toBeGreaterThan(before);
     expect(rows).toBeLessThanOrEqual(after);
     const tables = copy
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
@@ -411,59 +423,116 @@ describe("backup CLI (src/backup-main.ts)", () => {
     expect(partials()).toEqual([]);
   }, 20_000);
 
+  /**
+   * 자식(backup-main.ts)을 정해진 단계에 세우는 문 — 단계에 닿으면 fd 3 에 그 이름 한 줄을 쓰고, 테스트가 한 바이트를 돌려줄 때까지
+   * 동기로 기다린다. 그 사이에 보낸 신호는 처리기가 돌지 못하고 쌓였다가 자식이 다시 이벤트 루프로 돌아갈 때 닿는다 — 신호가 닿는
+   * 단계를 파일 존재 폴링이 아니라 자식이 정한다. 운영 코드는 건드리지 않는다(--import 로 fs 를 감싼다)
+   * - partial: 임시 디렉터리(.partial-*)를 만든 직후 — 복사 전
+   * - copied: 사본을 다 쓴 직후의 첫 chmod — 동기 복사 구간(복사 도중 닿은 신호와 같다 — 이벤트 루프로 돌아가지 않고 끝까지 간다)
+   */
+  const GATE_PRELOAD = `
+    import fs from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    const gateAt = process.env.DODOK_TEST_BACKUP_GATE;
+    const gate = (name) => {
+      if (name !== gateAt) return;
+      fs.writeSync(3, name + "\\n");
+      const buf = Buffer.alloc(1);
+      for (;;) {
+        try {
+          if (fs.readSync(3, buf, 0, 1, null) === 1) return;
+        } catch (err) {
+          if (err.code !== "EAGAIN") throw err;
+        }
+      }
+    };
+    const mkdtempSync = fs.mkdtempSync;
+    fs.mkdtempSync = (...args) => {
+      const dir = mkdtempSync(...args);
+      if (dir.includes(".partial-")) gate("partial");
+      return dir;
+    };
+    const chmodSync = fs.chmodSync;
+    let copied = false;
+    fs.chmodSync = (path, mode) => {
+      chmodSync(path, mode);
+      if (!copied && String(path).includes(".partial-") && String(path).endsWith("dodok.sqlite")) {
+        copied = true;
+        gate("copied");
+      }
+    };
+    syncBuiltinESMExports();
+  `;
+
+  /** 백업 CLI 를 gate 단계에 세우고 거기서 sig 를 보낸 뒤 놓아준다 */
+  async function signalAt(gate: "partial" | "copied", sig: NodeJS.Signals) {
+    makeDb();
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        `data:text/javascript,${encodeURIComponent(GATE_PRELOAD)}`,
+        "--import",
+        "tsx",
+        "src/backup-main.ts",
+      ],
+      {
+        cwd: serverDir,
+        env: { PATH: process.env.PATH, DATA_DIR: dataDir, DODOK_TEST_BACKUP_GATE: gate },
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    let reached = "";
+    child.stdout?.on("data", (d) => (stdout += d));
+    child.stderr?.on("data", (d) => (stderr += d));
+    const control = child.stdio[3] as import("node:net").Socket;
+    control.on("data", (d) => {
+      reached += String(d);
+      // 자식이 그 단계에 서 있다 — 신호를 보내고 놓아준다
+      child.kill(sig);
+      control.write("g");
+    });
+    const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((r) =>
+      child.once("exit", (c, s) => r([c, s])),
+    );
+    return { status, signal, stdout, stderr, reached: reached.trim() };
+  }
+
   it.each([
     ["SIGINT", 130],
     ["SIGTERM", 143],
   ] as const)(
-    "%s 를 받으면 .partial-* 를 남기지 않는다 — 복사 전이면 지우고 exit %i, 복사 중이면 끝까지 복사한다",
+    "복사 전에 %s 를 받으면 .partial-* 를 지우고 exit %i",
     async (sig, code) => {
-      // 복사가 수십 ms 걸리게 키운다 — partial 이 보이는 동안 신호를 보내기 위해서다
-      makeDb();
-      const db = new Database(dbPath());
-      db.exec("CREATE TABLE pad (b BLOB)");
-      db.exec(
-        "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 64) " +
-          "INSERT INTO pad SELECT zeroblob(1048576) FROM c",
-      );
-      db.close();
-      const child = spawn(process.execPath, ["--import", "tsx", "src/backup-main.ts"], {
-        cwd: serverDir,
-        env: { PATH: process.env.PATH, DATA_DIR: dataDir },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (d) => (stdout += d));
-      child.stderr.on("data", (d) => (stderr += d));
-      const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) =>
-        child.once("exit", (c, s) => r([c, s])),
-      );
-      let alive = true;
-      void exited.then(() => (alive = false));
-      let sent = false;
-      while (alive && !sent) {
-        if (existsSync(backupsRoot()) && partials().length > 0) sent = child.kill(sig);
-        else await new Promise((r) => setTimeout(r, 1));
-      }
-      const [status, signal] = await exited;
+      const r = await signalAt("partial", sig);
+      expect(r.reached).toBe("partial"); // 신호가 실제로 그 단계에서 갔다
+      expect(r.signal).toBeNull();
+      expect(r.status).toBe(code);
+      expect(r.stderr).toBe(`백업 중단: ${sig}\n`);
+      expect(r.stdout).toBe("");
+      expect(readdirSync(backupsRoot())).toEqual([]);
+    },
+    30_000,
+  );
 
-      // 이 테스트가 신호를 실제로 보냈다 — 못 보냈다면 복사가 너무 빨리 끝난 것이다
-      expect(sent).toBe(true);
-      expect(signal).toBeNull();
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "복사 중(동기 구간)에 %s 를 받으면 끝까지 복사하고 exit 0 — .partial-* 없이 온전한 사본 하나",
+    async (sig) => {
+      const r = await signalAt("copied", sig);
+      expect(r.reached).toBe("copied");
+      expect(r.signal).toBeNull();
+      // 신호가 동기 복사 도중에 닿았다 — 처리기는 돌지 못하고 복사가 끝난다(backup-main.ts 주석)
+      expect(r.status).toBe(0);
+      expect(r.stderr).toBe("");
+      expect(r.stdout).toMatch(/^백업 완료: /);
       expect(partials()).toEqual([]);
-      if (status === 0) {
-        // 신호가 동기 복사 도중에 닿았다 — 처리기는 돌지 못하고 복사가 끝난다(backup-main.ts 주석)
-        expect(stdout).toMatch(/^백업 완료: /);
-        const [d, ...rest] = readdirSync(backupsRoot());
-        expect(rest).toEqual([]);
-        const copy = new Database(join(backupsRoot(), d!, "dodok.sqlite"), { readonly: true });
-        expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
-        copy.close();
-      } else {
-        expect(status).toBe(code);
-        expect(stderr).toBe(`백업 중단: ${sig}\n`);
-        expect(readdirSync(backupsRoot())).toEqual([]);
-      }
+      const [d, ...rest] = readdirSync(backupsRoot());
+      expect(rest).toEqual([]);
+      const copy = new Database(join(backupsRoot(), d!, "dodok.sqlite"), { readonly: true });
+      expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
+      copy.close();
     },
     30_000,
   );

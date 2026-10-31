@@ -230,12 +230,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 쪽에서도 막힌다
     const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
     // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다.
-    // 사건은 하나(key bridge)로 묶고 막히게 한 쪽은 detail.path 로 가른다(러너 스펙 8장)
+    // 사건은 막히게 한 쪽마다 한 줄(key bridge:<path>) — 한 줄로 묶으면 detail 이 마지막 값으로 덮여 웹훅 소음(남의 틀린 토큰)이
+    // 진짜 브리지 맞혀 보기를 가린다. detail.path 도 그대로 싣는다(러너 스펙 8장)
     let ops: OpsService;
     const onAuthBlocked = (address: string, path: "bridge" | "runner" | "mcp" | "webhook") =>
       ops.record({
         kind: "bridge_auth_blocked",
-        key: "bridge",
+        key: `bridge:${path}`,
         severity: "warn",
         detail: { ipPrefix: ipPrefix(address), path },
       });
@@ -255,6 +256,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logController: new RedactingLogController(),
     });
     undo.push({ step: "fastify", run: () => fastify.close() });
+    // 종료 ①: close() 가 켠다 — 새 wire 연결을 인증보다 먼저 거부하고(아래 io.use), 끝나는 HTTP 응답마다 쉬는 연결을 닫는다
+    let shuttingDown = false;
+    // server.close()(io.close() 가 부른다)는 쉬는 keep-alive 연결을 그 순간 한 번만 닫고, 응답이 아직 안 끝난 연결은 건너뛴다.
+    // 그 응답(예: 첨부 내려받기 마지막 조각)이 조금 뒤 끝나면 연결은 쉬는 keep-alive 로 남아 keepAliveTimeout(Fastify 기본 72초)까지
+    // close 를 붙잡는다 — 종료 중에는 응답이 끝날 때마다 다시 닫는다. setImmediate: 한 틱 뒤 — 같은 finish 의 다른 리스너가 끝난 뒤
+    fastify.addHook("onResponse", (_request, _reply, done) => {
+      if (shuttingDown) setImmediate(() => fastify.server.closeIdleConnections());
+      done();
+    });
     await fastify.register(cookie);
     // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
     await fastify.register(rateLimit, { global: false });
@@ -795,7 +805,6 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     });
 
     // 종료 ①: close() 가 켜면 새 wire 연결을 인증보다 먼저 거부한다. 기존 연결·/bridge 는 어댑터가 닫힐 때까지 둔다
-    let shuttingDown = false;
     io.use((_socket, next) => (shuttingDown ? next(shuttingDownError()) : next()));
     const presence = createPresence();
     attachWire(io, {
