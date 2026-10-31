@@ -170,6 +170,13 @@ describe("pickClient", () => {
     ).toBe(1);
   });
 
+  it("포커스만 있고 안 보이는 창보다 보이기만 하는 창이 먼저다", () => {
+    const hiddenFocused = { url: `${O}/c/a`, visibilityState: "hidden", focused: true } as const;
+    const visibleOnly = { url: `${O}/c/b`, visibilityState: "visible", focused: false } as const;
+    expect(pickClient([hiddenFocused, visibleOnly], O)).toBe(1);
+    expect(pickClient([visibleOnly, hiddenFocused], O)).toBe(0);
+  });
+
   it("보이는 창도 포커스 창도 없으면 가장 최근 창(matchAll 순서의 첫 같은 출처 창)", () => {
     expect(
       pickClient(
@@ -259,6 +266,7 @@ describe("NAVIGATION_DENYLIST", () => {
       "/llms.txt.html",
       "/llms.txtx",
       "/apix",
+      "/socket.iox",
     ])
       expect(toIndex(path), path).toBe(true);
   });
