@@ -10,7 +10,7 @@ import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { attachments, runs } from "../../db/schema.sqlite";
 import { canReadChannel } from "../../auth/channel-access";
-import { apiError } from "../../http/errors";
+import { apiError, HttpError } from "../../http/errors";
 import { getChannel } from "../channels/service";
 import { TERMINAL_STATUSES } from "../runs/machine";
 import { sniff } from "./sniff";
@@ -69,6 +69,12 @@ export function toAttachment(row: Row): Attachment {
   };
 }
 
+/** 크기 상한을 넘는 업로드 — 서비스 검사(400)와 라우트 bodyLimit(Fastify 413, routes.ts 가 다시 씌운다)이 같은 문구·maxBytes 를 낸다 */
+export function sizeLimitError(maxBytes: number, status?: 413): HttpError {
+  const err = apiError("VALIDATION", "크기 상한을 넘는다", { maxBytes });
+  return status === undefined ? err : new HttpError(status, err.body);
+}
+
 export async function uploadAttachment(
   deps: AttachmentDeps,
   input: { channelId: string; uploader: Uploader; bytes: Uint8Array; nameHint?: string; mimeHint?: string },
@@ -77,7 +83,7 @@ export async function uploadAttachment(
     input.uploader.type === "user"
       ? ATTACHMENT_LIMITS.userImageMaxBytes
       : ATTACHMENT_LIMITS.agentFileMaxBytes;
-  if (input.bytes.length > max) throw apiError("VALIDATION", "크기 상한을 넘는다", { maxBytes: max });
+  if (input.bytes.length > max) throw sizeLimitError(max);
   if (input.bytes.length === 0) throw apiError("VALIDATION", "빈 파일이다");
   const s = sniff(input.bytes, input.mimeHint);
   if (input.uploader.type === "user" && s.kind !== "image")

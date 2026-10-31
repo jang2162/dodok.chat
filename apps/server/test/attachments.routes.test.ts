@@ -166,7 +166,12 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     const big = Buffer.concat([makePng(1, 1), Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes)]);
     const r = await upload(big);
     expect(r.statusCode).toBe(413);
-    expect(r.json()).toMatchObject({ code: "VALIDATION" });
+    // Fastify 의 일반 문구가 아니라 첨부 서비스의 문구·상한
+    expect(r.json()).toEqual({
+      code: "VALIDATION",
+      message: "크기 상한을 넘는다",
+      details: { maxBytes: ATTACHMENT_LIMITS.userImageMaxBytes },
+    });
     const pdf = await upload(PDF_BYTES, { "content-type": "application/pdf" });
     expect(pdf.statusCode).toBe(400);
     expect(pdf.json()).toMatchObject({ code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
@@ -479,6 +484,11 @@ describe("첨부 HTTP (스펙 4.3)", () => {
   it("브리지 POST: 20 MiB 넘으면 413", async () => {
     const r = await bridgeUpload(Buffer.alloc(ATTACHMENT_LIMITS.agentFileMaxBytes + 1, 1));
     expect(r.statusCode).toBe(413);
+    expect(r.json()).toEqual({
+      code: "VALIDATION",
+      message: "크기 상한을 넘는다",
+      details: { maxBytes: ATTACHMENT_LIMITS.agentFileMaxBytes },
+    });
   });
 
   it("이 스코프의 원시 파서가 바깥 JSON 경로를 바꾸지 않는다", async () => {
