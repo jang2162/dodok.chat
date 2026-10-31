@@ -48,10 +48,16 @@ export const resetNowTick = (): void => {
 /**
  * 「지금」을 1초마다 새로 읽는 시계. `active` 가 거짓이면 구독하지 않는다 —
  * 흐르는 값이 하나도 없으면 다시 그릴 까닭도 없다(값은 마지막으로 읽은 시각 그대로).
- * 다시 켜질 때 한 번 읽는다 — 멈춰 있던 동안 흐른 시간이 남아 있으면 처음 한 칸이 엉뚱해진다
+ * 다시 켜질 때 한 번 읽는다 — 멈춰 있던 동안 흐른 시간이 남아 있으면 처음 한 칸이 엉뚱해진다.
+ * 그 읽기는 켜지는 **렌더 안에서** 한다: 효과(구독)에 맡기면 효과가 새 값을 넣기 전 한 프레임 동안 옛 시각을 그린다
  */
 export function useNowTick(active: boolean): number {
   const [now, setNow] = useState(readNow);
+  const [wasActive, setWasActive] = useState(active);
+  if (active !== wasActive) {
+    setWasActive(active);
+    if (active) setNow(readNow());
+  }
   useEffect(() => (active ? subscribe(setNow) : undefined), [active]);
   return now;
 }
