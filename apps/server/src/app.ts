@@ -230,12 +230,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 쪽에서도 막힌다
     const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
     // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다.
-    // 사건은 하나(key bridge)로 묶고 막히게 한 쪽은 detail.path 로 가른다(러너 스펙 8장)
+    // 사건은 막히게 한 쪽마다 한 줄(key bridge:<path>) — 한 줄로 묶으면 detail 이 마지막 값으로 덮여 웹훅 소음(남의 틀린 토큰)이
+    // 진짜 브리지 맞혀 보기를 가린다. detail.path 도 그대로 싣는다(러너 스펙 8장)
     let ops: OpsService;
     const onAuthBlocked = (address: string, path: "bridge" | "runner" | "mcp" | "webhook") =>
       ops.record({
         kind: "bridge_auth_blocked",
-        key: "bridge",
+        key: `bridge:${path}`,
         severity: "warn",
         detail: { ipPrefix: ipPrefix(address), path },
       });

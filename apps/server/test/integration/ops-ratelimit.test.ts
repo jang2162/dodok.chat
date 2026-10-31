@@ -128,7 +128,7 @@ describe("레이트리밋 통합", () => {
     expect(JSON.parse(blockedHttp.bytes.toString())).toMatchObject({ code: "RATE_LIMITED" });
 
     const blocked = opsRows(l, "bridge_auth_blocked");
-    expect(blocked.map((r) => [r.key, r.severity, r.count])).toEqual([["bridge", "warn", 1]]);
+    expect(blocked.map((r) => [r.key, r.severity, r.count])).toEqual([["bridge:bridge", "warn", 1]]);
     expect(blocked[0]?.detail).toEqual({ ipPrefix: "127.0.0.0/24", path: "bridge" });
 
     clock.t += 59_999;
@@ -153,6 +153,22 @@ describe("레이트리밋 통합", () => {
 
     await l.plugin.reconnect({ token: l.bridgeToken });
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
+  });
+
+  it("막힘 사건은 경로마다 한 줄 — 웹훅 막힘 뒤의 브리지 막힘이 웹훅 줄을 덮지 않고 key bridge:<path> 로 갈린다", async () => {
+    const l = await boot();
+    const hook = async (token: string) =>
+      (await fetch(`${l.app.url}/hooks/${token}`, { method: "POST" })).status;
+    for (let i = 0; i <= LIMITS.bridgeFail.maxFailures; i++) await hook(`whk_unknown${i}`);
+    for (let i = 0; i < LIMITS.bridgeFail.maxFailures; i++)
+      await expect(l.plugin.reconnect({ token: "wrong" })).rejects.toThrow();
+    await expect(l.plugin.reconnect({ token: l.bridgeToken })).rejects.toThrow(/UNAUTHORIZED/);
+
+    const rows = opsRows(l, "bridge_auth_blocked").map((r) => [r.key, r.count, r.detail]);
+    expect(rows.sort()).toEqual([
+      ["bridge:bridge", 1, { ipPrefix: "127.0.0.0/24", path: "bridge" }],
+      ["bridge:webhook", 1, { ipPrefix: "127.0.0.0/24", path: "webhook" }],
+    ]);
   });
 
   it("브리지 — TRUST_PROXY 면 핸드셰이크와 /bridge/attachments 가 같은 X-Forwarded-For 주소(프록시가 덧붙인 오른쪽 값)로 센다", async () => {
