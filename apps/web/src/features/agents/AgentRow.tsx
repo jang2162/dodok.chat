@@ -50,49 +50,54 @@ export function AgentRow({
   const openclaw = agent.provider === "openclaw";
   return (
     <li className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <span
-          aria-hidden
-          className="mt-1.5 size-2.5 shrink-0 rounded-full"
-          style={{ background: agentColorVar(agent.handle) }}
-        />
-        <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-medium">{agent.name}</span>
-            <span className="text-sm text-muted-foreground">
-              <span>{handle}</span>
-              {openclaw && agent.gateway && <> · {agent.gateway.name}</>}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
-          </p>
-          {agent.provider === "runner" && <RunnerLine agent={agent} />}
-          {openclaw && agent.gateway === null && (
-            <p className="text-xs font-medium text-destructive">
-              {owner
-                ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
-                : "Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
+      {/* 좁은 화면(390px)에서는 버튼·스위치 묶음이 아랫줄로 감긴다 — 이름 칸이 한 글자 폭으로 눌리지 않게 최소 폭을 준다 */}
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex min-w-0 grow basis-48 items-start gap-3">
+          <span
+            aria-hidden
+            className="mt-1.5 size-2.5 shrink-0 rounded-full"
+            style={{ background: agentColorVar(agent.handle) }}
+          />
+          <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-medium">{agent.name}</span>
+              <span className="text-sm text-muted-foreground">
+                <span>{handle}</span>
+                {openclaw && agent.gateway && <> · {agent.gateway.name}</>}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
             </p>
-          )}
+            {agent.provider === "runner" && <RunnerLine agent={agent} />}
+            {openclaw && agent.gateway === null && (
+              <p className="text-xs font-medium text-destructive">
+                {owner
+                  ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
+                  : "Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
+              </p>
+            )}
+          </div>
         </div>
-        {canOpenDm(agent, role) && (
-          <Button asChild variant="outline" size="sm">
-            <Link to="/dm/$agentId" params={{ agentId: agent.id }} aria-label={`${handle} DM 보내기`}>
-              <MessageCircleIcon />
-              DM 보내기
-            </Link>
-          </Button>
-        )}
-        {openclaw && owner && <MoveGatewayDialog agent={agent} />}
-        {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
-        <Switch
-          ref={focusRef}
-          aria-label={`${handle} 사용`}
-          checked={agent.enabled}
-          disabled={toggle.isPending || readOnly}
-          onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
-        />
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {canOpenDm(agent, role) && (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/dm/$agentId" params={{ agentId: agent.id }} aria-label={`${handle} DM 보내기`}>
+                <MessageCircleIcon />
+                DM 보내기
+              </Link>
+            </Button>
+          )}
+          {openclaw && owner && <MoveGatewayDialog agent={agent} />}
+          {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
+          <Switch
+            ref={focusRef}
+            aria-label={`${handle} 사용`}
+            checked={agent.enabled}
+            disabled={toggle.isPending || readOnly}
+            onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
+          />
+        </div>
       </div>
       {!readOnly && agent.runnerAgent && <RunnerDefinition agent={agent} definition={agent.runnerAgent} />}
       <BasePromptEditor agent={agent} readOnly={readOnly} />
