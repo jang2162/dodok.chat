@@ -1463,6 +1463,30 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
       expect(charset.status).not.toBe(415);
     }, 20_000);
 
+    it("쿼리가 붙은 경로(?x=1)도 같은 훅이다 — 쿼리 없을 때와 같은 상태", async () => {
+      const plain = await post(path, body);
+      const withQuery = await post(`${path}?x=1`, body);
+      expect(withQuery.status).not.toBe(404);
+      expect(withQuery.status).toBe(plain.status);
+    });
+
+    it("본문 상한 16 KB — 딱 16 KB(뒤를 공백으로 채운 JSON)는 받고, 1바이트 넘으면 400 VALIDATION", async () => {
+      const send = (bytes: number) => {
+        const json = JSON.stringify(body);
+        return fetch(`${dev.url}${path}`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: json + " ".repeat(bytes - Buffer.byteLength(json)),
+        });
+      };
+      const plain = await post(path, body);
+      const atCap = await send(16 * 1024);
+      expect(atCap.status).toBe(plain.status);
+      const over = await send(16 * 1024 + 1);
+      expect(over.status).toBe(400);
+      await expect(over.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    });
+
     it("경로는 정확히 일치해야 한다 — 꼬리·접미·대소문자·GET 은 앱의 404", async () => {
       for (const variant of [`${path}X`, `${path}/`, path.toUpperCase()])
         expect((await post(variant, body)).status).toBe(404);
