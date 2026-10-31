@@ -15,6 +15,7 @@ export const APPROVAL_WITHDRAWN_MESSAGE = "승인 요청이 철회됐습니다";
 const SUMMARY_MAX = 400;
 const TOOL_NAME_MAX = 128;
 const JSON_SUMMARY_MAX = 200;
+const ARGS_MAX = 16_000;
 // 값 전체가 경로 하나인 파일 도구 입력 키 — 요약은 그 경로만
 const FILE_TOOL_PATH_KEY: Record<string, string> = {
   Read: "file_path",
@@ -113,6 +114,19 @@ export function summarizeToolInput(toolName: string, input: unknown, workdir: st
   return elide(summary, SUMMARY_MAX);
 }
 
+const argsCutMark = (omitted: number): string => ` …(뒤 ${omitted}자 생략)`;
+
+/**
+ * 승인 카드 「전체 보기」의 도구 입력 JSON 전체 — 가림·숨김 글자 드러내기는 요약(summarizeToolInput)과 같은 규칙이다(요약은 가렸는데
+ * 전체 보기에서 호스트 경로가 보이면 안 된다). ARGS_MAX(UTF-16)를 넘으면 끝을 자르고 표시를 남긴다 — 앞쪽 요약이 이미 꼬리를 보인다
+ */
+export function fullToolArgs(input: unknown, workdir: string): string {
+  const text = revealHidden(workdirMasker(workdir).json(JSON.stringify(input) ?? "null"));
+  if (text.length <= ARGS_MAX) return text;
+  const head = clip(text, ARGS_MAX - argsCutMark(text.length).length);
+  return head + argsCutMark(Array.from(text).length - Array.from(head).length);
+}
+
 export function createCanUseTool(deps: CanUseToolDeps): CanUseTool {
   return async (toolName, input, options) => {
     const id = options.toolUseID;
@@ -130,6 +144,7 @@ export function createCanUseTool(deps: CanUseToolDeps): CanUseTool {
       toolCallId: id,
       toolName: clip(toolName, TOOL_NAME_MAX),
       summary: summarizeToolInput(toolName, input, deps.workdir),
+      args: fullToolArgs(input, deps.workdir),
       canAllowAlways,
     });
     let outcome: ApprovalOutcome;

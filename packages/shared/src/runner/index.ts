@@ -102,6 +102,11 @@ export const RunnerApprovalRequested = z.object({
   toolCallId: z.string(),
   toolName: z.string().max(128),
   summary: z.string().max(400),
+  /**
+   * 도구 입력 JSON 전체(가림·숨김 글자 드러내기는 summary 와 같은 규칙, 넘으면 끝을 자르고 표시) — 카드의 「전체 보기」.
+   * 선택: 옛 러너는 보내지 않는다(그때 카드는 요약만)
+   */
+  args: z.string().max(16_000).optional(),
   canAllowAlways: z.boolean(),
 });
 export type RunnerApprovalRequested = z.infer<typeof RunnerApprovalRequested>;

@@ -185,6 +185,12 @@ describe("/runner 프레임 — 거절", () => {
     expect(RunnerApprovalRequested.safeParse({ ...APPROVAL, summary: "a".repeat(401) }).success).toBe(false);
   });
 
+  it("RunnerApprovalRequested — args 는 선택, 16,000자까지", () => {
+    expect(RunnerApprovalRequested.parse(APPROVAL)).not.toHaveProperty("args");
+    expect(RunnerApprovalRequested.safeParse({ ...APPROVAL, args: "a".repeat(16_000) }).success).toBe(true);
+    expect(RunnerApprovalRequested.safeParse({ ...APPROVAL, args: "a".repeat(16_001) }).success).toBe(false);
+  });
+
   it("RunnerRunFinal — costUsd 음수", () => {
     expect(RunnerRunFinal.safeParse({ ...FINAL, costUsd: -0.01 }).success).toBe(false);
   });
