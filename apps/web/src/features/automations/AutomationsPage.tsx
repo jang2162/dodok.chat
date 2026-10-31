@@ -223,13 +223,27 @@ function AutomationRow({
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
+        {/* 잠금은 `disabled` 가 아니라 `aria-disabled` + 누름 무시 — `disabled` 가 되면 브라우저가 초점을 버려
+            키보드로 누른 사람이 자리를 잃는다(보관 채널 반응 칩과 같은 꼴) */}
         <Switch
           aria-label={`${a.name} 켜기`}
           checked={a.enabled}
-          disabled={toggle.isPending}
-          onCheckedChange={(enabled) => toggle.mutate({ id: a.id, patch: { enabled } })}
+          aria-disabled={toggle.isPending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onCheckedChange={(enabled) => {
+            if (!toggle.isPending) toggle.mutate({ id: a.id, patch: { enabled } });
+          }}
         />
-        <Button type="button" size="sm" variant="outline" disabled={run.isPending} onClick={() => run.run(a)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-disabled={run.isPending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onClick={() => {
+            if (!run.isPending) run.run(a);
+          }}
+        >
           {run.isPending ? "게시하는 중…" : "지금 실행"}
         </Button>
         <AutomationDialog automation={a}>

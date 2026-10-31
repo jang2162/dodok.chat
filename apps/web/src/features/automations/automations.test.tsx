@@ -197,12 +197,14 @@ describe("목록", () => {
     const run = row.getByRole("button", { name: "지금 실행" });
     fireEvent.click(run);
     fireEvent.click(run);
-    await waitFor(() => expect(run).toBeDisabled());
+    await waitFor(() => expect(run).toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(run);
-    expect((await rowOf("다른 것")).getByRole("button", { name: "지금 실행" })).toBeEnabled();
+    expect((await rowOf("다른 것")).getByRole("button", { name: "지금 실행" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
     release();
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("「점검」을 게시했습니다"));
-    await waitFor(() => expect(run).toBeEnabled());
+    await waitFor(() => expect(run).not.toHaveAttribute("aria-disabled"));
     expect(server.writes()).toEqual([
       { method: "POST", url: `/api/v1/automations/${uid(501)}/run`, body: undefined },
     ]);
@@ -222,10 +224,10 @@ describe("목록", () => {
     // 다음 클릭은 앞 요청이 끝난(토스트) 뒤에 — 나가 있는 동안의 클릭은 걸러지는 것이 맞다
     await user().click(run);
     await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(run).toBeEnabled());
+    await waitFor(() => expect(run).not.toHaveAttribute("aria-disabled"));
     await user().click(run);
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(run).toBeEnabled());
+    await waitFor(() => expect(run).not.toHaveAttribute("aria-disabled"));
     await user().click(run);
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(2));
     const runUrl = `/api/v1/automations/${uid(501)}/run`;
@@ -233,6 +235,57 @@ describe("목록", () => {
       { method: "POST", url: runUrl, body: undefined },
       { method: "POST", url: runUrl, body: undefined },
       { method: "POST", url: runUrl, body: undefined },
+    ]);
+  });
+
+  it("[D2] 「지금 실행」을 키보드로 누르면 요청이 나가 있는 동안·끝난 뒤에도 초점이 그 버튼에 남는다", async () => {
+    const server = stubAutomationsServer({ automations: [automationOf(1, { name: "점검" })] });
+    renderRoute(PATH);
+    const run = (await rowOf("점검")).getByRole("button", { name: "지금 실행" });
+    const release = server.holdRun();
+    run.focus();
+    await user().keyboard("{Enter}");
+    await waitFor(() => expect(run).toHaveTextContent("게시하는 중…"));
+    // jsdom 은 disabled 가 된 요소에서 초점을 치우지 않는다 — 브라우저는 치운다. 그래서 「disabled 가 아니다」를 함께 잰다
+    expect(run).toHaveAttribute("aria-disabled", "true");
+    expect(run).toBeEnabled();
+    expect(document.activeElement).toBe(run);
+    // 나가 있는 동안 다시 눌러도 보내지 않는다
+    await user().keyboard("{Enter}");
+    release();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(run).toHaveTextContent("지금 실행"));
+    expect(document.activeElement).toBe(run);
+    expect(server.writes()).toHaveLength(1);
+  });
+
+  it("[D2] 「켜기」 스위치를 키보드로 누르면 요청이 나가 있는 동안·끝난 뒤에도 초점이 남고, 그 사이 누름은 무시한다", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = stubAutomationsServer({
+      automations: [automationOf(1, { name: "점검" })],
+      override: async (c) => {
+        if (c.method === "PATCH") await held;
+        return undefined;
+      },
+    });
+    renderRoute(PATH);
+    const row = await rowOf("점검");
+    const toggle = row.getByRole("switch", { name: "점검 켜기" });
+    toggle.focus();
+    await user().keyboard(" ");
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
+    expect(toggle).toBeEnabled();
+    expect(document.activeElement).toBe(toggle);
+    await user().keyboard(" ");
+    release();
+    expect(await row.findByText("꺼짐")).toBeInTheDocument();
+    await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+    expect(document.activeElement).toBe(toggle);
+    expect(server.writes()).toEqual([
+      { method: "PATCH", url: `/api/v1/automations/${uid(501)}`, body: { enabled: false } },
     ]);
   });
 
