@@ -628,6 +628,39 @@ describe("만들기·수정 대화상자", () => {
     expect(body).toHaveValue("@dev 봐 줘 @");
   });
 
+  it("[D3] 고른 @ 후보는 scrollIntoView(nearest) 로 보이게 한다 — 낮은 화면에서 대화상자 아래로 잘려도", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      stubAutomationsServer();
+      renderRoute(PATH);
+      const dialog = await openCreate();
+      await user().type(within(dialog).getByRole("textbox", { name: "문구" }), "@d");
+      const option = within(await screen.findByRole("listbox", { name: "멘션 후보" })).getByRole("option", {
+        name: /@dev/,
+      });
+      await waitFor(() => expect(option).toHaveAttribute("aria-selected", "true"));
+      await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "nearest" }));
+      expect(scroll.mock.contexts.at(-1)).toBe(option);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("@ 후보로 넣는 글자도 문구 maxLength(4,000)를 넘지 않는다 — 넘칠 만큼 자른다", async () => {
+    stubAutomationsServer();
+    renderRoute(PATH);
+    const dialog = await openCreate();
+    const body = within(dialog).getByRole("textbox", { name: "문구" });
+    const head = "x".repeat(3996);
+    body.focus();
+    fireEvent.change(body, { target: { value: `${head} @d` } });
+    await screen.findByRole("listbox", { name: "멘션 후보" });
+    await user().keyboard("{Enter}");
+    const got = (body as HTMLTextAreaElement).value;
+    expect([got.length, got.slice(-4)]).toEqual([4000, " @de"]);
+  });
+
   it("수정 — 지금 값이 채워지고 PATCH 로 보낸다", async () => {
     const server = stubAutomationsServer({
       automations: [
