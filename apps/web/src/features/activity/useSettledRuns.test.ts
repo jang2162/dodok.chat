@@ -62,3 +62,28 @@ it("vanished 도 상한을 넘으면 첫째를 버리고 그 stopped 도 함께 
   expect(result.current.stopped.has(all[0]!.id)).toBe(false);
   expect(result.current.stopped.size).toBe(SETTLED_RUNS_LIMIT);
 });
+
+it("빠졌다 돌아와 끝난 런을 ended 에서 201개 뒤로 밀면 seenVanished 에서도 빠진다 — 다음 빠짐 때 타임라인을 다시 받는다(짝 지우기)", () => {
+  const { result, rerender, invalidate } = setup([run(1)]);
+  // 1 이 종료를 못 본 채 빠진다 → vanished·stopped, 타임라인 무효화 1회
+  rerender({ live: [] });
+  expect(invalidate).toHaveBeenCalledTimes(1);
+  // 돌아와 끝난다 → ended(stopped 는 실시간이라 빠진다), vanished 는 남는다
+  rerender({ live: [run(1, "done")] });
+  expect(result.current.ended.has(run(1).id)).toBe(true);
+  expect(result.current.vanished.has(run(1).id)).toBe(true);
+  // 끝난 런 상한만큼 더 들어오면 1 이 ended 에서 밀려난다
+  const later = Array.from({ length: SETTLED_RUNS_LIMIT }, (_, i) => run(i + 2, "done"));
+  rerender({ live: later });
+  expect(result.current.ended.has(run(1).id)).toBe(false);
+  // 같은 렌더에서 1 은 실시간에서도 빠져 다시 vanished·stopped 로 적힌다(ended 에서 밀린 뒤라 건너뛰지 않는다)
+  expect(result.current.stopped.has(run(1).id)).toBe(true);
+  // 새 런이 빠져 vanishedKey 가 바뀌면 — 1 은 seenVanished 에서 잊혔으니 한 번 더 무효화된다
+  rerender({ live: [...later, run(500)] });
+  rerender({ live: later });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.runEvents(run(500).id) });
+  const forRun1 = invalidate.mock.calls.filter(
+    ([f]) => JSON.stringify(f?.queryKey) === JSON.stringify(qk.runEvents(run(1).id)),
+  );
+  expect(forRun1).toHaveLength(2);
+});
