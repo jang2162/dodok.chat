@@ -583,7 +583,7 @@ describe("재진입 때 보이는 세션의 최신 한 쪽으로 가진 메시�
       seed(queryClient, [msg(1, { bodyMd: "옛 본문" }), msg(2)]);
       setChannelSeq(queryClient, CH, 2);
       // REST 는 고치기 전에 읽었다 — 1 은 옛 판, 2 는 떠난 사이 붙은 반응
-      const thumbs = [{ emoji: "👍", count: 1, userIds: [uid(9_002)] }];
+      const thumbs = [{ emoji: "👍" as const, count: 1, userIds: [uid(9_002)] }];
       const rest = gatedRest({ [CH]: [msg(1, { bodyMd: "옛 본문" }), msg(2, { reactions: thumbs })] });
       await watching(queryClient);
       fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
