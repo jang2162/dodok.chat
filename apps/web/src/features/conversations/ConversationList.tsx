@@ -7,7 +7,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { useConversationUnread } from "@/features/reads/useUnread";
-import { DATE_GROUP_LABEL, groupByDate } from "./dateGroups";
+import { DATE_GROUP_LABEL, groupByDate, useToday } from "./dateGroups";
 import { useConversationPermissions } from "./permissions";
 import { useConversationActivity, useConversationList } from "./queries";
 
@@ -140,6 +140,8 @@ function ListBody({
   onPick?: () => void;
   byDate: boolean;
 }) {
+  // 자정을 넘기면 묶음(오늘·어제…)과 줄의 시각·날짜 표시를 다시 센다
+  const today = useToday();
   if (list.data === undefined) {
     return list.isError ? (
       <div className="flex flex-col items-start gap-2 px-1.5 text-sm text-muted-foreground">
@@ -181,7 +183,7 @@ function ListBody({
   return (
     <>
       {byDate
-        ? groupByDate(list.conversations).map(({ group, conversations }, i) => (
+        ? groupByDate(list.conversations, today).map(({ group, conversations }, i) => (
             // 같은 머리가 두 번 나올 수 있다(`groupByDate`) — 자리 번호를 키에 싣는다
             <div key={`${group}:${i}`} role="group" aria-label={DATE_GROUP_LABEL[group]} className="mb-1">
               <h3 aria-hidden className="px-1.5 pt-2 pb-1 text-xs font-medium text-muted-foreground">
