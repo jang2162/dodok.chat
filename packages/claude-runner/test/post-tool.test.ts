@@ -56,6 +56,13 @@ describe("dodok MCP 서버의 post 도구", () => {
     expect(() => z.toJSONSchema(PostInputSchema, { io: "input" })).not.toThrow();
   });
 
+  it("설명에 쓰기 경계가 거절하는 components 제약 — 플러그인 COMPONENTS_DESCRIPTION 과 같은 구절", () => {
+    const t = postToolOf(async () => ({ messageId: "m" }));
+    expect(t.description).toContain(
+      "A checkbox with required: true must be checked; select minValues ≤ maxValues ≤ options; placeholder non-empty.",
+    );
+  });
+
   it("보내면 「보냈습니다(메시지 id)」", async () => {
     const seen: PostInput[] = [];
     const t = postToolOf(async (input) => {

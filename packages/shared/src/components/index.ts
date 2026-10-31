@@ -79,17 +79,17 @@ function withItemId(itemId: typeof StoredItemId, { strict }: { strict: boolean }
   });
   // 채울 수 없는 셀렉트(「보내기」가 영영 안 켜진다)를 쓰는 자리에서 곧바로 거절한다.
   // z.toJSONSchema 는 refine 을 싣지 않으므로 에이전트에게는 도구 설명 문장이 이 규칙을 알린다.
+  // 어긴 조건마다 그 칸을 경로로 단다 — maxValues 넘침은 maxValues, 그 밖은 minValues.
+  const SELECT_RULE = "select: minValues ≤ maxValues ≤ options 수, 단일 선택이면 minValues ≤ 1";
   const Select = strict
-    ? SelectBase.refine(
-        (s) =>
-          (s.minValues === undefined || s.minValues <= (s.maxValues ?? s.options.length)) &&
-          (s.maxValues === undefined || s.maxValues <= s.options.length) &&
-          (s.multi || s.minValues === undefined || s.minValues <= 1),
-        {
-          message: "select: minValues ≤ maxValues ≤ options 수, 단일 선택이면 minValues ≤ 1",
-          path: ["minValues"],
-        },
-      )
+    ? SelectBase.superRefine((s, ctx) => {
+        const minOver =
+          s.minValues !== undefined &&
+          (s.minValues > (s.maxValues ?? s.options.length) || (!s.multi && s.minValues > 1));
+        if (minOver) ctx.addIssue({ code: "custom", message: SELECT_RULE, path: ["minValues"] });
+        if (s.maxValues !== undefined && s.maxValues > s.options.length)
+          ctx.addIssue({ code: "custom", message: SELECT_RULE, path: ["maxValues"] });
+      })
     : SelectBase;
 
   const ActionsBlock = z

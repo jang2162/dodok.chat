@@ -17,7 +17,7 @@ import { createPathMasker, type PathMasker, workdirRoots } from "./mask";
 // 설정 경로와 realpath)는 workdirMasker 하나가 짓고, 드라이버는 스트리밍 꼬리 쥐기·카드 길이 검사처럼 구조를 아는 자리에서
 // sink.mask 를 쓴다. 그와 별도로 sink 는 run.event·run.final·run.error·outbound.post 의 글 칸을 내보내기 직전에 한 번 더
 // 가린다 — 가림은 두 번 해도 같은 글이라(가린 글에는 작업 디렉터리·절대 경로가 남지 않는다) 드라이버가 빠뜨린 칸의 그물이다.
-// 보지 않는 것: control.call 인자(채널 프롬프트 등 사람이 시킨 글이다), 이미지·파일 바이트, approval.requested 의 summary —
+// 보지 않는 것: control.call 인자(채널 프롬프트 등 사람이 시킨 글이다), 이미지·파일 바이트, approval.requested 의 summary·args —
 // 드라이버가 같은 뿌리(workdirMasker)로 가린 뒤 가운데를 줄인 글이라 다시 가리면 멱등이 깨진다: 생략 표시(끝이 공백) 뒤 상대 경로의
 // `/…` 가 절대 경로로 보여 꼬리가 「작업 디렉터리 밖」 표지로 숨거나, 요약이 400자를 넘어 승인 프레임이 버려진다(태스크 2 리뷰 H1)
 

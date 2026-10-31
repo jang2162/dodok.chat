@@ -143,6 +143,30 @@ describe("runs.requested_by", () => {
     expect(relay.requestedBy).toBeNull();
   });
 
+  it("같은 시각 — 런이 끝난 시각과 글의 createdAt 이 같은 ms 면 물려받는다(스냅샷 폴백 릴레이, server-decided 리뷰 L-1)", async () => {
+    const { channel, a, b } = room();
+    const human = await say(channel, mia, `@${a.handle} 시작`);
+    const first = onlyRun("triggerMessageId", human.id);
+    const message = createAgentMessage(app.db, app.bus, {
+      conversationId: first.conversationId,
+      agentId: first.agentId,
+      runId: first.id,
+      externalId: `out-${++n}`,
+      bodyMd: `@${b.handle} 넘길게`,
+    });
+    updateRun(app.db, first.id, {
+      status: "error",
+      error: { code: "TIMEOUT", message: "t" },
+      endedAt: new Date(message.createdAt),
+    });
+    const ended = app.db.select().from(runs).where(eq(runs.id, first.id)).get();
+    expect(ended?.endedAt?.toISOString()).toBe(message.createdAt);
+    await route(message);
+    const relay = onlyRun("triggerMessageId", message.id);
+    expect(relay.triggerKind).toBe("relay");
+    expect(relay.requestedBy).toBe(mia);
+  });
+
   it("열린 런의 글이 낳은 릴레이는 그대로 물려받는다", async () => {
     const { channel, a, b } = room();
     const human = await say(channel, mia, `@${a.handle} 시작`);

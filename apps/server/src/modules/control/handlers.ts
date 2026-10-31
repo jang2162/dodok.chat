@@ -141,6 +141,11 @@ function agentHandle(ctx: HandlerContext, agentId: string): string {
   return agent.handle;
 }
 
+/** basePrompt 의 화면 이름 — 웹 「에이전트」 화면과 같다: OpenClaw 는 「메모」(에이전트에게 전달되지 않음), 러너는 「지시」 */
+function basePromptLabel(ctx: HandlerContext, agentId: string): string {
+  return getAgent(ctx.db, agentId, ctx.workspaceId)?.provider === "runner" ? "지시" : "메모";
+}
+
 /**
  * 러너 에이전트는 이름·아바타만 — 핸들·지시는 받지 않는다(러너 일반화 스펙 6장 「제어 도구는 러너 구성을 바꾸지 못한다」: 채널 안
  * 에이전트가 확인 카드 하나로 자기 지시를 바꾸는 길을 닫는다). 정의 필드(model 등)는 도구 입력 스키마에 없어 strict 파싱이 막는다.
@@ -562,14 +567,14 @@ export const HANDLERS: Handlers = {
         done: `에이전트 @${handle} 의 설정을 바꿨습니다`,
       };
     },
-    summary: (_ctx, input) =>
+    summary: (ctx, input) =>
       [
         input.handle === undefined ? undefined : `핸들: @${input.handle}`,
         input.name === undefined ? undefined : `이름: ${input.name}`,
         input.avatarUrl === undefined ? undefined : `아바타: ${input.avatarUrl ?? "(지움)"}`,
         input.basePrompt === undefined
           ? undefined
-          : `기본 프롬프트: ${input.basePrompt === null ? "(지움)" : clip(input.basePrompt)}`,
+          : `${basePromptLabel(ctx, input.agentId)}: ${input.basePrompt === null ? "(지움)" : clip(input.basePrompt)}`,
       ]
         .filter((line) => line !== undefined)
         .join("\n") || undefined,

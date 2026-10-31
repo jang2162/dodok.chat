@@ -235,12 +235,17 @@ export function ApprovalCard({
           {control ? (
             <ControlBody summary={approval.description} origin={approval.detail} />
           ) : tool ? (
-            toolSummary && (
+            // 요약이 빈 문자열(예: Bash command "")이어도 입력 전체가 있으면 「전체 보기」는 남긴다
+            (toolSummary || toolFull) && (
               <div>
-                <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
-                  {toolSummary}
-                </code>
-                <TruncatedNote args={toolSummary} />
+                {toolSummary && (
+                  <>
+                    <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
+                      {toolSummary}
+                    </code>
+                    <TruncatedNote args={toolSummary} />
+                  </>
+                )}
                 {toolFull && <Arguments args={toolFull} showLabel="전체 보기" hideLabel="전체 접기" />}
               </div>
             )

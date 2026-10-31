@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { RouterHistory } from "@tanstack/react-router";
+import { leaveToLoginThenReset } from "@/features/auth/mutations";
 import { captureInstallPrompt } from "@/pwa/install";
 import { safeNotificationUrl } from "@/pwa/sw-logic";
 import type { AppNotifyTarget } from "@/realtime/WireProvider";
@@ -20,8 +21,11 @@ export function createApp(history?: RouterHistory): AppClient {
   const router = createAppRouter(queryClient, history);
 
   /**
-   * REST 401(wire `UNAUTHORIZED` 도 여기로 — 태스크 5): 클라이언트 상태를 비우고 `/login?next=<지금 경로>` 로.
-   * 이미 로그인 화면이면(틀린 토큰의 401 등) 아무것도 하지 않는다 — next 를 덮거나 두 번 가지 않게.
+   * REST 401(wire `UNAUTHORIZED` 도 여기로 — 태스크 5): `/login?next=<지금 경로>` 로 옮기고, 화면을 바꾸는 그 커밋에서 클라이언트
+   * 상태를 비운다(로그아웃과 같은 순서 — `leaveToLoginThenReset`). 먼저 비우면 아직 마운트된 셸이 빈 캐시로 다시 받아 끊긴 세션으로
+   * 401 이 더 난다. 이동이 실패해도 비운다.
+   * 이미 로그인 화면이면(틀린 토큰의 401 등) 아무것도 하지 않는다 — next 를 덮거나 두 번 가지 않게. 옮기는 중(비우기 전)에 온
+   * 401 도 같다: 이동을 걸면 `latestLocation` 이 곧바로 `/login` 이다.
    * 이동 막기(`useBlocker` — 토큰 원문 대화상자 등)는 건너뛴다: 세션이 끝났으니 머무를 까닭이 없고, 캐시를 비우면 막던 화면도
    * 어차피 사라진다.
    * 로그인 없이 여는 화면(`/join`·`/reset` — 오프라인 사본의 옛 me 로 소켓이 붙은 채 연 링크)이면 상태만 비우고 머문다
@@ -29,9 +33,11 @@ export function createApp(history?: RouterHistory): AppClient {
   function onUnauthorized() {
     const { pathname, href } = router.latestLocation;
     if (pathname === "/login") return;
-    resetClientState(queryClient);
-    if (isPublicPath(pathname)) return;
-    void router.navigate({ to: "/login", search: { next: href }, replace: true, ignoreBlocker: true });
+    if (isPublicPath(pathname)) {
+      resetClientState(queryClient);
+      return;
+    }
+    void leaveToLoginThenReset(queryClient, router, href);
   }
 
   /**

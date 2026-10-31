@@ -283,6 +283,20 @@ describe("ComponentsV1", () => {
       expect(StoredComponentsV1.safeParse(card(select)).error?.issues ?? []).toEqual([]);
     });
     it.each([
+      ["minValues > maxValues", { multi: true, minValues: 3, maxValues: 2 }, ["minValues"]],
+      ["minValues > options 수", { multi: true, minValues: 4 }, ["minValues"]],
+      ["maxValues > options 수", { multi: true, maxValues: 4 }, ["maxValues"]],
+      ["단일인데 minValues > 1", { minValues: 2 }, ["minValues"]],
+      [
+        "둘 다 — maxValues 넘침과 minValues > maxValues",
+        { multi: true, minValues: 5, maxValues: 4 },
+        ["minValues", "maxValues"],
+      ],
+    ])("%s: 오류 경로는 어긴 칸(shared-contracts 리뷰 L2)", (_name, select, fields) => {
+      const issues = ComponentsV1.safeParse(card(select)).error?.issues ?? [];
+      expect(issues.map((i) => i.path)).toEqual(fields.map((f) => ["blocks", 0, "items", 0, f]));
+    });
+    it.each([
       ["경계: minValues = maxValues = options 수", { multi: true, minValues: 3, maxValues: 3 }],
       ["경계: minValues = options 수(maxValues 없음)", { multi: true, minValues: 3 }],
       ["단일에 minValues 1", { minValues: 1 }],
