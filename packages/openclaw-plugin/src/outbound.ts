@@ -208,9 +208,12 @@ export function messageToolSendToOutbound(input: MessageToolSendInput): Outbound
   }
   const threadId = session?.threadRootId;
   if (threadId) {
+    // 코어의 명시적 「최상위」 표지 — 빈 threadId 와 달리 「이 스레드 말고」라는 뜻이라 이 스레드로 보내지 않고 거절한다
+    if (input.params["topLevel"] === true || input.params["threadId"] === null) {
+      return { ok: false, error: THREAD_ONLY_REASON };
+    }
     const requested = input.params["threadId"];
-    const requestedThread =
-      requested === undefined || requested === null || requested === "" ? undefined : String(requested);
+    const requestedThread = requested === undefined || requested === "" ? undefined : String(requested);
     if (requestedThread !== undefined && requestedThread.toLowerCase() !== threadId) {
       return { ok: false, error: THREAD_ONLY_REASON };
     }

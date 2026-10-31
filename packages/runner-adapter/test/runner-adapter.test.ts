@@ -1691,6 +1691,16 @@ describe("mayReadAttachment — 러너 토큰의 첨부 읽기 범위(조율자 
     expect(h.adapter.mayReadAttachment(TOKEN_A_ID, other.id)).toBe(false);
   });
 
+  it("사람이 중지한 런은 러너의 run.final 을 기다리지 않고 곧바로 false", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const shot = image();
+    const { runId, sessionKey } = await startRun(h, r, withAttachments(shot));
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, shot.id)).toBe(true);
+    await h.adapter.abort(runId, sessionKey, null);
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, shot.id)).toBe(false);
+  });
+
   it("런이 run.final·run.error·끊김으로 닫히면 false", async () => {
     const h = await setup();
     const r = await readyRunner(h);
@@ -1959,6 +1969,28 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(approvals(h)).toHaveLength(RUN_FREE_APPROVALS * 2);
     expect(approvals(h).filter((a) => a.status === "pending")).toHaveLength(RUN_FREE_APPROVALS);
     expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
+  });
+
+  it(`무효 승인 요청(세션 키 불일치·계약 위반)은 누계를 쓰지 않는다 — 그 뒤에도 유효한 요청 ${RUN_FREE_APPROVALS}개가 버킷 밖으로 통과한다`, async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    const otherKey = dodokSessionKey("coder", randomUUID());
+    for (let i = 0; i < RUN_FREE_APPROVALS; i++) {
+      r.send("approval.requested", {
+        ...approvalFrame(runId, sessionKey, `bad-key-${i}`),
+        sessionKey: otherKey,
+      });
+      const { toolName: _, ...noToolName } = approvalFrame(runId, sessionKey, `bad-shape-${i}`);
+      r.send("approval.requested", noToolName);
+    }
+    for (let i = 0; i < RUN_FREE_APPROVALS; i++)
+      r.send("approval.requested", approvalFrame(runId, sessionKey, `ok-${i}`));
+    await until(() => approvals(h).length === RUN_FREE_APPROVALS, "valid approvals");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(approvals(h).map((a) => a.toolCallId)).toEqual(
+      Array.from({ length: RUN_FREE_APPROVALS }, (_, i) => `toolu_ok-${i}`),
+    );
   });
 
   it("열린 런을 가리켜도 처리기가 버릴 프레임(계약 위반·세션 키 불일치·모르는 오류 코드·끝난 승인의 철회)은 control 버킷을 센다", async () => {

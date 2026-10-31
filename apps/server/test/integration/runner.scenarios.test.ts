@@ -19,6 +19,7 @@ import { and, eq } from "drizzle-orm";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pino from "pino";
 import { io } from "socket.io-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents, runs } from "../../src/db/schema.sqlite";
@@ -632,8 +633,12 @@ describe("러너 통합 시나리오", () => {
     const dbDir = mkdtempSync(join(tmpdir(), "dodok-runner-restart-"));
     const env = { DB_PATH: join(dbDir, "dodok.sqlite") };
     const autoReconnect = { minMs: 50, maxMs: 200 };
+    // 두 서버의 거절 줄을 모은다 — 폐기된 러너가 다시 붙으려 했는지를 서버 인증이 아니라 시도 자체로 본다(리뷰 N3)
+    const lines: string[] = [];
+    const logger = pino({ level: "warn" }, { write: (line: string) => void lines.push(line) });
+    const rejectedHandshakes = () => lines.filter((l) => l.includes("runner connection rejected"));
     try {
-      live = await bootLiveApp({ env });
+      live = await bootLiveApp({ env, deps: { logger } });
       const port = Number(new URL(live.app.url).port);
       const connectAuto = async (label: string) => {
         const runner = await startFakeRunner({
@@ -665,7 +670,7 @@ describe("러너 통합 시나리오", () => {
       expect(macbook.connected).toBe(false);
 
       // 같은 주소·같은 DB 로 다시 띄우면 러너가 스스로 돌아와 hello 가 통한다
-      live = await bootLiveApp({ env, port });
+      live = await bootLiveApp({ env, port, deps: { logger } });
       await vi.waitFor(
         () => {
           expect(macbook.helloCount).toBe(2);
@@ -677,7 +682,11 @@ describe("러너 통합 시나리오", () => {
       expect(macbook.connected).toBe(true);
       const status = await setupStatus();
       expect(status.runners.list.map((r) => r.label).sort()).toEqual(["desktop", "macbook"]);
-      // 폐기된 러너는 규칙대로 멈춰 있다 — 돌아온 러너들보다 먼저 끊겼으므로 다시 붙을 틈이 충분했다
+      // 폐기된 러너는 규칙대로 멈춰 있다 — 다시 붙으려 하지도 않는다. helloCount 만 보면 서버 인증(폐기 토큰 UNAUTHORIZED)이
+      // 막아 준 것과 가르지 못한다. 시도했다면 그 핸드셰이크가 거절 줄을 남긴다 — 돌아온 러너들보다 먼저 끊겼고, 백오프 상한의 두 배를
+      // 더 기다리므로 다시 붙을 틈이 충분했다
+      await new Promise((done) => setTimeout(done, autoReconnect.maxMs * 2));
+      expect(rejectedHandshakes()).toEqual([]);
       expect(revoked.helloCount).toBe(1);
       expect(revoked.connected).toBe(false);
     } finally {

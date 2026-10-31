@@ -253,6 +253,40 @@ describe("runOnce", () => {
     expect(fake.calls[0]!.options.sessionId).toBeUndefined();
   });
 
+  it("세션을 연 길을 러너 로그에 남긴다 — 새로·resume·전사 확인 실패", async () => {
+    const lines: string[] = [];
+    const log = (line: string) => lines.push(line);
+    const runId = runSpec().start.deliver.runId;
+
+    const fresh = harness(createFakeSdk(), { log });
+    fresh.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(runSpec(), fresh.ctx);
+
+    const resumed = harness(createFakeSdk(), { log });
+    resumed.fake.sessions.add(SESSION_ID);
+    resumed.fake.script(...script.textTurn("msg_1", ["x"]));
+    await runOnce(runSpec(), resumed.ctx);
+
+    const broken = createFakeSdk();
+    const failing = harness(
+      {
+        ...broken,
+        sessionExists: async () => {
+          throw new Error("unreadable");
+        },
+      },
+      { log },
+    );
+    broken.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(runSpec(), failing.ctx);
+
+    expect(lines).toEqual([
+      `dodok-runner: 런 ${runId} 세션 새로 열기`,
+      `dodok-runner: 런 ${runId} 세션 resume`,
+      `dodok-runner: 런 ${runId} 세션 새로 열기(전사 확인 실패)`,
+    ]);
+  });
+
   it("resume 직후 num_turns 0 result 는 건너뛰고 프롬프트 턴의 result 로 끝낸다", async () => {
     const { fake, ctx, emitted } = harness();
     fake.sessions.add(SESSION_ID);
@@ -498,8 +532,9 @@ describe("runOnce", () => {
 describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시(리뷰 M3)", () => {
   const IN_USE = `Claude Code process exited with code 1\nError: Session ID ${SESSION_ID} is already in use.`;
 
-  it("sessionId 로 연 첫 시도가 거절되면 resume 으로 다시 열어 끝낸다 — 오류를 내지 않는다", async () => {
-    const { fake, ctx, emitted } = harness();
+  it("sessionId 로 연 첫 시도가 거절되면 resume 으로 다시 열어 끝낸다 — 오류를 내지 않는다, 다시 연 것을 로그에 남긴다", async () => {
+    const lines: string[] = [];
+    const { fake, ctx, emitted } = harness(createFakeSdk(), { log: (line) => lines.push(line) });
     fake.script({ throw: new Error(IN_USE) });
     fake.script(script.init(), ...script.textTurn("msg_1", ["이어서"]));
     await runOnce(runSpec(), ctx);
@@ -507,6 +542,10 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
     expect(fake.calls[1]!.options.resume).toBe(SESSION_ID);
     expect(fake.calls[1]!.options.sessionId).toBeUndefined();
+    expect(lines).toEqual([
+      `dodok-runner: 런 ${runSpec().start.deliver.runId} 세션 새로 열기`,
+      `dodok-runner: 런 ${runSpec().start.deliver.runId} 이미 있는 세션이라 resume 으로 다시 엽니다`,
+    ]);
     expect(errors(emitted)).toEqual([]);
     expect(finals(emitted)).toMatchObject([{ final: { text: "이어서" } }]);
   });

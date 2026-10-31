@@ -87,7 +87,9 @@ export function createNodeFilesFs(
   }
   return {
     supported: platform === "darwin" || platform === "linux",
-    realpath: (p) => realpathSync(p),
+    // native — 대소문자만 틀린 이름도 실제 이름으로 푼다(루트·작업 디렉터리·둘러보기와 같게). JS 판은 받은 글자를 그대로 둬
+    // 대소문자만 다른 경로를 가리키는 링크가 작업 디렉터리 밖으로 보였다
+    realpath: (p) => realpathSync.native(p),
     stat: (p) => statSync(p),
     open,
     fstat: (fd) => fstatSync(fd),

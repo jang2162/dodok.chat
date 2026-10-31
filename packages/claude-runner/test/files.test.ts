@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -47,7 +48,28 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
+// 대소문자를 가리지 않는 파일 시스템(macOS 기본 APFS)에서만 뜻이 있다 — Linux CI·대소문자 구분 볼륨에서는 건너뛴다
+const caseInsensitiveTmp = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "dodok-case-"));
+  try {
+    writeFileSync(join(dir, "probe"), "");
+    return existsSync(join(dir, "PROBE"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
 describe("checkPostFiles", () => {
+  it.skipIf(!caseInsensitiveTmp)(
+    "대소문자만 틀린 이름도 실제 이름으로 풀어 통과 — 대소문자만 다른 경로를 가리키는 링크도 밖으로 보지 않는다",
+    () => {
+      symlinkSync(join(base, "REPO", "A.TXT"), join(workdir, "case-link"));
+      const real = realpathSync.native(join(workdir, "a.txt"));
+      const { checks } = checkPostFiles(workdir, ["A.TXT", "case-link"]);
+      expect(checks.map((c) => (c.ok ? c.abs : c.reason))).toEqual([real, real]);
+    },
+  );
+
   it("작업 디렉터리 안 상대 경로는 통과 — 절대 경로는 realpath, rel 은 상대", () => {
     const { checks, tooMany } = checkPostFiles(workdir, ["a.txt", "sub/b.txt", "./sub/../a.txt"]);
     expect(tooMany).toBe(false);

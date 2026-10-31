@@ -641,14 +641,17 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
 
     forgetRun,
 
-    onPluginHello(_session, hello) {
+    onPluginHello(session, hello) {
       // gatewayVersion 은 플러그인이 돌고 있는 Gateway 의 runtime.version. pluginBuiltWithSdk 는 빌드 때 박힌
-      // openclaw devDependency 버전이라 Gateway 버전이 아니다(9.5 위에서도 2026.9.4 로 찍힌다)
+      // openclaw devDependency 버전이라 Gateway 버전이 아니다(9.5 위에서도 2026.9.4 로 찍힌다).
+      // tokenId(원문 아님)는 토큰 교체 중 어느 토큰으로 붙었는지, capabilities 는 그 플러그인이 threads 등을 아는지 로그만으로 가르게 싣는다
       logger.info(
         {
           pluginVersion: hello.version,
           pluginBuiltWithSdk: hello.sdkVersion,
           gatewayVersion: hello.gatewayVersion ?? null,
+          tokenId: session.tokenId,
+          capabilities: hello.capabilities,
         },
         "bridge plugin hello",
       );

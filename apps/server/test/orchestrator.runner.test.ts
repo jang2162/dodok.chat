@@ -223,6 +223,17 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
     expect(runner.runStarts).toHaveLength(3);
   });
 
+  it("스레드를 모르는 러너(hello capabilities 에 threads 없음)에는 스레드 런을 보내지 않고 PLUGIN_OUTDATED 로 닫는다 — non-OpenClaw 도 supports() 를 본다", async () => {
+    const { runner, coder, log, channel } = await start({
+      hello: { capabilities: ["interrupt", "approvals", "attachments"] },
+    });
+    const root = await sendMessage(log.socket, channel.id, "스레드 루트");
+    await sendMessage(log.socket, channel.id, "@coder 스레드에서 봐줘", { threadRootId: root.id });
+    const run = await runOf(log, coder.id);
+    expect(await log.terminal(run.id)).toMatchObject({ status: "error", error: { code: "PLUGIN_OUTDATED" } });
+    expect(runner.runStarts).toEqual([]);
+  });
+
   it.each(["path", "program", "permissionMode", "allowedTools"])(
     "RUNNER_CEILING(%s) 도 같은 꼴의 카드",
     async (item) => {

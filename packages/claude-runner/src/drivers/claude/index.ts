@@ -13,6 +13,8 @@ export type ClaudeDriverOptions = {
   claudeCodeVersion: string;
   baseEnv?: NodeJS.ProcessEnv;
   closeGraceMs?: number;
+  /** 세션을 연 길(새로·resume·거절 뒤 resume)을 남기는 줄 */
+  logger?: { info(msg: string): void };
 };
 
 export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
@@ -56,6 +58,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         costs,
         signal,
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
+        ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
       });
     },
   };

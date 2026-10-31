@@ -869,6 +869,29 @@ describe("startRunnerConnection", () => {
     ]);
   });
 
+  it("control.call 은 런 signal 을 보지 않는다 — 기다리는 사이 런이 중지돼도 서버의 ack 가 도구 결과다(서버가 런 종료 때 기다리던 호출을 닫는다)", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    server.onControl = (socket, ack) => {
+      socket.emit("run.abort", { runId: RUN_ID });
+      void setTimeout(() => ack({ ok: false, error: { code: "EXPIRED", message: "런이 끝났습니다" } }), 100);
+    };
+    fake.script(
+      { callTool: { name: "update_channel", input: { channelId: RUN_ID, name: "ops" } } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["x"])] },
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect(server.controls).toHaveLength(1);
+    expect(fake.calls[0]!.toolResults).toEqual([
+      {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ code: "EXPIRED", message: "런이 끝났습니다" }) }],
+      },
+    ]);
+    expect(server.finals[0]).toMatchObject({ stopReason: "aborted" });
+  });
+
   it("control.call 을 보낸 뒤 전송이 끊기면 도구 결과는 「결과를 모른다」 — 실패라고 하지 않는다(태스크 4 리뷰 L2)", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.hellos.length === 1);

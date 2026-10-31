@@ -410,6 +410,8 @@ describe("스레드 아웃바운드", () => {
   it.each([
     ["다른 스레드", { to: `channel:${CH}`, message: "hi", threadId: "01a09fc9-d204-7551-89d6-38544d07a1bb" }],
     ["스레드가 아닌 값(최상위를 뜻하려는 것)", { to: `channel:${CH}`, message: "hi", threadId: "top" }],
+    ["코어의 명시적 최상위 표지 topLevel: true", { to: `channel:${CH}`, message: "hi", topLevel: true }],
+    ["코어의 명시적 최상위 표지 threadId: null", { to: `channel:${CH}`, message: "hi", threadId: null }],
   ])("스레드 세션의 message 툴이 가리키는 곳이 %s — 고정 사유로 거절한다", (_label, params) => {
     expect(toolSend(params)).toEqual({ ok: false, error: THREAD_ONLY_REASON });
   });
