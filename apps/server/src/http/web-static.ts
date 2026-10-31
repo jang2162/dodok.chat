@@ -37,6 +37,8 @@ export const BACKEND_PREFIXES = [
   "/runner/",
   "/hooks/",
   "/mcp",
+  // 끝 슬래시(/mcp/)·그 아래도 SPA 가 아니라 서버 404 JSON — 바깥 MCP 클라이언트에 주소를 잘못 넣었을 때 HTML 이 아니라 오류를 받게
+  "/mcp/",
   "/healthz",
   "/llms.txt",
 ] as const;
