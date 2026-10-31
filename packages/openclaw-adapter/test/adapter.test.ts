@@ -245,9 +245,9 @@ describe("createOpenClawAdapter — 상태", () => {
     expect(ofKind("status").at(-1)?.status).toEqual(oneGateway("down", "down"));
   });
 
-  it("플러그인 hello 로그에 gatewayVersion(runtime.version)과 빌드 때 박힌 SDK 버전을 다른 이름으로 싣는다", async () => {
+  it("플러그인 hello 로그에 gatewayVersion(runtime.version)과 빌드 때 박힌 SDK 버전을 다른 이름으로, 통과한 토큰 id 와 capabilities 를 함께 싣는다", async () => {
     await plugin({}, { ...hello, gatewayVersion: "2026.9.5" });
-    await plugin();
+    await plugin({}, { ...hello, capabilities: ["config.set", "threads"] }, OTHER_TOKEN);
     const lines = logger.info.mock.calls
       .filter((call) => call[1] === "bridge plugin hello")
       .map((call) => call[0])
@@ -257,12 +257,16 @@ describe("createOpenClawAdapter — 상태", () => {
         pluginVersion: "0.0.0",
         pluginBuiltWithSdk: "2026.9.4",
         gatewayVersion: "2026.9.5",
+        tokenId: "t1",
+        capabilities: ["config.set"],
         gatewayId: CONNECTION_ID,
       },
       {
         pluginVersion: "0.0.0",
         pluginBuiltWithSdk: "2026.9.4",
         gatewayVersion: null,
+        tokenId: "t2",
+        capabilities: ["config.set", "threads"],
         gatewayId: CONNECTION_ID,
       },
     ]);
