@@ -1,7 +1,9 @@
 import {
+  INBOUND_REACTIONS_MAX,
   type InboundReaction,
   type Message,
   REACTION_EMOJIS,
+  REACTION_EXCERPT_MAX,
   type ReactionEmoji,
   type ReactionSet,
 } from "@dodok/shared";
@@ -16,8 +18,8 @@ import { assertDmWritable } from "../dms/service";
 import { rowToMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 
-/** 한 런에 싣는 리액션 수 — 넘치면 최근 쪽을 남기고 나머지는 reactionsOmitted 로 센다(InboundContext.reactions 의 상한과 같다) */
-export const REACTIONS_PER_RUN = 20;
+/** 한 런에 싣는 리액션 수 — 넘치면 최근 쪽을 남기고 나머지는 reactionsOmitted 로 센다(값은 shared 계약의 상한) */
+export const REACTIONS_PER_RUN = INBOUND_REACTIONS_MAX;
 
 /**
  * InboundReaction.excerpt 의 길이 상한 — UTF-16 단위로 센다. 계약 스키마의 string.max 는 zod 판본마다 세는 법이 달라(핀한 4.6.5 는
@@ -25,7 +27,7 @@ export const REACTIONS_PER_RUN = 20;
  * 쌍이 많은 글의 발췌가 60 코드 포인트보다 짧은 것. 세는 법은 `z.string().max(60).safeParse("😀".repeat(31))` 로 잰다 — 코드
  * 포인트로 세면 통과, UTF-16 으로 세면 거절
  */
-const EXCERPT_MAX = 60;
+const EXCERPT_MAX = REACTION_EXCERPT_MAX;
 
 /**
  * 리액션을 켜거나 끈다(리액션 스펙 docs/superpowers/specs/2026-10-05-reactions-design.md 「`modules/reactions/`」 절). 이미 그
