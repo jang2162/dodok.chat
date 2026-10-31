@@ -15,6 +15,8 @@ import type { OpsService } from "./service";
 /** 끊김이 이만큼 이어져야 사건을 연다 — 그보다 짧은 깜빡임은 남기지 않는다(Review Focus 2) */
 export const DISCONNECT_EVENT_MS = 60_000;
 export const DISK_CHECK_INTERVAL_MS = 600_000;
+/** 한 번의 statfs 를 이만큼만 기다린다 — 네트워크 파일 시스템에서 멈춰도 ready 가 풀려 부팅이 이어진다 */
+export const DISK_CHECK_TIMEOUT_MS = 5_000;
 
 const MIB = 1024 * 1024;
 /** 이보다 적으면 error — 첨부 업로드를 507 로 거절해 SQLite 가 쓸 자리를 남긴다 */
@@ -280,6 +282,9 @@ type Statfs = (
 /**
  * DATA_DIR 의 디스크 여유를 지금 한 번, 그 뒤 intervalMs 마다 잰다. warn·error 면 disk_low 를 남긴다(같은 줄로 묶인다).
  * ready 는 첫 측정이 끝나면 풀린다 — 그 전과 statfs 실패 때 current() 는 unknown 이고 업로드를 막지 않는다.
+ * 한 번의 statfs 가 timeoutMs 를 넘기면 unknown + warn(code timeout)으로 그 측정을 끝낸다. 멈춘 statfs 는 libuv 스레드 풀
+ * 한 칸을 쥔 채 남으므로 그것이 끝날 때까지 새로 부르지 않는다(주기·check() 모두) — 상한마다 또 부르면 풀(기본 4칸)이 차
+ * 다른 fs 가 멈춘다. 멈췄던 statfs 가 끝나면 그 자리에서 다시 잰다.
  * check() 는 주기를 기다리지 않고 지금 다시 잰다(진행 중인 측정이 있으면 그것이 끝난 뒤) — dev:fake 디스크 흉내가 쓴다
  */
 export function createDiskMonitor(deps: {
@@ -288,16 +293,39 @@ export function createDiskMonitor(deps: {
   logger: Pick<Logger, "warn">;
   statfs?: Statfs;
   intervalMs?: number;
+  timeoutMs?: number;
 }): { current(): DiskState; check(): Promise<void>; close(): void; ready: Promise<void> } {
   const { dataDir, ops, logger } = deps;
   const statfs: Statfs = deps.statfs ?? ((p) => fsStatfs(p, { bigint: true }));
+  const timeoutMs = deps.timeoutMs ?? DISK_CHECK_TIMEOUT_MS;
   let state: DiskState = { level: "unknown" };
   let closed = false;
   let inflight: Promise<void> | undefined;
+  /** 상한을 넘기고도 아직 안 끝난 statfs — 있으면 새로 부르지 않는다 */
+  let stuck = false;
 
   const measure = async () => {
+    if (stuck) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const s = await statfs(dataDir);
+      const call = statfs(dataDir);
+      const timedOut = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), timeoutMs);
+        timer.unref();
+      });
+      const s = await Promise.race([call, timedOut]);
+      if (s === "timeout") {
+        stuck = true;
+        const settle = () => {
+          stuck = false;
+          void tick();
+        };
+        call.then(settle, settle);
+        if (closed) return;
+        state = { level: "unknown" };
+        logger.warn({ code: "timeout" }, "disk check failed");
+        return;
+      }
       if (closed) return;
       const bsize = BigInt(s.bsize);
       const freeBytes = Number(BigInt(s.bavail) * bsize);
@@ -312,6 +340,8 @@ export function createDiskMonitor(deps: {
       // 경로가 든 메시지는 싣지 않는다 — 코드만
       const code = (err as NodeJS.ErrnoException | undefined)?.code;
       logger.warn({ code: code ?? "unknown" }, "disk check failed");
+    } finally {
+      clearTimeout(timer);
     }
   };
   /** 주기 측정 — 진행 중인 측정이 있으면 건너뛴다(겹쳐 재지 않는다) */
