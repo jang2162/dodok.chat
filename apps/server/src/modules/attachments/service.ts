@@ -102,7 +102,8 @@ export async function uploadAttachment(
           input.uploader.type === "user" ? input.uploader.userId : (input.uploader.runnerTokenId ?? null),
         gatewayId: input.uploader.type === "bridge" ? (input.uploader.gatewayId ?? null) : null,
         kind: s.kind,
-        name: sanitizeAttachmentName(input.nameHint ?? fallback),
+        // macOS 는 한글 파일 이름을 NFD 로 보낸다 — NFC 검색어로 찾히게 저장 경계에서 NFC 로(옛 행은 db/nfc-backfill)
+        name: sanitizeAttachmentName((input.nameHint ?? fallback).normalize("NFC")),
         mime: s.mime,
         size: input.bytes.length,
         width: s.width ?? null,

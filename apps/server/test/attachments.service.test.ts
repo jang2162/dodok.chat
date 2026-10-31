@@ -111,6 +111,17 @@ describe("attachments service", () => {
     expect(b.name).toBe("etc보고서.pdf");
   });
 
+  it("이름은 NFC 로 저장한다 — macOS 의 NFD(조합형) 한글 이름도", async () => {
+    const nfd = "회의록.pdf".normalize("NFD");
+    expect(nfd).not.toBe("회의록.pdf");
+    const a = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES, nameHint: nfd },
+    );
+    expect(a.name).toBe("회의록.pdf");
+    expect(db.select().from(attachments).where(eq(attachments.id, a.id)).get()?.name).toBe("회의록.pdf");
+  });
+
   it("사람은 이미지가 아니면 VALIDATION(이미지만 올릴 수 있습니다), SVG 도", async () => {
     for (const bytes of [PDF_BYTES, SVG_BYTES])
       await expect(

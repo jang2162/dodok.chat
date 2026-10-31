@@ -80,6 +80,9 @@ export function searchMessages(
   q: SearchQuery,
   now: Date,
 ): SearchResult {
+  // 첨부 이름은 NFC 로 저장한다(attachments/service·db/nfc-backfill) — NFD 로 온 검색어(macOS 조합형)도 같은 꼴로. 2글자 판정·LIKE·FTS 가
+  // 모두 이 값을 쓴다
+  q = { ...q, q: q.q.normalize("NFC") };
   // FTS5 쿼리 파서는 NUL 에서 문자열을 끝내 「unterminated string」 500 이 되고, LIKE 는 패턴이 NUL 에서 잘려 더 넓게 찾는다
   if (q.q.includes("\u0000")) throw apiError("VALIDATION", "검색어에 NUL 문자를 쓸 수 없다");
   const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, reader), ...filters(q)];

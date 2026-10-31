@@ -4,9 +4,10 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { isBundled, migrationsFolder } from "../runtime";
 import * as authSchema from "./auth-schema";
 import { assertTrigramSupport } from "./fts";
+import { backfillNfcAttachmentNames } from "./nfc-backfill";
 import * as schema from "./schema.sqlite";
 
-/** 파일 경로 또는 ":memory:". 연결 후 마이그레이션까지 적용한다. */
+/** 파일 경로 또는 ":memory:". 연결 후 마이그레이션과 SQL 로 못 하는 데이터 백필(첨부 이름 NFC)까지 적용한다. */
 export function createDb(file: string) {
   const sqlite = new Database(file);
   sqlite.pragma("journal_mode = WAL");
@@ -19,6 +20,7 @@ export function createDb(file: string) {
   }
   assertTrigramSupport(sqlite);
   migrate(db, { migrationsFolder: migrationsFolder() });
+  backfillNfcAttachmentNames(db);
   return db;
 }
 

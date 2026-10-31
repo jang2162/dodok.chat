@@ -191,6 +191,32 @@ describe("색인 트리거 (스펙 5.1)", () => {
       .run();
     expect(ids(t.search("분기보고서"))).toEqual([m.id]);
   });
+
+  it("NFD(조합형) 검색어로 NFC 첨부 이름·본문이 찾힌다 — 3글자 이상(FTS)과 2글자(LIKE) 둘 다", () => {
+    const t = setup();
+    const m = t.say("회의록 정리");
+    const a: Attachment = {
+      id: uuid(),
+      kind: "file",
+      url: `artifact://${uuid()}`,
+      name: "분기회의록.pdf",
+      mime: "application/pdf",
+      size: 10,
+    };
+    const f = t.say("파일 올림");
+    t.db
+      .update(messages)
+      .set({ attachments: [a] })
+      .where(eq(messages.id, f.id))
+      .run();
+    const nfd = (s: string) => s.normalize("NFD");
+    expect(nfd("회의록")).not.toBe("회의록");
+    expect(ids(t.search(nfd("회의록"))).sort()).toEqual([m.id, f.id].sort());
+    expect(ids(t.search(nfd("분기회의")))).toEqual([f.id]);
+    const short = t.search(nfd("회의"));
+    expect(short.limited).toBe(true);
+    expect(ids(short)).toEqual([m.id]);
+  });
 });
 
 describe("3글자 이상 — MATCH", () => {
