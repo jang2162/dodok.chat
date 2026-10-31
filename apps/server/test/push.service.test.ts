@@ -1026,6 +1026,25 @@ describe("attachPushTriggers — 버스 배선", () => {
     expect(got).toHaveLength(2);
   });
 
+  it("승인 기억은 1000개까지 — 넘으면 가장 오래된 것부터 잊는다(FIFO)", () => {
+    const bus = new ServerBus();
+    const got: PushTarget[][] = [];
+    attachPushTriggers(bus, { dispatch: async (x) => void got.push(x) }, lookups, captureLogger().logger);
+    const first = { ...approval, id: uuid() };
+    const rest = Array.from({ length: 1000 }, () => ({ ...approval, id: uuid() }));
+    bus.emit("approval.requested", { approval: first });
+    for (const a of rest) bus.emit("approval.requested", { approval: a });
+    expect(got).toHaveLength(1001);
+    // 1001번째가 들어오며 first 가 밀려났다 — 다시 오면 또 보낸다
+    bus.emit("approval.requested", { approval: first });
+    expect(got).toHaveLength(1002);
+    // first 가 다시 들어오며 rest[0] 이 밀려났고, 가장 최근 것은 아직 기억한다
+    bus.emit("approval.requested", { approval: rest[999]! });
+    expect(got).toHaveLength(1002);
+    bus.emit("approval.requested", { approval: rest[0]! });
+    expect(got).toHaveLength(1003);
+  });
+
   it("트리거 계산이 던져도 버스로 번지지 않고 error 로그(사유만)", () => {
     const bus = new ServerBus();
     const cap = captureLogger();
