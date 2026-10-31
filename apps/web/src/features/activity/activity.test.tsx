@@ -1,6 +1,6 @@
 import type { ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -106,7 +106,11 @@ beforeEach(() => {
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
 });
-afterEach(() => {
+afterEach(async () => {
+  // 앱 셸의 작성기(tiptap)는 언마운트된 뒤 다음 틱(`setTimeout` 1ms)에 `Editor.destroy` 를 부른다 — 파일의 마지막 테스트면 그 틱이
+  // 오기 전에 테스트 환경이 내려가 「window is not defined」로 터졌다(plan.md 이월 「테스트 빈틈 몇」). 여기서 먼저 내리고 그 틱을 넘긴다
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 5));
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   wire.socket = undefined;
@@ -432,8 +436,7 @@ it("승인 둘이면 A 가 확정된 뒤 카드가 B 로 갈아탄다", async ()
     useApprovalStore.getState().apply(approval());
     useApprovalStore.getState().apply(second());
   });
-  const cardId = () =>
-    aside.querySelector('[data-slot="approval-card"]')?.getAttribute("data-approval-id");
+  const cardId = () => aside.querySelector('[data-slot="approval-card"]')?.getAttribute("data-approval-id");
   await waitFor(() => expect(cardId()).toBe(APPROVAL));
 
   act(() =>
