@@ -154,7 +154,12 @@ function MemberLine({
         {member.id === meId && <span className="ml-1 text-xs font-normal text-muted-foreground">(나)</span>}
       </td>
       <td className="px-3 py-2">{member.displayName}</td>
-      <td className="px-3 py-2 break-all text-muted-foreground">{member.email ?? "—"}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {/* 좁은 화면에서 글자 단위로 끊지 않고 말줄임 — 전체 값은 툴팁 */}
+        <span className="block max-w-48 truncate sm:max-w-64" title={member.email ?? undefined}>
+          {member.email ?? "—"}
+        </span>
+      </td>
       <td className="px-3 py-2 whitespace-nowrap">
         <RoleCell member={member} viewerRole={viewerRole} />
       </td>
@@ -234,7 +239,9 @@ function DeactivatedLine({
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
         <span className="font-medium">{handle}</span>
         <span>{member.displayName}</span>
-        <span className="break-all">{member.email ?? "—"}</span>
+        <span className="max-w-full truncate" title={member.email ?? undefined}>
+          {member.email ?? "—"}
+        </span>
         <span>{ROLE_LABEL[member.role]}</span>
       </div>
       {canActOn(viewerRole, member.role) && (
