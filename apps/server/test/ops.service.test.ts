@@ -244,6 +244,38 @@ describe("OpsService — 폭주 병합(같은 줄의 ops.event·로그는 창마
     expect(emitted).toHaveLength(2);
   });
 
+  it("resolve 는 다른 줄의 보류분을 건드리지 않는다 — 그 줄은 창 끝에 마지막 상태로 나간다", () => {
+    ops.record({ kind: "gateway_down", key: "gateway", severity: "warn" });
+    ops.record({ kind: "gateway_down", key: "gateway", severity: "warn" }); // 보류(닫을 줄)
+    ops.record({ kind: "ratelimit", key: "other", severity: "info" });
+    ops.record({ kind: "ratelimit", key: "other", severity: "info" }); // 보류(다른 줄)
+    ops.resolve("gateway_down", "gateway");
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted.at(-1)?.event).toMatchObject({ key: "other", count: 2 });
+    expect(emitted.filter((p) => p.event.key === "other").map((p) => p.event.count)).toEqual([1, 2]);
+  });
+
+  it("ack 는 확인하지 않은 다른 줄의 보류분을 건드리지 않는다", () => {
+    ops.record({ kind: "run_failed", key: "agent:a", severity: "warn" });
+    ops.record({ kind: "run_failed", key: "agent:a", severity: "warn" }); // 보류(확인할 줄)
+    clock = new Date(T0.getTime() + 2 * MIN);
+    ops.record({ kind: "run_failed", key: "agent:b", severity: "warn" });
+    ops.record({ kind: "run_failed", key: "agent:b", severity: "warn" }); // 보류(upTo 뒤라 남는 줄)
+    expect(ops.ack(new Date(T0.getTime() + MIN))).toBe(1);
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted.filter((p) => p.event.key === "agent:b").map((p) => p.event.count)).toEqual([1, 2]);
+    expect(emitted.filter((p) => p.event.key === "agent:a").at(-1)?.event.ackedAt).not.toBeNull();
+  });
+
+  it("창 길이는 1초다 — 999ms 에는 보류분이 남고 1000ms 에 나간다", () => {
+    ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    vi.advanceTimersByTime(999);
+    expect(emitted).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2]);
+  });
+
   it("close 는 보류분을 내보내고 타이머를 끈다", () => {
     ops.record({ kind: "ratelimit", key: "k", severity: "info" });
     ops.record({ kind: "ratelimit", key: "k", severity: "info" });
