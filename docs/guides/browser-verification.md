@@ -59,6 +59,7 @@
 - ⚠ **auto 모드에서는 권한 분류기가 포트로 스크립트 본문을 받아 실행하는 드라이버(위)를 막는다**(「Create RCE Surface」). 그때는 항목마다 독립 스크립트(launch → 컨텍스트 → 닫기)로 돌고, 로컬 로그인 분당 5 를 넘지 않게 세션 토큰을 API(`POST /api/v1/auth/local`)로 한 번 받아 `context.addCookies` 로 `dodok.session` 을 싣는다. 상태는 서버 DB 에 남으므로 항목 사이에 이어진다.
 - **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.** 이 `ws.close()` 는 「업그레이드는 됐는데 핸드셰이크 전에 깨끗이 닫힌」 시도라, 진짜 서버 중단(연결 거부 — 브라우저가 `error` 를 먼저 낸다)과 다른 길을 탄다 — 웹은 그 길을 `realtime/wire.ts` 의 `WireManager` 로 실패로 친다. 서버가 죽은 경우를 재려면 서버 프로세스를 내렸다 올린다.
 - **화면 캐시가 낡은 상태(끊긴 러너를 붙은 줄로 아는 폼 등)는 wire 이벤트만 막아 만든다** — `page.routeWebSocket` 에서 `const server = ws.connectToServer(); server.onMessage(m => { if (!freeze) ws.send(m); }); ws.onMessage(m => server.send(m));` 로 서버 프레임만 버린다. 연결은 살아 있어 재접속·재구독이 일어나지 않는다(위 `ws.close()` 는 재접속을 일으켜 캐시를 다시 받는다).
+- **새 글을 몰아 넣는 확인(두 탭·가상 목록 밀어내기 등)은 wire `message.send` 레이트리밋에 걸린다** — 소켓당 분당 30·버스트 10(`apps/server/src/modules/ops/limits.ts` 의 `wire.heavy`, `component.interact`·`run.abort` 와 같은 버킷)이라 버스트 10건 뒤로는 2.1초 간격으로 보낸다. 걸리면 `RATE_LIMITED` 이고 서버 로그에 `ops.ratelimit key=wire:message.send` 가 남는다.
 - `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/guides/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
 
 ## 배포 이미지(앱 컨테이너)를 볼 때
