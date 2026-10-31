@@ -109,6 +109,6 @@ function leaveThenReset(qc: QueryClient, router: ReturnType<typeof useRouter>) {
   const off = router.subscribe("onBeforeRouteMount", (e) => {
     if (e.toLocation.pathname === "/login") reset();
   });
-  // 이동이 막히거나(이동 막기) 실패해도 상태는 비운다 — 세션은 이미 끝났다
-  router.navigate({ to: "/login", replace: true }).then(reset, reset);
+  // 실패해도 상태는 비운다 — 세션은 이미 끝났다. 이동 막기(useBlocker)는 무시한다: 막힌 이동의 약속은 풀리지도 거절되지도 않아 정리가 영영 안 돈다
+  router.navigate({ to: "/login", replace: true, ignoreBlocker: true }).then(reset, reset);
 }
