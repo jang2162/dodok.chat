@@ -148,6 +148,25 @@ describe("resolveRef — 플러그인 인코딩 왕복(a3-c1 리뷰 2절)", () =
       expect(resolveRef(`artifact://${ref}`, [a1, f])).toEqual({ kind: "attachment", attachment: f });
   });
 
+  it("NFD 이름 참조는 서버가 NFC 로 저장한 첨부로 풀린다(server-decided 리뷰 M-1)", () => {
+    const nfc = named("회의록.pdf".normalize("NFC"), ID2);
+    const nfd = "회의록.pdf".normalize("NFD");
+    expect(nfd).not.toBe(nfc.name);
+    expect(resolveRef(`artifact://${nfd}`, [a1, nfc])).toEqual({ kind: "attachment", attachment: nfc });
+    expect(resolveRef(`artifact://${encodeURIComponent(nfd)}`, [a1, nfc])).toEqual({
+      kind: "attachment",
+      attachment: nfc,
+    });
+  });
+
+  it("NFC 이름 참조는 NFD 이름으로 남은 옛 첨부도 찾는다", () => {
+    const nfd = named("회의록.pdf".normalize("NFD"), ID2);
+    expect(resolveRef(`artifact://${"회의록.pdf".normalize("NFC")}`, [a1, nfd])).toEqual({
+      kind: "attachment",
+      attachment: nfd,
+    });
+  });
+
   it("referencedAttachmentIds 도 같은 해석을 쓴다 — 탭·% 든 이름", () => {
     const tab = named("탭이름.pdf", ID2);
     const pct = named("50% 할인.pdf", ID3);
