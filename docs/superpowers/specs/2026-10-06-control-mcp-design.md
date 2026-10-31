@@ -205,16 +205,16 @@ call(principal, tool, args)
 
 - 값은 `orchestrator.requesterOf(tx, trigger)` 한 곳에서 정한다 — `trigger.requestedBy` 를 주는 것은 「다시 실행」뿐(`components/service.ts` 가 원래 런의 값을 넘긴다), 상호작용·「이어가기」는 `interactionId` 로 `component_interactions.user_id` 를 읽는다. 릴레이의 「부모 런」은 트리거 에이전트 글의 `runId` 런이다(`decideRuns` 는 parentRunId 를 싣지 않는다). 값은 공유 `Run` 에 싣지 않는다(REST·wire 로 나가지 않게) — 읽기는 `runs/store.ts getRunRequestedBy`(t2 보고 「requested_by 규칙」·판단 5·6).
 - **마이그레이션 전 런의 「다시 실행」은 읽기만 된다.** `runs.requested_by`(0022)는 nullable 이라 옛 런은 null 이고, 그 런의 run_error 카드로 다시 실행한 런도 null 을 물려받아 쓰기 도구가 `FORBIDDEN` 「사람이 시킨 런에서만 바꿀 수 있습니다」다 — 배포 직후 옛 실패 런에만 해당한다(t2 리뷰 L3).
-- **릴레이가 물려받는 시킨 사람은 조이지 않았다.** 글 저장 때 그 런이 열려 있었을 때만 물려주면, 정상 경로인 늦은 정본(런이 타임아웃으로 닫힌 뒤 온 답 — `onCanonical` 은 종료된 런의 정본도 저장·라우팅한다)이 낳은 릴레이 런이 시킨 사람을 잃는다. 대신 **확인 카드에 출처를 싣는다**(`approval.detail`): 「시킨 사람: @mia」, 릴레이면 「시작한 글: @mia · #dev · 42번째 글 「앞 120자」」(카드 누름이면 「시작: @mia 의 카드 누름」)·「릴레이: @a → …」, 사슬 중 에이전트 글이 그 런이 끝난 뒤 저장됐으면 「주의: @a 의 글은 그 런이 끝난 뒤에 왔습니다 — 직접 시킨 일인지 확인하세요」. 웹에 메시지 고정 주소가 없어 링크 대신 채널·순번·앞부분을 글로 쓴다. 남는 위험은 「시키지 않은 카드가 그 사람에게 뜬다」이고, 조이는 길은 `requesterOf` 의 에이전트 갈래에 `parent.endedAt < message.createdAt` 이면 null 한 줄이다(t2 리뷰 L2, t3 보고 「L2 판단」, t3 리뷰 R4).
+- **늦은 정본이 낳은 릴레이는 시킨 사람이 없다** — `requesterOf` 에이전트 갈래가 앞 런의 `endedAt` 이 글의 `createdAt` 보다 앞이면 null 이다. 확인 카드의 출처 줄·「주의」 줄은 그대로 둔다(같은 런이 열려 있는 동안 저장된 글만 물려받으므로 「주의」 줄은 이제 사슬 앞쪽의 글에만 뜬다). **확인 카드에 출처를 싣는다**(`approval.detail`): 「시킨 사람: @mia」, 릴레이면 「시작한 글: @mia · #dev · 42번째 글 「앞 120자」」(카드 누름이면 「시작: @mia 의 카드 누름」)·「릴레이: @a → …」, 사슬 중 에이전트 글이 그 런이 끝난 뒤 저장됐으면 「주의: @a 의 글은 그 런이 끝난 뒤에 왔습니다 — 직접 시킨 일인지 확인하세요」. 웹에 메시지 고정 주소가 없어 링크 대신 채널·순번·앞부분을 글로 쓴다. 남는 위험은 「시키지 않은 카드가 그 사람에게 뜬다」이고, 조이는 길은 `requesterOf` 의 에이전트 갈래에 `parent.endedAt < message.createdAt` 이면 null 한 줄이다(t2 리뷰 L2, t3 보고 「L2 판단」, t3 리뷰 R4).
 - `approvals.requested_by`(0024, FK 없음)를 두어 shared `Approval.requestedBy` 를 싣는다 — **`dodok_control` 행에만 채운다**(다른 종류는 null). 카드는 기존 승인처럼 워크스페이스 방·구독 ack 로 가므로 카드를 볼 수 있는 사람 = 「@mia 의 확인을 기다립니다」를 볼 사람이다(t3 판단 2, t3 보고 「requestedBy 노출 범위」).
 
 **제어 서비스 (태스크 3)**
 
 - 차례는 `레이트 → Zod → 정책 → 상태 확인(보관·없음) → (에이전트·쓰기) 카드 → 정책·상태 다시 → 실행 → 사건·시스템 메시지`. 허용 뒤 상태 재확인은 「런은 채널 A, 도구는 채널 B 를 겨누는데 대기 중 B 가 보관됐다」를 막는 유일한 방어다(`updateChannel` 은 보관을 보지 않는다)(t3 리뷰 R2, t3 수정 보고).
-- **레이트 키는 (via, 시킨 사람, 에이전트)** — 같은 사람의 PAT 와 에이전트마다 버킷이 따로라, 에이전트 N 개를 쓰면 한 사람이 분당 쓰기 10×(N+1) 까지 간다. 본문 「실행 흐름」 장의 「주체마다」를 `Principal`(via·agentId 포함)로 읽은 것이다. 걸리면 운영 사건 `ratelimit` key `control:<via>`(t3 리뷰 L-a).
+- **레이트 키는 시킨 사람**(`user:<userId>`) — 같은 사람의 PAT 와 그 사람이 시킨 에이전트들이 한 버킷이다. 시킨 사람이 없는 자동화 사슬만 (via, 에이전트)마다. 걸리면 운영 사건 `ratelimit` key `control:<via>`.
 - **이미 보관한 채널의 `archive_channel` 은 `CHANNEL_ARCHIVED`** 다 — 「보관한 채널의 쓰기(보관 해제 말고)」를 그대로 따른 것이라 REST `POST /channels/:id/archive` 의 멱등 200 과 갈린다(t3 판단 7, t3 리뷰 L-c).
 - `remove_channel_agent` 에 사람 id 를 주면 `NOT_FOUND` 다 — `removeMember` 는 종류를 보지 않아 처리기가 에이전트인지 먼저 본다(멤버 관리는 범위 밖)(t3 판단 8).
-- 보관한 에이전트의 `update_agent` 는 REST PATCH 처럼 성공한다 — 막지 않는다(t3 수정 보고 「넘길 것」).
+- 보관한 에이전트의 `update_agent` 는 확인 카드 전에 `AGENT_ARCHIVED` 다. REST PATCH 는 그대로 성공한다.
 - **운영 사건 `control_change` 의 key 는 `control:<도구>:<시킨 사람 id>`** 이고 detail 의 `agentId`·`channelId`·`targetAgentId` 는 없으면 `null` 이다(본문 「실행 흐름」 장은 `?`). 도구 이름 하나로 묶으면 한 시간 안의 두 번째 변경부터 다른 사람·다른 에이전트의 흔적이 한 줄에 섞인다 — 에이전트 도구는 시스템 메시지가 없어 사건이 유일한 기록이다(t3 리뷰 R1, t3 수정 보고).
 - 시스템 메시지는 채널 도구만(`create_channel` 빼고) — 「@mia 의 요청으로 @ops 가 채널 이름·주제를 바꿨습니다」·「@mia 가 MCP 로 …」, 조사는 `util/josa`. 에이전트 도구(`register_agent`·`update_agent`·`set_agent_enabled`·`archive_agent`)는 사건만 남긴다(t3 보고 「도구별 처리기」).
 - `read_messages` 는 멘션 토큰만 `@핸들` 로 푸는 `search/readable.ts readableMentions` 를 쓴다(마크다운은 그대로 — 모델은 읽는다)(t3 판단 6).
