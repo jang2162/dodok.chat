@@ -104,6 +104,27 @@ describe("결과로 가기 — 채널 목록", () => {
     await waitFor(() => expect(row("본문 10")).toHaveFocus());
   });
 
+  it("받는 동안 사람이 다른 곳(작성기 등)으로 옮긴 초점은 도착해도 그대로 둔다", async () => {
+    let answer: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+    const { row } = setup(timelineOf(range(60, 100)));
+    const input = document.createElement("input");
+    document.body.append(input);
+    try {
+      act(() => requestJump({ conversationId: CH, messageId: msg(10).id, seq: 10 }, { focus: true }));
+      await waitFor(() => expect(fetched()).toContain(url("limit=50&around=10")));
+      input.focus();
+      answer(json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }));
+      await waitFor(() => expect(row("본문 10")).toHaveAttribute("data-highlighted", "true"));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(input).toHaveFocus();
+    } finally {
+      input.remove();
+    }
+  });
+
   it("강조는 색만 바꾸고 움직임은 prefers-reduced-motion 이면 끈다", async () => {
     const { row } = setup(timelineOf(range(1, 30)));
     jumpTo(5);

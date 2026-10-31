@@ -20,6 +20,7 @@ import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/a
 import { useReadAtEnd } from "@/features/reads/readSender";
 import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
+import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
@@ -68,6 +69,23 @@ export type MessageListProps = {
   /** 메시지가 없을 때의 문구 — 없으면 채널의 것(멘션을 권한다). DM 은 멘션이 없어 따로 준다(첫 안내 등) */
   emptyText?: string;
 };
+
+/**
+ * 결과로 가기가 초점을 가져와도 되는가 — 초점이 떨어졌거나(닫힌 대화상자와 함께 사라졌다) 닫히는 검색 대화상자 안이거나, 이 목록을
+ * 품은 시트(좁은 화면의 스레드 패널)가 열리며 준 자리(탭 링크 — 입력 칸은 아니다)일 때. 받는 동안 사람이 작성기 등으로 옮긴 초점은
+ * 가져오지 않는다
+ */
+function focusIsFree(doc: Document, list: HTMLElement): boolean {
+  const active = doc.activeElement;
+  if (active === null || active === doc.body || active.closest(`[${SEARCH_DIALOG_ATTR}]`)) return true;
+  if (
+    active.matches(
+      'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"])',
+    )
+  )
+    return false;
+  return active.closest('[role="dialog"]')?.contains(list) === true;
+}
 
 /** 세션 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 세션·스레드마다 새로 시작한다 */
 export function MessageList(props: MessageListProps) {
@@ -258,11 +276,16 @@ function ChannelMessages({
     setLanded(focusId);
     const until = win.performance.now() + HIGHLIGHT_MS;
     let raf = 0;
+    const doc = el.ownerDocument;
     const tick = () => {
       const index = rowsRef.current.findIndex((r) => r.kind === "message" && r.message.id === focusId);
       const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
+      if (doc.activeElement !== row && !focusIsFree(doc, el)) {
+        focused();
+        return;
+      }
       row?.focus({ preventScroll: true });
-      if ((row && el.ownerDocument.activeElement === row) || win.performance.now() > until) focused();
+      if ((row && doc.activeElement === row) || win.performance.now() > until) focused();
       else raf = win.requestAnimationFrame(tick);
     };
     tick();

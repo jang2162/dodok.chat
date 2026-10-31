@@ -380,6 +380,43 @@ describe("검색하기", () => {
   });
 });
 
+/** 답글(133) 하나가 걸리는 검색 — 채널 목록은 루트를 가졌고, 스레드 최신 50 에는 그 답글이 없어 around 로 받는다 */
+function replyResultClient() {
+  const reply = msg(133, { threadRootId: ROOT.id, bodyMd: "찾던 답글" });
+  search = () => json(200, { hits: [hitOf(reply, { snippet: "찾던 답글" })], limited: false });
+  const qc = subscribedClient();
+  qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({ ...t!, items: [ROOT, ...t!.items] }));
+  // 스레드 최신 50 에는 그 답글이 없다 — around 로 받는다(서버 스레드 REST 도 around 를 받는다)
+  const replies = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) =>
+      msg(from + i, { threadRootId: ROOT.id, bodyMd: `답글 ${from + i}` }),
+    );
+  routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50`, () =>
+    json(200, { root: ROOT, messages: replies(200, 249), hasMore: true }),
+  );
+  routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50&around=133`, () =>
+    json(200, {
+      root: ROOT,
+      messages: [...replies(110, 132), reply, ...replies(134, 150)],
+      hasMore: true,
+      hasMoreAfter: true,
+    }),
+  );
+  return qc;
+}
+
+/** 검색에서 그 답글 결과를 골라 스레드 패널까지 */
+async function pickReplyResult(qc: ReturnType<typeof replyResultClient>) {
+  const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
+  const dialog = await openWith({ metaKey: true });
+  await typeQuery("찾던");
+  const result = await within(dialog).findByRole("button", { name: /찾던 답글/ });
+  expect(result).toHaveTextContent("스레드 답글");
+  await userEvent.setup({ delay: null }).click(result);
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`));
+  return screen.findByTestId("thread-panel");
+}
+
 describe("결과로 가기", () => {
   it("채널 결과 — 대화상자가 닫히고 그 채널을 around 로 받아 그 메시지를 강조한다", async () => {
     search = () => json(200, { hits: [hitOf(msg(10), { snippet: "열째 메시지" })], limited: false });
@@ -449,34 +486,7 @@ describe("결과로 가기", () => {
   });
 
   it("답글 결과 — 채널은 그 루트로, 스레드 패널은 around 로 받은 그 답글로", async () => {
-    const reply = msg(133, { threadRootId: ROOT.id, bodyMd: "찾던 답글" });
-    search = () => json(200, { hits: [hitOf(reply, { snippet: "찾던 답글" })], limited: false });
-    const qc = subscribedClient();
-    qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({ ...t!, items: [ROOT, ...t!.items] }));
-    // 스레드 최신 50 에는 그 답글이 없다 — around 로 받는다(서버 스레드 REST 도 around 를 받는다)
-    const replies = (from: number, to: number) =>
-      Array.from({ length: to - from + 1 }, (_, i) =>
-        msg(from + i, { threadRootId: ROOT.id, bodyMd: `답글 ${from + i}` }),
-      );
-    routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50`, () =>
-      json(200, { root: ROOT, messages: replies(200, 249), hasMore: true }),
-    );
-    routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50&around=133`, () =>
-      json(200, {
-        root: ROOT,
-        messages: [...replies(110, 132), reply, ...replies(134, 150)],
-        hasMore: true,
-        hasMoreAfter: true,
-      }),
-    );
-    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
-    const dialog = await openWith({ metaKey: true });
-    await typeQuery("찾던");
-    const result = await within(dialog).findByRole("button", { name: /찾던 답글/ });
-    expect(result).toHaveTextContent("스레드 답글");
-    await userEvent.setup({ delay: null }).click(result);
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`));
-    const panel = await screen.findByTestId("thread-panel");
+    const panel = await pickReplyResult(replyResultClient());
     // 채널 목록은 루트를 강조한다(이미 가진 루트라 around 를 부르지 않는다). 루트 강조는 누르자마자 켜져 HIGHLIGHT_MS 뒤 꺼지므로
     // around 를 기다리는 패널보다 먼저 본다 — 느린 머신에서 패널을 기다리다 루트 강조를 놓치지 않게
     const channel = screen.getByRole("region", { name: "메시지" });
@@ -496,6 +506,12 @@ describe("결과로 가기", () => {
       `/api/v1/conversations/${CH}/messages?limit=50&around=133`,
     );
     // 초점은 스레드 패널의 그 답글이 받는다 — 채널 목록의 루트가 가져가지 않는다
+    await waitFor(() => expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveFocus());
+  });
+
+  it("좁은 화면 — 스레드 시트가 열리며 탭 머리에 준 초점도 도착한 그 답글이 받는다", async () => {
+    stubMedia(true);
+    const panel = await pickReplyResult(replyResultClient());
     await waitFor(() => expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveFocus());
   });
 
