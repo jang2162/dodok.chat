@@ -156,6 +156,28 @@ describe("목록", () => {
     expect(screen.getByText(/America\/New_York/)).toBeInTheDocument();
   });
 
+  it("운영 상태 조회가 실패하면 시각 자리는 「…」가 아니라 「알 수 없음」", async () => {
+    stubAutomationsServer({
+      automations: [
+        automationOf(1, {
+          name: "아침 점검",
+          nextRunAt: "2026-10-12T13:00:00.000Z",
+          lastRunAt: "2026-10-05T13:00:00.000Z",
+          lastStatus: "ok",
+        }),
+      ],
+      override: (c) =>
+        c.method === "GET" && c.url === "/api/v1/ops/status"
+          ? json(404, { code: "NOT_FOUND", message: "x" })
+          : undefined,
+    });
+    renderRoute(PATH);
+    const row = await rowOf("아침 점검");
+    expect(await row.findByText(/다음 실행 알 수 없음/)).toBeInTheDocument();
+    expect(row.getByText("마지막 실행 알 수 없음 · 성공")).toBeInTheDocument();
+    expect(row.queryByText(/…$/)).toBeNull();
+  });
+
   it("경고 줄 — 채널에 없음·꺼짐·모르는 핸들(조사는 받침대로), 채널 보관", async () => {
     const OLD = channelOf(uid(62), { name: "old", archivedAt: "2026-10-06T00:00:00.000Z" });
     stubAutomationsServer({
