@@ -554,6 +554,15 @@ describe("ApprovalCard — 도구 승인(kind tool, 러너 스펙 6장)", () => 
     expect(screen.getByText("잘렸습니다.")).toBeInTheDocument();
   });
 
+  it("요약이 빈 문자열이어도 「전체 보기」로 입력 전체를 편다(shared-contracts 리뷰 L4)", async () => {
+    const user = userEvent.setup();
+    const full = '{"command":""}';
+    const { container } = renderCard(tool({ description: "", detail: full }));
+    expect(container.querySelector("code")).toBeNull();
+    await user.click(button("전체 보기"));
+    expect(screen.getByText(full)).toBeInTheDocument();
+  });
+
   it("옛 러너(detail 만 — 요약)면 「전체 보기」가 없다", () => {
     renderCard(tool());
     expect(screen.queryByRole("button", { name: "전체 보기" })).not.toBeInTheDocument();
