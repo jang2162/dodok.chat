@@ -79,11 +79,11 @@ async function openThread() {
   const qc = createQueryClient(() => {});
   qc.setQueryData<Timeline>(qk.timeline(CH, A), { ...emptyTimeline(), items: [ROOT], lastSeq: 1 });
   qc.setQueryData<Timeline>(qk.thread(CH, A, ROOT.id), threadFromPage(undefined, ROOT, [ROOT], false));
-  renderRoute(`/c/${CH}/s/${A}/t/${ROOT.id}`, qc);
+  const { router } = renderRoute(`/c/${CH}/s/${A}/t/${ROOT.id}`, qc);
   const panel = await screen.findByTestId("thread-panel");
   const reply = await within(panel).findByRole("textbox", { name: "스레드 답글 입력" });
   const main = await screen.findByRole("textbox", { name: "메시지 입력" });
-  return { qc, panel, reply, main };
+  return { qc, router, panel, reply, main };
 }
 
 const closeByOther = () => ({ conversation: conv({ closedAt: at(3), closedBy: "other" }) });
@@ -114,5 +114,22 @@ it("세션 작성기에서 쓰던 중이면 스레드 패널이 열려 있어도
   const mainNotice = notices.find((n) => !panel.contains(n));
   if (!mainNotice) throw new Error("본문 쪽 안내가 없다");
   await waitFor(() => expect(within(mainNotice).getByText("닫힌 세션입니다")).toHaveFocus());
+  live.detach();
+});
+
+it("스레드 작성기에서 쓰던 중 패널이 그냥 빠지면(주소 이동 — 뒤로 가기) 그 뒤 세션이 닫힐 때 초점은 본문 쪽 안내로 간다", async () => {
+  const { qc, router, reply } = await openThread();
+  const live = liveHandlers(qc);
+  act(() => reply.focus());
+  expect(reply).toHaveFocus();
+  // 닫기 단추가 아니라 주소로 빠진다 — 초점을 돌려줄 자리 없이 body 로 떨어진다
+  await act(() => router.navigate({ to: `/c/${CH}/s/${A}` }));
+  await waitFor(() => expect(screen.queryByTestId("thread-panel")).toBeNull());
+  expect(document.activeElement).toBe(document.body);
+
+  live.emit("conversation.updated", closeByOther());
+
+  const notice = await screen.findByTestId("conversation-closed");
+  await waitFor(() => expect(within(notice).getByText("닫힌 세션입니다")).toHaveFocus());
   live.detach();
 });

@@ -39,7 +39,12 @@ export function ClosedNotice({
     const active = document.activeElement;
     // 쓰던 작성기는 이 안내와 같은 커밋에 숨는다(`hidden`) — 그 안의 초점은 브라우저가 이 effect 뒤에야 body 로 옮기므로 떨어진 것으로 본다
     const dropped = active === null || active === document.body || active.closest("[hidden]") !== null;
-    const mine = focusZone === undefined || zone === undefined || focusZone.current === zone;
+    // 스레드 패널이 닫기 단추가 아니라 주소 이동(뒤로 가기)으로 그냥 빠지면 자리는 `thread` 로 남는다 — 패널이 없으면 본문 것으로 본다
+    const last =
+      focusZone?.current === "thread" && !document.querySelector('[data-testid="thread-panel"]')
+        ? "main"
+        : focusZone?.current;
+    const mine = focusZone === undefined || zone === undefined || last === zone;
     if (focusFirst && dropped && mine) ref.current?.focus();
   }, [focusFirst, focusZone, zone]);
   return (
