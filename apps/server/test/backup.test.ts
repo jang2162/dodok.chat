@@ -100,11 +100,13 @@ describe("runBackup", () => {
     const after = 4000 + Atomics.load(shared, 1);
 
     // 백업이 도는 동안 쓰기가 실제로 있었다 — 없었다면 이 테스트는 「쓰는 중」을 재지 않은 것이다
+    // onPartial 문이 커밋 한 번을 보장하므로(못 하면 던진다) 늘 참이다 — 문이 깨지지 않았음을 가리키는 보험일 뿐, 아래 rows 단언이 본체다
     expect(during).toBeGreaterThan(0);
     const copy = new Database(join(result.dir, "dodok.sqlite"), { readonly: true });
     expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
     const rows = (copy.prepare("SELECT count(*) AS n FROM probe").get() as { n: number }).n;
-    expect(rows).toBeGreaterThanOrEqual(before);
+    // 백업 시작 뒤·복사 전에 커밋된 행(문이 보장)이 사본에 있다
+    expect(rows).toBeGreaterThan(before);
     expect(rows).toBeLessThanOrEqual(after);
     const tables = copy
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
