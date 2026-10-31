@@ -2,6 +2,7 @@ import type { Invite, MemberRow, TeamRole } from "@dodok/shared";
 import { ChevronRightIcon } from "lucide-react";
 import { type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useCachedMe, useRole } from "@/api/queries";
+import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { isDeactivated } from "./deactivated";
@@ -259,21 +260,49 @@ function DeactivatedLine({
   );
 }
 
-/** 역할 — owner 가 보는 owner 아닌 줄만 바꿀 수 있다(admin ↔ member). 바꾸는 중에는 잠근다 */
+/**
+ * 역할 — owner 가 보는 owner 아닌 줄만 바꿀 수 있다(admin ↔ member). 바꾸는 중에는 잠근다.
+ * 승격은 곧바로, **강등(admin → member)만** 확인을 거친다 — 강등하면 서버가 그 사람이 만든 쓰이지 않은 초대·재설정 링크를 폐기하고
+ * 다시 올려도 살아나지 않는다(p4m-t7b o6). 셀렉트는 제어형이라 확인 전·취소 뒤에는 원래 값(관리자)을 보인다
+ */
 function RoleCell({ member, viewerRole }: { member: MemberRow; viewerRole: "owner" | "admin" }) {
   const change = useChangeRole();
+  const [confirming, setConfirming] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
   if (viewerRole !== "owner" || member.role === "owner") return <>{ROLE_LABEL[member.role]}</>;
+  const handle = `@${member.handle}`;
   return (
-    <select
-      aria-label={`@${member.handle} 역할`}
-      value={member.role}
-      disabled={change.isPending}
-      onChange={(e) => change.mutate({ userId: member.id, role: e.target.value as "admin" | "member" })}
-      className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-    >
-      <option value="member">{ROLE_LABEL.member}</option>
-      <option value="admin">{ROLE_LABEL.admin}</option>
-    </select>
+    <>
+      <select
+        ref={selectRef}
+        aria-label={`${handle} 역할`}
+        value={member.role}
+        disabled={change.isPending}
+        onChange={(e) => {
+          const role = e.target.value as "admin" | "member";
+          if (member.role === "admin" && role === "member") setConfirming(true);
+          else change.mutate({ userId: member.id, role });
+        }}
+        className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <option value="member">{ROLE_LABEL.member}</option>
+        <option value="admin">{ROLE_LABEL.admin}</option>
+      </select>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`${handle} 을 ${ROLE_LABEL.member}로 바꿀까요?`}
+        description={`이 사람이 만든 쓰이지 않은 초대·재설정 링크는 쓸 수 없게 되고, 다시 ${ROLE_LABEL.admin}로 올려도 살아나지 않습니다.`}
+        confirmLabel={`${ROLE_LABEL.member}로 바꾸기`}
+        pendingLabel="바꾸는 중…"
+        pending={change.isPending}
+        destructive
+        returnFocus={selectRef}
+        onConfirm={() =>
+          change.mutate({ userId: member.id, role: "member" }, { onSettled: () => setConfirming(false) })
+        }
+      />
+    </>
   );
 }
 
