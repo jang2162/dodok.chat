@@ -394,6 +394,20 @@ describe("Gateway 수정·부팅 — 어댑터에 넘기는 값(FakeAdapter)", (
     expect(tokenRow()).toBe("rotated");
   });
 
+  it("이름이 바뀌면 agents.changed 를 한 번 보낸다 — 주소·켜기만 바뀌거나 같은 이름이면 보내지 않는다", async () => {
+    const live = await bootFake();
+    const { id } = GatewaySummary.parse(
+      (await api(live, "POST", "/gateways", { name: "사무실", url: "ws://gw:1", token: "t" })).json(),
+    );
+    let agentsChanged = 0;
+    live.app.bus.on("agents.changed", () => void agentsChanged++);
+    await api(live, "PATCH", `/gateways/${id}`, { name: "본사" });
+    expect(agentsChanged).toBe(1);
+    await api(live, "PATCH", `/gateways/${id}`, { name: "본사" });
+    await api(live, "PATCH", `/gateways/${id}`, { url: "ws://gw:2", enabled: false });
+    expect(agentsChanged).toBe(1);
+  });
+
   it("삭제는 어댑터의 removeGateway 를 부른다", async () => {
     const live = await bootFake();
     const { id } = GatewaySummary.parse(

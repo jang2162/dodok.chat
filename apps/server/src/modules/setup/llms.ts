@@ -15,8 +15,10 @@ import { RUNNER_TOKEN_FILE } from "../runners/routes";
 export type LlmsFileInfo = { sha256: string; bundleSha256: string };
 
 export type LlmsInput = {
-  /** 공개 오리진(`https://…`) — 설치 파일·연결 페이지·러너 serverUrl 이 이 위에 선다 */
+  /** 공개 오리진(`https://…`) — 설치 파일·러너 serverUrl 이 이 위에 선다 */
   origin: string;
+  /** 웹 오리진(APP_ORIGIN) — 사람이 확인할 연결 페이지 주소. 배포(한 오리진)는 origin 과 같고 dev 는 웹·서버가 갈린다 */
+  webOrigin: string;
   /** 플러그인 계정 설정의 bridgeUrl — 발급 대화상자의 플러그인 설정 조각과 같은 값 */
   bridgeUrl: string;
   plugin: LlmsFileInfo | null;
@@ -28,8 +30,16 @@ const BRIDGE_TOKEN_FILE = "~/.dodok-bridge-token";
 /** 러너 전용 Claude 로그인 디렉터리(러너 설정 `programs.claude.configDir`) — 사람의 `~/.claude` 와 섞지 않는다 */
 const RUNNER_CLAUDE_DIR = "~/.dodok-runner/claude";
 const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
+/**
+ * 설치된 러너 패키지 디렉터리 — bin 링크 `dodok-runner`(→ dist/main.js)를 풀어 두 단계 위. `$(npm root -g)` 는 일부 npm(11.19)이 경로 속
+ * UUID 를 `***` 로 가려 찍어 깨진다. docker-deploy.md 「러너 설치」 3번이 같은 식을 쓴다(setup.llms.test 가 대조한다)
+ */
+export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
 const NO_FILE =
   "서버에 파일이 없습니다. 이 절의 설치를 멈추고 사람에게 알린다(서버 관리자가 파일을 만든 뒤 서버를 재시작해야 한다).";
+
+/** 받은 설치 파일을 둘 자리 — 고정 `/tmp` 이름은 다른 사용자가 미리 만들거나 바꿔치기할 수 있다(템플릿을 줘야 macOS 도 TMPDIR 을 따른다) */
+const MKTEMP_DIR = 'dir="$(mktemp -d "${TMPDIR:-/tmp}/dodok.XXXXXX")" && echo "$dir"';
 
 /** 토큰 파일의 값을 Authorization 머리로 실어 받는 명령 — 토큰은 표준 입력으로만 curl 에 간다 */
 const download = (tokenFile: string, url: string, out: string) =>
@@ -39,8 +49,8 @@ const download = (tokenFile: string, url: string, out: string) =>
   ].join("\n");
 
 function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
-  const { origin, bridgeUrl } = input;
-  const out = "/tmp/dodok-openclaw-plugin.tgz";
+  const { origin, webOrigin, bridgeUrl } = input;
+  const out = '"${dir:?}/dodok-openclaw-plugin.tgz"';
   return `설치할 것: dodok OpenClaw 채널 플러그인. 이 호스트의 OpenClaw Gateway 안에서 돌며 dodok 서버로 나가는 연결 하나를 연다(호스트 쪽 포트는 열지 않는다).
 
 - 파일 sha256: ${file.sha256}
@@ -54,17 +64,18 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    chmod 600 ${BRIDGE_TOKEN_FILE}
    \`\`\`
 
-2. 플러그인 파일을 받아 파일 sha256 을 대조한다. 다르면 멈춘다.
+2. 플러그인 파일을 \`mktemp -d\` 로 만든 임시 디렉터리에 받아 파일 sha256 을 대조한다. 다르면 멈추고 \`rm -rf "\${dir:?}"\` 로 지운다. 3번까지 같은 셸에서 이어 간다(셸이 바뀌면 첫 줄이 찍은 경로를 dir 에 다시 둔다).
 
    \`\`\`bash
+   ${MKTEMP_DIR}
    ${download(BRIDGE_TOKEN_FILE, `${origin}/api/v1/setup/plugin.tgz`, out).replaceAll("\n", "\n   ")}
    shasum -a 256 ${out}   # Linux 는 sha256sum
    \`\`\`
 
-3. Gateway 를 내린다(호스트가 Gateway 를 돌리는 방식대로 — 모르면 사람에게 묻는다). 떠 있는 Gateway 에 설치하면 파일이 바뀌지 않을 수 있다. 설치하고, 로드됐는지와 번들 sha256 을 확인한다. 다르면 멈춘다.
+3. Gateway 를 내린다(호스트가 Gateway 를 돌리는 방식대로 — 모르면 사람에게 묻는다). 떠 있는 Gateway 에 설치하면 파일이 바뀌지 않을 수 있다. 설치하고(받은 파일은 설치한 뒤 지운다), 로드됐는지와 번들 sha256 을 확인한다. 다르면 멈춘다.
 
    \`\`\`bash
-   openclaw plugins install ${out} --force --accept-capabilities
+   openclaw plugins install ${out} --force --accept-capabilities; rm -rf "\${dir:?}"
    openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
    shasum -a 256 ~/.openclaw/extensions/dodok/dist/index.js   # 기본 상태 디렉터리일 때
    \`\`\`
@@ -75,8 +86,8 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    (
      token="$(cat ${BRIDGE_TOKEN_FILE})" && [ -n "$token" ] || exit 1
      dir="$(mktemp -d "\${TMPDIR:-/tmp}/dodok.XXXXXX")" || exit 1
-     trap 'rm -rf "$dir" ${BRIDGE_TOKEN_FILE}' EXIT
-     patch="$dir/dodok.patch.json5"
+     trap 'rm -rf "\${dir:?}" ${BRIDGE_TOKEN_FILE}' EXIT
+     patch="\${dir:?}/dodok.patch.json5"
      ( umask 077; printf '{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}\\n' \\
          '${bridgeUrl}' "$token" > "$patch" ) && chmod 600 "$patch" && openclaw config patch --file "$patch"
    )
@@ -88,7 +99,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    {"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"${bridgeUrl}","token":"<브리지 토큰>"}}}}}
    \`\`\`
 
-5. Gateway 를 올린다. 사람에게 dodok 연결 페이지(${origin}/settings/connection)의 그 Gateway 카드 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 카드에 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
+5. Gateway 를 올린다. 사람에게 dodok 연결 페이지(${webOrigin}/settings/connection)의 그 Gateway 카드 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 카드에 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
 
    \`\`\`bash
    openclaw devices approve <요청 id>
@@ -97,8 +108,8 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 }
 
 function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
-  const { origin } = input;
-  const out = "/tmp/dodok-claude-runner.tgz";
+  const { origin, webOrigin } = input;
+  const out = '"${dir:?}/dodok-claude-runner.tgz"';
   // 러너는 천장만 쥔다(러너 일반화 스펙 2장) — 에이전트는 앱에서 만든다. 상한은 낮게: 서버 쪽 admin 이 루트 안 어디서든 이 상한까지 돌릴 수 있다
   const config = {
     serverUrl: origin,
@@ -128,20 +139,21 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    chmod 600 ${RUNNER_TOKEN_FILE}
    \`\`\`
 
-2. 러너 파일을 받아 파일 sha256 을 대조하고(다르면 멈춘다) 설치한 뒤 번들 sha256 을 대조한다(다르면 멈춘다).
+2. 러너 파일을 \`mktemp -d\` 로 만든 임시 디렉터리에 받아 파일 sha256 을 대조하고(다르면 멈춘다) 설치한 뒤 번들 sha256 을 대조한다(다르면 멈춘다). 받은 파일은 설치한 뒤 지운다.
 
    \`\`\`bash
+   ${MKTEMP_DIR}
    ${download(RUNNER_TOKEN_FILE, `${origin}/api/v1/setup/runner.tgz`, out).replaceAll("\n", "\n   ")}
    shasum -a 256 ${out}   # Linux 는 sha256sum
-   npm install -g ${out}
-   shasum -a 256 "$(npm root -g)/@dodok/claude-runner/dist/main.js"
+   npm install -g ${out}; rm -rf "\${dir:?}"
+   shasum -a 256 "${RUNNER_PKG_DIR}/dist/main.js"
    \`\`\`
 
-3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
+3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
 
    \`\`\`bash
    CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude
-   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    \`\`\`
 
 4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. roots 의 경로(에이전트가 돌 수 있는 디렉터리 — 좁게)·라벨과 id(영문 소문자·숫자·-)는 사람에게 묻는다. 에이전트는 이 파일이 아니라 dodok 앱에서 만든다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).
@@ -150,7 +162,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}
    \`\`\`
 
-5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${origin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
+5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${webOrigin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
 
    \`\`\`bash
    dodok-runner

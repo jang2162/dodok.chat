@@ -8,12 +8,14 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { v7 as uuid } from "uuid";
@@ -25,7 +27,7 @@ import { runnerConfigExample } from "../../web/src/features/setup/runnerConfig";
 import type { App } from "../src/app";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
-import { renderLlmsTxt } from "../src/modules/setup/llms";
+import { renderLlmsTxt, RUNNER_PKG_DIR } from "../src/modules/setup/llms";
 import { PLUGIN_BUNDLE_ENTRY } from "../src/modules/setup/plugin-file";
 import { issueBridgeToken, revokeBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -202,11 +204,52 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
   });
 });
 
+describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
+  it("연결 페이지 확인 주소만 웹 오리진이고, 설치 파일·serverUrl 은 공개 오리진 그대로", () => {
+    const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
+    const body = renderLlmsTxt({
+      origin: "http://localhost:3000",
+      webOrigin: "http://localhost:5173",
+      bridgeUrl: "ws://localhost:3000/bridge",
+      plugin: file,
+      runner: file,
+    });
+    const gateway = section(body, "OpenClaw Gateway 호스트");
+    expect(gateway).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+    expect(gateway).not.toContain("http://localhost:3000/settings/connection");
+    expect(gateway).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+    expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
+    // 러너 5번의 「러너 탭」 확인 주소도 사람이 여는 웹 페이지다
+    expect(section(body, "러너 머신")).toContain("(http://localhost:5173/settings/runners)");
+    expect(section(body, "러너 머신")).not.toContain("http://localhost:3000/settings/runners");
+  });
+});
+
+describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () => {
+  it("BRIDGE_PUBLIC_URL 로 서버가 갈려도 연결 페이지는 APP_ORIGIN 위", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-llms-web-"));
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE));
+    const app = await bootTestApp(
+      { APP_ORIGIN: "http://localhost:5173", BRIDGE_PUBLIC_URL: "ws://localhost:3000/bridge" },
+      { pluginDirs: [dir], runnerDirs: [] },
+    );
+    try {
+      const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
+      expect(body).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+      expect(body).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("renderLlmsTxt — 파일이 없을 때", () => {
   it("파일이 없는 절은 「서버에 파일이 없습니다」, 있는 절은 sha 를 싣는다", () => {
     const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
     const noPlugin = renderLlmsTxt({
       origin: "https://x.example",
+      webOrigin: "https://x.example",
       bridgeUrl: "wss://x.example/bridge",
       plugin: null,
       runner: file,
@@ -218,6 +261,7 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
 
     const noRunner = renderLlmsTxt({
       origin: "https://x.example",
+      webOrigin: "https://x.example",
       bridgeUrl: "wss://x.example/bridge",
       plugin: file,
       runner: null,
@@ -232,6 +276,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
   const body = renderLlmsTxt({
     origin: "https://x.example",
+    webOrigin: "https://x.example",
     bridgeUrl: "wss://x.example/bridge",
     plugin: { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) },
     runner: { sha256: "c".repeat(64), bundleSha256: "d".repeat(64) },
@@ -254,18 +299,69 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
 
     const pkg = JSON.parse(readFileSync(join(ROOT, "packages/claude-runner/package.json"), "utf8")) as {
       name: string;
+      bin: Record<string, string>;
       dependencies: Record<string, string>;
     };
     const sdk = "@anthropic-ai/claude-agent-sdk";
     expect(pkg.dependencies).toHaveProperty(sdk);
     expect(line).toContain(
-      `"$(npm root -g)/${pkg.name}/node_modules/${sdk}-$(node -p 'process.platform+"-"+process.arch')/claude"`,
+      `"${RUNNER_PKG_DIR}/node_modules/${sdk}-$(node -p 'process.platform+"-"+process.arch')/claude"`,
     );
+    // 패키지 디렉터리 식은 bin 링크를 풀어 두 단계 위로 간다 — bin 대상이 패키지 안 두 단계 깊이여야 맞다
+    expect(RUNNER_PKG_DIR).toContain('"$(command -v dodok-runner)"');
+    expect(pkg.bin["dodok-runner"]?.split("/")).toHaveLength(2);
     // 플랫폼별 번들 CLI 패키지 이름이 <SDK>-<platform>-<arch> 꼴이다(이 머신의 판으로)
     const sdkPkg = JSON.parse(
       readFileSync(join(ROOT, "packages/claude-runner/node_modules", sdk, "package.json"), "utf8"),
     ) as { optionalDependencies: Record<string, string> };
     expect(Object.keys(sdkPkg.optionalDependencies)).toContain(`${sdk}-${process.platform}-${process.arch}`);
+  });
+
+  it("러너 2·3번 — npm root -g 를 쓰지 않고(npm 11.19 가 경로를 가려 찍는다) 설치된 dodok-runner 링크를 풀어 패키지 디렉터리를 찾는다", () => {
+    expect(runner).not.toContain("npm root -g");
+    expect(readFileSync(join(ROOT, "docs/guides/docker-deploy.md"), "utf8")).not.toContain("npm root -g");
+    // npm -g 설치와 같은 꼴: <prefix>/bin/dodok-runner → ../lib/node_modules/@dodok/claude-runner/dist/main.js
+    const prefix = mkdtempSync(join(tmpdir(), "dodok-llms-prefix-"));
+    try {
+      const pkgDir = join(prefix, "lib", "node_modules", "@dodok", "claude-runner");
+      mkdirSync(join(pkgDir, "dist"), { recursive: true });
+      // 실행 권한이 없으면 command -v 가 건너뛰고 PATH 뒤쪽의 다른 설치를 고른다
+      writeFileSync(join(pkgDir, "dist", "main.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+      mkdirSync(join(prefix, "bin"));
+      symlinkSync(
+        "../lib/node_modules/@dodok/claude-runner/dist/main.js",
+        join(prefix, "bin", "dodok-runner"),
+      );
+      const res = spawnSync("bash", ["-c", `printf '%s' "${RUNNER_PKG_DIR}"`], {
+        encoding: "utf8",
+        env: { PATH: `${join(prefix, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin` },
+      });
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stdout).toBe(realpathSync(pkgDir));
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it("토큰은 어떤 외부 명령의 argv 에도 실리지 않는다 — 토큰을 받는 명령은 셸 내장(printf·[)이나 대입뿐", () => {
+    const TOKEN_REFS = ['"$(cat ~/.dodok-bridge-token)"', '"$(cat ~/.dodok-runner/token)"', '"$token"'];
+    const consumers: string[] = [];
+    for (const block of [...bashBlocks(gateway), ...bashBlocks(runner)]) {
+      let text = block.replace(/\\\n\s*/g, " "); // 줄 잇기
+      for (const ref of TOKEN_REFS) text = text.replaceAll(ref, "TOKENREF");
+      text = text.replace(/'[^']*'/g, "'Q'"); // 작은따옴표 안의 괄호·구분자를 걷는다
+      for (let prev = ""; prev !== text;) [prev, text] = [text, text.replace(/\$\([^()]*\)/g, "SUBST")];
+      for (const command of text.split(/\|\||&&|[|;()\n]/)) {
+        if (!command.includes("TOKENREF")) continue;
+        const words = command.trim().split(/\s+/);
+        consumers.push(words[0] ?? "");
+        const builtin = words[0] === "printf" || words[0] === "[";
+        const onlyAssignments = words.every((w) => /^[A-Za-z_]\w*=/.test(w));
+        expect(builtin || onlyAssignments, command.trim()).toBe(true);
+      }
+    }
+    // 두 받기(printf)·패치 파일(printf)·빈 토큰 검사([)·토큰 읽기(대입) — 규칙이 빈 집합에 대해 참이 되지 않게
+    expect(consumers.sort()).toEqual(["[", "printf", "printf", "printf", "token=TOKENREF"]);
   });
 
   it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {
@@ -276,6 +372,132 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     expect(readFileSync(join(ROOT, "packages/claude-runner/src/connection.ts"), "utf8")).toContain(
       "dodok-runner: 연결됨(",
     );
+  });
+
+  describe("설치 파일 받기·설치 명령을 bash 로 그대로 돌린다 — mktemp 자리에 받고 설치한 뒤 지운다", () => {
+    let root: string;
+    let tmp: string;
+    let log: string;
+    const fake = (bin: string, name: string, body: string[]) => {
+      writeFileSync(join(bin, name), ["#!/bin/sh", ...body, ""].join("\n"), { mode: 0o755 });
+    };
+
+    /** 가짜 curl(-o 자리에 쓰고 그 경로를 남긴다)·openclaw·npm(받은 파일이 아직 있는지 남긴다)·shasum·jq 와 설치된 러너 링크 */
+    const setup = () => {
+      root = mkdtempSync(join(tmpdir(), "dodok-llms-dl-"));
+      tmp = join(root, "tmp");
+      mkdirSync(tmp);
+      log = join(root, "log");
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      fake(bin, "curl", [
+        'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done',
+        'cat > /dev/null; printf tgz > "$out"; printf "curl %s\\n" "$out" >> "$LOG"',
+      ]);
+      fake(bin, "shasum", ['printf "shasum %s\\n" "$3" >> "$LOG"']);
+      fake(bin, "jq", ["cat > /dev/null"]);
+      fake(bin, "openclaw", [
+        '[ "$1 $2" = "plugins install" ] && { [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"; }',
+        "exit 0",
+      ]);
+      fake(bin, "npm", [
+        '[ "$1 $2" = "install -g" ] && [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"',
+      ]);
+      const pkgDir = join(root, "lib", "node_modules", "@dodok", "claude-runner");
+      mkdirSync(join(pkgDir, "dist"), { recursive: true });
+      writeFileSync(join(pkgDir, "dist", "main.js"), "", { mode: 0o755 });
+      symlinkSync("../lib/node_modules/@dodok/claude-runner/dist/main.js", join(bin, "dodok-runner"));
+      mkdirSync(join(root, "home", ".dodok-runner"), { recursive: true });
+      writeFileSync(join(root, "home", ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
+      writeFileSync(join(root, "home", ".dodok-runner", "token"), "drn_secret\n", { mode: 0o600 });
+      return { bin, pkgDir };
+    };
+    const run = (bin: string, script: string) =>
+      spawnSync("bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          HOME: join(root, "home"),
+          TMPDIR: tmp,
+          LOG: log,
+          PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+        },
+      });
+    const logLines = () => readFileSync(log, "utf8").trim().split("\n");
+
+    it("Gateway 2·3번 — 같은 셸에서 이어 돌리면 받은 파일을 설치하고 임시 디렉터리가 남지 않는다", () => {
+      const { bin } = setup();
+      try {
+        const steps = bashBlocks(gateway);
+        const res = run(
+          bin,
+          [blockWith(steps, "setup/plugin.tgz"), blockWith(steps, "plugins install")].join("\n"),
+        );
+        expect(res.status, res.stderr).toBe(0);
+        const [got = "", sum = "", install = ""] = logLines();
+        const file = got.replace(/^curl /, "");
+        expect(file.startsWith(`${tmp}/`), file).toBe(true);
+        expect(file.endsWith("/dodok-openclaw-plugin.tgz")).toBe(true);
+        expect(sum).toBe(`shasum ${file}`);
+        expect(install).toBe(`install ${file}`);
+        expect(readdirSync(tmp)).toEqual([]);
+        expect(gateway).not.toContain("/tmp/dodok-openclaw-plugin.tgz");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("$dir 이 비면(셸이 바뀜) 받기·설치·지우기가 루트 경로를 건드리지 않고 멈춘다", () => {
+      const { bin } = setup();
+      try {
+        const without = (block: string) =>
+          block
+            .split("\n")
+            .filter((l) => !l.includes("mktemp -d"))
+            .join("\n");
+        const gSteps = bashBlocks(gateway);
+        const rSteps = bashBlocks(runner);
+        for (const block of [
+          blockWith(gSteps, "setup/plugin.tgz"),
+          blockWith(gSteps, "plugins install"),
+          blockWith(rSteps, "setup/runner.tgz"),
+        ]) {
+          // 앞선 셸이 만든 dir 을 잃은 것처럼 dir 없이 돌린다 — 받기(curl)·설치가 한 번도 실행되지 않아야 한다
+          const res = run(bin, `unset dir\n${without(block)}`);
+          expect(res.status, block).not.toBe(0);
+          // bash 는 비어 있는 `${dir:?}` 에서 스크립트를 통째로 끝낸다 — 오류 문구가 그 원인이다
+          expect(res.stderr, block).toContain("dir: parameter null or not set");
+          expect(without(block), block).not.toMatch(/\$dir\b/); // 막지 않는 맨 $dir 이 남지 않았다
+          // 설치 줄 뒤의 지우기도 빈 값으로 돌지 않는다(앞 줄이 먼저 끝내므로 그 줄만 따로 돌린다)
+          const rm = /rm -rf "\$\{dir:\?\}"/.exec(block);
+          if (block.includes("rm -rf")) {
+            expect(rm, block).not.toBeNull();
+            const alone = run(bin, `unset dir\n${rm?.[0]}`);
+            expect(alone.status, alone.stderr).not.toBe(0);
+          }
+        }
+        expect(() => readFileSync(log, "utf8")).toThrow(); // 가짜 curl·openclaw·npm 이 아무것도 남기지 않았다
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("러너 2번 — 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
+      const { bin, pkgDir } = setup();
+      try {
+        const res = run(bin, blockWith(bashBlocks(runner), "setup/runner.tgz"));
+        expect(res.status, res.stderr).toBe(0);
+        const [got = "", sum = "", install = "", bundle = ""] = logLines();
+        const file = got.replace(/^curl /, "");
+        expect(file.startsWith(`${tmp}/`), file).toBe(true);
+        expect(sum).toBe(`shasum ${file}`);
+        expect(install).toBe(`install ${file}`);
+        expect(bundle).toBe(`shasum ${realpathSync(pkgDir)}/dist/main.js`);
+        expect(readdirSync(tmp)).toEqual([]);
+        expect(runner).not.toContain("/tmp/dodok-claude-runner.tgz");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("토큰·패치 파일 명령을 bash 로 그대로 돌린다", () => {

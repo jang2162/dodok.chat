@@ -665,6 +665,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       // 파일은 부팅 때 한 번 잰다 — 본문도 그때 한 번(다시 빌드된 파일은 재시작해야 내려 주는 것과 같다)
       llmsTxt: renderLlmsTxt({
         origin: serverUrl,
+        webOrigin: config.APP_ORIGIN,
         bridgeUrl: publicUrl,
         plugin: pluginFile,
         runner: runnerFile,
@@ -833,6 +834,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     undo.push({ step: "run-failures", run: () => runFailures.close() });
     // 푸시(스펙 5.2~5.4): 버스 → 트리거 → 보고 있으면 거르기 → 발송. 발송은 버스 처리기를 막지 않는다
     const pushDispatcher = createPushDispatcher({ db, logger, presence, transports: pushTransports, ops });
+    // undo 는 역순이다 — 트리거를 뗀 다음, db 를 닫기 전에 진행 중인 발송을 정상 종료와 같은 상한으로 기다린다(구독 정리가 db 를 쓴다)
+    undo.push({ step: "push-drain", run: () => pushDispatcher.drain(PUSH_DRAIN_TIMEOUT_MS) });
     const pushTriggers = attachPushTriggers(
       bus,
       pushDispatcher,

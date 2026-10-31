@@ -118,6 +118,13 @@ describe("서버가 웹을 낸다(DODOK_WEB_DIR)", () => {
       expect(res.body, url).not.toContain("<p>index</p>");
       expect(res.statusCode, url).toBeGreaterThanOrEqual(400);
     }
+    // 끝 슬래시 /mcp/ 와 그 아래도 SPA 가 아니라 404 JSON
+    for (const url of ["/mcp/", "/mcp/x"]) {
+      const res = await get(url);
+      expect(res.statusCode, url).toBe(404);
+      expect(res.headers["content-type"], url).toMatch(/^application\/json/);
+      expect(res.body, url).not.toContain("<p>index</p>");
+    }
     // 백엔드 라우트는 그대로
     expect((await get("/healthz")).json()).toEqual({ ok: true, db: "ok" });
   });

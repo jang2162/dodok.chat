@@ -24,7 +24,13 @@ import { parseParams, parseQuery } from "../../http/validate";
 import { assertChannelWritable, loadReadableChannel } from "../channels/service";
 import { assertDmWritable } from "../dms/service";
 import { getConversation } from "../conversations/store";
-import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
+import {
+  type AttachmentDeps,
+  findReadable,
+  sizeLimitError,
+  type Uploader,
+  uploadAttachment,
+} from "./service";
 import type { BlobLocks } from "./store";
 
 /** locks 는 정리 타이머와 같은 객체여야 한다(app.ts 가 하나를 만들어 둘에 준다) */
@@ -146,6 +152,13 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
   void fastify.register(async (scope) => {
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+    // 라우트 bodyLimit 이 앱 상한과 같아 Fastify 의 413 이 서비스 검사보다 먼저 난다 — 그 일반 문구를 서비스와 같은 문구·maxBytes 로
+    // 다시 씌워 바깥 오류 처리기로 넘긴다(던지면 부모 처리기가 받는다)
+    scope.setErrorHandler((error, request) => {
+      if ((error as { code?: unknown }).code === "FST_ERR_CTP_BODY_TOO_LARGE")
+        throw sizeLimitError(request.routeOptions.bodyLimit ?? 0, 413);
+      throw error;
+    });
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
     const verified = new WeakMap<FastifyRequest, unknown>();

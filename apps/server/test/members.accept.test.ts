@@ -48,7 +48,7 @@ function counts(a: App) {
   };
 }
 
-/** 로그인 버킷(5회/분)을 넉넉히 — 수락·재설정·로그인이 같은 IP 버킷을 쓴다 */
+/** 로그인 버킷(5회/분)을 넉넉히 — 이 파일은 로그인을 여러 번 한다. 수락·재설정은 초대 경로 버킷(invitePublicPerMin)이라 따로다 */
 const roomy = { limits: { localLoginPerMin: 100 } };
 
 describe("POST /api/v1/invites/lookup·accept", () => {
@@ -577,6 +577,42 @@ describe("POST /api/v1/invites/reset", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(findValidInvite(app.db, token, new Date())).toBeDefined();
+  });
+
+  it("검사 뒤 claim 전(비밀번호 해시 중)에 대상이 멤버에서 빠지면 404, 링크는 소비되지 않고 비밀번호도 그대로", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await accept(app, joinBody((await issue(app, owner.headers)).token));
+    const userId = (joined.json() as { user: User }).user.id;
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${userId}/reset-link`,
+      headers: owner.headers,
+    });
+    const { token } = link.json() as { token: string };
+    // claim 직전의 await 에 끼는 훅 — 첫 검사는 이미 지났다
+    const ctx = await app.auth.$context;
+    const hash = ctx.password.hash;
+    ctx.password.hash = async (password: string) => {
+      app!.db
+        .delete(memberships)
+        .where(and(eq(memberships.workspaceId, app!.workspaceId), eq(memberships.userId, userId)))
+        .run();
+      return hash(password);
+    };
+    try {
+      const res = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/invites/reset",
+        payload: { token, password: "brand-new-password-42" },
+      });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      ctx.password.hash = hash;
+    }
+    expect(findValidInvite(app.db, token, new Date())).toBeDefined();
+    const account = await ctx.internalAdapter.findCredentialAccount(userId);
+    expect(await ctx.password.verify({ hash: account!.password!, password: PASSWORD })).toBe(true);
   });
 
   it("조회도 — 대상이 더 이상 멤버가 아니면 404", async () => {

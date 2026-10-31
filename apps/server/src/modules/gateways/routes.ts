@@ -96,6 +96,8 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
         "gateway updated",
       );
       ctx.changed();
+      // 에이전트 줄이 Gateway 이름을 싣는다 — adapter.status 의 이름 변화를 기다리지 않고 다른 탭이 곧바로 다시 받게
+      if (row.name !== before.name) ctx.agentsChanged();
     }
     return toGatewaySummary(row);
   });
