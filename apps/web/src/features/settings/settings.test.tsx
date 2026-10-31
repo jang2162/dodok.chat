@@ -284,6 +284,35 @@ describe("채널 프롬프트", () => {
   });
 });
 
+describe("채널 프롬프트 — 저장 중", () => {
+  it("저장 중에는 Enter 다시·글 입력이 먹지 않는다 — PATCH 1회, 값 그대로, readonly", async () => {
+    const hold = gate();
+    const server = stubSettingsServer({
+      override: async ({ method, url }) => {
+        if (method === "PATCH" && url === channelUrl) await hold.opened;
+        return undefined;
+      },
+    });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const section = await region("채널 프롬프트");
+    const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
+    await userEvent.type(box, "간결하게");
+    const save = within(section).getByRole("button", { name: "저장" });
+    save.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(box).toHaveAttribute("readonly"));
+
+    await userEvent.keyboard("{Enter}");
+    await userEvent.type(box, "추가");
+    expect(box).toHaveValue("간결하게");
+    expect(server.writes().map((c) => c.body)).toEqual([{ prompt: "간결하게" }]);
+
+    hold.open();
+    await within(section).findByRole("status");
+    expect(server.writes()).toHaveLength(1);
+  });
+});
+
 describe("릴레이 정책", () => {
   const withAgents = () => [memberOf("user", OWNER), memberOf("agent", DEV), memberOf("agent", FIN)];
 
