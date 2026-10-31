@@ -1971,6 +1971,28 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
   });
 
+  it(`무효 승인 요청(세션 키 불일치·계약 위반)은 누계를 쓰지 않는다 — 그 뒤에도 유효한 요청 ${RUN_FREE_APPROVALS}개가 버킷 밖으로 통과한다`, async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    const otherKey = dodokSessionKey("coder", randomUUID());
+    for (let i = 0; i < RUN_FREE_APPROVALS; i++) {
+      r.send("approval.requested", {
+        ...approvalFrame(runId, sessionKey, `bad-key-${i}`),
+        sessionKey: otherKey,
+      });
+      const { toolName: _, ...noToolName } = approvalFrame(runId, sessionKey, `bad-shape-${i}`);
+      r.send("approval.requested", noToolName);
+    }
+    for (let i = 0; i < RUN_FREE_APPROVALS; i++)
+      r.send("approval.requested", approvalFrame(runId, sessionKey, `ok-${i}`));
+    await until(() => approvals(h).length === RUN_FREE_APPROVALS, "valid approvals");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(approvals(h).map((a) => a.toolCallId)).toEqual(
+      Array.from({ length: RUN_FREE_APPROVALS }, (_, i) => `toolu_ok-${i}`),
+    );
+  });
+
   it("열린 런을 가리켜도 처리기가 버릴 프레임(계약 위반·세션 키 불일치·모르는 오류 코드·끝난 승인의 철회)은 control 버킷을 센다", async () => {
     const h = await setup({ frames: { events: 100, control: 1 } });
     const { r, runId, sessionKey } = await drainedControl(h);
