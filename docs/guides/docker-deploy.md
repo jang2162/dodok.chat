@@ -612,7 +612,7 @@ docker compose logs app | grep '"event":"ops.'
 
 **`/healthz`** — 인증 없이 열려 있고 본문은 `{"ok":true,"db":"ok"}`(DB 를 못 읽으면 503 `{"ok":false,"db":"error"}`)뿐이다. 워크스페이스 id·어댑터 상세는 admin 이상만 읽는 `GET /api/v1/ops/status`(운영 화면이 읽는 것)에만 있다.
 
-**디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람 이미지·에이전트 파일 둘 다)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패) 「알 수 없음」이고 업로드는 막지 않는다.
+**디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람 이미지·에이전트 파일 둘 다)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패, 또는 한 번의 측정이 5초를 넘김 — 네트워크 파일 시스템이 멈췄을 때, 로그 `disk check failed` 의 `code: "timeout"`) 「알 수 없음」이고 업로드는 막지 않는다. 멈춘 측정이 끝날 때까지는 다시 재지 않는다.
 
 **레이트리밋** — 숫자의 정본은 `apps/server/src/modules/ops/limits.ts` 의 `LIMITS` 하나다(`grep -nE 'PerMin|perMin|socketsPerUser|bridgeFail' apps/server/src/modules/ops/limits.ts`). 상태는 서버 메모리에 있어 재시작하면 풀린다. 걸릴 때마다 사건 「요청 제한 발동」(정보 — 배지에는 안 잡힌다)이 남고, 주소는 IPv4 /24·IPv6 /48 로 줄여 적힌다. 「IP 당」·「주소」는 `TRUST_PROXY` 판정의 클라이언트 주소다(위 「신뢰 주소 — `TRUST_PROXY`」).
 
@@ -640,6 +640,8 @@ docker compose logs app | grep '"event":"ops.'
 | 제어 도구 호출(`/mcp`·러너 `control.call`·플러그인 `control.call`) | `controlPerMin`·쓰기는 그 안에서 한 번 더 `controlWritePerMin`(주체마다 — 개인 토큰이면 그 사람, 채널 안 에이전트면 (그 에이전트, 그 런을 시킨 사람). 같은 사람의 개인 토큰과 에이전트마다 버킷이 따로다) | 도구 결과 `isError` `RATE_LIMITED`, 사건 「요청 제한 발동」(key `control:<pat\|agent>`) |
 | 러너가 보내는 `control.call` | `runner.control`(위 `hello`·`outbound.post` 와 같은 버킷) | ack `RATE_LIMITED`(에이전트의 도구가 오류로 받는다). 플러그인의 `control.call` 에는 프레임 버킷이 없다 — `/bridge` 는 원래 프레임을 세지 않는다 |
 | `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments`, 토큰으로 받는 설치 파일(`GET /api/v1/setup/plugin.tgz`·`runner.tgz` 의 `Authorization: Bearer`) | `bridgeFail`(**여섯이 한 카운터**(웹훅은 위 줄의 따로 둔 카운터), **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다. 설치 파일은 Bearer 가 없는 요청을 세지 않는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP·설치 파일은 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
+
+사건 「브리지 인증 실패가 반복돼 주소를 막음」은 막히게 한 경로마다 따로 한 줄이다(key `bridge:bridge`·`bridge:runner`·`bridge:mcp`·`bridge:webhook`) — 웹훅 소음이 같은 시간의 브리지 막힘을 덮지 않는다.
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
