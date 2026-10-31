@@ -17,6 +17,7 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import {
   AGENT,
   APPROVAL,
+  APPROVAL2,
   approval,
   CH,
   CH2,
@@ -389,6 +390,35 @@ it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위�
   await waitFor(() =>
     expect(aside.querySelector('[data-slot="approval-card"]')).toHaveAttribute("data-status", "allowed"),
   );
+});
+
+/**
+ * 카드 자리 규칙을 실물로 잠근다(plan.md 이월 「`PanelSlot` 테스트 하네스가 실물에 안 묶여 있다」) — D13 의
+ * 하네스(`ApprovalCard.test.tsx` 의 `PanelSlot`)는 이 규칙을 베낀 것이라, 규칙이 바뀌면 여기가 먼저 깨져야 한다
+ */
+it("승인 둘이면 A 가 확정된 뒤 카드가 B 로 갈아탄다", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  const second = (over: Partial<Parameters<typeof approval>[0]> = {}) =>
+    approval({ id: APPROVAL2, toolCallId: "toolu_02", ...over });
+  act(() => {
+    useApprovalStore.getState().apply(approval());
+    useApprovalStore.getState().apply(second());
+  });
+  const cardId = () =>
+    aside.querySelector('[data-slot="approval-card"]')?.getAttribute("data-approval-id");
+  await waitFor(() => expect(cardId()).toBe(APPROVAL));
+
+  act(() =>
+    useApprovalStore
+      .getState()
+      .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+  );
+
+  expect(cardId()).toBe(APPROVAL2);
+  expect(aside.querySelector('[data-slot="approval-card"]')).toHaveAttribute("data-status", "pending");
 });
 
 // 설계 5.3 — 자리 둘(메시지 흐름·활동 탭)이 **하나의 스토어**를 본다. 다른 화면이라 중복이 아니다
