@@ -28,7 +28,7 @@ import { type AnyHandler, type HandlerContext, handlerFor } from "./handlers";
 import type { Principal } from "./principal";
 
 // 제어 서비스(제어 MCP 스펙 「실행 흐름」 장) — 바깥 MCP 클라이언트(/mcp)와 채널 안 에이전트(러너·플러그인)가 같은 입구로 부른다.
-// 레이트 → 도구 찾기 → 입력 Zod → 역할(그때 읽은 시킨 사람의 역할, REST 와 같은 정책 함수) → (채널 안 에이전트의 쓰기면) 확인 카드
+// 레이트(사람마다 — 개인 토큰과 그 사람이 시킨 에이전트가 한 버킷) → 도구 찾기 → 입력 Zod → 역할(그때 읽은 시킨 사람의 역할, REST 와 같은 정책 함수) → (채널 안 에이전트의 쓰기면) 확인 카드
 // → 허용 뒤 역할 다시 → 실행(REST 와 같은 액션 함수) → 운영 사건·시스템 메시지. 결과는 던지지 않고 ControlResult 로 돌려준다
 
 export type ControlDeps = {
@@ -99,8 +99,12 @@ export function createControlService(deps: ControlDeps): ControlService {
     now: clock,
   };
 
-  /** 주체마다 — 같은 사람이라도 개인 토큰과 각 에이전트는 따로 센다 */
-  const principalKey = (p: Principal) => `${p.via}:${p.userId ?? "-"}:${p.agentId ?? "-"}`;
+  /**
+   * 사람마다 — 같은 사람의 개인 토큰과 그 사람이 시킨 에이전트들은 한 버킷이다(에이전트를 늘려 상한을 곱하지 못하게).
+   * 시킨 사람이 없는 자동화 사슬은 사람이 없으니 (via, 에이전트)마다 센다
+   */
+  const principalKey = (p: Principal) =>
+    p.userId === null ? `${p.via}:-:${p.agentId ?? "-"}` : `user:${p.userId}`;
 
   function limited(bucket: KeyedLimiter, p: Principal): boolean {
     if (bucket.take(principalKey(p))) return false;
