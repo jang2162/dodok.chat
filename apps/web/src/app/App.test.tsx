@@ -91,9 +91,12 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
 });
 
 it("Query 밖 REST 401(notifyUnauthorized)도 같은 곳 — 상태를 비우고 /login?next=<지금 경로> 로 한 번", async () => {
+  // 401 뒤에는 세션도 끝난 것이다 — me 가 200 이면 로그인 청크보다 먼저 와 폼이 안 그려질 수 있다
+  let expired = false;
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (input, init) => {
+      if (expired) return json(401, UNAUTHORIZED);
       if (String(input) === "/api/v1/auth/me") return json(200, ME);
       return shellGet(input, init) ?? json(200, { channels: [] });
     }),
@@ -102,6 +105,7 @@ it("Query 밖 REST 401(notifyUnauthorized)도 같은 곳 — 상태를 비우고
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   const reset = spyReset();
 
+  expired = true;
   act(() => notifyUnauthorized());
 
   expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
