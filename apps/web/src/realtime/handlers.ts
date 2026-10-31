@@ -387,6 +387,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
       void qc.invalidateQueries({ queryKey: qk.opsStatus });
       void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
+      // 연결 페이지의 설정 상태(Gateway·러너가 붙었는가)도 끊긴 사이 바뀌었을 수 있다 — 떠 있을 때만 다시 받는다
+      void qc.invalidateQueries({ queryKey: qk.setupStatus });
       // 세션의 제목·닫기·다시 열기는 conversation.updated 로만 온다 — lastSeq 이어 받기는 그 시스템 메시지만 메우고 세션 캐시는
       // 낡은 채 남는다(태스크 6 리뷰 M1). 머리·작성기 자리의 세션 하나와 목록 칸
       void qc.invalidateQueries({ queryKey: qk.conversationAll });
