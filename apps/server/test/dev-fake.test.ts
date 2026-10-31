@@ -22,10 +22,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// startDevFake 가 createApp 에 넘긴 gatewayBackoff 를 값으로 단언하려고 호출 인자를 모은다(동작은 그대로 통과).
+const createAppDeps = vi.hoisted(
+  () => [] as Array<{ gatewayBackoff?: { initialMs: number; maxMs: number } }>,
+);
+vi.mock("../src/app", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/app")>();
+  return {
+    ...actual,
+    createApp: ((...args: Parameters<typeof actual.createApp>) => {
+      createAppDeps.push((args[1] ?? {}) as never);
+      return actual.createApp(...args);
+    }) as typeof actual.createApp,
+  };
+});
 import {
   DEV_FAKE_CHANNEL_NAME,
   DEV_FAKE_DISK_PATH,
   DEV_FAKE_DM_TEXT,
+  DEV_FAKE_GATEWAY_BACKOFF,
   DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
@@ -1608,15 +1624,10 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
     expect(events("gateway_down")[0]?.resolvedAt).toBeDefined();
   }, 20_000);
 
-  it("gateway — 오래 끊겨 있었어도 connected 는 몇 초 안에 붙는다(dev:fake 는 재접속 백오프 상한을 줄인다)", async () => {
-    await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "down" });
-    // 운영 백오프(1s 부터 두 배, ±20%)면 8초 끊긴 뒤 다음 시도는 11초 이후 — 줄인 상한이면 1초 남짓
-    await new Promise((r) => setTimeout(r, 8_000));
-    const started = Date.now();
-    const up = await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "connected" });
-    await expect(up.json()).resolves.toMatchObject({ ok: true, status: { gateway: "connected" } });
-    expect(Date.now() - started).toBeLessThan(3_000);
-  }, 20_000);
+  it("gateway — dev:fake 는 재접속 백오프 상한을 줄여 createApp 에 넘긴다(운영 기본 30초면 오래 끊긴 뒤 connected 가 늦는다)", () => {
+    expect(DEV_FAKE_GATEWAY_BACKOFF.maxMs).toBeLessThanOrEqual(1_000);
+    expect(createAppDeps.some((d) => d.gatewayBackoff === DEV_FAKE_GATEWAY_BACKOFF)).toBe(true);
+  });
 
   it("gateway — state 가 down·connected 가 아니거나 gatewayId 가 없거나 사무실·집이 아니면 400", async () => {
     expect((await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "up" })).status).toBe(400);

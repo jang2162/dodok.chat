@@ -340,7 +340,7 @@ const DEV_FAKE_BODY_MAX = 16 * 1024;
 /** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
 export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
 /** 끊김 훅 뒤 곧바로 붙게 줄인 재접속 백오프 — 운영 기본(상한 30초)이면 오래 끊긴 뒤 connected 가 30초까지 늦는다 */
-const DEV_FAKE_GATEWAY_BACKOFF = { initialMs: 250, maxMs: 1_000 };
+export const DEV_FAKE_GATEWAY_BACKOFF = { initialMs: 250, maxMs: 1_000 };
 /** 400 응답 문구에 싣는 고를 수 있는 gatewayId */
 const GATEWAY_IDS_USAGE = DEV_FAKE_GATEWAYS.map((g) => `"${g.id}"`).join(" | ");
 /** 시작 때 고정 짝이 붙기를 기다리는 상한 */
