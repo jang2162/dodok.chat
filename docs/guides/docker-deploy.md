@@ -415,8 +415,8 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**(4번 `programs.claude.configDir`)의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
    ```bash
    CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
-   # claude 명령이 없으면 러너가 품은 번들 CLI 로(플랫폼별 패키지 디렉터리 이름은 `ls "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai"` 로 본다 — 아래 경로의 이름과 다르면 그 이름으로 바꾼다):
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   # claude 명령이 없으면 러너가 품은 번들 CLI 로(플랫폼별 패키지 디렉터리 이름은 `ls "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai"` 로 본다 — 아래 경로의 이름과 다르면 그 이름으로 바꾼다):
+   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    ```
    러너 **전용 Claude 계정**을 권한다 — 아래 「드러나는 것」 1.
 4. **[R] 설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 1번의 조각에서 `roots` 를 고친다. 정본은 `packages/claude-runner/src/config.ts` 의 `RunnerConfig` — 모르는 키는 거절한다.
@@ -452,7 +452,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 6. **[웹·admin] 프로젝트 더하기** — 「러너」 탭 → 그 러너 카드의 「프로젝트 추가」 → 루트 고르기 → 「둘러보기」(디렉터리만·숨김 제외·500개까지, git 저장소 표시) 또는 「직접 입력」(루트 안의 상대 경로 — 비우면 루트 자신) → 「확인하고 추가」. 서버가 러너에 그 자리를 물어 루트 밖·없음·파일이면 사유와 함께 거절한다. 같은 러너의 같은 자리는 하나다. 붙은 러너에만 더할 수 있다.
 7. **[웹·admin] 에이전트 만들기** — 「에이전트」 탭 → 「에이전트 가져오기」 → 제공자 「러너」 → 러너 → 프로젝트 → 프로그램(못 쓰는 것은 사유와 함께 흐리다) → 핸들·이름·모델·권한 모드(러너 상한까지만 고를 수 있다)·허용 도구(상한의 부분집합)·지시·DM 허용 → 「만들기」. 끊긴 러너로는 만들 수 없다. 채널에 넣고 멘션한다 — 에이전트는 그 프로젝트 디렉터리에서 돈다. 지시와 채널 프롬프트는 **매 런** 요청에 실리고, 지시나 채널 규칙(프롬프트·채널 지시·릴레이 정책)을 바꾸면 서버가 그 에이전트의 러너 세션을 다음 런에서 새로 연다 — 사람이 새 세션을 열 필요가 없고, 대가로 세션 이력(앞 도구 결과·긴 작업 문맥)을 잃는다(`docs/guides/agent-guide.md` 「러너 에이전트」). 프로그램은 만든 뒤 바꾸지 않는다(새 에이전트를 만든다), 프로젝트는 「러너」 탭의 「옮기기」로만 바뀐다.
 
-**AI 에게 맡기는 길** — [R] 에서 셸을 쓰는 AI 에이전트가 돌면 2~5번을 그 AI 에게 맡길 수 있다. 1번 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [R] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: <원문>`(원문이 들어 있다 — 체크리스트 4 「AI 에게 맡기는 길」과 같은 규칙). `llms.txt` 의 「러너 머신」 절은 토큰을 `~/.dodok-runner/token`(0600)에 두고, 그 토큰으로 `runner.tgz` 를 받아(`Authorization: Bearer <러너 토큰>` — owner 세션 대신. 폐기된 토큰·브리지 토큰·틀린 값은 401 이고 브리지 실패 카운터에 센다) 파일 sha256·설치·번들 sha256(`$(npm root -g)/@dodok/claude-runner/dist/main.js`)을 대조한 뒤, 설정 파일을 만들고 `dodok-runner` 를 띄운다. 6·7번(프로젝트·에이전트)은 사람이 앱에서 한다.
+**AI 에게 맡기는 길** — [R] 에서 셸을 쓰는 AI 에이전트가 돌면 2~5번을 그 AI 에게 맡길 수 있다. 1번 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [R] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: <원문>`(원문이 들어 있다 — 체크리스트 4 「AI 에게 맡기는 길」과 같은 규칙). `llms.txt` 의 「러너 머신」 절은 토큰을 `~/.dodok-runner/token`(0600)에 두고, 그 토큰으로 `runner.tgz` 를 받아(`Authorization: Bearer <러너 토큰>` — owner 세션 대신. 폐기된 토큰·브리지 토큰·틀린 값은 401 이고 브리지 실패 카운터에 센다) 파일 sha256·설치·번들 sha256(`$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/dist/main.js`)을 대조한 뒤, 설정 파일을 만들고 `dodok-runner` 를 띄운다. 6·7번(프로젝트·에이전트)은 사람이 앱에서 한다.
 
 - **AI 가 멈추고 사람에게 묻는 자리** — 3번 러너 전용 로그인(사람이 한다 — AI 는 명령을 보여 주고 기다린다. `claude` 명령이 없으면 위 번들 CLI 줄을 보여 준다), 4번 `roots` 의 경로·라벨·id, sha256 이 다를 때. 5번 `dodok-runner` 는 끝나지 않고 전경에 머무니, 출력에 `연결됨` 이 보이면 AI 가 사람에게 넘긴다(끄기는 Ctrl+C) — 사람이 「러너」 탭에서 그 러너가 「연결됨」인지 본다.
 - 안내서의 설정 예시는 4번과 같은 꼴이다(`maxPermissionMode` `default`·도구 상한 없음). 상한을 더 낮추거나 도구 상한을 두려면 사람이 4번대로 고친다.

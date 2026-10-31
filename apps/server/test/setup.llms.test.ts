@@ -8,12 +8,14 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { v7 as uuid } from "uuid";
@@ -25,7 +27,7 @@ import { runnerConfigExample } from "../../web/src/features/setup/runnerConfig";
 import type { App } from "../src/app";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
-import { renderLlmsTxt } from "../src/modules/setup/llms";
+import { renderLlmsTxt, RUNNER_PKG_DIR } from "../src/modules/setup/llms";
 import { PLUGIN_BUNDLE_ENTRY } from "../src/modules/setup/plugin-file";
 import { issueBridgeToken, revokeBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -294,18 +296,48 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
 
     const pkg = JSON.parse(readFileSync(join(ROOT, "packages/claude-runner/package.json"), "utf8")) as {
       name: string;
+      bin: Record<string, string>;
       dependencies: Record<string, string>;
     };
     const sdk = "@anthropic-ai/claude-agent-sdk";
     expect(pkg.dependencies).toHaveProperty(sdk);
     expect(line).toContain(
-      `"$(npm root -g)/${pkg.name}/node_modules/${sdk}-$(node -p 'process.platform+"-"+process.arch')/claude"`,
+      `"${RUNNER_PKG_DIR}/node_modules/${sdk}-$(node -p 'process.platform+"-"+process.arch')/claude"`,
     );
+    // 패키지 디렉터리 식은 bin 링크를 풀어 두 단계 위로 간다 — bin 대상이 패키지 안 두 단계 깊이여야 맞다
+    expect(RUNNER_PKG_DIR).toContain('"$(command -v dodok-runner)"');
+    expect(pkg.bin["dodok-runner"]?.split("/")).toHaveLength(2);
     // 플랫폼별 번들 CLI 패키지 이름이 <SDK>-<platform>-<arch> 꼴이다(이 머신의 판으로)
     const sdkPkg = JSON.parse(
       readFileSync(join(ROOT, "packages/claude-runner/node_modules", sdk, "package.json"), "utf8"),
     ) as { optionalDependencies: Record<string, string> };
     expect(Object.keys(sdkPkg.optionalDependencies)).toContain(`${sdk}-${process.platform}-${process.arch}`);
+  });
+
+  it("러너 2·3번 — npm root -g 를 쓰지 않고(npm 11.19 가 경로를 가려 찍는다) 설치된 dodok-runner 링크를 풀어 패키지 디렉터리를 찾는다", () => {
+    expect(runner).not.toContain("npm root -g");
+    expect(readFileSync(join(ROOT, "docs/guides/docker-deploy.md"), "utf8")).not.toContain("npm root -g");
+    // npm -g 설치와 같은 꼴: <prefix>/bin/dodok-runner → ../lib/node_modules/@dodok/claude-runner/dist/main.js
+    const prefix = mkdtempSync(join(tmpdir(), "dodok-llms-prefix-"));
+    try {
+      const pkgDir = join(prefix, "lib", "node_modules", "@dodok", "claude-runner");
+      mkdirSync(join(pkgDir, "dist"), { recursive: true });
+      // 실행 권한이 없으면 command -v 가 건너뛰고 PATH 뒤쪽의 다른 설치를 고른다
+      writeFileSync(join(pkgDir, "dist", "main.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+      mkdirSync(join(prefix, "bin"));
+      symlinkSync(
+        "../lib/node_modules/@dodok/claude-runner/dist/main.js",
+        join(prefix, "bin", "dodok-runner"),
+      );
+      const res = spawnSync("bash", ["-c", `printf '%s' "${RUNNER_PKG_DIR}"`], {
+        encoding: "utf8",
+        env: { PATH: `${join(prefix, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin` },
+      });
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stdout).toBe(realpathSync(pkgDir));
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
   });
 
   it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {

@@ -30,6 +30,11 @@ const BRIDGE_TOKEN_FILE = "~/.dodok-bridge-token";
 /** 러너 전용 Claude 로그인 디렉터리(러너 설정 `programs.claude.configDir`) — 사람의 `~/.claude` 와 섞지 않는다 */
 const RUNNER_CLAUDE_DIR = "~/.dodok-runner/claude";
 const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
+/**
+ * 설치된 러너 패키지 디렉터리 — bin 링크 `dodok-runner`(→ dist/main.js)를 풀어 두 단계 위. `$(npm root -g)` 는 일부 npm(11.19)이 경로 속
+ * UUID 를 `***` 로 가려 찍어 깨진다. docker-deploy.md 「러너 설치」 3번이 같은 식을 쓴다(setup.llms.test 가 대조한다)
+ */
+export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
 const NO_FILE =
   "서버에 파일이 없습니다. 이 절의 설치를 멈추고 사람에게 알린다(서버 관리자가 파일을 만든 뒤 서버를 재시작해야 한다).";
 
@@ -136,14 +141,14 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${download(RUNNER_TOKEN_FILE, `${origin}/api/v1/setup/runner.tgz`, out).replaceAll("\n", "\n   ")}
    shasum -a 256 ${out}   # Linux 는 sha256sum
    npm install -g ${out}
-   shasum -a 256 "$(npm root -g)/@dodok/claude-runner/dist/main.js"
+   shasum -a 256 "${RUNNER_PKG_DIR}/dist/main.js"
    \`\`\`
 
-3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
+3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
 
    \`\`\`bash
    CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude
-   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    \`\`\`
 
 4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. roots 의 경로(에이전트가 돌 수 있는 디렉터리 — 좁게)·라벨과 id(영문 소문자·숫자·-)는 사람에게 묻는다. 에이전트는 이 파일이 아니라 dodok 앱에서 만든다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).
