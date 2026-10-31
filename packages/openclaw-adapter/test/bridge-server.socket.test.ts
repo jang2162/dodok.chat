@@ -280,6 +280,36 @@ describe("attachBridge (실제 Socket.IO)", () => {
     expect(calls).toBe(4);
   });
 
+  it.each([
+    ["스레드 불일치", "VALIDATION", "threadId does not match the run thread"],
+    ["모르는 에이전트", "NOT_FOUND", "agent not found"],
+  ] as const)(
+    "저장이 서버 HttpError(%s)를 던지면 body.code(%s)를 그대로 ack 에 싣는다 — INTERNAL 로 뭉개지 않는다",
+    async (_label, code, message) => {
+      await stop();
+      // 서버 apps/server/src/http/errors.ts HttpError 의 모양 — 코드는 .code 가 아니라 .body.code 에 있다
+      class HttpError extends Error {
+        constructor(
+          readonly status: number,
+          readonly body: { code: string; message: string },
+        ) {
+          super(body.message);
+          this.name = "HttpError";
+        }
+      }
+      await start({
+        onOutboundMessage: async () => {
+          throw new HttpError(400, { code, message });
+        },
+      });
+      const socket = await readyClient();
+      expect(await socket.emitWithAck("outbound.message", outbound("o-http"))).toEqual({
+        ok: false,
+        error: { code, message },
+      });
+    },
+  );
+
   it("deliverInbound 는 플러그인 ack 를 돌려주고, 연결이 없으면 ADAPTER_UNAVAILABLE", async () => {
     const delivery = { deliveryId: randomUUID() } as InboundDeliver;
     expect(await bridge.forGateway(GATEWAY).deliverInbound(delivery, 1_000)).toMatchObject({

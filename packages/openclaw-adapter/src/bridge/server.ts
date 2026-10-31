@@ -127,9 +127,13 @@ function errorResult(code: "TIMEOUT" | "ADAPTER_UNAVAILABLE" | "INTERNAL", messa
   return { ok: false, error: { code, message } };
 }
 
-/** 저장이 계약 오류 코드를 실어 던졌으면(AdapterError — 예: 보관한 채널의 CHANNEL_ARCHIVED) 플러그인에 그 코드로, 아니면 INTERNAL */
+/**
+ * 저장이 계약 오류 코드를 실어 던졌으면 플러그인에 그 코드로, 아니면 INTERNAL. 코드는 `.code`(AdapterError — 예: 보관한 채널의
+ * CHANNEL_ARCHIVED)나 `.body.code`(서버 HttpError — 예: 스레드 불일치 VALIDATION·모르는 에이전트 NOT_FOUND)에 있다
+ */
 function outboundError(error: unknown): ApiError {
-  const code = ErrorCode.safeParse((error as { code?: unknown } | null)?.code);
+  const thrown = error as { code?: unknown; body?: { code?: unknown } | null } | null;
+  const code = ErrorCode.safeParse(thrown?.code ?? thrown?.body?.code);
   if (code.success && error instanceof Error) return { code: code.data, message: error.message };
   return { code: "INTERNAL", message: String(error) };
 }
