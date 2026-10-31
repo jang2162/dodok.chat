@@ -59,6 +59,13 @@ describe("resolveOutboundSessionRoute — 스레드 인식(ADR 0006 「아웃바
     expect(route({ threadId: ROOT.toUpperCase() })?.sessionKey).toBe(THREAD_KEY);
   });
 
+  it("스레드 세션에 다른 threadId 가 오면 그 다른 스레드 키 — precedence 가 threadId 먼저임을 고정한다", () => {
+    const otherRoot = "01a09fc9-d204-7551-89d6-38544d07a1bb";
+    expect(route({ currentSessionKey: THREAD_KEY, threadId: otherRoot })?.sessionKey).toBe(
+      `${CHANNEL_KEY}:thread:${otherRoot}`,
+    );
+  });
+
   it("replyToId(인바운드 메시지 id)로는 스레드를 만들지 않는다 — 기본 precedence 를 쓰지 않는다", () => {
     expect(route({ currentSessionKey: THREAD_KEY, replyToId: OTHER_CH })?.sessionKey).toBe(THREAD_KEY);
     expect(route({ replyToId: OTHER_CH })?.sessionKey).toBe(CHANNEL_KEY);
