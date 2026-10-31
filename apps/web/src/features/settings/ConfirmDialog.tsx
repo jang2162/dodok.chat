@@ -123,11 +123,27 @@ function ConfirmButton({
     const timer = setTimeout(() => setArmed(true), armMs);
     return () => clearTimeout(timer);
   }, [armMs]);
+  // 같은 틱의 두 번째 누름을 거른다 — `pending` 은 다시 그린 뒤에야 참이라 그 사이 누름이 요청을 한 번 더 보낸다(AgentRow 꼴).
+  // 진행이 끝나면(`pending` 이 거짓으로) 다시 받는다. 누른 뒤 한 틱이 지나도 진행 중이 아니면(진행 없이 닫는 확인, 그려지기 전에
+  // 이미 실패한 요청) 그때 푼다 — react-query 는 `mutate` 안에서 진행 알림 타이머를 먼저 걸므로 이 타이머보다 앞서 그려진다
+  const sending = useRef(false);
+  const pendingNow = useRef(pending);
+  useEffect(() => {
+    pendingNow.current = pending;
+    if (!pending) sending.current = false;
+  }, [pending]);
   return (
     <Button
       variant={destructive ? "destructive" : "default"}
       disabled={pending || !armed}
-      onClick={onConfirm}
+      onClick={() => {
+        if (sending.current) return;
+        sending.current = true;
+        onConfirm();
+        setTimeout(() => {
+          if (!pendingNow.current) sending.current = false;
+        }, 0);
+      }}
     >
       {label}
     </Button>

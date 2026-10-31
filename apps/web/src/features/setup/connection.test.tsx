@@ -409,6 +409,24 @@ describe("브리지 토큰", () => {
       expect(server.count("DELETE", `${TOKENS_PATH}/${tokenId(1)}`)).toBe(1);
     });
 
+    it("확인 「폐기」를 같은 틱에 두 번 눌러도 DELETE 는 한 번(공용 ConfirmDialog 의 같은 틱 가드)", async () => {
+      const server = stubSetupServer({
+        status: statusOf({ plugin: { tokenId: tokenId(2) } }),
+        tokens: [tokenOf(1), tokenOf(2, { connected: true })],
+      });
+      renderConnection();
+      const br = await region("브리지 토큰");
+      const row = await within(br).findByRole("listitem", { name: "토큰-1" });
+      await userEvent.click(within(row).getByRole("button", { name: "토큰-1 폐기" }));
+      const confirm = within(await screen.findByRole("dialog")).getByRole("button", { name: "폐기" });
+      act(() => {
+        confirm.click();
+        confirm.click();
+      });
+      await waitFor(() => expect(row).toHaveTextContent("폐기됨"));
+      expect(server.count("DELETE", `${TOKENS_PATH}/${tokenId(1)}`)).toBe(1);
+    });
+
     it("접속 중인 토큰 — 「에이전트가 멈춥니다」 확인, 다른 활성 토큰이 있으면 한 번으로 끝", async () => {
       const server = stubSetupServer({
         status: statusOf({ plugin: { tokenId: tokenId(1) } }),
