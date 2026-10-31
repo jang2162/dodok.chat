@@ -143,6 +143,22 @@ it("핸들·툴 이름을 모르면 조사까지 맞춘 일반 문구", () => {
   );
 });
 
+it("확인 카드(dodok_control)는 도구 이름 대신 고정 문구 — 「확인 필요 — @<에이전트> 가 채널 설정을 바꾸려 합니다」", () => {
+  expect(approvalNotifyTitle({ toolName: "update_channel", kind: "dodok_control" }, "dev")).toBe(
+    "확인 필요 — @dev 가 채널 설정을 바꾸려 합니다",
+  );
+  expect(approvalNotifyTitle({ toolName: "update_channel", kind: "dodok_control" }, undefined)).toBe(
+    "확인 필요 — 에이전트가 채널 설정을 바꾸려 합니다",
+  );
+  // 알림 본체도 같은 제목을 쓴다
+  const { made } = notifications("granted");
+  notifyApproval(
+    { ...approval(), kind: "dodok_control", toolName: "update_channel" },
+    away({ handle: "dev" }),
+  );
+  expect(made[0]?.title).toBe("확인 필요 — @dev 가 채널 설정을 바꾸려 합니다");
+});
+
 it("같은 승인은 알림 tag 가 같다 — 쌓이지 않는다", () => {
   const { made } = notifications("granted");
   notifyApproval(approval(), away());
