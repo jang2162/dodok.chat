@@ -36,7 +36,9 @@ let ioServer: Server;
 let bridge: BridgeHandle;
 let url: string;
 let received: OutboundMessage[];
-let storeDelayMs: number;
+// 저장을 이 문이 열릴 때까지 붙든다 — 시간 대신 순서로 막는 테스트만 켠다. storeEntered 는 저장이 시작되면 불린다
+let storeGate: Promise<void> | undefined;
+let storeEntered: (() => void) | undefined;
 let rejected: string[];
 let nowMs: number;
 // 검증 함수가 던지는 경우(저장소 오류)를 재는 테스트만 켠다
@@ -74,7 +76,8 @@ function outbound(outboundId: string) {
 /** 앱·Socket.IO·브리지를 띄운다 — extra 는 이 테스트 파일의 기본 옵션 위에 얹는다 */
 async function start(extra: Partial<Parameters<typeof attachBridge>[1]> = {}) {
   received = [];
-  storeDelayMs = 0;
+  storeGate = undefined;
+  storeEntered = undefined;
   rejected = [];
   nowMs = 0;
   verifyThrows = false;
@@ -92,7 +95,8 @@ async function start(extra: Partial<Parameters<typeof attachBridge>[1]> = {}) {
     onRejected: (reason) => rejected.push(reason),
     onOutboundMessage: async (_session, message) => {
       received.push(message);
-      if (storeDelayMs > 0) await new Promise((done) => setTimeout(done, storeDelayMs));
+      storeEntered?.();
+      if (storeGate) await storeGate;
       return { messageId: randomUUID() };
     },
     ...extra,
@@ -224,11 +228,22 @@ describe("attachBridge (실제 Socket.IO)", () => {
   });
 
   it("처리 중인 outboundId 가 다른 연결로 다시 오면 기다렸다가 같은 결과를 받는다 (저장 한 번)", async () => {
-    storeDelayMs = 100;
+    // 시간이 아니라 순서로 막는다 — 저장은 새 연결이 hello 를 마치고 같은 outboundId 를 다시 보낸 것을 서버가 받은 뒤에야 끝난다.
+    // 100ms 지연이었을 때는 새 연결의 hello 가 늦으면 옛 연결이 정상 ack 를 먼저 받아 흔들렸다
+    let openGate!: () => void;
+    storeGate = new Promise<void>((resolve) => (openGate = resolve));
+    const entered = new Promise<void>((resolve) => (storeEntered = resolve));
     const before = await readyClient();
     // 새 연결의 hello 가 이전 연결을 교체해 끊으므로 이 ack 는 클라이언트에서 reject 된다
     const abandoned = before.emitWithAck("outbound.message", outbound("o-inflight")).catch((e: Error) => e);
-    await new Promise((done) => setTimeout(done, 20));
+    await entered;
+    // 여기서부터 붙는 연결(= 새 연결)이 다시 보낸 outbound 를 서버가 받으면 문을 연다. onAny 는 핸들러보다 먼저 불리고 핸들러는
+    // nextTick 에 돌므로 setImmediate 로 한 바퀴 미뤄 핸들러가 처리 중인 저장을 기다리기 시작한 뒤에 연다
+    ioServer.of("/bridge").on("connection", (serverSocket) => {
+      serverSocket.onAny((event: string) => {
+        if (event === "outbound.message") setImmediate(openGate);
+      });
+    });
 
     // 플러그인이 ack 타임아웃으로 끊고 재연결해 head 를 다시 보낸 모양
     const after = await readyClient();
