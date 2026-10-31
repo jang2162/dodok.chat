@@ -1,0 +1,55 @@
+# 러너 npm 패키지 @dodok/runner 배포 — runner-v<판본> 태그를 밀면 돈다. 절차는 docs/guides/runner-release.md
+name: runner-publish
+
+on:
+  push:
+    tags: ["runner-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: runner-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Check tool versions against mise.toml
+        run: |
+          node_pin=$(sed -n 's/^node = "\(.*\)"$/\1/p' mise.toml)
+          pnpm_pin=$(sed -n 's/^"npm:pnpm" = "\(.*\)"$/\1/p' mise.toml)
+          test -n "$node_pin" && test -n "$pnpm_pin"
+          test "$(node -v)" = "v$node_pin" || { echo "::error::node $(node -v) != mise.toml $node_pin"; exit 1; }
+          test "$(pnpm -v)" = "$pnpm_pin" || { echo "::error::pnpm $(pnpm -v) != mise.toml $pnpm_pin"; exit 1; }
+
+      - name: Check tag matches package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p 'require("./packages/claude-runner/package.json").version')
+          test "$TAG" = "runner-v$version" || { echo "::error::tag $TAG != runner-v$version (packages/claude-runner/package.json)"; exit 1; }
+
+      - run: pnpm install --frozen-lockfile --filter "@dodok/runner..."
+
+      - run: pnpm -F @dodok/runner typecheck
+      - run: pnpm -F @dodok/runner test
+      - run: pnpm -F @dodok/runner build
+
+      # prepublishOnly 가 다시 빌드하고 꾸러미를 확인한다. 인증은 NPM_TOKEN 시크릿 — npm 의 trusted publisher 로 이 워크플로를
+      # 등록했으면 시크릿 없이 OIDC 로 올라간다(docs/guides/runner-release.md 「npm 쪽 사전 준비」)
+      - name: Publish
+        run: pnpm -F @dodok/runner publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
