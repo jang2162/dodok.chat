@@ -1021,7 +1021,7 @@ await page.evaluate(async () =>
 | 릴레이 한도 | `@dev @fin 시작` | 채널에 dev·fin 둘 다. 채널 설정에서 릴레이 턴 상한을 1 로(`PATCH /channels/:id {relayPolicy:{maxRelayTurns:1, allowPairs:"all"}}`) 하면 곧바로 닿는다 |
 
 도착은 `registration.getNotifications()` 로 본다. 알림 본문에 메시지 본문·툴 인자가 없는 것, 서버 로그에 `p256dh`·비밀 키·알림 문구·`fcm/send` 가 없는 것도 같이 본다.
-**걸렀다·보냈다·보냈는데 안 왔다를 가르는 법** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`transport`·`result`)를 한 줄씩 남긴다(HTTP 상태는 디스패처 줄에 없다 — 통로가 거절·실패를 받았을 때만 그 통로가 `statusCode` 와 고정 문구 `reason` 을 warn 으로 남긴다: `push send failed`(warn)·`push rejected`(error)). 이 두 줄과 `chrome://gcm-internals` 의 Receive Message Log 로 가른다. `dev:fake` 진입점은 로그 수준을 `info` 로 고정하므로 debug 줄을 보려면 `startDevFake({ logLevel: "debug" })` 로 감싸 띄운다.
+**걸렀다·보냈다·보냈는데 안 왔다를 가르는 법** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`transport`·`result`)를 한 줄씩 남긴다(HTTP 상태는 디스패처 줄에 없다 — 통로가 거절·실패를 받았을 때만 그 통로가 `statusCode` 와 고정 문구 `reason` 을 warn 으로 남긴다: `push send failed`(warn)·`push rejected`(error)). 이 두 줄과 `chrome://gcm-internals` 의 Receive Message Log 로 가른다. `dev:fake` 도 `LOG_LEVEL` 을 따른다(없으면 `info`) — `LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`.
 **탭을 닫으면** 브라우저가 웹소켓을 곧바로 닫고(vite preview 프록시도 늦추지 않는다), 웹은 `pagehide` 에서도 「안 보임」을 보낸다 — 닫은 직후의 트리거도 걸러지지 않는다. 남는 최대 45초 창(engine.io 핑 25s+20s)은 close 가 서버에 가지 않는 경우 — 네트워크 단절·절전·프로세스 멈춤 — 뿐이다(스펙 10장 트레이드오프).
 ⚠ 자동화 브라우저를 강제 종료(kill)하며 여러 번 붙으면, 죽은 소켓이 ping 제한까지 presence 에 남아 「보고 있음」으로 한 번 더 걸러질 수 있다. 헷갈리면 서버를 `--keep` 으로 다시 띄워 presence 만 비운다.
 

@@ -122,6 +122,13 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
   });
 
+  it("로그 레벨은 LOG_LEVEL(debug 로 푸시 건너뜀 줄을 본다), 없거나 비었으면 info, 모르는 이름이면 시작하지 않는다", () => {
+    expect(devFakeCliOptions({ LOG_LEVEL: "debug" }, []).logLevel).toBe("debug");
+    expect(devFakeCliOptions({}, []).logLevel).toBe("info");
+    expect(devFakeCliOptions({ LOG_LEVEL: "" }, []).logLevel).toBe("info");
+    expect(() => devFakeCliOptions({ LOG_LEVEL: "verbose" }, [])).toThrow(/LOG_LEVEL/);
+  });
+
   it("리슨 주소는 DEV_FAKE_HOST(컨테이너면 0.0.0.0), 없거나 비었으면 127.0.0.1", () => {
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "0.0.0.0" }, []).host).toBe("0.0.0.0");
     expect(devFakeCliOptions({}, []).host).toBe("127.0.0.1");
