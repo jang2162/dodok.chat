@@ -292,6 +292,25 @@ describe("보관·보관 해제(channel.updated)", () => {
     expect(server.calls()).toBe(2);
   });
 
+  it("새로 만든 빈 채널(channel.created)의 첫 channel.updated 는 다시 받지 않는다 — 현황이 그 채널을 안다", async () => {
+    const { fake, server } = await connected(snap(row(), row({ channelId: CH2 })));
+    fake.serverEmit("channel.created", { channel: channelOf(CH3) });
+    fake.serverEmit("channel.updated", { channel: channelOf(CH3, { name: "renamed" }) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.calls()).toBe(1);
+  });
+
+  it("현황 요청이 나가 있는 동안 만든 채널도 받은 스냅숏 위에 얹는다", async () => {
+    const server = stubUnread();
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    await waitFor(() => expect(server.calls()).toBe(1));
+    fake.serverEmit("channel.created", { channel: channelOf(CH3) });
+    server.release(snap(row()));
+    await waitFor(() => expect(store().ready).toBe(true));
+    expect(CH3 in store().channels).toBe(true);
+  });
+
   it("보관과 상관없는 변경(이름 바꾸기)은 다시 받지 않는다", async () => {
     const { fake, server } = await connected(snap(row(), row({ channelId: CH2 })));
     fake.serverEmit("channel.updated", { channel: channelOf(CH, { name: "renamed" }) });

@@ -245,6 +245,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       qc.setQueryData<Channel[]>(qk.channels, (list) =>
         list && !list.some((c) => c.id === channel.id) ? [...list, channel] : list,
       );
+      // 읽지 않음 현황도 이 채널을 안다 — 모르면 첫 channel.updated(이름 바꾸기 등)가 보관 해제로 읽혀 현황을 다시 받는다
+      if (!isChannelArchived(channel)) useUnread.getState().addChannel(channel.id);
     },
     /**
      * 워크스페이스 방으로 온다 — 구독하지 않은 채널도. 보관하면 사이드바에서 빠지고 열린 화면은 상세 캐시로 읽기 전용이 된다(`applyChannel`)

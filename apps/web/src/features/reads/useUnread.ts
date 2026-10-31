@@ -35,7 +35,8 @@ export type ReadContext = { listed: boolean };
 /** 스냅숏 요청이 나가 있는 동안 받은 신호 — 받은 때의 사정과 함께 두었다가 스냅숏 위에 다시 얹는다 */
 type Buffered =
   | { kind: "activity"; activity: ChannelActivity; ctx: ActivityContext }
-  | { kind: "read"; update: ConversationReadUpdate; ctx: ReadContext };
+  | { kind: "read"; update: ConversationReadUpdate; ctx: ReadContext }
+  | { kind: "channel"; channelId: string };
 
 type UnreadState = {
   /** 스냅숏을 받았는가 — 아니면 굵게·배지를 그리지 않는다(틀린 배지보다 없는 배지) */
@@ -46,7 +47,7 @@ type UnreadState = {
   byConversation: Record<string, UnreadEntry>;
   /**
    * 스냅숏이 실은 보관하지 않은 채널(대화가 없는 채널 포함) — 보관·보관 해제가 현황에 반영됐는지 견준다(`needsResync`). 신호로 새
-   * 세션 항목을 만든 채널도 더한다
+   * 세션 항목을 만든 채널과 스냅숏 뒤에 새로 만든 채널(`addChannel`)도 더한다
    */
   channels: Record<string, true>;
   buffer: Buffered[];
@@ -55,6 +56,11 @@ type UnreadState = {
   failSnapshot(): void;
   applyActivity(a: ChannelActivity, ctx: ActivityContext): void;
   applyRead(u: ConversationReadUpdate, ctx: ReadContext): void;
+  /**
+   * 새로 만든 보관하지 않은 채널(`channel.created`) — 스냅숏이 아직 모르는 빈 채널이다. 더하지 않으면 그 채널의 첫 `channel.updated` 가
+   * 보관 해제 전으로 읽혀(`needsResync`) 현황을 한 번 다시 받는다
+   */
+  addChannel(channelId: string): void;
   /** 로그아웃·401 */
   reset(): void;
 };
@@ -118,8 +124,15 @@ function withRead(t: Tables, u: ConversationReadUpdate, ctx: ReadContext): Table
   });
 }
 
+const withChannel = (t: Tables, channelId: string): Tables =>
+  channelId in t.channels ? t : { ...t, channels: { ...t.channels, [channelId]: true } };
+
 const replay = (t: Tables, b: Buffered): Tables =>
-  b.kind === "activity" ? withActivity(t, b.activity, b.ctx) : withRead(t, b.update, b.ctx);
+  b.kind === "activity"
+    ? withActivity(t, b.activity, b.ctx)
+    : b.kind === "read"
+      ? withRead(t, b.update, b.ctx)
+      : withChannel(t, b.channelId);
 
 const INITIAL = { ready: false, loading: false, byConversation: {}, channels: {}, buffer: [] };
 
@@ -161,6 +174,10 @@ export const useUnread = create<UnreadState>()((set) => ({
   applyRead: (update, ctx) =>
     set((s) =>
       s.loading ? { buffer: [...s.buffer, { kind: "read", update, ctx }] } : withRead(s, update, ctx),
+    ),
+  addChannel: (channelId) =>
+    set((s) =>
+      s.loading ? { buffer: [...s.buffer, { kind: "channel", channelId }] } : withChannel(s, channelId),
     ),
   reset: () => {
     viewingAtEnd = undefined;
