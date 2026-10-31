@@ -36,7 +36,7 @@ CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공�
 
 ## 명령
 pnpm i · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev (루트 `pnpm dev` 는 없다)
-pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off) · oxfmt 는 `**/*.md` 를 보지 않는다 — 문서를 고친 뒤 `---` 앞의 빈 줄(빠지면 앞 문단이 H2 가 된다)과 표 줄은 눈으로 본다 · `pnpm test` 는 다른 검사(typecheck·build)와 동시에 돌리지 않는다 — 실제 시간을 재는 웹 테스트가 깨진다 · 다른 워커가 많이 도는 머신에서는 혼자 돌려도 실제 시간 시험이 흔들릴 수 있다 — 실패하면 그 시험만 다시 돌려 보고, 실패가 되풀이되면 단언 순서가 강조 시간(`HIGHLIGHT_MS` 2초)에 기대는지 본다
+pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off) · oxfmt 는 `**/*.md` 를 보지 않는다 — 문서를 고친 뒤 `---` 앞의 빈 줄(빠지면 앞 문단이 H2 가 된다)과 표 줄은 눈으로 본다 · `pnpm test` 는 다른 검사(typecheck·build)와 동시에 돌리지 않는다 — 실제 시간을 재는 웹 테스트가 깨진다 · 다른 워커가 많이 도는 머신에서는 혼자 돌려도 실제 시간 시험이 흔들릴 수 있다 — 실패하면 그 시험만 다시 돌려 보고, 실패가 되풀이되면 단언 순서가 강조 시간(`HIGHLIGHT_MS` 2초)에 기대는지 본다 · 루트 `pnpm test` 는 한 패키지가 실패하면 Turbo 가 나머지 패키지 시험을 끊는다 — 실행 수를 재야 하면 `pnpm exec turbo run test --continue` 로 끝까지 돌리거나 끊긴 패키지를 `pnpm -F <패키지> test` 로 따로 혼자 돌린다
 Node 24.21.0 · pnpm 11.16.0 은 mise.toml 핀(`mise install`). Bash 도구는 SessionStart 훅(.claude/hooks/node-env.sh)이 PATH 를 잡는다. `node -v` 가 24 가 아니면 `export PATH="$(mise where node)/bin:$PATH"`.
 scripts/orca-worker.sh status|spawn|attach|wait|reap|stop|keep|sync-config · bash scripts/test/orca-worker.test.sh
 서버 단독: pnpm -F @dodok/server dev(루트 .env, 이미 있는 env 는 안 덮음) · pnpm wire-cli <origin> [localToken] <명령>(REST·wire 손 점검) · dev Gateway 실연 절차 docs/guides/live-smoke.md(지난 결과 docs/superpowers/reports/*-live-smoke-report.md)
