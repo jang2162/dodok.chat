@@ -477,6 +477,24 @@ describe("fakeAgentScript", () => {
         expect(text, `${JSON.stringify(text)} ⊃ ${keyword}`).not.toContain(keyword);
     }
   });
+  it("대본 소스의 text.includes 리터럴은 모두 DEV_FAKE_KEYWORDS 의 키워드를 담는다 — 인라인 조건에 새 키워드를 더하면 위 전수 검사가 따라가게", () => {
+    const source = readFileSync(join(import.meta.dirname, "../scripts/dev-fake.ts"), "utf8");
+    // 에이전트 대본(fakeAgentScript)과 그것이 부르는 조건 함수들 — 러너 대본(fakeRunnerScript)은 따로다
+    const bodyOf = (name: string): string => {
+      const start = source.search(new RegExp(`function ${name}\\(`));
+      expect(start, name).toBeGreaterThanOrEqual(0);
+      return source.slice(start, source.indexOf("\n}\n", start));
+    };
+    const body = ["fakeAgentScript", "approvalScript", "componentsScript"].map(bodyOf).join("\n");
+    const literals = [...body.matchAll(/text\.includes\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1] ?? "");
+    // 표에서 읽는 것(COMPONENT_CARDS·ATTACHMENT_REPLIES·CALL_ME)은 리터럴이 아니다 — 인라인 다섯 이상이 실제로 잡혔는지
+    expect(literals).toEqual(expect.arrayContaining(["드롭", "실패", "느리게", "오래", "도구", "승인"]));
+    for (const literal of literals)
+      expect(
+        DEV_FAKE_KEYWORDS.some((keyword) => literal.includes(keyword)),
+        `${literal} 은 DEV_FAKE_KEYWORDS 의 어떤 키워드도 담지 않는다`,
+      ).toBe(true);
+  });
 });
 
 type RunnerCall =
