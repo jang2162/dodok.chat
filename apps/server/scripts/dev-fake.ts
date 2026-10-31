@@ -1351,18 +1351,21 @@ function seedDevFakeGateway(
 
 /**
  * 고정 짝의 가짜 플러그인이 못 붙을 만한, 사람이 바꾼 것 — 고정 Gateway 를 껐거나 고정 토큰을 폐기했으면(`--keep` 으로 이어받은 것)
- * 다시 붙이는 안내를, 아니면 undefined 를 돌려준다. 시드가 시작마다 행을 되살리므로 새 DB 는 늘 undefined 다
+ * 다시 붙이는 안내를, 아니면 undefined 를 돌려준다. 시드가 시작마다 행을 되살리므로 새 DB 는 늘 undefined 다.
+ * 시작 때 못 붙은 짝은 가짜 플러그인이 없어 plugin-token 훅이 「fake plugin not started」로 거절한다 — 그래서 안내는 다시 띄우기다
+ * (켠 Gateway 는 `--keep` 으로 이어받아도 붙고, 폐기한 고정 토큰은 `--keep` 으로는 그대로라 새 DB 로만 붙는다)
  */
 function changedByHand(db: DbOrTx, workspaceId: string, spec: DevFakeGatewaySpec): string | undefined {
   if (getGatewayRow(db, workspaceId, spec.id)?.enabled === false)
-    return "enable the Gateway on the connection page";
+    return "enable the Gateway on the connection page, then restart dev:fake (--keep keeps the DB)";
   const hash = createHash("sha256").update(spec.bridgeToken).digest("hex");
   const token = db
     .select({ revokedAt: bridgeTokens.revokedAt })
     .from(bridgeTokens)
     .where(eq(bridgeTokens.hash, hash))
     .get();
-  if (token?.revokedAt != null) return "POST /__devfake/plugin-token { gatewayId, token } with a new token";
+  if (token?.revokedAt != null)
+    return "the fixed bridge token is revoked — restart dev:fake without --keep (new DB); POST /__devfake/plugin-token cannot start a fake plugin";
   return undefined;
 }
 
