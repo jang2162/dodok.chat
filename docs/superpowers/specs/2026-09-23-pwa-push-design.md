@@ -222,7 +222,7 @@
 
 - **R4 — 개발 모드 서비스 워커는 기본으로 끈다**(2.1 정정). 2.1 은 `devOptions: { enabled: true, type: "module" }` 이었다. 지금은 `enabled: process.env.VITE_PWA_DEV === "1"` 이고 `navigateFallback` 도 두지 않는다(`apps/web/vite.config.ts:10-13`·`:50-51`, `f6741f3`).
   까닭: 계획 Step 3 이 더한 `navigateFallback: "index.html"` 때문에 개발 SW 가 **Vite 가 변환한 dev `index.html`** 을 미리 저장하고 탐색을 가로챘다. 같은 오리진에서 dev 뒤에 preview 를 띄우면 빈 화면에 갇혔다(p4-t1b 리뷰 D1, 실측). 또 이 머신의 5173 은 다른 프로젝트라, dodok dev 를 5173 에서 한 번 연 브라우저는 그 오리진의 다른 앱에도 SW 를 남긴다.
-  끄면 `virtual:pwa-register` 가 아무것도 하지 않는 `registerSW` 로 풀려 `startPwa` 도 등록하지 않는다(p4-t1b 재리뷰 실측). 브라우저 검증은 빌드본 `vite preview` 로 하거나 `VITE_PWA_DEV=1` 을 셸에 준다(설정은 `loadEnv` 를 쓰지 않아 `.env` 의 값은 닿지 않는다). 절차는 `docs/guides/live-smoke.md`「푸시 확인 절차 (`dev:fake`, 모델 런 0회)」.
+  끄면 `virtual:pwa-register` 가 아무것도 하지 않는 `registerSW` 로 풀려 `startPwa` 도 등록하지 않는다(p4-t1b 재리뷰 실측). 브라우저 검증은 빌드본 `vite preview` 로 하거나 `VITE_PWA_DEV=1` 을 셸에 준다(설정은 `loadEnv` 를 쓰지 않아 `.env` 의 값은 닿지 않는다). 절차는 `docs/guides/browser-verification.md`「PWA·서비스 워커를 볼 때」.
   **틀리면 남는 것**: 개발 중 SW 동작을 보려면 환경변수 하나가 더 든다. 빌드본은 끄기에 안 걸린다 — 빌드본 SW 는 미리 저장 목록에 `index.html` 이 있을 때만 탐색 폴백(`NavigationRoute`)을 건다(`apps/web/src/sw.ts:15-20`). 반대 방향(preview 를 띄웠던 오리진에서 dev 로 돌아오기)은 PWA 본성상 옛 빌드가 계속 뜬다 — SW 를 해제하거나 Shift+새로고침한다.
 - **`sw.ts` 는 주입 자리 `self.__WB_MANIFEST` 를 한 번만 읽는다**(3장 보탬). `const manifest = self.__WB_MANIFEST` 뒤 `precacheAndRoute(manifest)`·`manifest.some(...)` 이다(`apps/web/src/sw.ts:9-16`). workbox `injectManifest` 는 그 자리가 파일에 정확히 한 번 나오기를 요구한다 — 계획 코드처럼 두 번 참조하면 빌드가 `AssertionError` 로 실패했다(p4-t1b 보고서 표 1). 태스크 5 브리프에 「다시 참조 금지」로 넘겼다.
   `self` 의 타입은 workbox-precaching 이 이미 선언한 전역을 쓴다(`declare const self: ServiceWorkerGlobalScope`). 계획의 교차 타입은 `TS2339` 로 깨졌다.
