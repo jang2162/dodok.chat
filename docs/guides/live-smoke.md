@@ -163,7 +163,9 @@ T=$(jq -r '."http://127.0.0.1:'$PORT'"' data/wire-cli-session.json)   # 출력�
 GW=$(jq -n --rawfile t data/dev-gateway.token '{name: "dev", url: "ws://127.0.0.1:19001", token: ($t | rtrimstr("\n"))}' \
   | curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d @- http://127.0.0.1:$PORT/api/v1/gateways \
   | jq -r .id)
-curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways | jq --arg id "$GW" '.[] | select(.id == $id) | {id, name, url, tokenSet}'   # tokenSet: true 인지
+# 목록에 이 Gateway 가 있는지 — 없으면(POST 가 실패해 GW=null 등) jq -e 가 0 이 아닌 값으로 끝나 경고가 찍힌다(tokenSet 은 늘 true 라 보지 않는다)
+curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways \
+  | jq -e --arg id "$GW" '.[] | select(.id == $id) | {id, name, url}' || echo "Gateway '$GW' 가 목록에 없다 — 위 POST 응답을 다시 본다"
 ( umask 077; curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"label":"live-smoke"}' \
     http://127.0.0.1:$PORT/api/v1/gateways/$GW/bridge-tokens | jq .pluginConfig > data/bridge-token.patch.json )
 oc --dev config patch --file data/bridge-token.patch.json && rm data/bridge-token.patch.json   # 9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드)
