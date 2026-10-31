@@ -178,8 +178,6 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
         providerSessionId: null,
         promptRevisionAtStart: promptRevision,
         instructionsRevisionAtStart: instructionsRevision,
-        sessionStartedAt: null,
-        lifecycleRevision: null,
         lastSyncedAt: now,
         reactionsSeenAt: now,
       })

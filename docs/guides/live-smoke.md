@@ -767,7 +767,7 @@ gcall sessions.list '{"limit":300}' | jq -r --arg cv "$CV" '.sessions[] | select
   | while read k; do gcall sessions.delete "{\"key\":\"$k\"}" >/dev/null; done
 ```
 
-- Gateway `sessions.list` 의 `startedAt` 은 세션 시작이 아니라 **마지막 런의 시작**이고 리셋하면 `null` 이 된다 — 세션 시작 시각으로 읽지 않는다. 세션 시작은 서버 `agent_sessions.session_started_at`(`sessions.reset` 응답의 `entry.sessionStartedAt` 을 옮긴 것)으로 본다.
+- Gateway `sessions.list` 의 `startedAt` 은 세션 시작이 아니라 **마지막 런의 시작**이고 리셋하면 `null` 이 된다 — 세션 시작 시각으로 읽지 않는다. 서버는 세션 시작 시각을 저장하지 않는다(`agent_sessions` 의 `session_started_at`·`lifecycle_revision` 열은 마이그레이션 0032 가 걷었다).
 - **9.5 Gateway 의 세션 저장소는 SQLite 다**(새로 만든 상태에서 — `<OPENCLAW_HOME>/.openclaw/agents/<에이전트>/agent/openclaw-agent.sqlite`, dev 는 `~/.openclaw-dev/agents/<에이전트>/agent/openclaw-agent.sqlite`). 읽기 전용으로 연다.
 
 ```bash

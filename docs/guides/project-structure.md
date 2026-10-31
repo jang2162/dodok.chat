@@ -212,7 +212,7 @@ src/
 │                         `client error` 줄 하나로 서버가 죽던 자리. err 밖의 키에는 Buffer 를 싣지 않는다 — 머리 주석)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + message_reactions + automations + push_devices + personal_tokens + conversations + conversation_reads — 마이그레이션 0000~0029,
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + message_reactions + automations + push_devices + personal_tokens + conversations + conversation_reads — 마이그레이션 0000~0032,
 │  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·conversation_reads.user_id·conversation_reads.conversation_id·message_reactions.message_id·message_reactions.user_id·push_devices.session_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
@@ -450,7 +450,7 @@ src/
 │  │                      채널 런 recentMessages 는 그 대화의 thread_root_id IS NULL 만(상호작용 트리거 메시지 조회도 대화 단위), 헤더용 conversationTitle, 스레드 런은 recentMessages 가 비고 context.thread = 루트(THREAD_ROOT_TEXT_MAX 4000자)·그 스레드 normal 답글 최근 20(트리거 앞 — 상호작용이면 카드까지)),
 │  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
 │  ├─ sessions/           agent_sessions — 대화×에이전트(스레드면 ×루트) 세션 키 보장(키는 어댑터 sessionKeyFor → shared dodokSessionKey(providerAgentId, conversationId, rootId?)), 서버가 정하는 러너 세션 id(ensureProviderSessionId — 채널 규칙 리비전이 바뀌면 renewSessionOnPromptChange 가 비우고 오케스트레이터가 info 한 번).
-│  │                      리액션 커서 reactions_seen_at 은 새 세션 행(ensureSession)·러너 세션 새로 열기(renewSessionOnPromptChange)가 지금으로 둔다. sessionStartedAt·lifecycleRevision 열은 남았지만 쓰는 경로가 없다(늘 null). getSessionRow(id 로 한 행)
+│  │                      리액션 커서 reactions_seen_at 은 새 세션 행(ensureSession)·러너 세션 새로 열기(renewSessionOnPromptChange)가 지금으로 둔다. getSessionRow(id 로 한 행)
 │  │                      세션 시작 리비전은 행마다(스레드 세션 행도 따로). providerAgentId 가 규칙 밖이면 키를 만들기 전에 VALIDATION(INVALID_AGENT_ID_REASON — run_error 카드와 같은 문장)
 │  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction/retry 런.
 │  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만.

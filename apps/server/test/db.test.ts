@@ -1624,3 +1624,52 @@ describe("러너 프로젝트 마이그레이션(0031)", () => {
     }
   });
 });
+
+describe("세션 리셋 열 걷기 마이그레이션(0032)", () => {
+  it("_runner_projects 까지 적용된 DB 에 얹으면 세션 행은 남고 session_started_at·lifecycle_revision 열만 사라진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_runner_projects");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const cols = () =>
+          (sqlite.prepare("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>).map(
+            (c) => c.name,
+          );
+        expect(cols()).toEqual(expect.arrayContaining(["session_started_at", "lifecycle_revision"]));
+
+        // 부모 행 없이 세션 행만 넣는다 — 열 보존만 재므로 FK 는 잠시 끈다
+        sqlite.pragma("foreign_keys = OFF");
+        const id = uuid();
+        const conv = uuid();
+        sqlite
+          .prepare(
+            "INSERT INTO agent_sessions (id, channel_id, conversation_id, agent_id, session_key, prompt_revision_at_start, session_started_at, lifecycle_revision, provider_session_id) VALUES (?, ?, ?, ?, ?, 3, ?, 'rev-1', 'prov-1')",
+          )
+          .run(id, uuid(), conv, uuid(), `agent:dev:dodok:channel:${conv}`, Date.UTC(2026, 8, 15));
+        sqlite.pragma("foreign_keys = ON");
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(cols()).not.toContain("session_started_at");
+        expect(cols()).not.toContain("lifecycle_revision");
+        const row = db.select().from(schema.agentSessions).all();
+        expect(row).toHaveLength(1);
+        expect(row[0]).toMatchObject({
+          id,
+          conversationId: conv,
+          promptRevisionAtStart: 3,
+          providerSessionId: "prov-1",
+        });
+        const idx = sqlite.prepare("PRAGMA index_list(agent_sessions)").all() as Array<{ name: string }>;
+        expect(idx.map((i) => i.name)).toContain("agent_sessions_conversation_agent_thread");
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
