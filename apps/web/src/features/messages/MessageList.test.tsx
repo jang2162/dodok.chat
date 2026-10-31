@@ -881,10 +881,10 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
   });
 
   it("배너를 누르면 entryReadSeq 뒤 첫 루트를 물어 그 seq 를 가운데로 받고(답글 seq 가 아니라), 구분선으로 간다", async () => {
-    // 12·13 은 옛 스레드의 답글 — 첫 루트는 14
+    // 12·13 은 옛 스레드의 답글 — 첫 루트는 14. 세션 페이지는 루트만 싣는다(답글은 응답에 없다)
     serve({
       [firstRootUrl(11)]: { messages: range(14, 14), hasMore: true },
-      [aroundUrl(14)]: { messages: range(1, 38), hasMore: false, hasMoreAfter: true },
+      [aroundUrl(14)]: { messages: [...range(1, 11), ...range(14, 38)], hasMore: false, hasMoreAfter: true },
     });
     const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
     await screen.findByText("본문 100");
@@ -892,7 +892,7 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
     expect(urls()).toEqual([firstRootUrl(11), aroundUrl(14)]);
     const line = await screen.findByRole("separator", { name: "새 메시지" });
-    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 12");
+    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 14");
     expect(banner()).toBeNull();
   });
 
@@ -1154,7 +1154,8 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
         url === `/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`
           ? { messages: range(14, 14), hasMore: true }
           : url === `/api/v1/conversations/${CH}/messages?limit=50&around=14`
-            ? { messages: range(1, 38), hasMore: false, hasMoreAfter: true }
+            ? // 12·13 은 답글이라 세션 페이지에 없다
+              { messages: [...range(1, 11), ...range(14, 38)], hasMore: false, hasMoreAfter: true }
             : undefined;
       return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response("{}", { status: 500 });
     });
