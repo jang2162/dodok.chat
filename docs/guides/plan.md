@@ -845,6 +845,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **새 채널에 에이전트를 넣은 직후의 멘션이 `ADAPTER_ERROR:INTERNAL`(`PreparedModelCatalogConfigReplacedError`)로 실패할 수 있다** — 9.5 실연에서 0.1초 뒤 보낸 멘션 한 번. 채널 프롬프트 동기화의 설정 쓰기와 런 준비가 겹친 것으로 보인다. 다시 보내면 된다(「다시 실행」 카드가 남는다). 출처: t7 실연 「새로 찾은 것」.
 - **Claude Code 2.1.296 이 연결마다 `server/discover`(프로토콜 2026-07-28)를 먼저 보내 400 을 받는다** — SDK 1.30.0 이 모르는 요청이라 클라이언트가 `initialize` 로 물러선다. 동작은 맞고 요청 로그에 400 이 한 줄씩 남는다. SDK 를 올리면 사라질 수 있다(정확 핀 — 올릴 때 `bundle:smoke` 의 `/mcp` 단계). 출처: t7 바깥 손 확인.
 - **openclaw-adapter 테스트가 한 번 간헐 실패했다** — 루트 `pnpm test --force` 한 번에 1건 실패, 단독 2회·전체 재실행은 통과(태스크 5 수정, 그 변경과 무관한 패키지). 테스트 이름을 남기지 못했다. 태스크 7 의 루트 `pnpm test --force` 두 번에서는 재현되지 않았다(321 통과). 재현되면 이름과 함께 여기에 적는다.
+- **웹 서비스 워커의 `NAVIGATION_DENYLIST` 에 `/mcp` 가 없다** — `apps/web/src/pwa/sw-logic.ts`. 서버는 `/mcp`·`/mcp/` 의 탐색(GET)을 404 JSON 으로 답하지만(`apps/server/src/http/web-static.ts`), 서비스 워커가 설치된 브라우저에서 주소창으로 `/mcp` 를 열면 index.html(SPA)로 가로채인다. 바깥 MCP 클라이언트의 POST 는 탐색이 아니라 영향이 없다. 고칠 길: 목록에 `/^\/mcp(\/|\?|$)/` 를 더하고 `sw-logic.test.ts` 「NAVIGATION_DENYLIST」에 사례를 더한다.
 
 **채널 세션(2026-10-26)** — 스펙 `docs/superpowers/specs/2026-10-25-channel-sessions-design.md` 「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t1~t9)는 `.superpowers/sdd/2026-10-25-channel-sessions/`, 브라우저 기록은 `.superpowers/sdd/2026-10-25-channel-sessions-browser/report.md` 다(git 제외).
 
