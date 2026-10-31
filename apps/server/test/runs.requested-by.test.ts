@@ -127,6 +127,31 @@ describe("runs.requested_by", () => {
     expect([first.requestedBy, second.requestedBy, third.requestedBy]).toEqual([who(), who(), who()]);
   });
 
+  it("늦은 정본 — 앞 런이 끝난 뒤에 저장된 글이 낳은 릴레이는 시킨 사람이 없다(null 이면 쓰기 제어 도구는 FORBIDDEN — control.service 「시킨 사람 없음」)", async () => {
+    const { channel, a, b } = room();
+    const human = await say(channel, owner, `@${a.handle} 시작`);
+    const first = onlyRun("triggerMessageId", human.id);
+    expect(first.requestedBy).toBe(owner);
+    updateRun(app.db, first.id, {
+      status: "error",
+      error: { code: "TIMEOUT", message: "t" },
+      endedAt: new Date(Date.now() - 1_000),
+    });
+    const late = await answer(first.id, `@${b.handle} 넘길게`);
+    const relay = onlyRun("triggerMessageId", late.id);
+    expect(relay.triggerKind).toBe("relay");
+    expect(relay.requestedBy).toBeNull();
+  });
+
+  it("열린 런의 글이 낳은 릴레이는 그대로 물려받는다", async () => {
+    const { channel, a, b } = room();
+    const human = await say(channel, mia, `@${a.handle} 시작`);
+    const first = onlyRun("triggerMessageId", human.id);
+    expect(first.endedAt).toBeNull();
+    const relay = onlyRun("triggerMessageId", (await answer(first.id, `@${b.handle} 넘길게`)).id);
+    expect(relay.requestedBy).toBe(mia);
+  });
+
   it("자동화 글로 시작한 사슬 — 멘션 런도 릴레이 런도 null [Review Focus 3]", async () => {
     const { channel, a, b } = room();
     const automation = insertAutomation(app.db, {

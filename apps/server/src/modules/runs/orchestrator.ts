@@ -114,8 +114,8 @@ export type EnqueueTrigger = {
 
 /**
  * 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절 표) — 사람 글의 멘션·자동 응답은 작성자, 카드 상호작용·「이어가기」는 누른
- * 사람, 릴레이는 앞 런(트리거 에이전트 글의 런)의 값, 자동화 글로 시작한 사슬은 null. 릴레이가 앞 런을 물려받으므로 사슬 전체가
- * 처음 사람(또는 null)을 지닌다 — 에이전트 글을 작성자로 보면 사슬 중간에서 사람이 사라지고, 자동화 글을 사람으로 보면 권한이 생긴다
+ * 사람, 릴레이는 앞 런(트리거 에이전트 글의 런)의 값 — 그 런이 끝난 뒤에 저장된 글이면 null, 자동화 글로 시작한 사슬은 null.
+ * 릴레이가 앞 런을 물려받으므로 사슬 전체가 처음 사람(또는 null)을 지닌다 — 에이전트 글을 작성자로 보면 사슬 중간에서 사람이 사라지고, 자동화 글을 사람으로 보면 권한이 생긴다
  */
 function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
   if (trigger.requestedBy !== undefined) return trigger.requestedBy;
@@ -130,8 +130,13 @@ function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
   }
   const message = trigger.message;
   if (message?.authorType === "user") return message.authorId ?? null;
-  if (message?.authorType === "agent" && message.runId !== undefined)
+  if (message?.authorType === "agent" && message.runId !== undefined) {
+    // 늦은 정본·옛 runId 를 단 글 — 앞 런이 끝난 뒤에 저장된 글이 낳은 릴레이는 시킨 사람을 물려받지 않는다(스펙 「구현과 맞춘 것」)
+    const parent = store.getRun(db, message.runId);
+    if (parent?.endedAt !== undefined && Date.parse(parent.endedAt) < Date.parse(message.createdAt))
+      return null;
     return store.getRunRequestedBy(db, message.runId);
+  }
   return null;
 }
 
