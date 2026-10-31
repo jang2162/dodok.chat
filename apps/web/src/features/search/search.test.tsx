@@ -477,15 +477,8 @@ describe("결과로 가기", () => {
     await userEvent.setup({ delay: null }).click(result);
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`));
     const panel = await screen.findByTestId("thread-panel");
-    await waitFor(() =>
-      expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveAttribute(
-        "data-highlighted",
-        "true",
-      ),
-    );
-    // 초점은 스레드 패널의 그 답글이 받는다 — 채널 목록의 루트가 가져가지 않는다
-    await waitFor(() => expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveFocus());
-    // 채널 목록은 루트를 강조한다(이미 가진 루트라 around 를 부르지 않는다)
+    // 채널 목록은 루트를 강조한다(이미 가진 루트라 around 를 부르지 않는다). 루트 강조는 누르자마자 켜져 HIGHLIGHT_MS 뒤 꺼지므로
+    // around 를 기다리는 패널보다 먼저 본다 — 느린 머신에서 패널을 기다리다 루트 강조를 놓치지 않게
     const channel = screen.getByRole("region", { name: "메시지" });
     await waitFor(() =>
       expect(within(channel).getByText("루트 질문").closest("[data-index]")).toHaveAttribute(
@@ -493,9 +486,17 @@ describe("결과로 가기", () => {
         "true",
       ),
     );
+    await waitFor(() =>
+      expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveAttribute(
+        "data-highlighted",
+        "true",
+      ),
+    );
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
       `/api/v1/conversations/${CH}/messages?limit=50&around=133`,
     );
+    // 초점은 스레드 패널의 그 답글이 받는다 — 채널 목록의 루트가 가져가지 않는다
+    await waitFor(() => expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveFocus());
   });
 
   it("보관한 채널의 결과 — 줄에 「보관됨」과 채널 이름, 누르면 읽기 전용 채널 화면으로(Review Focus 4)", async () => {
