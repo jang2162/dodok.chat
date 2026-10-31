@@ -80,7 +80,7 @@ function main(): void {
   const connection = startRunnerConnection({
     config,
     token,
-    drivers: [createClaudeDriver({ sdk: realSdk, claudeCodeVersion: CLAUDE_CODE_VERSION })],
+    drivers: [createClaudeDriver({ sdk: realSdk, claudeCodeVersion: CLAUDE_CODE_VERSION, logger })],
     versions: {
       runnerVersion: RUNNER_VERSION,
       sdkVersion: SDK_VERSION,

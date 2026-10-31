@@ -148,6 +148,8 @@ export type RunContext = {
   signal: AbortSignal;
   now?: () => number;
   closeGraceMs?: number;
+  /** 러너 로그 한 줄 — 세션을 어느 길(새로·resume·거절 뒤 resume)로 열었는지 남긴다. 실연에서 그 길을 가리려고 */
+  log?: (line: string) => void;
 };
 
 /**
@@ -161,13 +163,17 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   const sessionId = start.providerSessionId;
+  const runId = start.deliver.runId;
   let resume = false;
+  let lookup = "";
   try {
     // SDK 는 요약을 뽑을 수 없는 세션도 undefined 로 돌려준다 — 그러면 아래 재시도가 받친다
     resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
   } catch {
     // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
+    lookup = "(전사 확인 실패)";
   }
+  ctx.log?.(`dodok-runner: 런 ${runId} 세션 ${resume ? "resume" : "새로 열기"}${lookup}`);
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
   const images = await loadImageBlocks(start.deliver, ctx.sink.http, ctx.signal);
@@ -175,6 +181,7 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   const outcome = await attempt(spec, ctx, resume, images);
   if (outcome !== "session-in-use") return;
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
   await attempt(spec, ctx, true, images);
 }
 
