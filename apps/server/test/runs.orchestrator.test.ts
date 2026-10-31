@@ -1472,6 +1472,32 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("보관한 에이전트의 런 없는 정본은 저장하되 silent(푸시 없음) — 보관 전에는 같은 글이 silent 없이 나간다", async () => {
+    const t = setup();
+    const created: Array<{ message: Message; silent?: true }> = [];
+    t.bus.on("message.created", (p) => created.push(p));
+    seedAgentSession(t.db, { conversationId: t.conversationId, agentId: t.agentId });
+    // 사람(@owner 꼴)을 부르는 본문 — 푸시 트리거는 silent 가 없을 때만 대상을 찾는다
+    const before = await t.orch.onCanonical(
+      t.outbound({ text: `<@u:${t.userId}> 보관 전` }),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+    expect(created.find((p) => p.message.id === before.messageId)?.silent).toBeUndefined();
+
+    t.db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, t.agentId)).run();
+    const after = await t.orch.onCanonical(
+      t.outbound({ text: `<@u:${t.userId}> 보관 뒤` }),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+    expect(getMessage(t.db, after.messageId ?? "")).toMatchObject({ authorId: t.agentId });
+    expect(getMessage(t.db, after.messageId ?? "")?.mentions?.users).toEqual([t.userId]);
+    expect(created.find((p) => p.message.id === after.messageId)?.silent).toBe(true);
+    expect(t.onAgentMessage).not.toHaveBeenCalled();
+    t.orch.stop();
+  });
+
   it("대문자로 저장된 providerAgentId — 런은 저장된 id 그대로 키를 만들고, 소문자 agentId 의 런 없는 정본도 그 에이전트에 붙는다", async () => {
     const t = setup();
     t.db.update(agents).set({ providerAgentId: "Dev" }).where(eq(agents.id, t.agentId)).run();

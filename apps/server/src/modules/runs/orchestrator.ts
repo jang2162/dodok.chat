@@ -1435,9 +1435,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           );
           throw new AdapterError("FORBIDDEN", CONVERSATION_ONLY_REASON);
         }
-        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다. 여기 오는 것은 그 에이전트
-        // 세션 대화의 글뿐이다(assertCanonicalConversation·isOwnSession) — 다른 세션·다른 대화로 쓰는 새 글은 위에서 이미 거절했다
-        const silent = isChannelArchived(db, channelId) || isConversationClosed(db, msg.conversationId);
+        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 에이전트·보관한 채널·닫힌 세션이면 그것도 하지 않는다(런 있는
+        // 정본의 archivedTarget 과 같은 셋). 여기 오는 것은 그 에이전트 세션 대화의 글뿐이다(assertCanonicalConversation·isOwnSession)
+        // — 다른 세션·다른 대화로 쓰는 새 글은 위에서 이미 거절했다
+        const silent = archivedTarget({ agentId, channelId, conversationId: msg.conversationId });
         const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId, silent);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };
