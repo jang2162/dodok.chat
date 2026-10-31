@@ -27,6 +27,8 @@ const ROLES = [
   "combobox",
   "switch",
   "checkbox",
+  "radio",
+  "group",
   "img",
   "dialog",
   "region",
@@ -85,8 +87,49 @@ function seedChannel() {
         }),
         componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
       }),
+      // 셀렉트 둘 — 단일(라디오)·다중(체크박스). 무리 이름은 placeholder(legend)
+      msg(4, {
+        authorType: "agent",
+        authorId: AGENT,
+        bodyMd: "골라 주세요",
+        components: ComponentsV1.parse({
+          id: "cmp_2",
+          blocks: [
+            {
+              type: "actions",
+              items: [
+                {
+                  type: "select",
+                  id: "fmt",
+                  placeholder: "보고서 형식",
+                  options: [
+                    { value: "pdf", label: "PDF" },
+                    { value: "md", label: "마크다운" },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "actions",
+              items: [
+                {
+                  type: "select",
+                  id: "tags",
+                  placeholder: "태그",
+                  multi: true,
+                  options: [
+                    { value: "a", label: "옵션 A" },
+                    { value: "b", label: "옵션 B" },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+      }),
     ],
-    lastSeq: 3,
+    lastSeq: 4,
   });
   act(() => {
     useRunStore.getState().applyState(runState({ status: "streaming" }));
@@ -124,6 +167,11 @@ describe("앱 셸 + 채널 화면", () => {
     expect(screen.getByRole("button", { name: "실행 중지" })).toBeInTheDocument();
 
     expect(unnamed()).toEqual(NONE);
+    // 셀렉트 무리·라디오·체크박스가 실제로 스윕 대상에 들어 있었다(빈 스윕이 아니다)
+    expect(screen.getByRole("group", { name: "보고서 형식" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "PDF" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "태그" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "옵션 A" })).toBeInTheDocument();
     const list = screen.getByRole("region", { name: "메시지" });
     expect(list.parentElement?.querySelector('[aria-live="polite"]')).not.toBeNull();
   });
