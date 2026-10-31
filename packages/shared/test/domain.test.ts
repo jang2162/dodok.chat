@@ -250,6 +250,12 @@ describe("Message", () => {
     expect(m.attachments).toEqual([]);
     expect(m.components).toBeUndefined();
   });
+  it("automationName 은 선택 — 자동화 글에 서버가 붙인다(40자까지)", () => {
+    const auto = { ...base, authorType: "automation" };
+    expect(Message.parse(auto).automationName).toBeUndefined();
+    expect(Message.parse({ ...auto, automationName: "아침 점검" }).automationName).toBe("아침 점검");
+    expect(Message.safeParse({ ...auto, automationName: "가".repeat(41) }).success).toBe(false);
+  });
   it("components가 있으면 스키마로 검증한다", () => {
     expect(
       Message.safeParse({ ...base, components: { blocks: [{ type: "actions", items: [] }] } }).success,

@@ -26,8 +26,11 @@ const SYSTEM: Author = { name: "시스템", isAgent: false };
 const AUTOMATION: Author = { name: "⚙ 자동화", isAgent: false };
 const DELETED_AUTOMATION: Author = { name: "⚙ 지운 자동화", isAgent: false };
 
-/** 작성자를 풀 글 — 자동화 글은 `createdAt` 으로 받아 둔 목록이 그 글보다 뒤인지 본다(없으면 목록이 뒤인 것으로 본다) */
-type Authored = Pick<Message, "authorType" | "authorId"> & { createdAt?: string };
+/**
+ * 작성자를 풀 글 — 자동화 글은 `createdAt` 으로 받아 둔 목록이 그 글보다 뒤인지 본다(없으면 목록이 뒤인 것으로 본다).
+ * `automationName` 은 서버 하이드레이션이 자동화 글에 붙인 이름(지운 자동화면 없다 — 검색 결과 줄에도 없다)
+ */
+type Authored = Pick<Message, "authorType" | "authorId" | "automationName"> & { createdAt?: string };
 
 /**
  * 작성자·멘션을 `["agents"]`·`["people"]` 로 푼다(팀 스펙 5·6장). 사람 목록을 아직 못 받았으면 나 하나는 `["me"]` 로 푼다.
@@ -35,8 +38,9 @@ type Authored = Pick<Message, "authorType" | "authorId"> & { createdAt?: string 
  * `deactivatedPerson` 이 멘션 칩의 판정.
  * 보관(삭제)한 에이전트는 목록에 남아 있어 이름·핸들 그대로 「삭제됨」을 단다(스펙 「에이전트 보관」 절) — `archivedAgent` 가 멘션 칩의 판정.
  * 모르는 작성자(목록에 없는 에이전트·사람)는 「알 수 없음」.
- * 자동화 글(자동화 스펙 「웹」 장)은 admin 이상이면 「⚙ 자동화 · <이름>」, 받은 목록에 없으면 「⚙ 지운 자동화」, member 는
- * 「⚙ 자동화」. 목록은 캐시만 읽는다 — 받는 것은 글을 그리는 자리의 `useLoadAutomationAuthors`
+ * 자동화 글(자동화 스펙 「웹」 장)은 admin 이상이면 「⚙ 자동화 · <이름>」(목록 우선 — 목록을 받기 전이면 글에 실린 이름), 받은
+ * 목록에 없으면 「⚙ 지운 자동화」. member 는 글에 실린 이름(`automationName`)이 있으면 「⚙ 자동화 · <이름>」, 없으면 「⚙ 자동화」.
+ * 목록은 캐시만 읽는다 — 받는 것은 글을 그리는 자리의 `useLoadAutomationAuthors`
  */
 export function useAuthors(): {
   author(m: Authored): Author;
@@ -72,13 +76,17 @@ export function useAuthors(): {
     (m: Authored): Author => {
       if (m.authorType === "system") return SYSTEM;
       if (m.authorType === "automation") {
-        if (!canManage) return AUTOMATION;
+        const carried: Author | undefined =
+          m.automationName === undefined
+            ? undefined
+            : { name: `⚙ 자동화 · ${m.automationName}`, isAgent: false };
+        if (!canManage) return carried ?? AUTOMATION;
         const automation = m.authorId ? automationById.get(m.authorId) : undefined;
         if (automation) return { name: `⚙ 자동화 · ${automation.name}`, isAgent: false };
         const settled =
           automationsAt !== undefined &&
           (m.createdAt === undefined || automationsAt >= Date.parse(m.createdAt));
-        return settled ? DELETED_AUTOMATION : AUTOMATION;
+        return settled ? DELETED_AUTOMATION : (carried ?? AUTOMATION);
       }
       if (m.authorType === "agent") {
         const agent = m.authorId ? agentById.get(m.authorId) : undefined;

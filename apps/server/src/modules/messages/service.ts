@@ -16,7 +16,13 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, type SQL, sql } f
 import { v7 as uuidv7 } from "uuid";
 import type { z } from "zod";
 import type { Db, DbOrTx } from "../../db/client";
-import { channels, componentInteractions, conversations, messages } from "../../db/schema.sqlite";
+import {
+  automations,
+  channels,
+  componentInteractions,
+  conversations,
+  messages,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
@@ -237,9 +243,32 @@ export function withThreadSummaries(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
-/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약. REST·구독 ack·wire 팬아웃이 쓴다 */
+/**
+ * 자동화 글에 그 자동화의 이름(automationName)을 붙인다 — 이름을 풀 목록 API 가 admin 전용이라 member 는 이것으로 본다(이름은
+ * 비밀이 아니다 — 푸시에도 간다). 지운 자동화면 붙이지 않는다. 자동화 글이 없으면 질의하지 않고, 있으면 작성자 id 로 한 번
+ */
+export function withAutomationNames(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = [
+    ...new Set(msgs.flatMap((m) => (m.authorType === "automation" && m.authorId ? [m.authorId] : []))),
+  ];
+  if (ids.length === 0) return msgs;
+  const names = new Map(
+    db
+      .select({ id: automations.id, name: automations.name })
+      .from(automations)
+      .where(inArray(automations.id, ids))
+      .all()
+      .map((r) => [r.id, r.name]),
+  );
+  return msgs.map((m) => {
+    const name = m.authorType === "automation" && m.authorId ? names.get(m.authorId) : undefined;
+    return name === undefined ? m : { ...m, automationName: name };
+  });
+}
+
+/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름. REST·구독 ack·wire 팬아웃이 쓴다 */
 export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
-  return withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)));
+  return withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs))));
 }
 
 /**

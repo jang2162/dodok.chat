@@ -296,6 +296,11 @@ export const Message = z.object({
   kind: z.enum(["normal", "system"]),
   authorType: z.enum(["user", "agent", "system", "automation"]),
   authorId: Id.optional(), // system이면 없음. automation 이면 자동화 id(자동화를 지워도 메시지는 남는다 — FK 가 아니다)
+  /**
+   * 자동화 글이고 그 자동화가 아직 있을 때만 — 서버 하이드레이션(withAutomationNames)이 붙인다. 자동화 목록 API 는 admin 전용이라
+   * member 는 이것으로 이름을 본다. 지운 자동화면 없다
+   */
+  automationName: z.string().max(40).optional(),
   bodyMd: z.string().max(100_000),
   mentions: MentionSet,
   attachments: z.array(Attachment).max(ATTACHMENT_LIMITS.perMessage).default([]),

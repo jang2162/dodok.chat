@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { channels, memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
-import { hydrateForClient, withInteractions } from "../modules/messages/service";
+import { hydrateForClient, withAutomationNames, withInteractions } from "../modules/messages/service";
 import { withReactions } from "../modules/reactions/service";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
 import type { BusEvents, ServerBus } from "./bus";
@@ -15,7 +15,7 @@ export const WIRE_MAX_PENDING = 500;
 
 export type WireFanoutOptions = {
   logger: Logger;
-  /** message.created·updated 를 내보내기 직전 상호작용 기록(components 설계 「붙이는 자리」 절)·리액션 집계(리액션 설계 「`modules/reactions/`」 절)를 붙일 때 읽는다 */
+  /** message.created·updated 를 내보내기 직전 상호작용 기록(components 설계 「붙이는 자리」 절)·리액션 집계(리액션 설계 「`modules/reactions/`」 절)·자동화 이름을 붙일 때 읽는다 */
   db: Db;
   /** people.changed·agents.changed 의 룸(`workspace:<id>`)·역할 룸을 고르는 워크스페이스 — attachWire 의 `ctx.workspaceId` 와 같은 값 */
   workspaceId: string;
@@ -114,8 +114,9 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     return row ? channelAudience(row) : undefined;
   };
 
+  // 자동화 이름도 붙인다 — 안 붙이면 member 화면의 새 자동화 글이 다시 불러오기 전까지 「⚙ 자동화」로만 보인다
   const hydrate = (message: Message): Message =>
-    withReactions(opts.db, withInteractions(opts.db, [message]))[0] ?? message;
+    withAutomationNames(opts.db, withReactions(opts.db, withInteractions(opts.db, [message])))[0] ?? message;
   // 갱신은 루트일 수 있다(카드 상호작용 등) — 요약을 빼고 보내면 웹 칩이 사라진다. 새 메시지는 답글이 있을 수 없어 요약을 보지 않는다
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 

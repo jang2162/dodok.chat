@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import {
   attachments,
+  automations,
   channelMembers,
   channels,
   componentInteractions,
@@ -20,6 +21,7 @@ import {
   createSystemMessage,
   createUserMessage,
   getMessage,
+  hydrateForClient,
   listMessages,
   withInteractions,
 } from "../src/modules/messages/service";
@@ -657,6 +659,45 @@ describe("createAutomationMessage", () => {
     expect(message.clientMsgId).toBeUndefined();
     expect(created.map((m) => m.id)).toEqual([message.id]);
     expect(getMessage(db, message.id)).toEqual(message);
+  });
+
+  it("클라이언트 하이드레이션이 자동화 글에 그 자동화의 이름을 붙인다 — 지운 자동화·다른 작성자에는 없다", () => {
+    const { db, bus, userId, workspaceId, channelId } = setup();
+    const automationId = uuid();
+    const now = new Date();
+    db.insert(automations)
+      .values({
+        id: automationId,
+        workspaceId,
+        name: "아침 점검",
+        channelId,
+        kind: "webhook",
+        bodyMd: "점검",
+        createdBy: userId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    const conversationId = channelConversation(db, channelId);
+    const live = createAutomationMessage(db, bus, { conversationId, automationId, bodyMd: "점검" });
+    const gone = createAutomationMessage(db, bus, {
+      conversationId,
+      automationId: uuid(),
+      bodyMd: "옛 점검",
+    });
+    const human = createUserMessage(db, bus, {
+      conversationId,
+      authorId: userId,
+      bodyMd: "사람",
+      clientMsgId: "h1",
+    });
+    const [a, b, c] = hydrateForClient(db, [live, gone, human]);
+    expect(a?.automationName).toBe("아침 점검");
+    expect(Message.parse(a)).toEqual(a);
+    expect(b).not.toHaveProperty("automationName");
+    expect(c).not.toHaveProperty("automationName");
+    // 저장된 메시지(서버 내부 경로)에는 싣지 않는다 — 클라이언트 경로만
+    expect(getMessage(db, live.id)).not.toHaveProperty("automationName");
   });
 
   it("채널 밖 사람을 멘션하면 그 사람이 채널에 들어온다(사람 멘션과 같다) — channel.member.changed 한 번", () => {

@@ -71,6 +71,40 @@ describe("자동화 작성자", () => {
     expect(article().getByText("⚙ 자동화")).toBeInTheDocument();
   });
 
+  it("member 도 글에 실린 이름(서버 하이드레이션)이 있으면 「⚙ 자동화 · <이름>」 — 목록은 여전히 부르지 않는다", async () => {
+    const calls = stubList([MORNING]);
+    renderWithClient(
+      <MessageItem message={{ ...byAutomation(MORNING.id), automationName: "아침 점검" }} head />,
+      memberClient(),
+    );
+    expect(article().getByText("⚙ 자동화 · 아침 점검")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls()).toBe(0);
+  });
+
+  it("admin 은 목록 우선 — 목록을 받기 전에는 글에 실린 이름, 받은 목록의 이름이 다르면 목록의 것", async () => {
+    const renamed = { ...MORNING, name: "새 이름" };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (input) => {
+        const url = String(input);
+        if (url !== "/api/v1/automations") return json(404, { code: "NOT_FOUND", message: url });
+        await gate;
+        return json(200, [renamed]);
+      }),
+    );
+    renderWithClient(
+      <MessageItem message={{ ...byAutomation(MORNING.id), automationName: "아침 점검" }} head />,
+    );
+    expect(article().getByText("⚙ 자동화 · 아침 점검")).toBeInTheDocument();
+    release();
+    expect(await article().findByText("⚙ 자동화 · 새 이름")).toBeInTheDocument();
+  });
+
   it("역할이 member 로 내려가면 받아 둔 목록이 남아 있어도 「⚙ 자동화」 — 이름도 「지운 자동화」도 보이지 않는다", async () => {
     const calls = stubList([MORNING]);
     const qc = memberClient();

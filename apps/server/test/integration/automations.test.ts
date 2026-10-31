@@ -124,6 +124,8 @@ describe("통합 — 자동화", () => {
 
     const posted = await automationPost(t, automation.id);
     expect(posted.mentions).toEqual({ agents: [t.devId], users: [] });
+    // wire message.created 도 하이드레이션을 지난다 — member 화면이 이 이름으로 「⚙ 자동화 · 아침 점검」을 그린다
+    expect(posted.automationName).toBe("아침 점검");
     const { run, delivery } = await runOf(t, posted);
     expect(run).toMatchObject({ status: "done", agentId: t.devId });
     expect(delivery?.message.author).toEqual({
