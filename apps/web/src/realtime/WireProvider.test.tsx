@@ -385,6 +385,28 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true, channelId: CH });
   });
 
+  /** jsdom 의 Event 에는 persisted 가 없다 — PageTransitionEvent 의 그 필드만 얹는다 */
+  const pageShow = (persisted: boolean) => Object.assign(new Event("pageshow"), { persisted });
+
+  it("뒤로 가기 캐시에서 돌아오면(pageshow persisted) 지금 보임을 곧바로 보낸다 — pagehide 의 대칭", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+    act(() => void window.dispatchEvent(new Event("pagehide")));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: false, channelId: CH });
+
+    // 첫 로드의 pageshow 는 연결이 맡는다 — 보내지 않는다
+    act(() => void window.dispatchEvent(pageShow(false)));
+    expect(fake.sentOf("presence.update")).toHaveLength(2);
+
+    // 소켓이 살아 돌아왔다 — visibilitychange 나 재연결을 기다리지 않는다
+    act(() => void window.dispatchEvent(pageShow(true)));
+    expect(fake.sentOf("presence.update")).toEqual([
+      { visible: true, channelId: CH },
+      { visible: false, channelId: CH },
+      { visible: true, channelId: CH },
+    ]);
+  });
+
   it("끊겨 있으면 pagehide 에도 보내지 않는다", async () => {
     const loc = fakeLocation(CH);
     const fake = await connected(loc.target);
@@ -429,7 +451,7 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     expect(fake.sentOf("presence.update")).toEqual([{ visible: true }]);
   });
 
-  it("떠나면 이동·visibilitychange·pagehide 구독을 푼다", async () => {
+  it("떠나면 이동·visibilitychange·pagehide·pageshow 구독을 푼다", async () => {
     const loc = fakeLocation(CH);
     stubMe();
     const { unmount } = render(<Tree target={loc.target} />);
@@ -442,6 +464,7 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     fake.socket.connected = true;
     act(() => void document.dispatchEvent(new Event("visibilitychange")));
     act(() => void window.dispatchEvent(new Event("pagehide")));
+    act(() => void window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true })));
     expect(fake.sentOf("presence.update")).toEqual([]);
   });
 });

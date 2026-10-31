@@ -5,6 +5,7 @@ import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
 import { PanelTabs, usePanelTab } from "@/app/layout/PanelTabs";
+import { useSidebarSheetOpen } from "@/app/layout/sidebarSheet";
 import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
 import { ChannelArchivedContext, isChannelArchived } from "@/features/channels/archived";
 import { Composer } from "@/features/composer/Composer";
@@ -77,8 +78,10 @@ export function ChannelPage() {
   );
   // DM 에는 채널 설정·스레드가 없다(계획 판정 PD2·스펙 결정 7) — 그 주소로 와도 패널을 그리지 않는다. 활동 탭만 연다
   const tab = dmChannel && routeTab !== "activity" ? undefined : routeTab;
-  // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다)
-  const covered = useIsNarrow() && tab !== undefined;
+  // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다).
+  // 왼쪽 사이드바 시트도 같다(AppShell 이 연 채로 둔다)
+  const sidebarSheetOpen = useSidebarSheetOpen();
+  const covered = (useIsNarrow() && tab !== undefined) || sidebarSheetOpen;
   // 읽기 전용 사유 줄이 초점을 받는 것은 이 화면에서 쓸 수 있던 DM 이 읽기 전용이 됐을 때만(`DmReadOnlyNotice` 의 focusOnMount)
   const [seenWritable, setSeenWritable] = useState<string>();
   if (dm && readOnly === null && seenWritable !== channelId) setSeenWritable(channelId);

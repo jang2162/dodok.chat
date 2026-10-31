@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TICK_MS, resetNowTick, useNowTick } from "./useNowTick";
 
@@ -40,6 +41,30 @@ it("꺼지면 타이머를 거두고, 다시 켜지면 그동안 흐른 시간�
   act(() => void rerender({ active: true }));
   expect(result.current).toBe(stopped + 60 * TICK_MS);
   expect(vi.getTimerCount()).toBe(1);
+});
+
+/**
+ * 켜짐 전이 — `active` 가 거짓 → 참으로 바뀌는 렌더가 효과(구독)를 기다리면 그 한 프레임은 멈췄던 옛 시각이다
+ * (plan.md 이월 「켜짐 전이 첫 프레임이 옛 시각이다」). 화면에 붙은(commit) 값을 적어야 잰다 — 렌더 함수 안에서 적으면
+ * 렌더 중 갱신으로 버려지는 렌더까지 섞인다
+ */
+it("다시 켜지는 첫 그림부터 지금을 본다 — 멈췄던 옛 시각을 한 프레임도 그리지 않는다", () => {
+  const committed: number[] = [];
+  const { rerender } = renderHook(
+    ({ active }) => {
+      const now = useNowTick(active);
+      useLayoutEffect(() => void committed.push(now));
+      return now;
+    },
+    { initialProps: { active: false } },
+  );
+  act(() => void vi.advanceTimersByTime(60 * TICK_MS));
+  committed.length = 0;
+
+  act(() => void rerender({ active: true }));
+
+  expect(committed.length).toBeGreaterThan(0);
+  expect(committed.every((now) => now === Date.now())).toBe(true);
 });
 
 /**

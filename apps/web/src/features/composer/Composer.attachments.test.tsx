@@ -271,11 +271,14 @@ describe("슬래시 명령과 첨부", () => {
 });
 
 it("채널을 옮기면 칩을 비우고 올리던 것을 끊는다(첨부는 채널별로 들고 다니지 않는다)", async () => {
-  const { rerender } = renderComposer();
+  const { box, rerender } = renderComposer();
   await pick(pngFile());
+  box.focus();
   act(() => rerender(CH2));
   expect(xhrAt(0).aborted).toBe(true);
   expect(chips()).toBeNull();
+  // 훅 안의 비우기다 — 칩 빼기처럼 초점을 옆 칩·「이미지 첨부」로 옮기지 않는다
+  expect(document.activeElement).toBe(box);
 });
 
 describe("칩을 빼면 초점을 옮긴다 — body 로 떨어지지 않게", () => {

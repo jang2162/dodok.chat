@@ -7,7 +7,7 @@ import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { Banners } from "./Banners";
 import { Sidebar } from "./Sidebar";
-import { OpenSidebarContext, SidebarTriggerContext } from "./sidebarSheet";
+import { OpenSidebarContext, SidebarSheetOpenContext, SidebarTriggerContext } from "./sidebarSheet";
 
 /**
  * 페이지 영역 스크롤 상자의 id — 화면이 바뀌면 라우터가 이 상자를 맨 위로 돌린다(`scrollToTopSelectors`).
@@ -58,44 +58,46 @@ export function AppShell() {
     <OpenSearchContext.Provider value={openSearch}>
       <OpenSidebarContext.Provider value={narrow ? openSidebar : undefined}>
         <SidebarTriggerContext.Provider value={trigger}>
-          <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
-            {narrow ? (
-              <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-                <SheetContent
-                  side="left"
-                  className="w-[260px] gap-0 p-0"
-                  aria-describedby={undefined}
-                  onCloseAutoFocus={(e) => {
-                    e.preventDefault();
-                    // 링크로 닫혔으면 이동은 아직 끝나지 않았다 — 지금 버튼에 초점을 주고, 화면이 바뀌어 그 버튼이
-                    // 사라지면(초점을 잃으면) 새 화면의 버튼이 이어받게 표시해 둔다
-                    pendingFocus.current = true;
-                    triggerRef.current?.focus();
-                  }}
-                >
-                  <SheetTitle className="sr-only">채널 목록</SheetTitle>
-                  <Sidebar onNavigate={closeSidebar} />
-                </SheetContent>
-              </Sheet>
-            ) : (
-              <aside className="w-[260px] shrink-0 border-r">
-                <Sidebar />
-              </aside>
-            )}
-            <main className="flex min-w-0 flex-1 flex-col">
-              <Banners />
-              {/* 긴 화면(연결·운영 등)은 여기서만 스크롤한다 — 문서가 스크롤되면 사이드바·배너가 함께 밀려 올라간다.
+          <SidebarSheetOpenContext.Provider value={narrow && sheetOpen}>
+            <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
+              {narrow ? (
+                <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+                  <SheetContent
+                    side="left"
+                    className="w-[260px] gap-0 p-0"
+                    aria-describedby={undefined}
+                    onCloseAutoFocus={(e) => {
+                      e.preventDefault();
+                      // 링크로 닫혔으면 이동은 아직 끝나지 않았다 — 지금 버튼에 초점을 주고, 화면이 바뀌어 그 버튼이
+                      // 사라지면(초점을 잃으면) 새 화면의 버튼이 이어받게 표시해 둔다
+                      pendingFocus.current = true;
+                      triggerRef.current?.focus();
+                    }}
+                  >
+                    <SheetTitle className="sr-only">채널 목록</SheetTitle>
+                    <Sidebar onNavigate={closeSidebar} />
+                  </SheetContent>
+                </Sheet>
+              ) : (
+                <aside className="w-[260px] shrink-0 border-r">
+                  <Sidebar />
+                </aside>
+              )}
+              <main className="flex min-w-0 flex-1 flex-col">
+                <Banners />
+                {/* 긴 화면(연결·운영 등)은 여기서만 스크롤한다 — 문서가 스크롤되면 사이드바·배너가 함께 밀려 올라간다.
                   채널 화면은 `flex-1 min-h-0` 으로 이 높이에 맞춰 목록이 스스로 스크롤하므로 두 겹이 되지 않는다 */}
-              <div
-                id={PAGE_SCROLL_ID}
-                data-testid="page-scroll"
-                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
-              >
-                <Outlet />
-              </div>
-            </main>
-          </div>
-          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+                <div
+                  id={PAGE_SCROLL_ID}
+                  data-testid="page-scroll"
+                  className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+                >
+                  <Outlet />
+                </div>
+              </main>
+            </div>
+            <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+          </SidebarSheetOpenContext.Provider>
         </SidebarTriggerContext.Provider>
       </OpenSidebarContext.Provider>
     </OpenSearchContext.Provider>

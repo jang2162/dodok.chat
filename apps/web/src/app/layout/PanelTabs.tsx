@@ -208,13 +208,17 @@ export function PanelTabs({
              * 이 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(D3·D13·D14 와 같은 부류). 패널이 내려가기
              * **전에** 헤더의 「채널 설정」 링크로 옮긴다 — 좁은 화면 시트가 닫힐 때 돌려주는 자리와 같다(D14).
              * 활동 탭도 같은 자리다: 헤더에 활동을 여는 자리는 따로 없고, 탭 머리는 패널과 함께 사라진다.
-             * 칩·「스레드에서 답하기」로 연 스레드만 그 자리로 돌아간다(`returnTarget`, m5)
+             * 칩·「스레드에서 답하기」로 연 스레드만 그 자리로 돌아간다(`returnTarget`, m5).
+             * 수정자 클릭(Cmd·Ctrl·Shift·Alt)·가운데 클릭은 라우터가 옮기지 않아 패널이 그대로 남는다 — 그때는 초점도 두고 간다
              */}
             <Link
               to="/c/$channelId/s/$conversationId"
               params={{ channelId, conversationId }}
               aria-label={`${tab.label} 닫기`}
-              onClick={() => returnTarget()?.focus()}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                returnTarget()?.focus();
+              }}
             >
               <XIcon />
             </Link>

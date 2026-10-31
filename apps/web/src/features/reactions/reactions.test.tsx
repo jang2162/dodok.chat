@@ -1,8 +1,8 @@
 import { type Message, type Person, REACTION_EMOJIS, type Result } from "@dodok/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ChannelArchivedContext } from "@/features/channels/archived";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { PendingItem } from "@/features/messages/PendingItem";
@@ -10,7 +10,9 @@ import { emptyTimeline, type Timeline, upsert } from "@/features/messages/timeli
 import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
 import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import { qk } from "@/api/queries";
-import { getThread, getTimeline } from "@/realtime/timelineCache";
+import { attachHandlers } from "@/realtime/handlers";
+import { createSubscriptions } from "@/realtime/subscriptions";
+import { getThread, getTimeline, setChannelSeq } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, USER } from "../../../test/fixtures";
@@ -105,6 +107,40 @@ describe("ReactionPicker", () => {
     await user.keyboard("{ArrowLeft}{Enter}");
     expect(onPick).toHaveBeenCalledExactlyOnceWith(REACTION_EMOJIS[6]);
   });
+});
+
+describe("ReactionPicker — 포인터로 열었을 때·열린 동안", () => {
+  it("메뉴가 열린 동안 트리거를 붙든다 — data-state=open 에 늘 보이는 클래스(초점이 포털로 가 행의 hover·focus-within 이 풀린다)", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<ReactionPicker onPick={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "반응 추가" });
+    expect(trigger).toHaveClass("opacity-0", "data-[state=open]:opacity-100");
+    await openPicker(user);
+    await screen.findAllByRole("menuitem");
+    expect(trigger).toHaveAttribute("data-state", "open");
+  });
+
+  it.each([
+    { key: "{ArrowRight}", at: 0 },
+    { key: "{ArrowLeft}", at: 7 },
+  ])(
+    "항목에 초점이 없으면(포인터로 열어 메뉴에 초점) $key 는 $at 번째 항목으로 — ↓·↑ 와 같다",
+    async ({ key, at }) => {
+      const user = userEvent.setup();
+      renderWithClient(<ReactionPicker onPick={vi.fn()} />);
+      await openPicker(user);
+      const items = await screen.findAllByRole("menuitem");
+      // 포인터로 연 상태(항목이 아니라 메뉴 자체가 초점)를 만든다 — 이 파일은 포인터로 열 수 없어(`openPicker`) 키보드로 연 뒤
+      // 포인터를 움직여 Radix 가 키보드 사용 중이 아님을 알게 하고 메뉴에 초점을 준다(그래야 첫 항목으로 되돌리지 않는다)
+      await waitFor(() => expect(items[0]).toHaveFocus());
+      const menu = screen.getByRole("menu");
+      fireEvent.pointerMove(menu);
+      act(() => menu.focus());
+      expect(menu).toHaveFocus();
+      await user.keyboard(key);
+      expect(items[at]).toHaveFocus();
+    },
+  );
 });
 
 describe("ReactionChips", () => {
@@ -206,14 +242,40 @@ describe("MessageItem 안의 리액션", () => {
     ]);
     expect(fake.sentOf("reaction.set")).toEqual([{ messageId: ROOT_MSG.id, emoji: "🎉", on: true }]);
 
-    // 서버 정본: mia 도 달았다 — 캐시는 이것으로 바뀐다(낙관값을 덮는다)
+    // 서버 정본: mia 도 달았다 — 앱의 실시간 처리기(`attachHandlers`)가 받아 캐시를 바꾼다(낙관값을 덮는다).
+    // 처리기는 구독한 채널(채널 커서가 선)의 것만 받는다
+    setChannelSeq(qc, CH, ROOT_MSG.seq);
+    const detach = attachHandlers(fake.wire, {
+      queryClient: qc,
+      subscriptions: createSubscriptions({ socket: fake.wire, queryClient: qc }),
+      onUnauthorized: () => {},
+      notify: { currentChannelId: () => CH, currentConversationId: () => CH, openActivity: () => {} },
+    });
+    onTestFinished(detach);
     const server = withReactions(1, [{ emoji: "🎉", count: 2, userIds: [MIA_ID, USER] }], {
       id: ROOT_MSG.id,
     });
-    act(() => {
-      qc.setQueryData(qk.timeline(CH, CH), (t: Timeline) => upsert(t, server));
+    act(() => fake.serverEmit("message.updated", { message: server }));
+    expect(getTimeline(qc, CH, CH)?.items[0]?.reactions).toEqual([
+      { emoji: "🎉", count: 2, userIds: [MIA_ID, USER] },
+    ]);
+  });
+
+  it("낙관값도 서버처럼 REACTION_EMOJIS 순서로 둔다 — 뒤에 단 앞 순서 이모지가 앞에 선다", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    const base = withReactions(1, [{ emoji: REACTION_EMOJIS[1], count: 1, userIds: [MIA_ID] }], {
+      id: ROOT_MSG.id,
     });
-    expect(getTimeline(qc, CH, CH)?.items[0]?.reactions[0]?.count).toBe(2);
+    qc.setQueryData(qk.timeline(CH, CH), timelineWith(base));
+    fake.onAck("reaction.set", emptyAck);
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={base} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: REACTION_EMOJIS[0] }));
+    expect(getTimeline(qc, CH, CH)?.items[0]?.reactions.map((r) => r.emoji)).toEqual([
+      REACTION_EMOJIS[0],
+      REACTION_EMOJIS[1],
+    ]);
   });
 
   it("ack 실패 → 원래대로 되돌리고 「반응을 저장하지 못했습니다」 토스트", async () => {

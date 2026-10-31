@@ -1,6 +1,6 @@
 import type { ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import {
   AGENT,
   APPROVAL,
+  APPROVAL2,
   approval,
   CH,
   CH2,
@@ -105,7 +106,11 @@ beforeEach(() => {
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
 });
-afterEach(() => {
+afterEach(async () => {
+  // 앱 셸의 작성기(tiptap)는 언마운트된 뒤 다음 틱(`setTimeout` 1ms)에 `Editor.destroy` 를 부른다 — 파일의 마지막 테스트면 그 틱이
+  // 오기 전에 테스트 환경이 내려가 「window is not defined」로 터졌다(plan.md 이월 「테스트 빈틈 몇」). 여기서 먼저 내리고 그 틱을 넘긴다
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 5));
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   wire.socket = undefined;
@@ -361,6 +366,31 @@ it("넓은 화면에서 「활동 닫기」를 누르면 초점이 헤더의 「
   expect(opener).toHaveFocus();
 });
 
+/**
+ * 수정자 클릭은 라우터가 옮기지 않는다(새 탭·새 창은 브라우저 몫) — 패널이 그대로 남는데 초점만 헤더로 가면
+ * 사람이 보던 자리를 잃는다(plan.md 이월 「넓은 화면 「닫기」의 수정자 클릭」)
+ */
+it.each(["Meta", "Control", "Shift", "Alt"])(
+  "넓은 화면에서 「활동 닫기」를 %s 와 함께 누르면 패널도 초점도 그대로다",
+  async (key) => {
+    stubMedia(false);
+    stubServer({ runs: [] });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
+    const aside = await panel();
+    const close = within(aside).getByRole("link", { name: "활동 닫기" });
+
+    // 같은 인스턴스여야 누른 수정자가 클릭까지 이어진다
+    const user = userEvent.setup();
+    await user.keyboard(`{${key}>}`);
+    await user.click(close);
+    await user.keyboard(`{/${key}}`);
+
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`);
+    expect(screen.getByTestId("page-channel-panel")).toBe(aside);
+    expect(close).toHaveFocus();
+  },
+);
+
 it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
   renderRoute(`/c/${CH}/s/${CH}/activity`);
@@ -389,6 +419,34 @@ it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위�
   await waitFor(() =>
     expect(aside.querySelector('[data-slot="approval-card"]')).toHaveAttribute("data-status", "allowed"),
   );
+});
+
+/**
+ * 카드 자리 규칙을 실물로 잠근다(plan.md 이월 「`PanelSlot` 테스트 하네스가 실물에 안 묶여 있다」) — D13 의
+ * 하네스(`ApprovalCard.test.tsx` 의 `PanelSlot`)는 이 규칙을 베낀 것이라, 규칙이 바뀌면 여기가 먼저 깨져야 한다
+ */
+it("승인 둘이면 A 가 확정된 뒤 카드가 B 로 갈아탄다", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  const second = (over: Partial<Parameters<typeof approval>[0]> = {}) =>
+    approval({ id: APPROVAL2, toolCallId: "toolu_02", ...over });
+  act(() => {
+    useApprovalStore.getState().apply(approval());
+    useApprovalStore.getState().apply(second());
+  });
+  const cardId = () => aside.querySelector('[data-slot="approval-card"]')?.getAttribute("data-approval-id");
+  await waitFor(() => expect(cardId()).toBe(APPROVAL));
+
+  act(() =>
+    useApprovalStore
+      .getState()
+      .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+  );
+
+  expect(cardId()).toBe(APPROVAL2);
+  expect(aside.querySelector('[data-slot="approval-card"]')).toHaveAttribute("data-status", "pending");
 });
 
 // 설계 5.3 — 자리 둘(메시지 흐름·활동 탭)이 **하나의 스토어**를 본다. 다른 화면이라 중복이 아니다
@@ -966,6 +1024,25 @@ it("끊긴 사이 끝난 런은 재접속 뒤에도 목록에 남고 선택·타
   await waitFor(() =>
     expect(within(aside).getAllByRole("button", { name: /@dev/ })[0]).toHaveTextContent("완료"),
   );
+});
+
+it("끊긴 사이 끝난 런의 타임라인은 재접속 뒤 다시 받는다 — 새로 빠진 런만(plan.md 이월)", async () => {
+  const { aside, state, queryClient } = await awaitingRun();
+  // 옛 런 타임라인도 캐시에 있다 — 이것까지 무효화하면 옛 런을 다시 받는다
+  queryClient.setQueryData(qk.runEvents(RUN), OTHER_RUN);
+  state.runs = [runOf(RUN2, { status: "done" }), runOf(RUN)];
+  // 끊긴 사이 그 런이 도구를 하나 더 썼다 — 실시간으로는 못 받았고 서버 기록에만 있다
+  const later = [
+    ...TOOL_EVENTS,
+    runEvent({ type: "TOOL_CALL_START", seq: 6, toolCallId: "t2", toolCallName: "Write" }),
+    runEvent({ type: "TOOL_CALL_END", seq: 7, toolCallId: "t2" }),
+  ];
+  stubServer({ runs: state.runs, events: { [RUN]: OTHER_RUN, [RUN2]: later } });
+
+  await reconnect(queryClient);
+
+  expect(await within(aside).findByText("Write")).toBeInTheDocument();
+  expect(queryClient.getQueryState(qk.runEvents(RUN))?.isInvalidated).toBe(false);
 });
 
 it("재접속 목록 조회가 실패해도 끊긴 사이 끝난 런은 사라지지 않는다(D12)", async () => {

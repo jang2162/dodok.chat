@@ -3,7 +3,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { useMemo } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { registerUnauthorized } from "@/app/session";
 import { getChannelSeq, setChannelSeq, updateTimeline } from "@/realtime/timelineCache";
@@ -881,10 +881,10 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
   });
 
   it("배너를 누르면 entryReadSeq 뒤 첫 루트를 물어 그 seq 를 가운데로 받고(답글 seq 가 아니라), 구분선으로 간다", async () => {
-    // 12·13 은 옛 스레드의 답글 — 첫 루트는 14
+    // 12·13 은 옛 스레드의 답글 — 첫 루트는 14. 세션 페이지는 루트만 싣는다(답글은 응답에 없다)
     serve({
       [firstRootUrl(11)]: { messages: range(14, 14), hasMore: true },
-      [aroundUrl(14)]: { messages: range(1, 38), hasMore: false, hasMoreAfter: true },
+      [aroundUrl(14)]: { messages: [...range(1, 11), ...range(14, 38)], hasMore: false, hasMoreAfter: true },
     });
     const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
     await screen.findByText("본문 100");
@@ -892,7 +892,7 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
     expect(urls()).toEqual([firstRootUrl(11), aroundUrl(14)]);
     const line = await screen.findByRole("separator", { name: "새 메시지" });
-    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 12");
+    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 14");
     expect(banner()).toBeNull();
   });
 
@@ -932,8 +932,8 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(fromEnd()).toBe(0);
   });
 
-  it("받은 창에 구분선이 없었으면 뒤에 이어 받은 쪽에 구분선이 생겨도 보던 자리를 끌고 가지 않는다", async () => {
-    // 첫 루트 뒤가 내 글뿐인 창 — 받은 창의 아래 끝에 머물러 다음 쪽을 이어 받고, 거기서 처음 남의 글(61)이 나온다
+  /** 첫 루트(31) 뒤가 내 글뿐인 창 — 구분선이 없다. 다음 쪽(56~)에서 처음 남의 글(61)이 나온다 */
+  const mineAfterFirstRoot = () =>
     serve({
       [firstRootUrl(30)]: { messages: mine(31, 31), hasMore: true },
       [aroundUrl(31)]: { messages: [...range(6, 30), ...mine(31, 55)], hasMore: true, hasMoreAfter: true },
@@ -942,10 +942,45 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
         hasMore: true,
       },
     });
+  /** 받은 창(6~55)에서 첫 루트(31)의 행 — 가운데에 둔 scrollTop */
+  const firstRootTop = 25 * ROW + ROW / 2 - RECT.height / 2;
+
+  it("받은 창에 구분선이 없으면 배너가 물은 첫 루트 행으로 간다", async () => {
+    mineAfterFirstRoot();
     const { qc, scroller } = setupEntry(timelineOf(range(61, 100), true), 30);
     await screen.findByText("본문 100");
     await pastVirtualizerReconcile();
     await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(6));
+    await waitFor(() => expect(scroller().scrollTop).toBe(firstRootTop));
+    expect(separator()).toBeNull();
+  });
+
+  /**
+   * 들어간 지 5초 안 — 들어갈 때의 끝 맞추기(virtual-core 가 `scrollToEnd` 뒤 5초 동안 끝을 다시 겨눈다)가 살아 있다.
+   * 구분선이 없다고 이동을 거두면 그 겨누기가 받은 목록의 끝까지 끌고 가 다음 쪽까지 이어 받는다(plan.md 이월)
+   */
+  it("들어간 지 5초 안에 배너를 눌러도 구분선 없는 창에서 끝으로 끌려가지 않는다 — 첫 루트 행에 선다", async () => {
+    mineAfterFirstRoot();
+    const { qc, scroller, fromEnd } = setupEntry(timelineOf(range(61, 100), true), 30);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(6));
+    await act(() => new Promise((r) => setTimeout(r, 100)));
+    expect(scroller().scrollTop).toBe(firstRootTop);
+    expect(fromEnd()).toBeGreaterThan(0);
+    expect(urls()).not.toContain(`/api/v1/conversations/${CH}/messages?limit=50&afterSeq=55`);
+  });
+
+  it("받은 창에 구분선이 없었으면 뒤에 이어 받은 쪽에 구분선이 생겨도 보던 자리를 끌고 가지 않는다", async () => {
+    mineAfterFirstRoot();
+    const { qc, scroller, scrollTo } = setupEntry(timelineOf(range(61, 100), true), 30);
+    await screen.findByText("본문 100");
+    await pastVirtualizerReconcile();
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(scroller().scrollTop).toBe(firstRootTop));
+    // 받은 창의 아래 끝까지 내려 다음 쪽을 이어 받는다 — 거기서 처음 남의 글(61)이 나온다
+    await scrollTo(50 * ROW - RECT.height);
     await waitFor(() => expect(items(qc)?.at(-1)?.seq).toBe(100));
     expect(items(qc)?.[0]?.seq).toBe(6);
     await act(() => new Promise((r) => setTimeout(r, 50)));
@@ -1119,7 +1154,8 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
         url === `/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`
           ? { messages: range(14, 14), hasMore: true }
           : url === `/api/v1/conversations/${CH}/messages?limit=50&around=14`
-            ? { messages: range(1, 38), hasMore: false, hasMoreAfter: true }
+            ? // 12·13 은 답글이라 세션 페이지에 없다
+              { messages: [...range(1, 11), ...range(14, 38)], hasMore: false, hasMoreAfter: true }
             : undefined;
       return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response("{}", { status: 500 });
     });
@@ -1509,13 +1545,28 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
       await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 43));
     });
 
+    /**
+     * 5초(AWAIT_UNREAD_MAX_MS)는 가짜 시계로 건너뛴다 — 실제로 4.5초를 기다리면 서버·웹 테스트가 함께 도는 부하에서 그 사이에
+     * 판정이 먼저 나 깨졌다(plan.md 이월). 타이머만 가짜로 두고 저절로도 흐르게 한다: rAF·performance.now(첫 붙임)와
+     * findBy·waitFor 의 대기는 그대로 돈다
+     */
     it("이어 받기가 끝내 안 오면 5초 뒤 가진 것으로 판정한다 — 그때 구분선과 끝이 한 화면이면 읽음이 간다", async () => {
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+        shouldAdvanceTime: true,
+      });
+      onTestFinished(() => void vi.useRealTimers());
       known(40, 100);
       const { sender } = open(timelineOf(range(1, 42)), 40);
       await screen.findByRole("separator", { name: "새 메시지" });
-      await act(() => new Promise((r) => setTimeout(r, 4_500)));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_500);
+      });
       expect(sender.request).not.toHaveBeenCalled();
-      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 42), { timeout: 2_000 });
-    }, 10_000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600);
+      });
+      expect(sender.request).toHaveBeenCalledWith(CH, 42);
+    });
   });
 });

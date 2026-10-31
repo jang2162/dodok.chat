@@ -264,6 +264,21 @@ describe("다시 붙으면 끊긴 사이 놓친 상태를 다시 받는다(재�
     expect(discover).toHaveBeenCalledTimes(1);
   });
 
+  it("연결 페이지의 설정 상태도 다시 받는다 — 끊긴 사이 Gateway·러너가 붙거나 떨어졌을 수 있다", async () => {
+    const { fake, queryClient, subscriptions } = setup();
+    vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
+    const setupStatus = observe(queryClient, qk.setupStatus);
+    await waitFor(() => expect(setupStatus).toHaveBeenCalledTimes(1));
+
+    fake.serverEmit("connect");
+    await Promise.resolve();
+    expect(setupStatus).toHaveBeenCalledTimes(1);
+
+    fake.serverEmit("disconnect", "transport close");
+    fake.serverEmit("connect");
+    await waitFor(() => expect(setupStatus).toHaveBeenCalledTimes(2));
+  });
+
   it("member — 어댑터만 다시 받고 ops 요청은 0 이다", async () => {
     const { fake, queryClient, subscriptions } = setup();
     vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
