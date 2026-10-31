@@ -72,7 +72,7 @@ const USAGE: Column[] = [
 ];
 
 /**
- * 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절).
+ * 채널 이름은 그 채널로 가는 링크, 에이전트는 이름과 핸들·Gateway — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절).
  * 「DM」 묶음 줄은 모든 DM 을 합친 것이라 갈 채널이 없다(에이전트 DM 계획 판정 PD5)
  */
 function Name({ row, channel }: { row: OpsRunsRow; channel: boolean }) {
@@ -85,11 +85,26 @@ function Name({ row, channel }: { row: OpsRunsRow; channel: boolean }) {
   );
 }
 
+/**
+ * 이름 옆에 `@핸들 · Gateway 이름`(러너 에이전트면 핸들만) — 같은 id 를 이름 그대로 가져온 두 Gateway 의 에이전트(둘 다 `main`)가
+ * 이 표에서 갈리게 한다(다중 Gateway 실연 보고). 행 id 가 에이전트 id 라 에이전트 목록(그 안의 `gateway`)으로 푼다 — 새 API 없음.
+ * 목록에 없으면(아직 못 받음) 이름만
+ */
 function AgentName({ row }: { row: OpsRunsRow }) {
   const agent = useAgents().data?.find((a) => a.id === row.id);
+  const where = agent
+    ? agent.provider === "openclaw" && agent.gateway
+      ? `@${agent.handle} · ${agent.gateway.name}`
+      : `@${agent.handle}`
+    : undefined;
   return (
     <>
       {row.name}
+      {where && (
+        <span data-slot="agent-where" className={TAG}>
+          {where}
+        </span>
+      )}
       {agent && isArchived(agent) && <ArchivedTag className={TAG} />}
     </>
   );
