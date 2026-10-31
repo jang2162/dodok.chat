@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { useChannels } from "@/api/queries";
+import { useDms } from "@/features/dms/queries";
 import { requestJump } from "@/features/messages/jumpTarget";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Dialog, DialogContent, DialogTitle } from "@/ui/dialog";
@@ -69,6 +70,8 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
   const [filters, setFilters] = useState<SearchFilters>({});
   const search = useSearch(input, filters);
   const channels = useChannels().data ?? [];
+  // 내 DM 도 거를 수 있게 — 이름은 결과 줄(SearchResults)과 같은 「DM · <에이전트 이름>」
+  const dms = useDms().data ?? [];
   const navigate = useNavigate();
   const set = (patch: SearchFilters) => setFilters((f) => ({ ...f, ...patch }));
   // 짧으면 옛 결과를 곧바로 숨긴다 — 결과는 디바운스된 검색어로 그리므로 기다리면 안내와 옛 결과가 겹친다
@@ -112,6 +115,11 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
           {channels.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
+            </option>
+          ))}
+          {dms.map((d) => (
+            <option key={d.channel.id} value={d.channel.id}>
+              {`DM · ${d.agent.name}`}
             </option>
           ))}
         </select>
