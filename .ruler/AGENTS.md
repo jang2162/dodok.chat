@@ -29,7 +29,7 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 - 흐름: spawn <슬러그> <역할> --brief <파일> → wait(exit 3 은 타임아웃, 다시 부른다) → (구현자 터미널을 끄려면 여기서 stop <슬러그> — `--force` 없이. 끝난 구현자는 회수된 뒤 꺼지고, 「워커가 도는 중이다」로 거부되면 아직 도는 것이니 wait 로 끝을 받는다. 워크트리 단위라 리뷰어를 띄운 뒤에 부르면 리뷰어도 끈다) → attach <슬러그> review(구현자 터미널을 재사용하지 않고 새 에이전트로 띄운다, 구현자의 Dispatch 가 진행 중이면 거부) → 판정(git diff --name-only 를 브리프 목록과 대조) → 병합 → reap <슬러그>. 역할 기본 모델: implement/review=opus, verify/chore=sonnet. `--model` 로 덮어쓴다.
 - 워크트리 자리는 .worktrees/dodok.chat/<슬러그>. Orca 의 worktree 경로 설정(이 머신은 글로벌 .worktrees, repo 별 worktreeBasePath 가 있으면 우선)이 그 자리를 내야 spawn 이 된다. git worktree add 로 만든 워크트리는 Orca 가 인식하지 않으므로 워커를 붙일 워크트리는 spawn 으로 만든다. 손으로 만들면 --base-branch $(git branch --show-current), pnpm install, scripts/orca-worker.sh sync-config <경로>(.env 복사·ruler apply). data/ 는 복사하지 않는다.
 - 브라우저 검증도 워커가 한다. BrowserOS neo 는 워커를 띄우기 전에 떠 있어야 한다(spawn 이 켠다). 브리프에 "네가 연 탭은 네가 닫아라".
-- 커밋: git add -A / git commit -a 금지, 경로를 명시해 stage. Conventional Commits, 패키지 스코프(feat(plugin): …).
+- 커밋: git add -A / git commit -a 금지, 경로를 명시해 stage. Conventional Commits, 패키지 스코프(feat(plugin): …). zsh 는 변수를 단어로 가르지 않는다 — `git add` 경로는 명령에 직접 적는다.
 
 ## 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓴다
 CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공용 지침은 지침 서버(https://guideline.develma.com) 사본이다 — 규칙은 아래 「공용 지침 관리」·「ruler 소스와 생성물」. 새 워크트리에는 생성물이 없으므로 `orca.yaml` 셋업과 `scripts/orca-worker.sh` spawn·sync-config 가 `ruler apply` 와 `codegraph init` 을 돌린다(안 돌리면 워커가 지침·MCP 없이, codegraph 는 「not initialized」 로 뜬다).
