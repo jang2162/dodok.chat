@@ -212,7 +212,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   try {
     // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
     if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
-    const db = createDb(config.dbPath);
+    const db = createDb(config.dbPath, {
+      onBackfill: (fixed) => {
+        if (fixed > 0) logger.info({ fixed }, "attachment names normalized to NFC");
+      },
+    });
     undo.push({ step: "db", run: () => db.$client.close() });
     const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
     const auth = createAuth(db, config, logger);

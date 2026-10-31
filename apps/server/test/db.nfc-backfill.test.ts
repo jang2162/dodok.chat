@@ -109,11 +109,17 @@ describe("첨부 이름 NFC 백필", () => {
       expect(t.search("회의록")).toEqual([]);
       first.$client.close();
 
-      const second = createDb(file);
+      const fixed: number[] = [];
+      const second = createDb(file, { onBackfill: (n) => fixed.push(n) });
+      expect(fixed).toEqual([2]);
       expect(nameOf(second, t.bound.id)).toBe(NFC_NAME);
       expect(jsonNames(second, t.message.id)).toEqual([NFC_NAME, "plain.pdf"]);
       expect(backfillNfcAttachmentNames(second)).toBe(0);
       second.$client.close();
+
+      const third = createDb(file, { onBackfill: (n) => fixed.push(n) });
+      expect(fixed).toEqual([2, 0]);
+      third.$client.close();
     });
   });
 });

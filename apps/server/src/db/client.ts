@@ -7,8 +7,13 @@ import { assertTrigramSupport } from "./fts";
 import { backfillNfcAttachmentNames } from "./nfc-backfill";
 import * as schema from "./schema.sqlite";
 
+export type CreateDbOptions = {
+  /** 백필이 고친 첨부 행 수(0 포함) — 로거가 없는 이 함수 대신 부르는 쪽(app.ts)이 부팅 로그에 남긴다 */
+  onBackfill?: (fixed: number) => void;
+};
+
 /** 파일 경로 또는 ":memory:". 연결 후 마이그레이션과 SQL 로 못 하는 데이터 백필(첨부 이름 NFC)까지 적용한다. */
-export function createDb(file: string) {
+export function createDb(file: string, opts: CreateDbOptions = {}) {
   const sqlite = new Database(file);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
@@ -20,7 +25,8 @@ export function createDb(file: string) {
   }
   assertTrigramSupport(sqlite);
   migrate(db, { migrationsFolder: migrationsFolder() });
-  backfillNfcAttachmentNames(db);
+  const fixed = backfillNfcAttachmentNames(db);
+  opts.onBackfill?.(fixed);
   return db;
 }
 
