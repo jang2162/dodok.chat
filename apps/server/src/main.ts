@@ -1,17 +1,28 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { startRunState } from "./modules/ops/health";
 import { installProcessHandlers } from "./process-handlers";
 import { dataDirErrorMessage, isBundled, unwritableDataPath } from "./runtime";
 
-// 소스 실행(`pnpm -F @dodok/server dev`)은 cwd 가 apps/server 다 — ./data·.env 가 저장소 루트를 가리키게 옮긴다.
-// 운영 번들은 이미지의 WORKDIR·환경변수(env_file)를 그대로 쓴다(.env 파일을 읽지 않는다)
-if (!isBundled()) {
-  process.chdir(resolve(import.meta.dirname, "../../.."));
-  if (existsSync(".env")) process.loadEnvFile(".env");
+/**
+ * 소스 실행(`pnpm -F @dodok/server dev`)은 cwd 가 apps/server 다 — ./data·.env 가 저장소 루트를 가리키게 옮기고 루트 .env 를 읽는다.
+ * 운영 번들은 이미지의 WORKDIR·환경변수(env_file)를 그대로 쓴다(.env 파일을 읽지 않는다). here 는 src/ 디렉터리(main.test 가 바꾼다)
+ */
+export function enterSourceRoot(
+  bundled: boolean,
+  here: string = import.meta.dirname,
+  proc: Pick<NodeJS.Process, "chdir" | "loadEnvFile"> = process,
+): void {
+  if (bundled) return;
+  const root = resolve(here, "../../..");
+  proc.chdir(root);
+  const env = join(root, ".env");
+  if (existsSync(env)) proc.loadEnvFile(env);
 }
+
+enterSourceRoot(isBundled());
 
 const config = loadConfig();
 // 스택 없이 한 줄로 끝낸다 — 사람이 docker compose logs 에서 바로 읽고 고치게
