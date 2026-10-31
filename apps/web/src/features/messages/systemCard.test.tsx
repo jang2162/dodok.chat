@@ -135,6 +135,47 @@ describe("run_error 카드의 「다시 실행」", () => {
   });
 });
 
+describe("run_error 카드의 서버 코드 — 「자세히」로 접는다", () => {
+  const errorCard = (bodyMd: string, kind: "run_error" | "info" = "run_error") =>
+    msg(4, {
+      kind: "system",
+      authorType: "system",
+      authorId: undefined,
+      bodyMd,
+      systemMeta: kind === "run_error" ? { kind, runId: RUN } : { kind },
+    });
+
+  it("본문 끝의 코드(`…실행이 실패했습니다: <코드>`)는 본문에서 떼고 접힌 「자세히」에 보인다", async () => {
+    renderCard(errorCard("@dev 실행이 실패했습니다: ADAPTER_ERROR:INTERNAL"), "member");
+    const card = screen.getByRole("note");
+    expect(card).toHaveTextContent("@dev 실행이 실패했습니다");
+    const details = card.querySelector<HTMLDetailsElement>('[data-slot="run-error-code"]');
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    expect(within(details!).getByText("자세히")).toBeInTheDocument();
+    expect(within(details!).getByText("ADAPTER_ERROR:INTERNAL")).toBeInTheDocument();
+    // 본문 자리에는 코드가 없다 — 「자세히」 안에만
+    const body = card.querySelector(".min-w-0")!;
+    expect(body.firstElementChild).not.toHaveTextContent("ADAPTER_ERROR");
+    await userEvent.click(within(details!).getByText("자세히"));
+    expect(details?.open).toBe(true);
+  });
+
+  it("친절 문구(꼴이 다른 본문)·run_error 가 아닌 카드는 그대로 — 「자세히」 없음", () => {
+    renderCard(errorCard("@dev 실행이 실패했습니다: 러너의 Claude Code 로그인을 확인하세요"), "member");
+    const card = screen.getByRole("note");
+    expect(card).toHaveTextContent("@dev 실행이 실패했습니다: 러너의 Claude Code 로그인을 확인하세요");
+    expect(card.querySelector('[data-slot="run-error-code"]')).toBeNull();
+  });
+
+  it("run_error 가 아니면 같은 꼴이어도 떼지 않는다", () => {
+    renderCard(errorCard("@dev 실행이 실패했습니다: TIMEOUT", "info"), "member");
+    const card = screen.getByRole("note");
+    expect(card).toHaveTextContent("@dev 실행이 실패했습니다: TIMEOUT");
+    expect(card.querySelector('[data-slot="run-error-code"]')).toBeNull();
+  });
+});
+
 // 이 웹보다 새 서버가 늘린 kind — 화면이 깨지지 않고 정보 모양으로 그린다
 it("모르는 kind 의 시스템 메시지는 정보 모양으로 그린다", () => {
   // 픽스처는 shared 스키마로 파싱하므로 모르는 kind 는 파싱 뒤에 얹는다
