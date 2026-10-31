@@ -340,6 +340,27 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     }
   });
 
+  it("토큰은 어떤 외부 명령의 argv 에도 실리지 않는다 — 토큰을 받는 명령은 셸 내장(printf·[)이나 대입뿐", () => {
+    const TOKEN_REFS = ['"$(cat ~/.dodok-bridge-token)"', '"$(cat ~/.dodok-runner/token)"', '"$token"'];
+    const consumers: string[] = [];
+    for (const block of [...bashBlocks(gateway), ...bashBlocks(runner)]) {
+      let text = block.replace(/\\\n\s*/g, " "); // 줄 잇기
+      for (const ref of TOKEN_REFS) text = text.replaceAll(ref, "TOKENREF");
+      text = text.replace(/'[^']*'/g, "'Q'"); // 작은따옴표 안의 괄호·구분자를 걷는다
+      for (let prev = ""; prev !== text;) [prev, text] = [text, text.replace(/\$\([^()]*\)/g, "SUBST")];
+      for (const command of text.split(/\|\||&&|[|;()\n]/)) {
+        if (!command.includes("TOKENREF")) continue;
+        const words = command.trim().split(/\s+/);
+        consumers.push(words[0] ?? "");
+        const builtin = words[0] === "printf" || words[0] === "[";
+        const onlyAssignments = words.every((w) => /^[A-Za-z_]\w*=/.test(w));
+        expect(builtin || onlyAssignments, command.trim()).toBe(true);
+      }
+    }
+    // 두 받기(printf)·패치 파일(printf)·빈 토큰 검사([)·토큰 읽기(대입) — 규칙이 빈 집합에 대해 참이 되지 않게
+    expect(consumers.sort()).toEqual(["[", "printf", "printf", "printf", "token=TOKENREF"]);
+  });
+
   it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {
     const step5 = runner.slice(runner.indexOf("\n5. "));
     expect(step5).toContain("`연결됨`");
