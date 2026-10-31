@@ -85,7 +85,7 @@ export function useLogout() {
         resetClientState(qc);
         return;
       }
-      leaveThenReset(qc, router);
+      void leaveToLoginThenReset(qc, router);
     },
   });
 }
@@ -95,9 +95,14 @@ export function useLogout() {
  * 셸의 관찰자(채널·에이전트·DM·어댑터 상태)가 정리(`resets`)가 바꾼 스토어로 다시 그려지며 빈 캐시에서 새로 받아 끊긴 세션으로 401 이
  * 몇 건 더 났다. 라우터가 새 매치를 넣은 직후(`onBeforeRouteMount`) 비우면 스토어 변화와 화면 교체가 한 번에 그려져 셸은 다시 그려지지
  * 않고 내려간다. 그 전에는 me 가 남아 있어도 로그인 화면은 아직 그려지지 않았으니 「이미 로그인」으로 되돌아가지 않는다.
- * 진행 중인 조회는 먼저 끊는다 — 응답이 비운 캐시에 다시 들어오지 않게
+ * 진행 중인 조회는 먼저 끊는다 — 응답이 비운 캐시에 다시 들어오지 않게.
+ * 로그아웃(`useLogout`)과 세션 만료 401(`createApp` 의 `onUnauthorized`, `next` 를 싣는다)이 함께 쓴다. 비운 뒤 풀리는 약속을 돌려준다
  */
-function leaveThenReset(qc: QueryClient, router: ReturnType<typeof useRouter>) {
+export function leaveToLoginThenReset(
+  qc: QueryClient,
+  router: ReturnType<typeof useRouter>,
+  next?: string,
+): Promise<void> {
   void qc.cancelQueries();
   let done = false;
   const reset = () => {
@@ -110,5 +115,9 @@ function leaveThenReset(qc: QueryClient, router: ReturnType<typeof useRouter>) {
     if (e.toLocation.pathname === "/login") reset();
   });
   // 실패해도 상태는 비운다 — 세션은 이미 끝났다. 이동 막기(useBlocker)는 무시한다: 막힌 이동의 약속은 풀리지도 거절되지도 않아 정리가 영영 안 돈다
-  router.navigate({ to: "/login", replace: true, ignoreBlocker: true }).then(reset, reset);
+  const moved =
+    next === undefined
+      ? router.navigate({ to: "/login", replace: true, ignoreBlocker: true })
+      : router.navigate({ to: "/login", search: { next }, replace: true, ignoreBlocker: true });
+  return moved.then(reset, reset);
 }
