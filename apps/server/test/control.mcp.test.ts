@@ -243,6 +243,19 @@ describe("/mcp", () => {
     expect(JSON.stringify(value)).toContain(channel.id);
   });
 
+  it("결과 꼴은 러너·플러그인 도구와 같다 — 성공은 content 만(isError 키 없음), 실패는 isError true + {code, message} 순서의 글", async () => {
+    const token = ownerToken();
+    const ok = (await rpc(token, "tools/call", { name: "list_channels", arguments: {} })).result;
+    expect(Object.keys(ok ?? {})).toEqual(["content"]);
+    expect(ok?.content).toEqual([{ type: "text", text: expect.any(String) }]);
+    const failed = (await rpc(token, "tools/call", { name: "get_channel", arguments: { channelId: 42 } }))
+      .result;
+    expect(Object.keys(failed ?? {}).sort()).toEqual(["content", "isError"]);
+    expect(failed?.isError).toBe(true);
+    const text = (failed?.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(Object.keys(JSON.parse(text) as object)).toEqual(["code", "message"]);
+  });
+
   it("member 토큰의 set_channel_prompt 는 isError + FORBIDDEN, 프롬프트는 그대로", async () => {
     const mia = await userWithRole(app, `mcp-member${++n}`, "member");
     const channel = newChannel(app, { members: [mia.id] });
