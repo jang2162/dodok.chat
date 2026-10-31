@@ -3,6 +3,7 @@
  * 「에이전트에게 아직 안 알린 것」 질의·커서.
  * 메시지·리액션은 시각을 정해 DB 에 직접 넣는다 — 커서 비교(created_at > since)를 시계 없이 재려고.
  */
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { InboundReaction, type Message, REACTION_EMOJIS } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
@@ -25,6 +26,7 @@ import {
   setReaction,
   withReactions,
 } from "../src/modules/reactions/service";
+import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { channelConversation, seedChannelWithAgent, seedConversation } from "./helpers/seed";
@@ -335,6 +337,36 @@ describe("pendingReactionsFor", () => {
       since: at(0),
     });
     expect(out.reactions.map((r) => r.messageId)).toEqual([root, reply]);
+  });
+
+  it("스레드를 열기 전 루트에 단 반응 — 그 루트에서 스레드를 처음 부르면 스레드 런에 실린다(새 스레드 커서 = 채널 세션 커서)", () => {
+    const c = setup();
+    const adapter = new FakeAdapter();
+    const channelSession = ensureSession(c.db, adapter, {
+      conversationId: c.conversationId,
+      agentId: c.agentId,
+    }).session;
+    // 채널 런이 at(0) 까지 알렸다
+    c.db
+      .update(agentSessions)
+      .set({ reactionsSeenAt: at(0) })
+      .where(eq(agentSessions.id, channelSession.id))
+      .run();
+    const root = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    react(c.db, root, c.mia, "👍", at(5));
+
+    const thread = ensureSession(c.db, adapter, {
+      conversationId: c.conversationId,
+      agentId: c.agentId,
+      threadRootId: root,
+    }).session;
+    const out = pendingReactionsFor(c.db, {
+      conversationId: c.conversationId,
+      agentId: c.agentId,
+      threadRootId: root,
+      since: thread.reactionsSeenAt,
+    });
+    expect(out.reactions.map((r) => [r.messageId, r.emoji])).toEqual([[root, "👍"]]);
   });
 
   it("since 와 같거나 이른 리액션은 뺀다 — 이후만", () => {
