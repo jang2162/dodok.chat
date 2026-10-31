@@ -17,8 +17,14 @@
   안 서는 확인이 많고, 그때 필요한 것이 **콘솔 로그와 네트워크(WebSocket 프레임)** 다. 둘 다 neo 가
   못 하는 것에 들어가므로, 실시간 동작을 재는 검증은 처음부터 Playwright 를 neo 에 붙여서 한다.
 - **`.mcp.json` 에 `playwright-neo`(neo 의 CDP 에 붙는 Playwright MCP)를 넣어 두었다.** 저장소에 커밋되어 있어
-  워커 세션도 같은 설정을 받는다. 포트는 9110 고정이라 neo 의 `ports.cdp` 가 다른 머신에서는 붙지 않는다 — 그때는
+  워커 세션도 같은 설정을 받는다. 포트는 `.mcp.json` 에 박혀 있어 neo 의 `ports.cdp` 와 다르면 붙지 않는다 — 그때는
   `playwright-core` 로 설정 파일의 포트에 직접 붙는다.
+- ⚠ **neo MCP 가 `no link to the browser yet` 를 되풀이하면 neo 설정의 `ports.cdp` 와 `~/Library/Application Support/BrowserClaw/DevToolsActivePort` 의 첫 줄(포트)을 비교한다.**
+  다르면 neo 를 다시 띄우는 것은 사람 몫이다(다른 워커가 쓰는 중일 수 있다). 그동안의 확인은 독립 Chromium(`playwright-core` 의 `chromium.launch`)에서
+  웹 오리진으로 `POST /api/v1/auth/local` 을 보내 쿠키를 얻어 보고, 그 사실을 보고에 적는다.
+- ⚠ **읽음(`conversation.read`)·presence 처럼 탭이 보일 때만 도는 동작은 neo 로 재지 않는다.** neo 의 탭은 백그라운드라 `visibilityState` 가 `hidden` 이고,
+  `useReadAtEnd` 는 보이는 탭에서만 읽음을 보내므로 「안 나간다」 확인이 고치기 전 코드에서도 통과한다. 독립 헤드리스 Chromium(`playwright-core` 의
+  `chromium.launch()`, 페이지가 `visible`)으로 보고 WebSocket `framesent` 로 센다.
 - `scripts/orca-worker.sh spawn` 은 워커를 띄우기 전에 neo 가 꺼져 있으면 켠다(`ensure_browser`) —
   그러나 **메인 세션 자신**이 시작될 때 꺼져 있었던 것은 스크립트가 고치지 못한다.
 - ⚠ **프로필이 하나라 쿠키·localStorage 는 호스트 단위로 공유되고, 로그인은 쿠키 세션(`dodok.session`)이다.**
@@ -32,6 +38,9 @@
 - **워크트리에서 앱을 띄울 때는 최상위와 포트를 갈라라.** 같은 포트를 두 프로세스가 잡으면 뒤에
   뜬 쪽이 죽거나, 브라우저가 어느 인스턴스를 보고 있는지 알 수 없다.
   → [워크트리 작업 흐름](worktree-workflow.md) 「생성 직후 세팅」
+  쿠키까지 가르려면 호스트도 가른다 — `PORT=<api> APP_ORIGIN=http://<슬러그>.localhost:<web> pnpm -F @dodok/server dev:fake` 와
+  `DODOK_API_ORIGIN=http://127.0.0.1:<api> pnpm -F @dodok/web dev --port <web>` 로 띄우고 `http://<슬러그>.localhost:<web>` 으로 연다. Vite 기본 설정이
+  `*.localhost` 를 받고, 웹이 API 를 프록시해 `dodok.session` 이 그 호스트에만 앉으며, wire 핸드셰이크 Origin 도 `APP_ORIGIN` 과 같아 붙는다.
 - ⚠ **초점 이동은 jsdom 테스트가 통과해도 실제 브라우저에서 따로 본다.** jsdom 은 숨겨진 요소의 초점을 body 로 옮기지 않고(브라우저는 커밋 뒤
   정리한다), act 환경이라 캐시 갱신의 다시 그리기가 늦어 언마운트된 컴포넌트의 `mutate` 콜백도 불린다(브라우저에서는 불리지 않는다) — 두 결함이
   테스트를 통과한 채 실제 브라우저에서만 났다. 언마운트 뒤에도 돌아야 하는 일은 `mutateAsync().then` 으로 쓰고, 숨은 자리 안의 초점은 떨어진 것으로
@@ -40,6 +49,8 @@
   `.then` 에서 직접 옮긴다. 대기 중 `disabled` 가 되는 버튼을 누른 채 실패하면 초점이 body 로 떨어지니 실패 처리에서도 되돌린다 — 잠기지 않는
   요소(오류 줄·대화상자 내용)로. 잠긴 버튼에 `focus()` 는 아무것도 하지 않는다. 이 함정은 jsdom 시험이 잡지 못한다(옛 코드도 jsdom 에서는 초점이
   맞게 간다) — 실제 브라우저에서 본다(`features/runners/ProjectList.tsx`·`MoveProjectDialog.tsx`).
+  대화상자 안에서는 jsdom 의 `blur()` 도 Radix 초점 가둠이 되돌린다 — 「body 로 떨어진 뒤」를 재려면 `vi.spyOn(document, "activeElement", "get")` 으로
+  흉내 낸다(`features/settings/ConfirmDialog.test.tsx`).
 
 ## Playwright 로 여러 번 나눠 돌릴 때
 
