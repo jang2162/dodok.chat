@@ -6,6 +6,7 @@
 import type { AutomationSchedule } from "@dodok/shared";
 import type { DbOrTx } from "../../db/client";
 import { apiError, HttpError } from "../../http/errors";
+import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
 import { type PostDeps, postAutomationMessage } from "./post";
 import { nextRunAt } from "./schedule";
@@ -119,11 +120,28 @@ export function rescheduleOne(
   updateAutomation(db, workspaceId, id, { nextRunAt: firstRunAfter(a, timeZone, now) });
 }
 
-/** 시간대를 바꾼 뒤 그 워크스페이스의 켜진 예약을 모두 새 시간대로 다시 센다(계획 판정 PA4) — 멈춰 있던 것(null)도 */
-export function rescheduleAll(db: DbOrTx, workspaceId: string, timeZone: string, now: Date): void {
+/**
+ * 시간대를 바꾼 뒤 그 워크스페이스의 켜진 예약을 모두 새 시간대로 다시 센다(계획 판정 PA4) — 멈춰 있던 것(null)도.
+ * 자동화마다 따로 센다(틱과 같다): 다음 시각을 셀 수 없는 예약(DB 를 직접 고친 것 등)은 null 로 멈추고 warn 만 남긴다 — 그 하나가
+ * 시간대 바꾸기 전체를 막지 않게. 예약을 고치거나 켜면(rescheduleOne) 다시 센다
+ */
+export function rescheduleAll(
+  db: DbOrTx,
+  workspaceId: string,
+  timeZone: string,
+  now: Date,
+  logger: Pick<Logger, "warn">,
+): void {
   for (const a of listAutomations(db, workspaceId)) {
     if (a.enabled && a.kind === "schedule") {
-      updateAutomation(db, workspaceId, a.id, { nextRunAt: firstRunAfter(a, timeZone, now) });
+      let next: Date | null;
+      try {
+        next = firstRunAfter(a, timeZone, now);
+      } catch (err) {
+        logger.warn({ err, automationId: a.id, timeZone }, "automation next run uncountable — stopped");
+        next = null;
+      }
+      updateAutomation(db, workspaceId, a.id, { nextRunAt: next });
     }
   }
 }

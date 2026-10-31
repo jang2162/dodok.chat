@@ -67,14 +67,16 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
     parseStored(OpsAckResult, { acked: ctx.ops.ack() }, "ops ack result"),
   );
 
-  // 준 키만 바꾼다. 시간대가 바뀌면 켜진 예약의 다음 시각을 같은 트랜잭션에서 다시 센다(계획 판정 PA4) — 하나라도 실패하면 설정도 그대로.
+  // 준 키만 바꾼다. 시간대가 바뀌면 켜진 예약의 다음 시각을 같은 트랜잭션에서 다시 센다(계획 판정 PA4) — 셀 수 없는 예약만 null 로
+  // 멈추고 warn, 나머지 예약과 설정은 저장한다(rescheduleAll). DB 쓰기가 던지면 설정도 그대로.
   // 그대로면 다시 세지 않는다: 기한이 지나 틱을 기다리는 회차가 지금 뒤의 다음 회차로 밀려 조용히 빠진다
   fastify.patch("/api/v1/ops/settings", admin, async (request) => {
     const patch = parseBody(OpsSettingsPatch, request.body);
     const saved = ctx.db.transaction((tx) => {
       const before = getOpsSettings(tx, ctx.workspaceId).timeZone;
       const settings = patchOpsSettings(tx, ctx.workspaceId, patch);
-      if (settings.timeZone !== before) rescheduleAll(tx, ctx.workspaceId, settings.timeZone, now());
+      if (settings.timeZone !== before)
+        rescheduleAll(tx, ctx.workspaceId, settings.timeZone, now(), request.log);
       return settings;
     });
     return parseStored(OpsSettings, saved, "ops settings");

@@ -11,6 +11,7 @@ import { createAgent } from "../src/modules/agents/service";
 import { nextRunAt } from "../src/modules/automations/schedule";
 import { deleteAutomation, getAutomation, updateAutomation } from "../src/modules/automations/store";
 import { addMember, createChannel } from "../src/modules/channels/service";
+import { getOpsSettings } from "../src/modules/ops/settings";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { createDmChannelForTest } from "./helpers/seed";
@@ -394,6 +395,34 @@ describe("자동화 관리 API", () => {
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ code: "CHANNEL_ARCHIVED" });
       expect(postsOf(automation.id)).toEqual([]);
+    });
+  });
+
+  describe("시간대 바꾸기(PATCH /ops/settings)", () => {
+    it("다음 시각을 셀 수 없는 예약이 있어도 200 — 설정은 저장되고, 그 예약만 null, 다른 예약은 새 시간대로", async () => {
+      const before = getOpsSettings(app.db, app.workspaceId);
+      const { automation: broken } = await schedule(newChannel().id);
+      const { automation: fine } = await schedule(newChannel().id);
+      // DB 를 직접 고친 예약 — weekday 가 빠진 weekly 는 맞는 날이 없어 다음 시각을 셀 수 없다
+      app.db
+        .update(automations)
+        .set({ scheduleJson: { repeat: "weekly", time: "09:00" } as unknown as AutomationSchedule })
+        .where(eq(automations.id, broken.id))
+        .run();
+      const fineBefore = getAutomation(app.db, app.workspaceId, fine.id)?.nextRunAt;
+      const zone = before.timeZone === "America/New_York" ? "Europe/Berlin" : "America/New_York";
+      try {
+        const res = await call({ method: "PATCH", url: "/ops/settings", payload: { timeZone: zone } });
+        expect(res.statusCode, res.body).toBe(200);
+        expect(getOpsSettings(app.db, app.workspaceId).timeZone).toBe(zone);
+        expect(getAutomation(app.db, app.workspaceId, broken.id)?.nextRunAt).toBeNull();
+        const fineAfter = getAutomation(app.db, app.workspaceId, fine.id)?.nextRunAt;
+        expect(fineAfter).toBeInstanceOf(Date);
+        expect(fineAfter).not.toEqual(fineBefore);
+      } finally {
+        await call({ method: "PATCH", url: "/ops/settings", payload: { timeZone: before.timeZone } });
+        deleteAutomation(app.db, app.workspaceId, broken.id);
+      }
     });
   });
 
