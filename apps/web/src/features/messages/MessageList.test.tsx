@@ -3,7 +3,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { useMemo } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { registerUnauthorized } from "@/app/session";
 import { getChannelSeq, setChannelSeq, updateTimeline } from "@/realtime/timelineCache";
@@ -1545,13 +1545,28 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
       await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 43));
     });
 
+    /**
+     * 5초(AWAIT_UNREAD_MAX_MS)는 가짜 시계로 건너뛴다 — 실제로 4.5초를 기다리면 서버·웹 테스트가 함께 도는 부하에서 그 사이에
+     * 판정이 먼저 나 깨졌다(plan.md 이월). 타이머만 가짜로 두고 저절로도 흐르게 한다: rAF·performance.now(첫 붙임)와
+     * findBy·waitFor 의 대기는 그대로 돈다
+     */
     it("이어 받기가 끝내 안 오면 5초 뒤 가진 것으로 판정한다 — 그때 구분선과 끝이 한 화면이면 읽음이 간다", async () => {
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+        shouldAdvanceTime: true,
+      });
+      onTestFinished(() => void vi.useRealTimers());
       known(40, 100);
       const { sender } = open(timelineOf(range(1, 42)), 40);
       await screen.findByRole("separator", { name: "새 메시지" });
-      await act(() => new Promise((r) => setTimeout(r, 4_500)));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_500);
+      });
       expect(sender.request).not.toHaveBeenCalled();
-      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 42), { timeout: 2_000 });
-    }, 10_000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600);
+      });
+      expect(sender.request).toHaveBeenCalledWith(CH, 42);
+    });
   });
 });
