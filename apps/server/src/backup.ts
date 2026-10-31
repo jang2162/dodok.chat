@@ -68,6 +68,9 @@ export async function runBackup(opts: {
     } finally {
       src.close();
     }
+    // 원본이 잠겨(SQLITE_BUSY — 롤백 저널 DB 에서 다른 연결이 쓰기 잠금을 쥠) 첫 단계가 실패하면 better-sqlite3 는 「완료」로
+    // resolve 하고 close() 가 사본을 지운다 — 뒤따른 chmod 의 ENOENT 대신 원인을 낸다
+    if (!existsSync(tmpDb)) throw new Error("원본 DB 가 잠겨 복사하지 못했다(SQLITE_BUSY)");
     chmodSync(tmpDb, 0o600);
     dbBytes = statSync(tmpDb).size;
     for (const f of SIDE_FILES) {

@@ -229,6 +229,21 @@ describe("runBackup", () => {
     expect(readdirSync(backupsRoot())).toEqual([]);
   });
 
+  it("원본 DB 가 잠겨(SQLITE_BUSY) 복사하지 못하면 chmod ENOENT 가 아니라 그 원인으로 던지고 부분 디렉터리를 남기지 않는다", async () => {
+    // 서버 DB 는 WAL 이라 잠겨도 스냅숏을 읽는다 — 롤백 저널 DB 에서 다른 연결이 쓰기 잠금을 쥔 때만 난다
+    const holder = new Database(dbPath());
+    holder.pragma("journal_mode = DELETE");
+    holder.exec("CREATE TABLE t (x)");
+    holder.exec("BEGIN EXCLUSIVE");
+    try {
+      await expect(runBackup({ dataDir })).rejects.toThrow("원본 DB 가 잠겨 복사하지 못했다(SQLITE_BUSY)");
+      expect(readdirSync(backupsRoot())).toEqual([]);
+    } finally {
+      holder.exec("ROLLBACK");
+      holder.close();
+    }
+  }, 20_000);
+
   it("사본은 .partial-* 에서 만들고 다 된 뒤에 백업 이름으로 옮긴다 — 옮긴 사본이 열린다", async () => {
     makeDb();
     writeFileSync(join(dataDir, "vapid.json"), "{}");
@@ -279,6 +294,12 @@ describe("runBackup", () => {
     const fresh = leavePartial(".partial-2026-09-24T00-00-00-000Z-new222", 60_000);
     // 긴 복사 중이면 디렉터리 mtime 은 오래돼도 사본 파일 mtime 이 새롭다
     const copying = leavePartial(".partial-2026-09-24T00-00-00-000Z-cpy333", 3 * hour, 1_000);
+    // 한 시간 넘은 진짜 백업은 .partial- 정리 대상이 아니다(보관 개수만 지운다 — 변이 M13)
+    const oldBackup = join(backupsRoot(), "2026-09-23T00-00-00-000Z");
+    mkdirSync(oldBackup);
+    writeFileSync(join(oldBackup, "dodok.sqlite"), "진짜 백업");
+    utimesSync(join(oldBackup, "dodok.sqlite"), new Date(0), new Date(0));
+    utimesSync(oldBackup, new Date(0), new Date(0));
     // .partial- 로 시작해도 파일은 사람이 둔 것일 수 있다
     writeFileSync(join(backupsRoot(), ".partial-notes"), "x");
     utimesSync(join(backupsRoot(), ".partial-notes"), new Date(0), new Date(0));
@@ -290,6 +311,8 @@ describe("runBackup", () => {
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(copying)).toBe(true);
     expect(existsSync(join(backupsRoot(), ".partial-notes"))).toBe(true);
+    expect(existsSync(join(oldBackup, "dodok.sqlite"))).toBe(true);
+    expect(r.removed).toEqual([]);
     expect(existsSync(join(r.dir, "dodok.sqlite"))).toBe(true);
   });
 
