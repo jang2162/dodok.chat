@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import { usePatchConversation } from "./mutations";
+import { type ClosedZone, useClosedFocus } from "./closed";
 import { useConversationPermissions } from "./permissions";
 
 /**
@@ -10,21 +11,26 @@ import { useConversationPermissions } from "./permissions";
  * 세션으로 바뀌어 부르는 쪽이 작성기를 다시 보인다(`onReopened` — 단추가 사라지므로 초점을 작성기로 옮기라는 신호).
  * `focusOnMount` 는 보던 세션이 이 화면에서 닫혔다는 뜻이다 — 누른 단추(머리의 「세션 닫기」)가 사라져 초점이 body 로 떨어졌으면 이
  * 안내로 옮긴다. 쓰던 작성기 안에 있었어도 옮긴다(작성기가 숨어 초점이 갈 곳이 없다). 다른 곳에 초점이 있으면(다른 탭·다른 사람이 닫았다) 뺏지 않는다(설정 패널의 `ArchivedSettings` 와 같은 규칙)
- * 스레드 패널은 단추 없이 문구만 둔다(`reopen` 없음) — 같은 화면에 「다시 열기」가 둘이 되지 않게
+ * 스레드 패널은 단추 없이 문구만 둔다(`reopen` 없음) — 같은 화면에 「다시 열기」가 둘이 되지 않게.
+ * 세션 화면에는 안내가 둘(세션 작성기·스레드 패널) 설 수 있다 — `zone` 이 마지막으로 초점을 가졌던 자리(`ClosedFocusContext`)와 같은
+ * 안내만 가져간다(스레드 작성기에서 쓰던 중이면 스레드 쪽, 아니면 본문 쪽)
  */
 export function ClosedNotice({
   channelId,
   conversation,
   reopen = false,
   focusOnMount = false,
+  zone,
   onReopened,
 }: {
   channelId: string;
   conversation: Conversation;
   reopen?: boolean;
   focusOnMount?: boolean;
+  zone?: ClosedZone;
   onReopened?: () => void;
 }) {
+  const focusZone = useClosedFocus()?.zone;
   const { canManage } = useConversationPermissions(channelId);
   const patch = usePatchConversation(conversation.id);
   const ref = useRef<HTMLParagraphElement>(null);
@@ -33,8 +39,9 @@ export function ClosedNotice({
     const active = document.activeElement;
     // 쓰던 작성기는 이 안내와 같은 커밋에 숨는다(`hidden`) — 그 안의 초점은 브라우저가 이 effect 뒤에야 body 로 옮기므로 떨어진 것으로 본다
     const dropped = active === null || active === document.body || active.closest("[hidden]") !== null;
-    if (focusFirst && dropped) ref.current?.focus();
-  }, [focusFirst]);
+    const mine = focusZone === undefined || zone === undefined || focusZone.current === zone;
+    if (focusFirst && dropped && mine) ref.current?.focus();
+  }, [focusFirst, focusZone, zone]);
   return (
     <div
       data-testid="conversation-closed"

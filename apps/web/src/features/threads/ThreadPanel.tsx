@@ -5,7 +5,7 @@ import { ApiRequestError, NetworkError } from "@/api/http";
 import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
 import { useChannelArchived } from "@/features/channels/archived";
 import { ClosedNotice } from "@/features/conversations/ClosedNotice";
-import { useConversationClosed } from "@/features/conversations/closed";
+import { useClosedFocus, useConversationClosed } from "@/features/conversations/closed";
 import { useConversationView } from "@/features/conversations/queries";
 import { Composer } from "@/features/composer/Composer";
 import { useSendMessage } from "@/features/composer/useSendMessage";
@@ -74,6 +74,7 @@ function ThreadBody({ channelId, conversationId, rootId }: ThreadProps) {
 function ThreadView({ channelId, conversationId, rootId }: ThreadProps) {
   const archived = useChannelArchived();
   const closed = useConversationClosed();
+  const closedFocus = useClosedFocus();
   const conversation = useConversationView(conversationId).data;
   const bubbleRunIds = useChannelBubbles(channelId, conversationId, rootId);
   const { retry, discard } = useSendMessage(channelId, conversationId, rootId);
@@ -96,7 +97,13 @@ function ThreadView({ channelId, conversationId, rootId }: ThreadProps) {
           {archived ? (
             <ArchivedNotice channelId={channelId} />
           ) : closed && conversation ? (
-            <ClosedNotice channelId={channelId} conversation={conversation} />
+            <ClosedNotice
+              key={conversationId}
+              channelId={channelId}
+              conversation={conversation}
+              zone="thread"
+              focusOnMount={closedFocus?.seenOpen === true}
+            />
           ) : (
             <Composer channelId={channelId} conversationId={conversationId} threadRootId={rootId} />
           )}
