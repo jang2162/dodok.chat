@@ -2,17 +2,28 @@ import type { ChannelSubscribeResult, Message, RunState } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
-import { applyToTimeline, refreshRoots, upsert, upsertMany } from "@/features/messages/timeline";
+import { qk } from "@/api/queries";
+import {
+  applyToTimeline,
+  emptyTimeline,
+  refreshRoots,
+  upsert,
+  upsertMany,
+} from "@/features/messages/timeline";
+import { TIMELINE_FIRST_PAGE } from "@/features/messages/useTimeline";
 import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { createRunReplay } from "./runReplay";
 import {
   dropChannelCaches,
   getChannelSeq,
   noteChannelSeq,
+  getTimeline,
   patchTimeline,
   setChannelSeq,
   staleChannelCaches,
   updateThread,
+  watchedConversations,
+  withTimelineEdits,
 } from "./timelineCache";
 import { emitAck, type WireSocket } from "./wire";
 
@@ -135,6 +146,29 @@ export function createSubscriptions(deps: { socket: WireSocket; queryClient: Que
   }
 
   /**
+   * 이어 받기는 끊긴 사이 **새로 생긴** seq 만 싣는다 — 그 사이 바뀐 옛 메시지(다른 탭이 누른 카드의 결과 줄·`consumed`, 반응, 본문
+   * 고침)는 오지 않는다. 그래서 보고 있는 세션마다 최신 한 쪽(첫 페이지와 같은 수)을 받아 **이미 가진** 메시지만 갈아 끼운다 — 없는
+   * 메시지는 넣지 않는다(이어 받기의 몫). 받는 사이 룸 이벤트로 온 변경은 받은 결과에 다시 얹는다(`withTimelineEdits`).
+   * 한계: 최신 한 쪽 밖(위로 올려 본 옛 쪽)과 열린 스레드 패널은 갱신하지 않는다. 실패는 조용히 둔다(다음 재구독·이벤트가 맞춘다)
+   */
+  async function refreshWatched(channelId: string): Promise<void> {
+    await Promise.all(
+      watchedConversations(qc, channelId).map(async (conversationId) => {
+        let had = false;
+        const t = await withTimelineEdits(qc, channelId, conversationId, async () => {
+          const page = await restFetchPage(conversationId, { limit: TIMELINE_FIRST_PAGE });
+          const cur = getTimeline(qc, channelId, conversationId);
+          had = cur !== undefined;
+          return cur ? refreshRoots(cur, page.messages) : emptyTimeline();
+        }).catch(() => undefined);
+        // 그 사이 캐시가 버려졌으면(넘친 재동기화 등) 되살리지 않는다
+        if (t && had && getTimeline(qc, channelId, conversationId))
+          qc.setQueryData(qk.timeline(channelId, conversationId), t);
+      }),
+    );
+  }
+
+  /**
    * 본 것(채널 커서) 뒤를 받아 세션별로 나눈다. 처음(커서 없음)이면 `fresh`. 끊긴 사이의 글이 한 쪽(200)을 넘으면(`hasMore` — Review
    * Focus 5) 이어 받지 않는다: 그 채널의 세션·스레드 캐시를 모두 버리고(지금 세션만 곧바로 다시 받는다) 커서를 서버가 아는 끝으로 맞춘다.
    * 다른 세션은 열 때 받는다 — 여러 세션에 흩어진 빈틈을 채널 이어 받기로 메우던 쪽 수(옛 `MAX_PAGES`)는 채널 경로 REST 와 함께 걷었다
@@ -151,6 +185,8 @@ export function createSubscriptions(deps: { socket: WireSocket; queryClient: Que
       distribute(channelId, res.messages, res.threadRoots ?? []);
       // 커서는 서버가 아는 끝까지 — 읽은 뒤에 생긴 글은 룸 이벤트로 온다(서버는 룸에 먼저 들어간 뒤 읽는다)
       noteChannelSeq(qc, channelId, res.latestSeq);
+      // 구독 ack 뒤에 받는다 — 그 사이 룸 이벤트(`message.updated`)가 먼저 왔어도 REST 가 그보다 새거나 같다
+      void refreshWatched(channelId);
     }
     await applySubscribed(channelId, res, known);
   }
