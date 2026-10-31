@@ -1691,6 +1691,16 @@ describe("mayReadAttachment — 러너 토큰의 첨부 읽기 범위(조율자 
     expect(h.adapter.mayReadAttachment(TOKEN_A_ID, other.id)).toBe(false);
   });
 
+  it("사람이 중지한 런은 러너의 run.final 을 기다리지 않고 곧바로 false", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const shot = image();
+    const { runId, sessionKey } = await startRun(h, r, withAttachments(shot));
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, shot.id)).toBe(true);
+    await h.adapter.abort(runId, sessionKey, null);
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, shot.id)).toBe(false);
+  });
+
   it("런이 run.final·run.error·끊김으로 닫히면 false", async () => {
     const h = await setup();
     const r = await readyRunner(h);

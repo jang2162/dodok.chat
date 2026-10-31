@@ -1033,7 +1033,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
 
     mayReadAttachment(tokenId, attachmentId) {
       for (const run of runs.values()) {
-        if (run.runner.tokenId !== tokenId) continue;
+        // 사람이 중지한 런은 러너가 run.final 을 보낼 때까지 runs 에 남는다 — 그동안 그 런의 첨부 읽기 허락을 남기지 않는다
+        if (run.runner.tokenId !== tokenId || run.aborted) continue;
         if (run.deliver.message.attachments.some((a) => a.id === attachmentId)) return true;
       }
       return false;
