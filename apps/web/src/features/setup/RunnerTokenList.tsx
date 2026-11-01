@@ -20,7 +20,8 @@ export function connectedRunnerTokenIds(
 }
 
 /**
- * 붙은 러너가 서버가 품은 러너 파일과 같은 빌드인가(러너 스펙 5장 「같은 빌드」) — hello 의 bundleSha256 으로 가른다. 붙어 있지 않으면 없다
+ * 붙은 러너가 서버가 품은 러너 파일과 같은 빌드인가(러너 스펙 5장 「같은 빌드」) — hello 의 bundleSha256 으로 가른다. 붙어 있지 않으면 없다.
+ * 다른 빌드는 경고가 아니라 정보다 — npm 판(`@dodok/runner`)은 태그를 민 커밋의 빌드라 서버와 달라도 정상일 수 있다
  */
 function RunnerBuild({
   runner,
@@ -33,8 +34,9 @@ function RunnerBuild({
   if (runner.bundleSha256 === file.bundleSha256)
     return <p className="text-xs text-muted-foreground">서버와 같은 빌드입니다</p>;
   return (
-    <p role="alert" className="text-xs font-medium text-destructive">
-      다른 빌드입니다 — 러너를 받아서 다시 설치하세요
+    <p className="text-xs text-muted-foreground">
+      서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 아래 「서버와 같은 빌드로
+      설치」를 쓰세요.
     </p>
   );
 }

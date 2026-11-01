@@ -23,7 +23,11 @@ export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} clau
  */
 export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
 /**
- * 받은 tgz 설치 명령. 앞의 uninstall 은 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 —
+ * npm 레지스트리 설치 명령 — 설치의 기본 길. 앞의 uninstall 은 아래 `runnerInstallCommand` 와 같은 까닭이다(옛 이름이 bin 을 쥐면 EEXIST)
+ */
+export const RUNNER_NPM_INSTALL_COMMAND = "npm uninstall -g @dodok/claude-runner; npm i -g @dodok/runner";
+/**
+ * 받은 tgz 설치 명령(「서버와 같은 빌드로 설치」). 앞의 uninstall 은 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 —
  * 남아 있으면 bin `dodok-runner` 가 겹쳐 설치가 EEXIST 로 실패한다. 없으면 그대로 지나가고(`;`), 옛 판이 남은 머신이 사라지면 걷는다
  */
 export const runnerInstallCommand = (fileName: string) =>
@@ -52,11 +56,64 @@ function downloadError(e: unknown): string {
   return "러너 파일을 받지 못했습니다 — 서버 연결을 확인하세요.";
 }
 
-/** 설치 안내(러너 스펙 5장) — tgz 받기 → 전용 로그인 → 설정 파일 → 실행 */
-function InstallSteps({ status }: { status: SetupStatus }) {
-  const file = status.runners.runnerFile;
+/**
+ * 서버가 품은 tgz 로 설치 — npm 판은 태그를 민 커밋의 빌드라 서버와 다를 수 있다. 서버와 같은 커밋의 빌드가 필요할 때의 대안이라
+ * 접어 둔다(받기·파일 sha256·크기·설치 명령, 서버에 파일이 없으면 만드는 명령)
+ */
+function SameBuildInstall({ file }: { file: SetupStatus["runners"]["runnerFile"] }) {
   const download = useDownloadRunner();
   const fileName = file.available ? `dodok-claude-runner-${file.sha256.slice(0, 12)}.tgz` : "";
+  return (
+    <details aria-label="서버와 같은 빌드로 설치" className="rounded-md border px-3 py-2">
+      <summary className="cursor-pointer select-none">서버와 같은 빌드로 설치</summary>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <p className="text-muted-foreground">
+          npm 판은 서버와 다른 커밋의 빌드일 수 있습니다. 서버와 같은 빌드가 필요하면 서버가 품은 러너 파일을
+          받아 설치합니다.
+        </p>
+        {file.available ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="self-start"
+              disabled={download.isPending}
+              onClick={() => download.mutate(fileName)}
+            >
+              <DownloadIcon />
+              러너 받기
+            </Button>
+            <dl className="flex flex-col gap-1 text-xs">
+              <Field name="파일 sha256">
+                <code className="font-mono">{file.sha256}</code>
+              </Field>
+              <Field name="크기">{file.bytes.toLocaleString("ko-KR")} 바이트</Field>
+            </dl>
+            <div aria-live="polite">
+              {download.isError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {downloadError(download.error)}
+                </p>
+              )}
+            </div>
+            <CopyBlock text={runnerInstallCommand(fileName)} label="파일 설치 명령 복사" />
+          </>
+        ) : (
+          <>
+            <p className="text-muted-foreground">
+              서버에 러너 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하세요.
+            </p>
+            <CopyBlock text={RUNNER_PACK_COMMAND} label="만드는 명령 복사" />
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** 설치 안내(러너 스펙 5장) — npm 설치(서버와 같은 빌드는 접힌 대안) → 전용 로그인 → 설정 파일 → 실행 */
+function InstallSteps({ status }: { status: SetupStatus }) {
   const config = runnerConfigExample({
     serverUrl: publicOriginOf(status.bridge.publicUrl),
     tokenFile: RUNNER_TOKEN_FILE,
@@ -66,43 +123,14 @@ function InstallSteps({ status }: { status: SetupStatus }) {
       <h3 className="text-sm font-medium">설치</h3>
       <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
         <li className="flex flex-col gap-1.5">
-          <p>러너를 받아 러너를 돌릴 머신에 설치합니다. Claude Agent SDK 는 설치할 때 npm 에서 받습니다.</p>
-          {file.available ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="self-start"
-                disabled={download.isPending}
-                onClick={() => download.mutate(fileName)}
-              >
-                <DownloadIcon />
-                러너 받기
-              </Button>
-              <dl className="flex flex-col gap-1 text-xs">
-                <Field name="파일 sha256">
-                  <code className="font-mono">{file.sha256}</code>
-                </Field>
-                <Field name="크기">{file.bytes.toLocaleString("ko-KR")} 바이트</Field>
-              </dl>
-              <div aria-live="polite">
-                {download.isError && (
-                  <p role="alert" className="text-sm text-destructive">
-                    {downloadError(download.error)}
-                  </p>
-                )}
-              </div>
-              <CopyBlock text={runnerInstallCommand(fileName)} label="설치 명령 복사" />
-            </>
-          ) : (
-            <>
-              <p className="text-muted-foreground">
-                서버에 러너 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하세요.
-              </p>
-              <CopyBlock text={RUNNER_PACK_COMMAND} label="만드는 명령 복사" />
-            </>
-          )}
+          <p>
+            러너를 돌릴 머신에 npm 으로 설치합니다. Claude Agent SDK 도 이때 npm 에서 받습니다. 앞줄은 옛
+            이름(
+            <code className="font-mono">@dodok/claude-runner</code>)의 설치본을 지웁니다 — 없으면 그대로
+            지나갑니다.
+          </p>
+          <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
+          <SameBuildInstall file={status.runners.runnerFile} />
         </li>
         <li className="flex flex-col gap-1.5">
           <p>러너 전용 Claude 계정으로 로그인합니다. 로그인을 마치면 나옵니다.</p>

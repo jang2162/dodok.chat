@@ -19,6 +19,7 @@ import {
 } from "../../../test/setupServer";
 import { ME } from "../../../test/shellApi";
 import { llmsHandoffLine } from "./llms";
+import { RUNNER_NPM_INSTALL_COMMAND } from "./RunnerSection";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -70,7 +71,7 @@ describe("러너 블록 — 토큰·설치 안내만", () => {
     expect(within(block).getByRole("link", { name: "러너 탭" })).toHaveAttribute("href", "/settings/runners");
   });
 
-  it("붙은 토큰 줄에 같은 빌드인지 — 다른 빌드면 다시 설치하라는 경고", async () => {
+  it("붙은 토큰 줄에 같은 빌드인지 — 다른 빌드는 경고가 아니라 정보(npm 판이면 정상일 수 있다)", async () => {
     stubSetupServer({
       status: statusOf({
         runners: {
@@ -89,7 +90,12 @@ describe("러너 블록 — 토큰·설치 안내만", () => {
     expect(await within(block).findByRole("listitem", { name: "맥북" })).toHaveTextContent(
       "서버와 같은 빌드입니다",
     );
-    expect(within(block).getByRole("listitem", { name: "데스크톱" })).toHaveTextContent("다른 빌드입니다");
+    const desk = within(block).getByRole("listitem", { name: "데스크톱" });
+    expect(desk).toHaveTextContent(
+      "서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 아래 「서버와 같은 빌드로 설치」를 쓰세요.",
+    );
+    expect(desk).not.toHaveTextContent("다시 설치하세요");
+    expect(within(desk).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(block).getByRole("listitem", { name: "끊긴" })).not.toHaveTextContent("빌드");
   });
 });
@@ -295,6 +301,44 @@ describe("러너 토큰 다시 발급", () => {
 });
 
 describe("러너 설치 안내", () => {
+  it("npm 설치가 첫 단계 — 옛 이름을 먼저 걷고(`;`) @dodok/runner 를 깐다, tgz 받기는 접힌 대안 안에", async () => {
+    stubSetupServer({
+      status: statusOf({
+        runners: {
+          list: [],
+          runnerFile: { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 2048 },
+        },
+      }),
+    });
+    renderConnection();
+    const block = await runnerRegion();
+    const command = await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND);
+    const first = command.closest("li") as HTMLElement;
+    // 설치 목록의 첫 단계다
+    expect(first.parentElement?.firstElementChild).toBe(first);
+    expect(first.parentElement?.tagName).toBe("OL");
+    expect(RUNNER_NPM_INSTALL_COMMAND).toBe("npm uninstall -g @dodok/claude-runner; npm i -g @dodok/runner");
+    expect(within(first).getByRole("button", { name: "설치 명령 복사" })).toBeInTheDocument();
+    // 접힌 대안 — 펼치기 전에는 닫혀 있고, 받기 버튼·파일 설치 명령은 그 안에 있다
+    const alt = first.querySelector("details");
+    expect(alt).not.toBeNull();
+    expect(alt?.open).toBe(false);
+    expect(within(alt as HTMLElement).getByText("서버와 같은 빌드로 설치")).toBeInTheDocument();
+    expect(within(alt as HTMLElement).getByRole("button", { name: "러너 받기" })).toBeInTheDocument();
+    expect(alt).toHaveTextContent(
+      "npm uninstall -g @dodok/claude-runner; npm install -g ./dodok-claude-runner-ffffffffffff.tgz",
+    );
+    await userEvent.click(within(alt as HTMLElement).getByText("서버와 같은 빌드로 설치"));
+    expect(alt?.open).toBe(true);
+  });
+
+  it("서버에 러너 파일이 없어도 npm 설치 명령은 그대로 보인다", async () => {
+    stubSetupServer();
+    renderConnection();
+    const block = await runnerRegion();
+    expect(await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND)).toBeInTheDocument();
+  });
+
   it("tgz 받기(서버가 준 이름) → 전용 로그인 → 설정 파일 → dodok-runner", async () => {
     const server = stubSetupServer({
       status: statusOf({
