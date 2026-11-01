@@ -116,7 +116,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
   const get = (remoteAddress = "10.0.0.1") =>
     app.fastify.inject({ method: "GET", url: "/llms.txt", remoteAddress });
 
-  it("로그인 없이 200 text/plain — 공개 오리진·bridgeUrl·두 파일의 sha·두 절 제목·AI 규칙 네 줄", async () => {
+  it("로그인 없이 200 text/plain — 공개 오리진·bridgeUrl·플러그인 파일의 sha·두 절 제목·AI 규칙 네 줄", async () => {
     const res = await get();
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("text/plain; charset=utf-8");
@@ -125,15 +125,16 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     expect(body).toContain("wss://chat.example.com/bridge");
     expect(body).toContain(sha(pluginTgz));
     expect(body).toContain(sha(PLUGIN_BUNDLE));
-    expect(body).toContain(sha(runnerTgz));
-    expect(body).toContain(sha(RUNNER_BUNDLE));
+    // 러너는 npm 레지스트리에서 설치한다 — 서버가 품은 러너 tgz 의 해시는 싣지 않는다
+    expect(body).not.toContain(sha(runnerTgz));
+    expect(body).not.toContain(sha(RUNNER_BUNDLE));
     expect(body).toContain("\n## OpenClaw Gateway 호스트\n");
     expect(body).toContain("\n## 러너 머신\n");
     for (const rule of [
       "토큰을 화면·로그·명령 줄 인자에 찍지 않는다 — 파일(0600)이나 표준 입력으로 넘긴다.",
       "토큰은 이 안내서가 지정한 자리에만 둔다.",
       "사람이 할 단계(Claude 로그인, 기기 페어링 승인 확인)에서는 멈추고 사람에게 묻는다.",
-      "받은 파일은 이 안내서의 sha256 과 대조하고, 다르면 멈춘다.",
+      "이 서버에서 받은 파일은 이 안내서의 sha256 과 대조하고, 다르면 멈춘다.",
     ])
       expect(body).toContain(rule);
   });
@@ -182,7 +183,8 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
       expect.arrayContaining(["serverUrl", "tokenFile", "roots", "programs"]),
     );
     expect((config as { serverUrl: string }).serverUrl).toBe("https://chat.example.com");
-    expect(runner).toContain("https://chat.example.com/api/v1/setup/runner.tgz");
+    expect(runner).toContain("npm i -g @dodok/runner");
+    expect(runner).not.toContain("runner.tgz");
   });
 
   it("대조: 웹 발급 대화상자의 「AI 에게 맡기기」 줄이 부르는 주소·절 제목이 본문에 있다", async () => {
@@ -197,10 +199,9 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
 
   it("대조: 안내서가 부르는 설치 경로는 이 서버에 있다(owner 로 200)", async () => {
     const { headers } = await login(app);
-    for (const path of ["/api/v1/setup/plugin.tgz", "/api/v1/setup/runner.tgz"]) {
-      expect((await get("10.0.0.3")).body).toContain(path);
-      expect((await app.fastify.inject({ method: "GET", url: path, headers })).statusCode, path).toBe(200);
-    }
+    const path = "/api/v1/setup/plugin.tgz";
+    expect((await get("10.0.0.3")).body).toContain(path);
+    expect((await app.fastify.inject({ method: "GET", url: path, headers })).statusCode, path).toBe(200);
   });
 });
 
@@ -212,7 +213,6 @@ describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
       webOrigin: "http://localhost:5173",
       bridgeUrl: "ws://localhost:3000/bridge",
       plugin: file,
-      runner: file,
     });
     const gateway = section(body, "OpenClaw Gateway 호스트");
     expect(gateway).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
@@ -245,29 +245,39 @@ describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () =
 });
 
 describe("renderLlmsTxt — 파일이 없을 때", () => {
-  it("파일이 없는 절은 「서버에 파일이 없습니다」, 있는 절은 sha 를 싣는다", () => {
-    const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
+  it("플러그인 파일이 없으면 Gateway 절은 「서버에 파일이 없습니다」, 러너 절은 npm 설치 그대로", () => {
     const noPlugin = renderLlmsTxt({
       origin: "https://x.example",
       webOrigin: "https://x.example",
       bridgeUrl: "wss://x.example/bridge",
       plugin: null,
-      runner: file,
     });
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).toContain("서버에 파일이 없습니다");
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).not.toContain("plugin.tgz");
     expect(section(noPlugin, "러너 머신")).not.toContain("서버에 파일이 없습니다");
-    expect(section(noPlugin, "러너 머신")).toContain("a".repeat(64));
+    expect(section(noPlugin, "러너 머신")).toContain("npm i -g @dodok/runner");
+  });
+});
 
-    const noRunner = renderLlmsTxt({
-      origin: "https://x.example",
-      webOrigin: "https://x.example",
-      bridgeUrl: "wss://x.example/bridge",
-      plugin: file,
-      runner: null,
-    });
-    expect(section(noRunner, "러너 머신")).toContain("서버에 파일이 없습니다");
-    expect(section(noRunner, "OpenClaw Gateway 호스트")).toContain("b".repeat(64));
+describe("GET /llms.txt — 서버에 러너 tgz 가 없을 때", () => {
+  it("러너 절은 「서버에 파일이 없습니다」로 막히지 않고 npm 설치를 싣는다", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-llms-norunner-"));
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE));
+    const app = await bootTestApp(
+      { APP_ORIGIN: "https://chat.example.com" },
+      { pluginDirs: [dir], runnerDirs: [] },
+    );
+    try {
+      const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
+      const runner = section(body, "러너 머신");
+      expect(runner).not.toContain("서버에 파일이 없습니다");
+      expect(runner).toContain("npm uninstall -g @dodok/claude-runner >/dev/null 2>&1");
+      expect(runner).toContain("npm i -g @dodok/runner");
+      expect(runner).toContain('"serverUrl": "https://chat.example.com"');
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -279,7 +289,6 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     webOrigin: "https://x.example",
     bridgeUrl: "wss://x.example/bridge",
     plugin: { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) },
-    runner: { sha256: "c".repeat(64), bundleSha256: "d".repeat(64) },
   });
   const gateway = section(body, "OpenClaw Gateway 호스트");
   const runner = section(body, "러너 머신");
@@ -357,8 +366,9 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         expect(builtin || onlyAssignments, command.trim()).toBe(true);
       }
     }
-    // 두 받기(printf)·패치 파일(printf)·빈 토큰 검사([)·토큰 읽기(대입) — 규칙이 빈 집합에 대해 참이 되지 않게
-    expect(consumers.sort()).toEqual(["[", "printf", "printf", "printf", "token=TOKENREF"]);
+    // 플러그인 받기(printf)·패치 파일(printf)·빈 토큰 검사([)·토큰 읽기(대입) — 규칙이 빈 집합에 대해 참이 되지 않게.
+    // 러너는 npm 레지스트리에서 설치하므로 토큰으로 받는 명령이 없다
+    expect(consumers.sort()).toEqual(["[", "printf", "printf", "token=TOKENREF"]);
   });
 
   it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {
@@ -401,6 +411,8 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       fake(bin, "npm", [
         '[ "$1 $2" = "uninstall -g" ] && { printf "uninstall %s\\n" "$3" >> "$LOG"; exit 1; }',
         '[ "$1 $2" = "install -g" ] && [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"',
+        '[ "$1 $2" = "i -g" ] && printf "i %s\\n" "$3" >> "$LOG"',
+        "exit 0",
       ]);
       const pkgDir = join(root, "lib", "node_modules", "@dodok", "runner");
       mkdirSync(join(pkgDir, "dist"), { recursive: true });
@@ -454,12 +466,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
             .filter((l) => !l.includes("mktemp -d"))
             .join("\n");
         const gSteps = bashBlocks(gateway);
-        const rSteps = bashBlocks(runner);
-        for (const block of [
-          blockWith(gSteps, "setup/plugin.tgz"),
-          blockWith(gSteps, "plugins install"),
-          blockWith(rSteps, "setup/runner.tgz"),
-        ]) {
+        for (const block of [blockWith(gSteps, "setup/plugin.tgz"), blockWith(gSteps, "plugins install")]) {
           // 앞선 셸이 만든 dir 을 잃은 것처럼 dir 없이 돌린다 — 받기(curl)·설치가 한 번도 실행되지 않아야 한다
           const res = run(bin, `unset dir\n${without(block)}`);
           expect(res.status, block).not.toBe(0);
@@ -480,20 +487,23 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       }
     });
 
-    it("러너 2번 — 옛 이름을 걷고(실패해도 잇는다) 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
-      const { bin, pkgDir } = setup();
+    it("러너 2번 — 옛 이름을 걷고(실패해도 잇는다) npm 레지스트리의 @dodok/runner 를 설치한 뒤 판본을 찍는다", () => {
+      const { bin } = setup();
       try {
-        const res = run(bin, blockWith(bashBlocks(runner), "setup/runner.tgz"));
+        const block = blockWith(bashBlocks(runner), "@dodok/runner");
+        // 깐 러너의 --version 을 남기는 가짜 — 설치 뒤에 불린다
+        rmSync(join(bin, "dodok-runner"));
+        fake(bin, "dodok-runner", ['printf "version %s\\n" "$1" >> "$LOG"']);
+        const res = run(bin, block);
         expect(res.status, res.stderr).toBe(0);
-        const [got = "", sum = "", uninstall = "", install = "", bundle = ""] = logLines();
-        const file = got.replace(/^curl /, "");
-        expect(file.startsWith(`${tmp}/`), file).toBe(true);
-        expect(sum).toBe(`shasum ${file}`);
-        expect(uninstall).toBe("uninstall @dodok/claude-runner");
-        expect(install).toBe(`install ${file}`);
-        expect(bundle).toBe(`shasum ${realpathSync(pkgDir)}/dist/main.js`);
+        expect(logLines()).toEqual([
+          "uninstall @dodok/claude-runner",
+          "i @dodok/runner",
+          "version --version",
+        ]);
+        expect(block).not.toContain("curl");
+        expect(block).not.toContain("shasum");
         expect(readdirSync(tmp)).toEqual([]);
-        expect(runner).not.toContain("/tmp/dodok-claude-runner.tgz");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

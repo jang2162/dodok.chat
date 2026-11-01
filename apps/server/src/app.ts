@@ -682,7 +682,6 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         webOrigin: config.APP_ORIGIN,
         bridgeUrl: publicUrl,
         plugin: pluginFile,
-        runner: runnerFile,
       }),
       llmsLimit: createIpLimit(fastify, { perMin: limits.llmsTxtPerMin, ops }),
     });

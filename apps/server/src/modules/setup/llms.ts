@@ -11,7 +11,7 @@
  */
 import { RUNNER_TOKEN_FILE } from "../runners/routes";
 
-/** 서버가 품은 tgz 의 두 해시 — 파일(받은 것 대조)과 안의 번들(설치한 것 대조) */
+/** 서버가 품은 플러그인 tgz 의 두 해시 — 파일(받은 것 대조)과 안의 번들(설치한 것 대조) */
 export type LlmsFileInfo = { sha256: string; bundleSha256: string };
 
 export type LlmsInput = {
@@ -21,8 +21,8 @@ export type LlmsInput = {
   webOrigin: string;
   /** 플러그인 계정 설정의 bridgeUrl — 발급 대화상자의 플러그인 설정 조각과 같은 값 */
   bridgeUrl: string;
+  /** 러너는 npm 레지스트리(`@dodok/runner`)에서 설치하므로 서버가 품은 러너 tgz 와 상관없이 그 절이 나온다 */
   plugin: LlmsFileInfo | null;
-  runner: LlmsFileInfo | null;
 };
 
 /** 노드에서 브리지 토큰을 잠깐 두는 자리 — 계정 설정에 넣은 뒤 지운다 */
@@ -37,6 +37,8 @@ const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
 export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
 /** 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 — 옛 판이 남은 머신이 사라지면 걷는다 */
 export const RUNNER_LEGACY_UNINSTALL = "npm uninstall -g @dodok/claude-runner >/dev/null 2>&1";
+/** 러너 설치 — npm 레지스트리의 `@dodok/runner`(연결 페이지의 설치 명령과 같은 패키지) */
+export const RUNNER_NPM_INSTALL = "npm i -g @dodok/runner";
 const NO_FILE =
   "서버에 파일이 없습니다. 이 절의 설치를 멈추고 사람에게 알린다(서버 관리자가 파일을 만든 뒤 서버를 재시작해야 한다).";
 
@@ -109,9 +111,8 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 `;
 }
 
-function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
+function runnerSection(input: LlmsInput): string {
   const { origin, webOrigin } = input;
-  const out = '"${dir:?}/dodok-claude-runner.tgz"';
   // 러너는 천장만 쥔다(러너 일반화 스펙 2장) — 에이전트는 앱에서 만든다. 상한은 낮게: 서버 쪽 admin 이 루트 안 어디서든 이 상한까지 돌릴 수 있다
   const config = {
     serverUrl: origin,
@@ -130,8 +131,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
   };
   return `설치할 것: dodok 러너(명령 dodok-runner). 이 머신의 허용 루트 안에서 dodok 앱이 만든 에이전트(Claude Code)를 돌려 dodok 서버로 나가는 연결 하나를 연다(머신 쪽 포트는 열지 않는다). 필요한 것: macOS 또는 Linux, Node 24, npm 레지스트리에 닿는 네트워크.
 
-- 파일 sha256: ${file.sha256}
-- 번들 sha256(설치한 뒤 dist/main.js): ${file.bundleSha256}
+- npm 패키지: @dodok/runner
 - 러너 설정의 serverUrl: ${origin}
 
 1. 사람에게 받은 러너 토큰을 0600 파일 ${RUNNER_TOKEN_FILE} 에 둔다. 파일 쓰기 도구를 쓰거나, 아래 명령의 표준 입력으로 토큰 한 줄을 넣는다. 러너가 이 파일을 계속 읽으므로 지우지 않는다.
@@ -141,15 +141,12 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    chmod 600 ${RUNNER_TOKEN_FILE}
    \`\`\`
 
-2. 러너 파일을 \`mktemp -d\` 로 만든 임시 디렉터리에 받아 파일 sha256 을 대조하고(다르면 멈춘다) 설치한 뒤 번들 sha256 을 대조한다(다르면 멈춘다). 받은 파일은 설치한 뒤 지운다.
+2. 러너를 npm 레지스트리에서 설치하고 판본이 찍히는지 본다. 설치할 때 Claude Agent SDK(과 플랫폼별 번들 CLI)도 함께 받는다. 설치가 실패하면(권한 오류 EACCES 포함 — sudo 를 쓰지 않는다) 멈추고 사람에게 알린다.
 
    \`\`\`bash
-   ${MKTEMP_DIR}
-   ${download(RUNNER_TOKEN_FILE, `${origin}/api/v1/setup/runner.tgz`, out).replaceAll("\n", "\n   ")}
-   shasum -a 256 ${out}   # Linux 는 sha256sum
    ${RUNNER_LEGACY_UNINSTALL}   # 옛 이름이 dodok-runner 를 쥐고 있으면 설치가 EEXIST 로 실패한다. 없으면 아무 일도 안 한다
-   npm install -g ${out}; rm -rf "\${dir:?}"
-   shasum -a 256 "${RUNNER_PKG_DIR}/dist/main.js"
+   ${RUNNER_NPM_INSTALL}
+   dodok-runner --version
    \`\`\`
 
 3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
@@ -184,12 +181,12 @@ export function renderLlmsTxt(input: LlmsInput): string {
 1. 토큰을 화면·로그·명령 줄 인자에 찍지 않는다 — 파일(0600)이나 표준 입력으로 넘긴다.
 2. 토큰은 이 안내서가 지정한 자리에만 둔다.
 3. 사람이 할 단계(Claude 로그인, 기기 페어링 승인 확인)에서는 멈추고 사람에게 묻는다.
-4. 받은 파일은 이 안내서의 sha256 과 대조하고, 다르면 멈춘다.
+4. 이 서버에서 받은 파일은 이 안내서의 sha256 과 대조하고, 다르면 멈춘다.
 
 ## OpenClaw Gateway 호스트
 
 ${input.plugin ? gatewaySection(input, input.plugin) : `${NO_FILE}\n`}
 ## 러너 머신
 
-${input.runner ? runnerSection(input, input.runner) : `${NO_FILE}\n`}`;
+${runnerSection(input)}`;
 }
