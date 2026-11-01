@@ -21,7 +21,7 @@ export type LlmsInput = {
   webOrigin: string;
   /** 플러그인 계정 설정의 bridgeUrl — 발급 대화상자의 플러그인 설정 조각과 같은 값 */
   bridgeUrl: string;
-  /** 러너는 npm 레지스트리(`@dodok/runner`)에서 설치하므로 서버가 품은 러너 tgz 와 상관없이 그 절이 나온다 */
+  /** 서버가 품은 플러그인 tgz — 없으면 Gateway 절 대신 NO_FILE. 러너 절은 npm(`@dodok/runner`)에서 설치하므로 러너 tgz 와 상관없이 나온다 */
   plugin: LlmsFileInfo | null;
 };
 
