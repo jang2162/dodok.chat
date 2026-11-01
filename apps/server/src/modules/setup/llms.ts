@@ -35,8 +35,6 @@ const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
  * UUID 를 `***` 로 가려 찍어 깨진다. docker-deploy.md 「러너 설치」 3번이 같은 식을 쓴다(setup.llms.test 가 대조한다)
  */
 export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
-/** 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 — 옛 판이 남은 머신이 사라지면 걷는다 */
-export const RUNNER_LEGACY_UNINSTALL = "npm uninstall -g @dodok/claude-runner >/dev/null 2>&1";
 /** 러너 설치 — npm 레지스트리의 `@dodok/runner`(연결 페이지의 설치 명령과 같은 패키지) */
 export const RUNNER_NPM_INSTALL = "npm i -g @dodok/runner";
 const NO_FILE =
@@ -144,7 +142,6 @@ function runnerSection(input: LlmsInput): string {
 2. 러너를 npm 레지스트리에서 설치하고 판본이 찍히는지 본다. 설치할 때 Claude Agent SDK(과 플랫폼별 번들 CLI)도 함께 받는다. 설치가 실패하면(권한 오류 EACCES 포함 — sudo 를 쓰지 않는다) 멈추고 사람에게 알린다.
 
    \`\`\`bash
-   ${RUNNER_LEGACY_UNINSTALL}   # 옛 이름이 dodok-runner 를 쥐고 있으면 설치가 EEXIST 로 실패한다. 없으면 아무 일도 안 한다
    ${RUNNER_NPM_INSTALL}
    dodok-runner --version
    \`\`\`

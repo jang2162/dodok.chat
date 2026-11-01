@@ -317,7 +317,7 @@ describe("러너 설치 안내", () => {
     // 설치 목록의 첫 단계다
     expect(first.parentElement?.firstElementChild).toBe(first);
     expect(first.parentElement?.tagName).toBe("OL");
-    expect(RUNNER_NPM_INSTALL_COMMAND).toBe("npm uninstall -g @dodok/claude-runner; npm i -g @dodok/runner");
+    expect(RUNNER_NPM_INSTALL_COMMAND).toBe("npm i -g @dodok/runner");
     expect(within(first).getByRole("button", { name: "설치 명령 복사" })).toBeInTheDocument();
     // 접힌 대안 — 펼치기 전에는 닫혀 있고, 받기 버튼·파일 설치 명령은 그 안에 있다
     const alt = first.querySelector("details");
@@ -325,9 +325,7 @@ describe("러너 설치 안내", () => {
     expect(alt?.open).toBe(false);
     expect(within(alt as HTMLElement).getByText("서버와 같은 빌드로 설치")).toBeInTheDocument();
     expect(within(alt as HTMLElement).getByRole("button", { name: "러너 받기" })).toBeInTheDocument();
-    expect(alt).toHaveTextContent(
-      "npm uninstall -g @dodok/claude-runner; npm install -g ./dodok-claude-runner-ffffffffffff.tgz",
-    );
+    expect(alt).toHaveTextContent("npm install -g ./dodok-claude-runner-ffffffffffff.tgz");
     await userEvent.click(within(alt as HTMLElement).getByText("서버와 같은 빌드로 설치"));
     expect(alt?.open).toBe(true);
   });
@@ -361,10 +359,8 @@ describe("러너 설치 안내", () => {
     expect(block).toHaveTextContent("dodok-runner");
     expect(block).toHaveTextContent("~/.dodok-runner/config.json");
     expect(block).toHaveTextContent(SHA_FILE);
-    // 옛 이름(@dodok/claude-runner)을 먼저 걷고 받은 파일 이름 그대로 설치한다 — 앞줄이 실패해도 설치가 이어지게 `;`
-    expect(block).toHaveTextContent(
-      "npm uninstall -g @dodok/claude-runner; npm install -g ./dodok-claude-runner-ffffffffffff.tgz",
-    );
+    // 받은 파일 이름 그대로 설치한다
+    expect(block).toHaveTextContent("npm install -g ./dodok-claude-runner-ffffffffffff.tgz");
     await userEvent.click(button);
     await waitFor(() => expect(clicks).toEqual(["dodok-claude-runner-ffffffffffff.tgz"]));
     expect(server.count("GET", "/api/v1/setup/runner.tgz")).toBe(1);

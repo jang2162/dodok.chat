@@ -271,7 +271,7 @@ describe("GET /llms.txt — 서버에 러너 tgz 가 없을 때", () => {
       const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
       const runner = section(body, "러너 머신");
       expect(runner).not.toContain("서버에 파일이 없습니다");
-      expect(runner).toContain("npm uninstall -g @dodok/claude-runner >/dev/null 2>&1");
+      expect(runner).not.toContain("npm uninstall");
       expect(runner).toContain("npm i -g @dodok/runner");
       expect(runner).toContain('"serverUrl": "https://chat.example.com"');
     } finally {
@@ -407,9 +407,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         '[ "$1 $2" = "plugins install" ] && { [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"; }',
         "exit 0",
       ]);
-      // uninstall 은 실패로 끝낸다 — 옛 패키지가 없거나 npm 이 거절해도 설치가 이어지는지 본다
       fake(bin, "npm", [
-        '[ "$1 $2" = "uninstall -g" ] && { printf "uninstall %s\\n" "$3" >> "$LOG"; exit 1; }',
         '[ "$1 $2" = "install -g" ] && [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"',
         '[ "$1 $2" = "i -g" ] && printf "i %s\\n" "$3" >> "$LOG"',
         "exit 0",
@@ -487,7 +485,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       }
     });
 
-    it("러너 2번 — 옛 이름을 걷고(실패해도 잇는다) npm 레지스트리의 @dodok/runner 를 설치한 뒤 판본을 찍는다", () => {
+    it("러너 2번 — npm 레지스트리의 @dodok/runner 를 설치한 뒤 판본을 찍는다", () => {
       const { bin } = setup();
       try {
         const block = blockWith(bashBlocks(runner), "@dodok/runner");
@@ -496,11 +494,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         fake(bin, "dodok-runner", ['printf "version %s\\n" "$1" >> "$LOG"']);
         const res = run(bin, block);
         expect(res.status, res.stderr).toBe(0);
-        expect(logLines()).toEqual([
-          "uninstall @dodok/claude-runner",
-          "i @dodok/runner",
-          "version --version",
-        ]);
+        expect(logLines()).toEqual(["i @dodok/runner", "version --version"]);
         expect(block).not.toContain("curl");
         expect(block).not.toContain("shasum");
         expect(readdirSync(tmp)).toEqual([]);

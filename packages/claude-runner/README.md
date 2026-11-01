@@ -15,12 +15,6 @@ dodok-runner --version
 
 npm 판은 서버와 다른 빌드일 수 있다 — 연결 페이지(설정 → 연결 → 「러너」)의 토큰 줄이 「서버와 다른 빌드입니다」로 알려도 npm 판이면 정상이다. 서버와 **같은 빌드**가 필요하면 그 페이지 「설치」의 접힌 「서버와 같은 빌드로 설치」에서 서버가 품은 tgz 를 받아 깐다.
 
-⚠ 옛 이름 `@dodok/claude-runner` 를 전역으로 깔아 두었으면 먼저 지운다 — 같은 명령 `dodok-runner` 를 둘이 함께 쥘 수 없다.
-
-```bash
-npm uninstall -g @dodok/claude-runner
-```
-
 ## 준비와 실행
 
 1. **러너 토큰** — dodok 앱의 연결 페이지(`/settings/connection`, owner)에서 「새 러너 토큰 발급」. 원문 `drn_…` 을 `~/.dodok-runner/token` 에 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(또는 env `DODOK_RUNNER_TOKEN`).

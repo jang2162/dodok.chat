@@ -2,7 +2,7 @@
 
 러너 CLI `dodok-runner`(`packages/claude-runner`)를 npm 패키지 `@dodok/runner` 로 올리는 절차다. 올리는 일은 GitHub Actions(`.github/workflows/runner-publish.yml`)가 하고, 사람은 판본을 올려 태그를 민다.
 
-연결 페이지(「러너」 블록 「설치」 1단계)와 `/llms.txt` 「러너 머신」 절은 이 npm 판을 기본으로 안내한다(`npm uninstall -g @dodok/claude-runner; npm i -g @dodok/runner`). 서버 이미지가 품고 연결 페이지의 접힌 「서버와 같은 빌드로 설치」가 내려 주는 tgz(`docs/guides/docker-deploy.md` 「러너 설치」 2 「서버와 같은 빌드가 필요할 때」)는 이 배포와 따로 돈다 — 그 tgz 는 서버와 **같은 커밋**의 빌드이고, npm 판은 태그를 민 커밋의 빌드다. 연결 페이지의 「서버와 같은 빌드입니다」는 번들 sha256 으로 견주므로, npm 판으로 붙은 러너는 서버와 커밋이 다르면 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」(경고가 아닌 안내)로 보인다.
+연결 페이지(「러너」 블록 「설치」 1단계)와 `/llms.txt` 「러너 머신」 절은 이 npm 판을 기본으로 안내한다(`npm i -g @dodok/runner`). 서버 이미지가 품고 연결 페이지의 접힌 「서버와 같은 빌드로 설치」가 내려 주는 tgz(`docs/guides/docker-deploy.md` 「러너 설치」 2 「서버와 같은 빌드가 필요할 때」)는 이 배포와 따로 돈다 — 그 tgz 는 서버와 **같은 커밋**의 빌드이고, npm 판은 태그를 민 커밋의 빌드다. 연결 페이지의 「서버와 같은 빌드입니다」는 번들 sha256 으로 견주므로, npm 판으로 붙은 러너는 서버와 커밋이 다르면 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」(경고가 아닌 안내)로 보인다.
 
 ## npm 쪽 사전 준비 (사람 몫, 한 번)
 

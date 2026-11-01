@@ -22,16 +22,10 @@ export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} clau
  * 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다 — 그 문서가 확인하는 법을 적는다
  */
 export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
-/**
- * npm 레지스트리 설치 명령 — 설치의 기본 길. 앞의 uninstall 은 아래 `runnerInstallCommand` 와 같은 까닭이다(옛 이름이 bin 을 쥐면 EEXIST)
- */
-export const RUNNER_NPM_INSTALL_COMMAND = "npm uninstall -g @dodok/claude-runner; npm i -g @dodok/runner";
-/**
- * 받은 tgz 설치 명령(「서버와 같은 빌드로 설치」). 앞의 uninstall 은 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 —
- * 남아 있으면 bin `dodok-runner` 가 겹쳐 설치가 EEXIST 로 실패한다. 없으면 그대로 지나가고(`;`), 옛 판이 남은 머신이 사라지면 걷는다
- */
-export const runnerInstallCommand = (fileName: string) =>
-  `npm uninstall -g @dodok/claude-runner; npm install -g ./${fileName}`;
+/** npm 레지스트리 설치 명령 — 설치의 기본 길 */
+export const RUNNER_NPM_INSTALL_COMMAND = "npm i -g @dodok/runner";
+/** 받은 tgz 설치 명령(「서버와 같은 빌드로 설치」) */
+export const runnerInstallCommand = (fileName: string) => `npm install -g ./${fileName}`;
 /** 러너 토큰 파일의 권장 자리 — 서버 RUNNER_TOKEN_FILE 과 같다 */
 const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
 
@@ -123,12 +117,7 @@ function InstallSteps({ status }: { status: SetupStatus }) {
       <h3 className="text-sm font-medium">설치</h3>
       <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
         <li className="flex flex-col gap-1.5">
-          <p>
-            러너를 돌릴 머신에 npm 으로 설치합니다. Claude Agent SDK 도 이때 npm 에서 받습니다. 앞줄은 옛
-            이름(
-            <code className="font-mono">@dodok/claude-runner</code>)의 설치본을 지웁니다 — 없으면 그대로
-            지나갑니다.
-          </p>
+          <p>러너를 돌릴 머신에 npm 으로 설치합니다. Claude Agent SDK 도 이때 npm 에서 받습니다.</p>
           <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
           <SameBuildInstall file={status.runners.runnerFile} />
         </li>
