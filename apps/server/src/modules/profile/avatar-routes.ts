@@ -15,6 +15,7 @@ import { parseParams } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
 import { setAgentAvatarAndNotify } from "../agents/actions";
 import { agentForRole, getAgent } from "../agents/service";
+import { agentActor } from "../connections/owner";
 import { broadcastPeople } from "../members/people";
 import { recordRateLimit } from "../ops/http-limits";
 import { KeyedLimiter } from "../ops/ratelimit";
@@ -60,9 +61,11 @@ export function registerAvatarRoutes(fastify: FastifyInstance, ctx: AvatarRouteC
       throw error;
     });
     const session = requireSession(ctx);
-    // 에이전트 수정(PATCH /agents/:id)과 같은 정책 — 세션 뒤, 본문을 받기 전에
-    const agentPolicy = async (request: FastifyRequest): Promise<void> =>
-      authorizeAgentPatch(sessionUser(request).role);
+    // 에이전트 수정(PATCH /agents/:id)과 같은 정책(그 에이전트 연결의 주인·admin 이상) — 세션 뒤, 본문을 받기 전에
+    const agentPolicy = async (request: FastifyRequest): Promise<void> => {
+      const { id } = parseParams(AgentParams, request.params);
+      authorizeAgentPatch(agentActor(ctx.db, ctx.workspaceId, id, sessionUser(request)));
+    };
     const limiter = new KeyedLimiter({ perMin: ctx.perMin, now: ctx.limitNow });
     // 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
     const uploadLimit = async (request: FastifyRequest): Promise<void> => {
@@ -114,7 +117,13 @@ export function registerAvatarRoutes(fastify: FastifyInstance, ctx: AvatarRouteC
         });
       }
       if (result.previous) await releaseAvatar(ctx.db, ctx.dir, result.previous);
-      return { agent: agentForRole(result.agent, me.role) };
+      return {
+        agent: agentForRole(
+          result.agent,
+          me.role,
+          agentActor(ctx.db, ctx.workspaceId, id, me).ownsConnection,
+        ),
+      };
     }
 
     scope.put("/api/v1/me/avatar", upload, async (request) =>

@@ -181,12 +181,12 @@ function toApiAgent(
 
 /**
  * 보는 사람의 역할에 맞춘 에이전트 — 러너 에이전트의 정의(Agent.runnerAgent — 권한 모드·도구·모델·프로젝트)와 기본 프롬프트
- * (basePrompt — 러너 에이전트의 「지시」 포함)는 admin 이상에게만 싣는다(러너 상태·프로그램 보기가 admin 이상이다 — 러너 일반화
- * 스펙 6장, 태스크 4 리뷰 L2 · 프로필 스펙 결정 3). admin 미만에게 Agent 를 내는 자리(GET /agents·GET /dms·제어 도구
- * list_agents·아바타 응답)가 이 함수를 지난다
+ * (basePrompt — 러너 에이전트의 「지시」 포함)는 admin 이상과 그 에이전트 연결의 주인에게만 싣는다(러너 상태·프로그램 보기가
+ * 그 러너의 주인·admin 이상이다 — 러너 일반화 스펙 6장, 태스크 4 리뷰 L2 · 프로필 스펙 결정 3 · 연결 탭 통합 스펙 5.3). admin 미만에게
+ * Agent 를 내는 자리(GET /agents·GET /dms·제어 도구 list_agents·아바타 응답)가 이 함수를 지난다 — 주인 여부는 부르는 쪽이 넘긴다
  */
-export function agentForRole(agent: Agent, role: TeamRole | undefined): Agent {
-  if (roleAtLeast(role, "admin")) return agent;
+export function agentForRole(agent: Agent, role: TeamRole | undefined, ownsConnection = false): Agent {
+  if (roleAtLeast(role, "admin") || (ownsConnection && roleAtLeast(role, "member"))) return agent;
   const shown = { ...agent };
   delete shown.runnerAgent;
   delete shown.basePrompt;

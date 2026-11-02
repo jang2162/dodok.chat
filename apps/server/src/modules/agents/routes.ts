@@ -12,11 +12,12 @@ import type { Auth } from "../../auth";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
+  authorizeAgentMoveGateway,
   authorizeAgentPatch,
   authorizeAgentRegister,
   authorizeRead,
 } from "../../auth/policies";
-import { requirePolicy, requireRole } from "../../auth/roles";
+import { requirePolicy, requireSession } from "../../auth/roles";
 import { sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -25,6 +26,15 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { syncPromptToGateway } from "../channels/prompt-sync";
 import { agentChannelGateways, listMembers } from "../channels/service";
+import {
+  agentActor,
+  agentConnectionOwner,
+  connectionOwners,
+  gatewayOwner,
+  isOwner,
+  ownerOfAgent,
+  projectOwner,
+} from "../connections/owner";
 import type { Orchestrator } from "../runs/orchestrator";
 import { assertWithinCeiling, type RunnerLiveApi } from "../runners/live";
 import {
@@ -101,47 +111,70 @@ const MoveGatewayBody = z.object({ gatewayId: Id });
 
 export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteContext): void {
   const policy = (p: Parameters<typeof requirePolicy>[1]) => ({ preHandler: requirePolicy(ctx, p) });
-  const admin = { preHandler: requireRole(ctx, "admin") };
-  const owner = { preHandler: requireRole(ctx, "owner") };
+  // 쓰기는 그 에이전트 연결의 주인·admin 이상(연결 탭 통합 스펙 5.2) — 연결을 읽어야 해서 핸들러 안에서 정책을 부른다
+  const session = { preHandler: requireSession(ctx) };
   // 다른 탭·사람의 화면이 에이전트·채널 멤버 목록을 다시 받게 — 본문이 없다(계획 판정 PS4)
   const changed = () => ctx.bus.emit("agents.changed", {});
 
   fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => {
     const user = sessionUser(request);
-    return { agents: listAgents(ctx.db, user.workspaceId).map((agent) => agentForRole(agent, user.role)) };
+    const owners = connectionOwners(ctx.db, user.workspaceId);
+    return {
+      agents: listAgents(ctx.db, user.workspaceId).map((agent) =>
+        agentForRole(agent, user.role, isOwner(ownerOfAgent(agent, owners), user.id)),
+      ),
+    };
   });
 
-  /** 등록(admin) — provider 로 갈래를 고르고 그 갈래의 스키마로 파싱한다(오류가 그 갈래의 필드를 가리키게) */
-  fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
-    const { workspaceId, id: userId } = sessionUser(request);
+  /**
+   * 등록 — provider 로 갈래를 고르고 그 갈래의 스키마로 파싱한다(오류가 그 갈래의 필드를 가리키게). 그 Gateway(OpenClaw)·그 프로젝트의
+   * 러너(러너 에이전트)의 주인·admin 이상
+   */
+  fastify.post("/api/v1/agents", session, async (request, reply) => {
+    const { workspaceId, id: userId, role } = sessionUser(request);
     const runner = (request.body as { provider?: unknown } | null)?.provider === "runner";
-    const agent = runner
-      ? createRunnerAgentAndNotify(ctx, parseBody(CreateRunnerAgentBody, request.body), workspaceId, userId)
-      : registerAgentAndNotify(ctx, parseBody(CreateOpenClawAgentBody, request.body), workspaceId, userId);
-    return reply.code(201).send({ agent });
+    if (runner) {
+      const body = parseBody(CreateRunnerAgentBody, request.body);
+      const owner = projectOwner(ctx.db, workspaceId, body.runnerProjectId);
+      authorizeAgentRegister({ role, ownsConnection: isOwner(owner, userId) });
+      return reply.code(201).send({ agent: createRunnerAgentAndNotify(ctx, body, workspaceId, userId) });
+    }
+    const body = parseBody(CreateOpenClawAgentBody, request.body);
+    const owner = body.gatewayId === undefined ? null : gatewayOwner(ctx.db, workspaceId, body.gatewayId);
+    authorizeAgentRegister({ role, ownsConnection: isOwner(owner, userId) });
+    return reply.code(201).send({ agent: registerAgentAndNotify(ctx, body, workspaceId, userId) });
   });
 
-  fastify.patch("/api/v1/agents/:id", policy(authorizeAgentPatch), async (request) => {
+  fastify.patch("/api/v1/agents/:id", session, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
+    const user = sessionUser(request);
     // 본문보다 먼저 404 — 옛 순서 그대로(patchAgentAndNotify 도 다시 본다)
-    const current = getAgent(ctx.db, id, sessionUser(request).workspaceId);
+    const current = getAgent(ctx.db, id, user.workspaceId);
     if (!current) throw apiError("NOT_FOUND", "agent not found");
+    authorizeAgentPatch(agentActor(ctx.db, user.workspaceId, id, user));
     const patch = parseBody(UpdateAgentBody, request.body);
     if (current.provider === "runner") assertNoFixedRunnerFields(request.body);
     assertRunnerPatchWithinCeiling(ctx, id, patch, sessionUser(request).workspaceId);
     return { agent: patchAgentAndNotify(ctx, id, patch, sessionUser(request).workspaceId) };
   });
 
-  /** 보관(admin) — 이미 보관했으면 200 그대로 */
-  fastify.delete("/api/v1/agents/:id", policy(authorizeAgentArchive), async (request) => {
+  /** 보관 — 그 에이전트 연결의 주인·admin 이상. 이미 보관했으면 200 그대로 */
+  fastify.delete("/api/v1/agents/:id", session, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
-    return { agent: await archiveAgentAndNotify(ctx, id, sessionUser(request).workspaceId) };
+    const user = sessionUser(request);
+    authorizeAgentArchive(agentActor(ctx.db, user.workspaceId, id, user));
+    return { agent: await archiveAgentAndNotify(ctx, id, user.workspaceId) };
   });
 
-  /** 되살리기(admin) — 같은 채널·세션으로 이어 답한다. 살아 있으면 200 그대로 */
-  fastify.post("/api/v1/agents/:id/restore", admin, async (request) => {
+  /**
+   * 되살리기 — 같은 채널·세션으로 이어 답한다. 살아 있으면 200 그대로. 그 에이전트 연결의 주인·admin 이상 — 연결이 지워졌으면 admin
+   * 이상(스펙 5.2)
+   */
+  fastify.post("/api/v1/agents/:id/restore", session, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
-    const { agent, autoRespondOffChannelIds } = restoreAgent(ctx.db, id, sessionUser(request).workspaceId);
+    const user = sessionUser(request);
+    authorizeAgentArchive(agentActor(ctx.db, user.workspaceId, id, user));
+    const { agent, autoRespondOffChannelIds } = restoreAgent(ctx.db, id, user.workspaceId);
     changed();
     for (const channelId of autoRespondOffChannelIds)
       ctx.bus.emit("channel.member.changed", { channelId, members: listMembers(ctx.db, channelId) });
@@ -149,13 +182,21 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   });
 
   /**
-   * OpenClaw 에이전트를 다른 Gateway 로(멀티 Gateway 스펙 「에이전트 API」 절, owner) — Gateway 가 지워져 연결이 빈 에이전트를 살리는 길이다.
+   * OpenClaw 에이전트를 다른 Gateway 로(멀티 Gateway 스펙 「에이전트 API」 절) — Gateway 가 지워져 연결이 빈 에이전트를 살리는 길이다.
+   * admin 이상, 또는 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것인 member(연결 탭 통합 스펙 5.2 — 연결이 빈 에이전트는 admin 이상).
    * 그 Gateway 가 이 에이전트의 채널에 새로 들어오면 그 채널의 프롬프트를 한 번 보낸다(계획 판정 PG10)
    */
-  fastify.put("/api/v1/agents/:id/gateway", owner, async (request) => {
+  fastify.put("/api/v1/agents/:id/gateway", session, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     const { gatewayId } = parseBody(MoveGatewayBody, request.body);
-    const workspaceId = sessionUser(request).workspaceId;
+    const { workspaceId, id: userId, role } = sessionUser(request);
+    // 원래 곳 — OpenClaw 에이전트면 그 Gateway 의 주인(연결이 비었으면 없음). 러너 에이전트는 서비스가 막는다
+    const from =
+      getAgent(ctx.db, id, workspaceId)?.provider === "openclaw"
+        ? agentConnectionOwner(ctx.db, workspaceId, id)
+        : null;
+    const ownsBoth = isOwner(from, userId) && isOwner(gatewayOwner(ctx.db, workspaceId, gatewayId), userId);
+    authorizeAgentMoveGateway(role, ownsBoth);
     const channelsBefore = agentChannelGateways(ctx.db, id);
     const { agent, previousGatewayId } = moveAgentGateway(ctx.db, { workspaceId, agentId: id, gatewayId });
     if (previousGatewayId !== gatewayId) {
@@ -166,8 +207,12 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     return { agent };
   });
 
-  /** 가져올 에이전트 목록(admin) — 검사·보관한 에이전트 표시는 discoverAgents */
-  fastify.get("/api/v1/agents/discover", policy(authorizeAgentDiscover), async (request) =>
-    discoverAgents(ctx, parseQuery(DiscoverAgentsQuery, request.query), sessionUser(request).workspaceId),
-  );
+  /** 가져올 에이전트 목록 — 그 Gateway 의 주인·admin 이상. 검사·보관한 에이전트 표시는 discoverAgents */
+  fastify.get("/api/v1/agents/discover", session, async (request) => {
+    const { workspaceId, id: userId, role } = sessionUser(request);
+    const query = parseQuery(DiscoverAgentsQuery, request.query);
+    const owner = query.gatewayId === undefined ? null : gatewayOwner(ctx.db, workspaceId, query.gatewayId);
+    authorizeAgentDiscover({ role, ownsConnection: isOwner(owner, userId) });
+    return discoverAgents(ctx, query, workspaceId);
+  });
 }

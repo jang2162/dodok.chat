@@ -340,7 +340,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "GET /runners",
-      min: "admin",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/runners" }),
     },
@@ -406,25 +406,25 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "POST /setup/runner-tokens",
-      min: "owner",
+      min: "member",
       ok: 201,
       request: () => ({ method: "POST", url: "/api/v1/setup/runner-tokens", payload: { label: `m${++n}` } }),
     },
     {
       name: "POST /setup/runner-tokens/:id/reissue",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "POST", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}/reissue` }),
     },
     {
       name: "DELETE /setup/runner-tokens/:id",
-      min: "owner",
+      min: "admin",
       ok: 204,
       request: () => ({ method: "DELETE", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}` }),
     },
     {
       name: "PUT /agents/:id/gateway",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({
         method: "PUT",
@@ -637,13 +637,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
     // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 「권한」 절)
     {
       name: "GET /gateways",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/gateways" }),
     },
     {
       name: "POST /gateways",
-      min: "owner",
+      min: "member",
       ok: 201,
       request: () => ({
         method: "POST",
@@ -653,7 +653,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "PATCH /gateways/:id",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({
         method: "PATCH",
@@ -663,19 +663,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "DELETE /gateways/:id",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "DELETE", url: `/api/v1/gateways/${newGateway()}` }),
     },
     {
       name: "GET /gateways/:id/bridge-tokens",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "GET", url: `/api/v1/gateways/${newGateway()}/bridge-tokens` }),
     },
     {
       name: "POST /gateways/:id/bridge-tokens",
-      min: "owner",
+      min: "admin",
       ok: 201,
       request: () => ({
         method: "POST",
@@ -685,7 +685,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "DELETE /gateways/:id/bridge-tokens/:tokenId",
-      min: "owner",
+      min: "admin",
       ok: 204,
       request: () => {
         const gatewayId = newGateway();

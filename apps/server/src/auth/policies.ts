@@ -119,34 +119,87 @@ export function authorizeSessionManagers(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
 }
 
-// ── 에이전트 ─────────────────────────────────────────────────
+// ── 연결(연결 탭 통합 스펙 5장) — Gateway·러너와 그 안의 프로젝트·에이전트 ─────────────────────
+// 프로젝트·에이전트는 따로 주인을 갖지 않고 자기가 속한 연결의 주인을 따른다(5.1). 주인 여부는 부르는 쪽이 읽어 넘긴다
+// (modules/connections/owner.ts) — 연결이 없으면(삭제된 Gateway·폐기 안 된 러너 없음) 주인도 없다(false)
 
-/** GET /agents/discover(admin 이상) */
-export function authorizeAgentDiscover(role: TeamRole | undefined): void {
-  requireAtLeast(role, "admin");
+/** 이 연결을 다루는 사람 — role 은 그 요청의 역할, ownsConnection 은 그 연결의 주인인가 */
+export type ConnectionActor = { role: TeamRole | undefined; ownsConnection: boolean };
+
+/** 그 연결의 주인(member 이상)이거나 admin 이상 */
+function requireConnection(actor: ConnectionActor): void {
+  requireAtLeast(actor.role, "member");
+  if (actor.ownsConnection || roleAtLeast(actor.role, "admin")) return;
+  throw apiError("FORBIDDEN", "그 연결의 주인·admin 이상만 쓸 수 있다");
 }
 
-/** POST /agents(admin 이상) */
-export function authorizeAgentRegister(role: TeamRole | undefined): void {
-  requireAtLeast(role, "admin");
+/** 두 연결 사이로 옮기기 — admin 이상, 또는 두 쪽이 다 자기 연결인 member(5.2 — 남의 Gateway·컴퓨터에 일을 떠넘기지 못하게) */
+function requireBothOwned(role: TeamRole | undefined, ownsBoth: boolean): void {
+  requireAtLeast(role, "member");
+  if (ownsBoth || roleAtLeast(role, "admin")) return;
+  throw apiError("FORBIDDEN", "두 연결의 주인·admin 이상만 옮길 수 있다");
 }
 
-/** PATCH /agents/:id(admin 이상) — 핸들·이름·아바타·메모(러너는 지시)·켜기/끄기 */
-export function authorizeAgentPatch(role: TeamRole | undefined): void {
-  requireAtLeast(role, "admin");
+/** POST /gateways·POST /setup/runner-tokens — 멤버면 누구나(member 의 Gateway 는 승인 대기로 만들어진다) */
+export function authorizeConnectionCreate(role: TeamRole | undefined): void {
+  requireAtLeast(role, "member");
 }
-
-/** DELETE /agents/:id — 보관(admin 이상) */
-export function authorizeAgentArchive(role: TeamRole | undefined): void {
-  requireAtLeast(role, "admin");
-}
-
-// ── 러너(러너 일반화 스펙 6장) — 토큰 발급·다시 발급·폐기는 연결 페이지(owner, requireOwner) ────────────────
 
 /**
- * 「러너」 탭(admin 이상) — GET /runners·/runners/:id/fs·/runners/:id/projects, POST /runners/:id/projects,
- * PATCH /runner-projects/:id, POST /runner-projects/:id/archive·/check·/move. 러너 에이전트 만들기·고치기는 POST·PATCH /agents 의 정책
+ * 연결 관리 — PATCH·DELETE /gateways/:id, 브리지 토큰 발급·폐기, 러너 토큰 다시 발급·폐기
  */
-export function authorizeRunnerManage(role: TeamRole | undefined): void {
+export function authorizeConnectionManage(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** 연결의 주소·토큰 목록·설치 정보 보기 — GET /gateways/:id/bridge-tokens, 걸러진 GET /setup/status·/setup/runner-tokens·/gateways */
+export function authorizeConnectionRead(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** POST /gateways/:id/approve(admin 이상) */
+export function authorizeGatewayApprove(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
+}
+
+// ── 에이전트 ─────────────────────────────────────────────────
+
+/** GET /agents/discover — 그 Gateway 의 주인·admin 이상 */
+export function authorizeAgentDiscover(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** POST /agents — 그 Gateway(OpenClaw)·그 프로젝트의 러너(러너 에이전트)의 주인·admin 이상 */
+export function authorizeAgentRegister(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** PATCH /agents/:id·아바타 — 핸들·이름·아바타·메모(러너는 지시)·켜기/끄기. 그 에이전트 연결의 주인·admin 이상 */
+export function authorizeAgentPatch(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** DELETE /agents/:id(보관)·POST /agents/:id/restore — 그 에이전트 연결의 주인·admin 이상. 연결이 없으면 admin 이상 */
+export function authorizeAgentArchive(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** PUT /agents/:id/gateway — admin 이상, 또는 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것 */
+export function authorizeAgentMoveGateway(role: TeamRole | undefined, ownsBoth: boolean): void {
+  requireBothOwned(role, ownsBoth);
+}
+
+// ── 러너(러너 일반화 스펙 6장) ─────────────────────────────────────
+
+/**
+ * 러너 관리 — GET /runners/:id/fs·/runners/:id/projects, POST /runners/:id/projects, PATCH /runner-projects/:id,
+ * POST /runner-projects/:id/archive·/check. 그 러너의 주인·admin 이상. 러너 에이전트 만들기·고치기는 POST·PATCH /agents 의 정책
+ */
+export function authorizeRunnerManage(actor: ConnectionActor): void {
+  requireConnection(actor);
+}
+
+/** POST /runner-projects/:id/move — admin 이상, 또는 두 러너가 다 자기 것 */
+export function authorizeProjectMove(role: TeamRole | undefined, ownsBoth: boolean): void {
+  requireBothOwned(role, ownsBoth);
 }

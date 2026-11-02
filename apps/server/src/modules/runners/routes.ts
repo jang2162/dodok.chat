@@ -1,6 +1,6 @@
 /**
- * 연결 페이지 러너 API(러너 스펙 5장) — 토큰 발급·다시 발급·폐기, owner 세션만(러너 tgz 만 owner 세션 또는 러너 토큰 — 설정 통합 스펙 「토큰으로 설치 파일
- * 받기」 절). 토큰 원문은 발급·다시 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
+ * 「연결」 탭 러너 API(러너 스펙 5장) — 토큰 발급은 멤버 누구나(발급한 사람이 그 러너의 주인), 다시 발급·폐기는 그 러너의 주인·admin 이상
+ * (연결 탭 통합 스펙 5.2 — 판정은 auth/policies.ts). 러너 tgz 만 owner 세션 또는 러너 토큰(설정 통합 스펙 「토큰으로 설치 파일 받기」 절). 토큰 원문은 발급·다시 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
  * 목록·상태·로그·wire 어디에도 원문은 없다(브리지 토큰 API — setup/routes.ts — 와 같은 규칙)
  */
 import {
@@ -13,12 +13,15 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
+import { authorizeConnectionCreate, authorizeConnectionManage } from "../../auth/policies";
+import { requireSession } from "../../auth/roles";
 import { requireOwner, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
+import { findRunner, isOwner } from "../connections/owner";
 import { requireOwnerOrToken } from "../setup/installer-auth";
 import { sendPackedFile } from "../setup/routes";
 import type { RunnerFile } from "./runner-file";
@@ -59,6 +62,14 @@ const runnerFileMissing = () => apiError("NOT_FOUND", "RUNNER_FILE_MISSING");
 
 export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteContext): void {
   const owner = { preHandler: requireOwner(ctx) };
+  const session = { preHandler: requireSession(ctx) };
+  /** 그 러너의 주인·admin 이상 — 없는 id 는 정책보다 먼저 404(다른 사람이 id 로 있는지 떠보지 못하게 판정 순서를 맞춘다) */
+  const manageable = (request: FastifyRequest, id: string) => {
+    const user = sessionUser(request);
+    const runner = findRunner(ctx.db, ctx.workspaceId, id);
+    if (!runner) throw apiError("NOT_FOUND", "runner token not found");
+    authorizeConnectionManage({ role: user.role, ownsConnection: isOwner(runner.owner, user.id) });
+  };
   const connectedTokenIds = (): ReadonlySet<string> => {
     const detail = ctx.registry.forProvider("runner")?.setupDetail();
     return new Set(detail?.provider === "runner" ? detail.runners.map((r) => r.tokenId) : []);
@@ -68,7 +79,8 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     tokens: listRunnerTokens(ctx.db, ctx.workspaceId, connectedTokenIds()),
   }));
 
-  fastify.post("/api/v1/setup/runner-tokens", owner, async (request, reply) => {
+  fastify.post("/api/v1/setup/runner-tokens", session, async (request, reply) => {
+    authorizeConnectionCreate(sessionUser(request).role);
     const { label } = parseBody(IssueRunnerTokenInput, request.body);
     const { token, record } = issueRunnerToken(ctx.db, ctx.workspaceId, label, sessionUser(request).id);
     ctx.logger.info({ tokenId: record.id, label: record.label }, "runner token issued");
@@ -82,8 +94,9 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     return reply.status(201).header("cache-control", "no-store").send(result);
   });
 
-  fastify.delete("/api/v1/setup/runner-tokens/:id", owner, async (request, reply) => {
+  fastify.delete("/api/v1/setup/runner-tokens/:id", session, async (request, reply) => {
     const { id } = parseParams(TokenParams, request.params);
+    manageable(request, id);
     if (!revokeRunnerToken(ctx.db, ctx.workspaceId, id))
       throw apiError("NOT_FOUND", "runner token not found");
     // 폐기는 이미 됐다 — 끊기가 실패해도 다음 핸드셰이크부터 거절된다. 끊긴 러너의 런은 어댑터가 ADAPTER_UNAVAILABLE 로 닫는다
@@ -106,8 +119,9 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
    * 다시 발급(러너 일반화 계획 판정 PR7) — 같은 러너(행)에 새 원문. 옛 원문의 연결은 폐기와 같은 길로 끊는다(러너는 종료 2, 열린 런은
    * 어댑터가 ADAPTER_UNAVAILABLE 로 닫는다). 프로젝트·에이전트는 그 러너에 남는다 — 머신에 새 토큰을 넣고 다시 띄우면 이어진다
    */
-  fastify.post("/api/v1/setup/runner-tokens/:id/reissue", owner, async (request, reply) => {
+  fastify.post("/api/v1/setup/runner-tokens/:id/reissue", session, async (request, reply) => {
     const { id } = parseParams(TokenParams, request.params);
+    manageable(request, id);
     const { token, record } = reissueRunnerToken(ctx.db, ctx.workspaceId, id);
     try {
       ctx.registry.forProvider("runner")?.revokeTokenSessions(id);
