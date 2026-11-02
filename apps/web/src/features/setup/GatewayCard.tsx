@@ -176,18 +176,22 @@ function BuildMatch({ gateway }: { gateway: GatewaySetup }) {
   if (gateway.pluginMatches === false)
     return (
       <p role="alert" className="text-sm font-medium text-destructive">
-        다른 빌드입니다 — 받아서 다시 설치하세요
+        다른 빌드입니다 — 새 토큰을 발급해 설치 명령을 다시 돌리세요
       </p>
     );
   // 모름 — 플러그인이 번들 sha 를 안 보냈거나(옛 빌드) 서버에 비교할 파일이 없다
   if (plugin.bundleSha256 === null)
-    return <p className="text-sm text-muted-foreground">빌드를 알 수 없습니다 — 새로 받아 설치하세요</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        빌드를 알 수 없습니다 — 새 토큰을 발급해 설치 명령을 다시 돌리세요
+      </p>
+    );
   return (
     <p className="text-sm text-muted-foreground">서버에 플러그인 파일이 없어 같은 빌드인지 알 수 없습니다</p>
   );
 }
 
-/** 이 Gateway 에 붙은 플러그인 — 접속 여부·버전·같은 빌드인가. 받기는 블록 머리(`PluginDownload`)에 한 번 */
+/** 이 Gateway 에 붙은 플러그인 — 접속 여부·버전·같은 빌드인가. 설치·업데이트는 이 카드의 「새 토큰 발급」이 주는 한 줄로 */
 function PluginStatus({ gateway }: { gateway: GatewaySetup }) {
   const plugin = gateway.bridge.plugin;
   return (
@@ -223,6 +227,7 @@ function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: Setu
         <IssueTokenDialog
           gatewayId={gateway.id}
           origin={publicOriginOf(status.bridge.publicUrl)}
+          pluginFileAvailable={status.pluginFile.available}
           triggerRef={issueButton}
         />
       </div>

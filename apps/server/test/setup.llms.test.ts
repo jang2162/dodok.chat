@@ -1,4 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
+import { PLUGIN_INSTALL_SCRIPT_PATH } from "@dodok/shared";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -21,7 +22,6 @@ import { gzipSync } from "node:zlib";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RunnerConfig } from "../../../packages/claude-runner/src/config";
-import { DodokAccountConfig } from "../../../packages/openclaw-plugin/src/config";
 import { llmsHandoffLine } from "../../web/src/features/setup/llms";
 import { runnerConfigExample } from "../../web/src/features/setup/runnerConfig";
 import type { App } from "../src/app";
@@ -159,21 +159,12 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
   });
 
   // 계획 판정 PS6 — 안내서의 명령·키가 플러그인·러너 코드와 어긋나면 노드의 AI 가 망가진 설정을 만든다
-  it("대조: 플러그인 계정 키는 플러그인 설정 스키마, 러너 설정은 RunnerConfig 를 그대로 지난다", async () => {
+  // 플러그인 계정 키 대조는 설치 스크립트가 맡는다(test/setup.plugin-install-script.test.ts — 플러그인 설정 스키마로 파싱)
+  it("대조: Gateway 절은 설치 스크립트를 가리키고, 러너 설정은 RunnerConfig 를 그대로 지난다", async () => {
     const body = (await get("10.0.0.2")).body;
     const gateway = section(body, "OpenClaw Gateway 호스트");
-    const [patch] = jsonBlocks(gateway) as Array<{
-      channels: { dodok: { accounts: { default: Record<string, unknown> } } };
-    }>;
-    const account = patch?.channels.dodok.accounts.default;
-    expect(Object.keys(account ?? {}).sort()).toEqual(["bridgeUrl", "token"]);
-    expect(DodokAccountConfig.safeParse(account).success).toBe(true);
-    expect(account?.bridgeUrl).toBe("wss://chat.example.com/bridge");
-    // 패치를 만드는 명령도 같은 키를 쓴다
-    expect(gateway).toContain(
-      `{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}`,
-    );
-    expect(gateway).toContain("https://chat.example.com/api/v1/setup/plugin.tgz");
+    expect(gateway).toContain(`https://chat.example.com${PLUGIN_INSTALL_SCRIPT_PATH}`);
+    expect(gateway).toContain("wss://chat.example.com/bridge");
 
     const runner = section(body, "러너 머신");
     const [config] = jsonBlocks(runner);
@@ -200,11 +191,12 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     }
   });
 
-  it("대조: 안내서가 부르는 설치 경로는 이 서버에 있다(owner 로 200)", async () => {
-    const { headers } = await login(app);
-    const path = "/api/v1/setup/plugin.tgz";
+  it("대조: 안내서가 부르는 설치 스크립트는 이 서버에 있다(로그인 없이 200)", async () => {
+    const path = PLUGIN_INSTALL_SCRIPT_PATH;
     expect((await get("10.0.0.3")).body).toContain(path);
-    expect((await app.fastify.inject({ method: "GET", url: path, headers })).statusCode, path).toBe(200);
+    const res = await app.fastify.inject({ method: "GET", url: path, remoteAddress: "10.0.0.5" });
+    expect(res.statusCode, path).toBe(200);
+    expect(res.body).toContain(sha(pluginTgz));
   });
 });
 
@@ -220,7 +212,7 @@ describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
     const gateway = section(body, "OpenClaw Gateway 호스트");
     expect(gateway).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
     expect(gateway).not.toContain("http://localhost:3000/settings/connection");
-    expect(gateway).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+    expect(gateway).toContain(`http://localhost:3000${PLUGIN_INSTALL_SCRIPT_PATH}`);
     expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
     // 러너 5번의 「러너 탭」 확인 주소도 사람이 여는 웹 페이지다
     expect(section(body, "러너 머신")).toContain("(http://localhost:5173/settings/runners)");
@@ -239,7 +231,7 @@ describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () =
     try {
       const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
       expect(body).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
-      expect(body).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+      expect(body).toContain(`http://localhost:3000${PLUGIN_INSTALL_SCRIPT_PATH}`);
     } finally {
       await app.close();
       rmSync(dir, { recursive: true, force: true });
@@ -257,6 +249,7 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
     });
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).toContain("서버에 파일이 없습니다");
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).not.toContain("plugin.tgz");
+    expect(section(noPlugin, "OpenClaw Gateway 호스트")).not.toContain(PLUGIN_INSTALL_SCRIPT_PATH);
     expect(section(noPlugin, "러너 머신")).not.toContain("서버에 파일이 없습니다");
     expect(section(noPlugin, "러너 머신")).toContain("npm i -g @dodok/runner");
   });
@@ -361,7 +354,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     }
   });
 
-  it("토큰은 어떤 외부 명령의 argv 에도 실리지 않는다 — 토큰을 받는 명령은 셸 내장(printf·[)이나 대입뿐", () => {
+  it("토큰은 어떤 외부 명령의 argv 에도 실리지 않는다 — 토큰을 받는 명령은 셸 내장(printf·[)이나 대입(명령 앞의 환경 대입 포함)뿐", () => {
     const TOKEN_REFS = ['"$(cat ~/.dodok-bridge-token)"', '"$(cat ~/.dodok-runner/token)"', '"$token"'];
     const consumers: string[] = [];
     for (const block of [...bashBlocks(gateway), ...bashBlocks(runner)]) {
@@ -374,13 +367,37 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         const words = command.trim().split(/\s+/);
         consumers.push(words[0] ?? "");
         const builtin = words[0] === "printf" || words[0] === "[";
-        const onlyAssignments = words.every((w) => /^[A-Za-z_]\w*=/.test(w));
-        expect(builtin || onlyAssignments, command.trim()).toBe(true);
+        // 명령 앞의 대입(FOO=… cmd)은 그 명령의 환경이지 argv 가 아니다 — 명령 이름 뒤의 FOO=… 은 인자라 안 된다
+        const assignment = (w: string) => /^[A-Za-z_]\w*=/.test(w);
+        const prefix = words.findIndex((w) => !assignment(w));
+        const tokenInPrefix = words.every(
+          (w, i) => !w.includes("TOKENREF") || (assignment(w) && (prefix === -1 || i < prefix)),
+        );
+        expect(builtin || tokenInPrefix, command.trim()).toBe(true);
       }
     }
-    // 플러그인 받기(printf)·패치 파일(printf)·빈 토큰 검사([)·토큰 읽기(대입) — 규칙이 빈 집합에 대해 참이 되지 않게.
+    // 설치 스크립트 실행(환경 대입) — 규칙이 빈 집합에 대해 참이 되지 않게. 받기·계정 설정은 스크립트가 표준 입력으로 한다.
     // 러너는 npm 레지스트리에서 설치하므로 토큰으로 받는 명령이 없다
-    expect(consumers.sort()).toEqual(["[", "printf", "printf", "token=TOKENREF"]);
+    expect(consumers.sort()).toEqual(["DODOK_BRIDGE_TOKEN=TOKENREF"]);
+  });
+
+  it("Gateway 절 — 설치 스크립트를 -o 로 받아 읽고 토큰은 환경 변수 DODOK_BRIDGE_TOKEN 으로 넘긴다, AI 가 직접 치는 설치·설정 줄은 없다", () => {
+    const steps = bashBlocks(gateway);
+    expect(blockWith(steps, PLUGIN_INSTALL_SCRIPT_PATH)).toContain(
+      `curl -fsS https://x.example${PLUGIN_INSTALL_SCRIPT_PATH} -o "\${dir:?}/install.sh"`,
+    );
+    expect(blockWith(steps, 'bash "')).toContain(
+      'DODOK_BRIDGE_TOKEN="$(cat ~/.dodok-bridge-token)" bash "${dir:?}/install.sh"',
+    );
+    // AI 가 치는 명령(bash 블록)에 옛 단계가 없다 — 설명 문장은 스크립트가 하는 일을 말한다
+    const typed = steps.join("\n");
+    for (const old of ["openclaw plugins install", "openclaw config patch", "plugin.tgz", "jq ", "shasum"])
+      expect(typed, old).not.toContain(old);
+    expect(gateway).not.toContain("plugin.tgz");
+    expect(gateway).toContain("DODOK_GATEWAY_SERVICE=0");
+    // 스크립트가 대조하는 값은 안내서에도 보인다
+    expect(gateway).toContain("a".repeat(64));
+    expect(gateway).toContain("b".repeat(64));
   });
 
   it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {
@@ -445,23 +462,59 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       });
     const logLines = () => readFileSync(log, "utf8").trim().split("\n");
 
-    it("Gateway 2·3번 — 같은 셸에서 이어 돌리면 받은 파일을 설치하고 임시 디렉터리가 남지 않는다", () => {
+    /** 가짜 curl 이 -o 자리에 쓰는 「설치 스크립트」 — 받은 토큰 환경 변수를 남기고 SCRIPT_EXIT 로 끝난다 */
+    const fakeInstaller = (bin: string) =>
+      fake(bin, "curl", [
+        'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done',
+        'printf \'printf "run %%s\\n" "$DODOK_BRIDGE_TOKEN" >> "$LOG"; exit "${SCRIPT_EXIT:-0}"\\n\' > "$out"',
+        'printf "curl %s\\n" "$out" >> "$LOG"',
+      ]);
+
+    it("Gateway 2·3번 — 같은 셸에서 이어 돌리면 받은 스크립트를 토큰 환경 변수로 돌리고, 토큰 파일·임시 디렉터리가 남지 않는다", () => {
       const { bin } = setup();
       try {
+        fakeInstaller(bin);
         const steps = bashBlocks(gateway);
         const res = run(
           bin,
-          [blockWith(steps, "setup/plugin.tgz"), blockWith(steps, "plugins install")].join("\n"),
+          [blockWith(steps, PLUGIN_INSTALL_SCRIPT_PATH), blockWith(steps, 'bash "')].join("\n"),
         );
         expect(res.status, res.stderr).toBe(0);
-        const [got = "", sum = "", install = ""] = logLines();
+        const [got = "", ran = ""] = logLines();
         const file = got.replace(/^curl /, "");
         expect(file.startsWith(`${tmp}/`), file).toBe(true);
-        expect(file.endsWith("/dodok-openclaw-plugin.tgz")).toBe(true);
-        expect(sum).toBe(`shasum ${file}`);
-        expect(install).toBe(`install ${file}`);
+        expect(file.endsWith("/install.sh")).toBe(true);
+        expect(ran).toBe("run dbt_secret");
         expect(readdirSync(tmp)).toEqual([]);
-        expect(gateway).not.toContain("/tmp/dodok-openclaw-plugin.tgz");
+        expect(existsSync(join(root, "home", ".dodok-bridge-token"))).toBe(false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("Gateway 3번 — 스크립트가 실패하면 그 끝 코드를 그대로 내고, 토큰 파일·임시 디렉터리는 지운다", () => {
+      const { bin } = setup();
+      try {
+        fakeInstaller(bin);
+        const steps = bashBlocks(gateway);
+        const res = spawnSync(
+          "bash",
+          ["-c", [blockWith(steps, PLUGIN_INSTALL_SCRIPT_PATH), blockWith(steps, 'bash "')].join("\n")],
+          {
+            encoding: "utf8",
+            env: {
+              HOME: join(root, "home"),
+              TMPDIR: tmp,
+              LOG: log,
+              SCRIPT_EXIT: "3",
+              PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+            },
+          },
+        );
+        expect(res.status, res.stderr).toBe(3);
+        expect(logLines()[1]).toBe("run dbt_secret");
+        expect(readdirSync(tmp)).toEqual([]);
+        expect(existsSync(join(root, "home", ".dodok-bridge-token"))).toBe(false);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -476,7 +529,7 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
             .filter((l) => !l.includes("mktemp -d"))
             .join("\n");
         const gSteps = bashBlocks(gateway);
-        for (const block of [blockWith(gSteps, "setup/plugin.tgz"), blockWith(gSteps, "plugins install")]) {
+        for (const block of [blockWith(gSteps, PLUGIN_INSTALL_SCRIPT_PATH), blockWith(gSteps, 'bash "')]) {
           // 앞선 셸이 만든 dir 을 잃은 것처럼 dir 없이 돌린다 — 받기(curl)·설치가 한 번도 실행되지 않아야 한다
           const res = run(bin, `unset dir\n${without(block)}`);
           expect(res.status, block).not.toBe(0);
@@ -516,48 +569,20 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     });
   });
 
-  describe("토큰·패치 파일 명령을 bash 로 그대로 돌린다", () => {
+  describe("토큰 파일 명령을 bash 로 그대로 돌린다", () => {
     let home: string;
     let tmp: string;
-    let bin: string;
-    let log: string;
-
-    beforeAll(() => {
-      bin = mkdtempSync(join(tmpdir(), "dodok-llms-bin-"));
-      // 가짜 openclaw — 패치 파일의 경로·권한·본문을 한 줄씩 남기고 OPENCLAW_EXIT 로 끝난다
-      writeFileSync(
-        join(bin, "openclaw"),
-        [
-          "#!/bin/sh",
-          '[ "$1 $2 $3" = "config patch --file" ] || exit 64',
-          'printf "%s\\n" "$4" > "$OPENCLAW_LOG"',
-          'ls -l "$4" | cut -c1-10 >> "$OPENCLAW_LOG"',
-          'cat "$4" >> "$OPENCLAW_LOG"',
-          'exit "${OPENCLAW_EXIT:-0}"',
-          "",
-        ].join("\n"),
-      );
-      chmodSync(join(bin, "openclaw"), 0o755);
-    });
-    afterAll(() => rmSync(bin, { recursive: true, force: true }));
 
     const fresh = () => {
       home = mkdtempSync(join(tmpdir(), "dodok-llms-home-"));
       tmp = join(home, "tmp");
       mkdirSync(tmp);
-      log = join(home, "openclaw.log");
     };
-    const run = (script: string, opts: { input?: string; exit?: number } = {}) =>
+    const run = (script: string, opts: { input?: string } = {}) =>
       spawnSync("bash", ["-c", script], {
         input: opts.input ?? "",
         encoding: "utf8",
-        env: {
-          HOME: home,
-          TMPDIR: tmp,
-          PATH: `${bin}:/usr/bin:/bin`,
-          OPENCLAW_LOG: log,
-          OPENCLAW_EXIT: String(opts.exit ?? 0),
-        },
+        env: { HOME: home, TMPDIR: tmp, PATH: "/usr/bin:/bin" },
       });
     const mode = (path: string) => statSync(path).mode & 0o777;
 
@@ -574,45 +599,6 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         expect(res.status, res.stderr).toBe(0);
         expect(readFileSync(join(home, file), "utf8"), file).toBe("dbt_new\n");
         expect(mode(join(home, file)), file).toBe(0o600);
-      }
-    });
-
-    it("Gateway 4번 — 패치 파일은 mktemp 자리의 0600 이고, 적용이 끝나면 패치·토큰 파일이 모두 사라진다", () => {
-      fresh();
-      writeFileSync(join(home, ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
-      const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"));
-      expect(res.status, res.stderr).toBe(0);
-      const [path = "", perm, patch = ""] = readFileSync(log, "utf8").split("\n");
-      expect(path.startsWith(`${tmp}/`), path).toBe(true); // mktemp 자리 — 고정 /tmp 경로가 아니다
-      expect(perm).toBe("-rw-------");
-      expect(JSON.parse(patch)).toEqual({
-        channels: {
-          dodok: { accounts: { default: { bridgeUrl: "wss://x.example/bridge", token: "dbt_secret" } } },
-        },
-      });
-      expect(existsSync(join(home, ".dodok-bridge-token"))).toBe(false);
-      expect(readdirSync(tmp)).toEqual([]);
-      expect(gateway).not.toContain("/tmp/dodok.patch");
-    });
-
-    it("Gateway 4번 — 적용이 실패해도 패치·토큰 파일을 지우고 실패 코드를 그대로 낸다", () => {
-      fresh();
-      writeFileSync(join(home, ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
-      const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"), { exit: 3 });
-      expect(res.status).toBe(3);
-      expect(existsSync(log)).toBe(true);
-      expect(existsSync(join(home, ".dodok-bridge-token"))).toBe(false);
-      expect(readdirSync(tmp)).toEqual([]);
-    });
-
-    it("Gateway 4번 — 토큰 파일이 없거나 비면 빈 토큰으로 패치하지 않는다", () => {
-      for (const token of [null, ""]) {
-        fresh();
-        if (token !== null) writeFileSync(join(home, ".dodok-bridge-token"), token, { mode: 0o600 });
-        const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"));
-        expect(res.status, String(token)).not.toBe(0);
-        expect(existsSync(log), String(token)).toBe(false);
-        expect(readdirSync(tmp)).toEqual([]);
       }
     });
   });

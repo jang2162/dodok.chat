@@ -19,7 +19,7 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { llmsHandoffLine } from "./llms";
 import { useIssueToken } from "./mutations";
-import { CopyBlock } from "./sections";
+import { CopyBlock, PACK_COMMAND, pluginInstallCommand } from "./sections";
 
 type Issued = { token: string; record: { label: string } };
 
@@ -238,15 +238,21 @@ export function IssuedToken<T extends Issued>({
   );
 }
 
-/** 브리지 토큰 발급(그 Gateway 에 묶인다) — 원문과 Gateway 호스트에 넣을 플러그인 설정 조각 */
+/**
+ * 브리지 토큰 발급(그 Gateway 에 묶인다) — 원문과 Gateway 호스트에 붙여 넣는 설치 명령 한 줄(설치 한 줄 명령 스펙 2026-11-02 「3. 웹」).
+ * 발급 응답의 `pluginConfig` 는 그리지 않는다 — 설치 스크립트가 계정 설정을 넣는다
+ */
 export function IssueTokenDialog({
   gatewayId,
   origin,
+  pluginFileAvailable,
   triggerRef,
 }: {
   gatewayId: string;
-  /** 서버의 공개 오리진(publicOriginOf) — 「AI 에게 맡기기」 줄의 안내서 주소 */
+  /** 서버의 공개 오리진(publicOriginOf) — 설치 명령과 「AI 에게 맡기기」 줄의 서버 주소 */
   origin: string;
+  /** 서버가 플러그인 tgz 를 품었는가(`status.pluginFile.available`) — 없으면 설치 명령 대신 만드는 명령 */
+  pluginFileAvailable: boolean;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
@@ -258,22 +264,31 @@ export function IssueTokenDialog({
       path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
       handoff={(issued) => llmsHandoffLine("bridge", origin, issued.token)}
-      config={(issued) => (
-        <div className="grid min-w-0 gap-1.5">
-          <p className="text-sm font-medium">플러그인 설정</p>
-          <p className="text-xs text-muted-foreground">
-            Gateway 호스트에서 이 조각을 파일로 저장해{" "}
-            <code className="font-mono">openclaw config patch --file</code> 로 적용하고 저장한 파일은
-            지우세요. 옛 토큰도 계속 통하므로 토큰 때문에 에이전트가 멈추지는 않습니다(설정을 바꾸는 순간 짧게
-            끊깁니다).
-          </p>
-          <CopyBlock
-            text={JSON.stringify(issued.pluginConfig, null, 2)}
-            label="설정 복사"
-            testId="plugin-config"
-          />
-        </div>
-      )}
+      config={(issued) =>
+        pluginFileAvailable ? (
+          <div className="grid min-w-0 gap-1.5">
+            <p className="text-sm font-medium">설치 명령</p>
+            <p className="text-xs text-muted-foreground">
+              Gateway 호스트에서 붙여 넣으면 플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시
+              올립니다. 맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는
+              남을 수 있습니다). 토큰이 들어 있으니 원문처럼 다루세요.
+            </p>
+            <CopyBlock
+              text={pluginInstallCommand(origin, issued.token)}
+              label="설치 명령 복사"
+              testId="plugin-install-command"
+            />
+          </div>
+        ) : (
+          <div className="grid min-w-0 gap-1.5">
+            <p className="text-sm font-medium">설치 명령</p>
+            <p className="text-xs text-muted-foreground">
+              서버에 플러그인 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하고 토큰을 다시 발급하세요.
+            </p>
+            <CopyBlock text={PACK_COMMAND} label="만드는 명령 복사" />
+          </div>
+        )
+      }
     />
   );
 }

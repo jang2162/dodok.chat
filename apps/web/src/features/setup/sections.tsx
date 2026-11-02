@@ -1,10 +1,8 @@
-import type { SetupStatus } from "@dodok/shared";
-import { CheckIcon, CopyIcon, DownloadIcon } from "lucide-react";
+import { PLUGIN_INSTALL_SCRIPT_PATH, type SetupStatus } from "@dodok/shared";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
-import { ApiRequestError } from "@/api/http";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { useDownloadPlugin } from "./mutations";
 
 /** 페어링 승인을 이만큼 넘게 기다리면 강조한다(스펙 「연결 페이지」) */
 export const PAIRING_STALE_MS = 5 * 60_000;
@@ -154,86 +152,28 @@ export function ServerSection({ status }: { status: SetupStatus }) {
 export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다";
 
 /**
- * Gateway 호스트에서 돌릴 설치 명령 — `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록이 정본이다.
- * 그 블록의 줄을 글자 그대로 옮기고 계정 설정 패치 줄만 뺀다(토큰은 「새 토큰 발급」이 따로 준다). 다른 것은 둘뿐이다 —
- * 받은 파일 이름, 번들 sha256 을 대조할 값(docker-deploy.md 는 [PC] 에서 잰 값, 여기는 서버가 품은 번들의 값 — 스펙 「결정」 번들 파일 sha256).
- * `connection.test.tsx` 가 그 블록과 대조하므로 문서가 바뀌면 테스트가 알린다
+ * Gateway 호스트에 붙여 넣는 설치·업데이트 한 줄(설치 한 줄 명령 스펙 2026-11-02 「3. 웹」) — 서버의 설치 스크립트가 받기·sha256 대조·
+ * Gateway 내리기·설치·계정 설정·올리기를 다 한다. 맨 앞 공백 한 칸은 우분투 기본 bash(`HISTCONTROL=ignoreboth`)가 이 줄을 히스토리에
+ * 남기지 않게 한다. 토큰은 bash 의 환경 변수로만 간다(curl·스크립트의 argv 에 없다). 서브셸의 `pipefail` 은 스크립트를 받지 못했을 때
+ * (404·429·연결 실패) 빈 입력을 받은 bash 의 0 대신 curl 의 실패 코드로 끝나게 한다 — 사람과 AI 가 끝 코드로 성패를 읽는다.
+ * `docs/guides/docker-deploy.md` 의 예시 줄과 `connection.test.tsx` 가 대조한다
  */
-export function installCommands(fileName: string, bundleSha256: string): string {
-  return [
-    "# Gateway 를 내린다(호스트가 Gateway 를 돌리는 방식대로)",
-    `openclaw plugins install /tmp/${fileName} --force --accept-capabilities`,
-    `openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]`,
-    `sha256sum ~/.openclaw/extensions/dodok/dist/index.js      # 기본 상태 디렉터리일 때. ${bundleSha256} 이어야 한다(macOS 는 shasum -a 256)`,
-    "# Gateway 를 올린다",
-  ].join("\n");
-}
-
-/** 받기 실패 문구 — 서버 메시지 앞머리로 가른다(api/http 의 봉투 message) */
-function downloadError(e: unknown): string {
-  if (e instanceof ApiRequestError) {
-    if (e.message === "PLUGIN_FILE_MISSING")
-      return `서버에서 플러그인 파일을 찾지 못했습니다 — 저장소에서 ${PACK_COMMAND} 로 만든 뒤 서버를 재시작하세요.`;
-    if (e.message.startsWith("PLUGIN_FILE_CHANGED"))
-      return "플러그인 파일이 그새 다시 빌드됐습니다 — 서버를 재시작하면 새 파일을 받습니다.";
-    return e.message;
-  }
-  return "플러그인 파일을 받지 못했습니다 — 서버 연결을 확인하세요.";
+export function pluginInstallCommand(origin: string, token: string): string {
+  return ` (set -o pipefail; curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='${token}' bash)`;
 }
 
 /**
- * 「플러그인 받기」 — OpenClaw 블록 머리에 한 번(멀티 Gateway 스펙 결정 10 — tgz 는 서버에 하나다). 받기(sha256)와 Gateway 호스트에서
- * 돌릴 설치 명령. 받기는 `pluginFile.available` 로만 그리고, 없으면 만드는 법을 보인다
+ * 「플러그인 설치」 — OpenClaw 블록 머리에 한 번(멀티 Gateway 스펙 결정 10 — tgz 는 서버에 하나다). 설치·업데이트는 Gateway 카드의
+ * 「새 토큰 발급」이 주는 한 줄로 하므로 여기는 그 안내만 둔다. 서버에 파일이 없으면 만드는 법을 보인다
  */
-export function PluginDownload({ status }: { status: SetupStatus }) {
-  const file = status.pluginFile;
-  const download = useDownloadPlugin();
-  const fileName = file.available ? `dodok-openclaw-plugin-${file.sha256.slice(0, 12)}.tgz` : "";
+export function PluginInstall({ status }: { status: SetupStatus }) {
   return (
-    <Section title="플러그인 받기" level={3} bare>
-      {file.available ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col items-start gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={download.isPending}
-              onClick={() => download.mutate(fileName)}
-            >
-              <DownloadIcon />
-              플러그인 받기
-            </Button>
-            <dl className="flex flex-col gap-1 text-xs">
-              <Field name="파일 sha256">
-                <code className="font-mono">{file.sha256}</code>
-              </Field>
-              <Field name="번들 sha256">
-                <code className="font-mono">{file.bundleSha256}</code>
-              </Field>
-              <Field name="크기">{file.bytes.toLocaleString("ko-KR")} 바이트</Field>
-            </dl>
-            <div aria-live="polite">
-              {download.isError && (
-                <p role="alert" className="text-sm text-destructive">
-                  {downloadError(download.error)}
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <p className="text-sm text-muted-foreground">
-              받은 파일을 Gateway 호스트의 <code className="font-mono">/tmp</code> 로 옮긴 뒤 그 호스트에서
-              돌립니다. 떠 있는 Gateway 에 설치하면 파일이 바뀌지 않을 수 있어 먼저 내립니다. Gateway 가
-              여럿이면 호스트마다 같은 파일을 설치합니다.
-            </p>
-            <CopyBlock
-              text={installCommands(fileName, file.bundleSha256)}
-              label="설치 명령 복사"
-              testId="plugin-install-commands"
-            />
-          </div>
-        </div>
+    <Section title="플러그인 설치" level={3} bare>
+      {status.pluginFile.available ? (
+        <p className="text-sm text-muted-foreground">
+          설치·업데이트는 각 Gateway 카드의 「새 토큰 발급」이 주는 명령 한 줄로 합니다. Gateway 가 여럿이면
+          호스트마다 그 카드에서 발급해 돌립니다.
+        </p>
       ) : (
         <div className="flex flex-col gap-1.5">
           <p className="text-sm text-muted-foreground">

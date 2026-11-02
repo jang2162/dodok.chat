@@ -263,7 +263,7 @@ describe("연결 화면", () => {
     renderRoute("/settings/connection");
     const page = await screen.findByTestId("page-connection");
     await within(page).findByRole("listitem", { name: "env" });
-    await within(page).findByRole("button", { name: "플러그인 받기" });
+    await within(page).findByRole("region", { name: "플러그인 설치" });
     expect(unnamed()).toEqual(NONE);
 
     await userEvent.click(within(page).getByRole("button", { name: "새 토큰 발급" }));
@@ -273,6 +273,7 @@ describe("연결 화면", () => {
     await userEvent.click(within(issue).getByRole("button", { name: "발급" }));
     const issued = await screen.findByRole("dialog", { name: /토큰을 발급했습니다/ });
     await within(issued).findByRole("button", { name: "토큰 복사" });
+    within(issued).getByRole("button", { name: "설치 명령 복사" });
     expect(unnamed(issued)).toEqual(NONE);
     await userEvent.click(within(issued).getByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

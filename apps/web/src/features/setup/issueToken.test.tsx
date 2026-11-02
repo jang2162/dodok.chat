@@ -1,6 +1,10 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { App } from "@/app/App";
@@ -12,9 +16,12 @@ import {
   RAW_TOKEN,
   cacheDump,
   renderConnection,
+  statusOf,
   stubSetupServer,
   tokenOf,
 } from "../../../test/setupServer";
+import { publicOriginOf } from "./llms";
+import { PACK_COMMAND, pluginInstallCommand } from "./sections";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,8 +41,35 @@ async function issue(label: string) {
   return dialog;
 }
 
+describe("설치 한 줄의 끝 코드", () => {
+  // 가짜 curl 로 한 줄을 bash 에서 그대로 돌린다 — 받기 실패가 빈 입력을 받은 bash 의 0 으로 덮이지 않아야 한다(사람과 AI 가 끝 코드로 성패를 읽는다)
+  function runWithCurl(curlBody: string) {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-install-cmd-"));
+    try {
+      writeFileSync(join(dir, "curl"), `#!/bin/sh\n${curlBody}\n`, { mode: 0o755 });
+      return spawnSync("/bin/bash", ["-c", pluginInstallCommand("https://chat.example.com", RAW_TOKEN)], {
+        encoding: "utf8",
+        env: { PATH: `${dir}:/usr/bin:/bin` },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("스크립트를 받지 못하면(curl 실패) curl 의 코드로 끝난다", () => {
+    const res = runWithCurl('echo "curl: (22) 404" >&2; exit 22');
+    expect(res.status, res.stderr).toBe(22);
+  });
+
+  it("받으면 스크립트가 토큰을 환경 변수로 받고 그 끝 코드로 끝난다", () => {
+    const ok = runWithCurl(`echo '[ "$DODOK_BRIDGE_TOKEN" = "${RAW_TOKEN}" ] || exit 9'`);
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(runWithCurl("echo 'exit 3'").status).toBe(3);
+  });
+});
+
 describe("새 토큰 발급", () => {
-  it("라벨 → 원문과 설정 조각을 한 번 보인다, 복사 버튼으로 복사한다", async () => {
+  it("라벨 → 원문과 설치 명령 한 줄을 한 번 보인다, 복사 버튼으로 복사한다", async () => {
     const server = stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
@@ -43,30 +77,53 @@ describe("새 토큰 발급", () => {
     const dialog = await issue("  게이트웨이 새 토큰 ");
     expect(await within(dialog).findByText(RAW_TOKEN)).toBeInTheDocument();
     expect(server.calls.find((c) => c.method === "POST")?.body).toEqual({ label: "게이트웨이 새 토큰" });
-    const config = within(dialog).getByTestId("plugin-config").textContent ?? "";
-    expect(JSON.parse(config)).toEqual({
-      channels: { dodok: { accounts: { default: { bridgeUrl: PUBLIC_URL, token: RAW_TOKEN } } } },
-    });
+    // Gateway 호스트에 붙여 넣는 한 줄 — 맨 앞 공백(bash 히스토리 피하기)·공개 오리진·토큰을 품는다
+    const command = within(dialog).getByTestId("plugin-install-command").textContent ?? "";
+    expect(command).toBe(pluginInstallCommand(publicOriginOf(PUBLIC_URL), RAW_TOKEN));
+    expect(
+      command.startsWith(
+        " (set -o pipefail; curl -fsS https://chat.example.com/api/v1/setup/plugin-install.sh | ",
+      ),
+    ).toBe(true);
+    expect(command.endsWith(`DODOK_BRIDGE_TOKEN='${RAW_TOKEN}' bash)`)).toBe(true);
+    expect(command).not.toContain("\n");
+    // 설정 조각(JSON)은 설치 명령이 대신한다
+    expect(within(dialog).queryByTestId("plugin-config")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "설정 복사" })).not.toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "토큰 복사" }));
     expect(writeText).toHaveBeenLastCalledWith(RAW_TOKEN);
-    await userEvent.click(within(dialog).getByRole("button", { name: "설정 복사" }));
-    expect(JSON.parse(writeText.mock.lastCall?.[0] ?? "")).toEqual(JSON.parse(config));
+    await userEvent.click(within(dialog).getByRole("button", { name: "설치 명령 복사" }));
+    expect(writeText).toHaveBeenLastCalledWith(command);
   });
 
-  it("좁은 대화상자에서도 원문을 숨기지 않는다 — 토큰은 줄을 바꾸고, 설정 조각은 제 상자 안에서 가로로 스크롤한다", async () => {
+  it("좁은 대화상자에서도 원문을 숨기지 않는다 — 토큰은 줄을 바꾸고, 설치 명령은 제 상자 안에서 가로로 스크롤한다", async () => {
     // jsdom 은 레이아웃이 없어 구조만 본다 — 390px 실측은 s2-c1 보고
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
     renderConnection();
     const dialog = await issue("좁은 화면");
     const token = await within(dialog).findByText(RAW_TOKEN);
-    const config = within(dialog).getByTestId("plugin-config");
+    const config = within(dialog).getByTestId("plugin-install-command");
     // grid 트랙 안의 블록이 원문 폭만큼 트랙을 넓히지 않는다(min-width:auto 면 대화상자 밖으로 삐져나간다)
     for (const pre of [token, config]) expect(pre.parentElement).toHaveClass("min-w-0");
     expect(token).toHaveClass("whitespace-pre-wrap", "break-all");
     expect(token).not.toHaveClass("overflow-x-auto");
-    // 설정 조각은 줄 구조(들여쓰기)를 지키고 넘치는 폭은 제 상자 안에서 스크롤한다
+    // 설치 명령은 한 줄을 지키고(줄을 바꾸면 붙여 넣은 셸이 두 명령으로 읽는다) 넘치는 폭은 제 상자 안에서 스크롤한다
     expect(config).toHaveClass("whitespace-pre", "overflow-x-auto");
+  });
+
+  it("서버에 플러그인 파일이 없으면 설치 명령 대신 만드는 명령 — 원문·「AI 에게 맡기기」는 그대로", async () => {
+    stubSetupServer({
+      status: statusOf({ pluginFile: { available: false }, pluginMatches: null }),
+      tokens: [tokenOf(1, { connected: true })],
+    });
+    renderConnection();
+    const dialog = await issue("파일 없음");
+    expect(await within(dialog).findByText(RAW_TOKEN)).toBeInTheDocument();
+    expect(within(dialog).getByTestId("llms-handoff")).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("plugin-install-command")).not.toBeInTheDocument();
+    expect(within(dialog).getByText(PACK_COMMAND)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("서버에 플러그인 파일이 없습니다");
   });
 
   it("「복사했습니다」 전에는 Esc 로도 닫히지 않는다 — 누르면 닫히고, 원문은 DOM·쿼리·뮤테이션 캐시 어디에도 없다", async () => {

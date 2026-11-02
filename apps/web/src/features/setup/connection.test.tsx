@@ -5,7 +5,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
-import { ME, json } from "../../../test/shellApi";
+import { ME } from "../../../test/shellApi";
 import {
   PUBLIC_URL,
   SHA_A,
@@ -18,7 +18,7 @@ import {
   tokenId,
   tokenOf,
 } from "../../../test/setupServer";
-import { installCommands } from "./sections";
+import { pluginInstallCommand } from "./sections";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -179,7 +179,7 @@ describe("서버·Gateway", () => {
 });
 
 describe("플러그인", () => {
-  it("접속·SDK·Gateway 버전, 같은 빌드, 받기(sha256)와 설치 명령", async () => {
+  it("접속·SDK·Gateway 버전, 같은 빌드 — 블록 머리는 받기 대신 「새 토큰 발급」의 설치 명령을 가리킨다", async () => {
     stubSetupServer();
     renderConnection();
     const pl = await region("플러그인");
@@ -187,52 +187,37 @@ describe("플러그인", () => {
     expect(pl).toHaveTextContent("접속됨");
     expect(pl).toHaveTextContent("2026.9.4");
     expect(pl).toHaveTextContent("2026.9.5");
-    // 받기·설치 명령은 Gateway 카드가 아니라 OpenClaw 블록 머리에 한 번(멀티 Gateway 스펙 결정 10)
     expect(pl).not.toHaveTextContent(SHA_FILE);
-    const head = await region("플러그인 받기");
-    expect(head).toHaveTextContent(SHA_FILE);
-    expect(within(head).getByRole("button", { name: "플러그인 받기" })).toBeInTheDocument();
-    // 받은 파일 이름·번들 sha256(파일 sha 가 아니다)을 넣은 docker-deploy.md [B] 줄들 — 대조는 아래 테스트
-    const cmd = within(head).getByTestId("plugin-install-commands").textContent ?? "";
-    expect(cmd).toBe(installCommands("dodok-openclaw-plugin-ffffffffffff.tgz", SHA_A));
-    expect(cmd).toContain("openclaw plugins install /tmp/dodok-openclaw-plugin-ffffffffffff.tgz ");
-    expect(cmd).not.toContain(SHA_FILE);
-    // 명령은 줄 구조를 지키고 넘치는 폭은 제 상자 안에서 스크롤한다(줄을 바꾸면 한 명령이 두 줄로 읽힌다)
-    const block = within(head).getByTestId("plugin-install-commands");
-    expect(block).toHaveClass("whitespace-pre", "overflow-x-auto");
-    expect(block.parentElement).toHaveClass("min-w-0");
+    const head = await region("플러그인 설치");
+    // 받기 버튼·sha·크기·/tmp 설치 명령은 없다 — 설치는 카드의 「새 토큰 발급」이 주는 한 줄로 한다
+    expect(within(head).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
+    expect(head).not.toHaveTextContent(SHA_FILE);
+    expect(head).not.toHaveTextContent(SHA_A);
+    expect(within(head).queryByTestId("plugin-install-commands")).not.toBeInTheDocument();
+    expect(head).toHaveTextContent(/각 Gateway 카드의 「새 토큰 발급」이 주는 명령 한 줄/);
+    expect(screen.queryByRole("region", { name: "플러그인 받기" })).not.toBeInTheDocument();
   });
 
-  it("설치 명령은 docker-deploy.md [B] 블록과 글자 그대로 같다 — 계정 설정 패치 줄만 빼고, 파일 이름과 대조할 sha 만 다르다", () => {
+  it("docker-deploy.md 의 설치 한 줄은 대화상자의 한 줄과 같은 꼴이다 — 오리진·토큰 자리만 다르다", () => {
     const doc = readFileSync(
       resolve(import.meta.dirname, "../../../../../docs/guides/docker-deploy.md"),
       "utf8",
     );
-    const from = doc.indexOf("[B] — **Gateway 를 먼저 내리고**");
-    expect(from).toBeGreaterThan(-1);
-    const block = /```bash\n([\s\S]*?)```/.exec(doc.slice(from))?.[1] ?? "";
-    const docLines = block.trimEnd().split("\n");
-    const patch = docLines.filter((l) => l.startsWith("openclaw config patch "));
-    expect(patch).toHaveLength(1);
-    const expected = docLines.filter((l) => !patch.includes(l));
-    // docker-deploy.md 가 옮기는 파일 이름을 넣으면 설치 줄까지 글자 그대로 같아야 한다
-    const web = installCommands("dodok-openclaw-plugin-0.0.0.tgz", SHA_A).split("\n");
-    expect(web).toHaveLength(expected.length);
-    web.forEach((line, i) => {
-      const want = expected[i] ?? "";
-      if (!want.startsWith("sha256sum ")) return expect(line).toBe(want);
-      // 명령과 「기본 상태 디렉터리일 때」 단서는 그대로, 대조할 값만 [PC] 에서 잰 값 대신 서버가 품은 번들의 sha
-      const [command, comment] = want.split("# ");
-      expect(comment?.startsWith("기본 상태 디렉터리일 때. ")).toBe(true);
-      expect(line.startsWith(`${command}# 기본 상태 디렉터리일 때. ${SHA_A} 이어야 한다`)).toBe(true);
-    });
+    const want = pluginInstallCommand("https://<도메인>", "<브리지 토큰>");
+    // 코드 블록 안의 줄 그대로(맨 앞 공백 포함) — 문서를 따라 치는 사람이 대화상자와 같은 줄을 본다
+    const blocks = [...doc.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1] ?? "");
+    const lines = blocks.flatMap((b) => b.split("\n")).filter((l) => l.includes("/plugin-install.sh |"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).toBe(want);
   });
 
-  it("다른 빌드면 「받아서 다시 설치」 경고", async () => {
+  it("다른 빌드면 「새 토큰을 발급해 설치 명령을 다시 돌리세요」 경고", async () => {
     stubSetupServer({ status: statusOf({ plugin: { bundleSha256: SHA_B }, pluginMatches: false }) });
     renderConnection();
     const pl = await region("플러그인");
-    expect(await within(pl).findByText(/다른 빌드입니다 — 받아서 다시 설치하세요/)).toBeInTheDocument();
+    expect(
+      await within(pl).findByText(/다른 빌드입니다 — 새 토큰을 발급해 설치 명령을 다시 돌리세요/),
+    ).toBeInTheDocument();
     expect(within(pl).queryByText("서버와 같은 빌드입니다")).not.toBeInTheDocument();
   });
 
@@ -240,7 +225,9 @@ describe("플러그인", () => {
     stubSetupServer({ status: statusOf({ plugin: { bundleSha256: null }, pluginMatches: null }) });
     renderConnection();
     const pl = await region("플러그인");
-    expect(await within(pl).findByText(/빌드를 알 수 없습니다 — 새로 받아 설치하세요/)).toBeInTheDocument();
+    expect(
+      await within(pl).findByText(/빌드를 알 수 없습니다 — 새 토큰을 발급해 설치 명령을 다시 돌리세요/),
+    ).toBeInTheDocument();
     expect(within(pl).queryByText(/다른 빌드/)).not.toBeInTheDocument();
     expect(within(pl).queryByText("서버와 같은 빌드입니다")).not.toBeInTheDocument();
   });
@@ -254,57 +241,17 @@ describe("플러그인", () => {
     expect(within(pl).queryByText(/같은 빌드/)).not.toBeInTheDocument();
   });
 
-  it("서버에 플러그인 파일이 없으면 받기 대신 만드는 법", async () => {
+  it("서버에 플러그인 파일이 없으면 머리에 만드는 법", async () => {
     stubSetupServer({ status: statusOf({ pluginFile: { available: false }, pluginMatches: null }) });
     renderConnection();
-    const head = await region("플러그인 받기");
+    const head = await region("플러그인 설치");
     expect(
       await within(head).findByText("pnpm -F @dodok/openclaw-plugin run pack:plugin"),
     ).toBeInTheDocument();
-    expect(within(head).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
+    expect(head).not.toHaveTextContent(/「새 토큰 발급」이 주는 명령/);
     const pl = await region("플러그인");
-    // 번들 sha 를 보낸 플러그인이어도 서버 쪽을 모르면 「새로 받아」라고 하지 않는다
-    expect(within(pl).queryByText(/새로 받아 설치하세요/)).not.toBeInTheDocument();
-  });
-
-  it("받기는 파일을 내려받는다 — 서버가 준 이름으로", async () => {
-    const server = stubSetupServer();
-    const createObjectURL = vi.fn(() => "blob:plugin");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL }));
-    const clicks: string[] = [];
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
-      clicks.push(`${this.download}|${this.getAttribute("href")}`);
-    });
-    renderConnection();
-    const head = await region("플러그인 받기");
-    await userEvent.click(await within(head).findByRole("button", { name: "플러그인 받기" }));
-    await waitFor(() => expect(clicks).toEqual(["dodok-openclaw-plugin-ffffffffffff.tgz|blob:plugin"]));
-    expect(server.count("GET", "/api/v1/setup/plugin.tgz")).toBe(1);
-    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:plugin"));
-  });
-
-  it("받기 404 PLUGIN_FILE_MISSING 이면 만드는 법을, 409 PLUGIN_FILE_CHANGED 면 재시작을 안내한다", async () => {
-    let reply = () => json(404, { code: "NOT_FOUND", message: "PLUGIN_FILE_MISSING" });
-    stubSetupServer({ plugin: () => reply() });
-    renderConnection();
-    const pl = await region("플러그인 받기");
-    const button = await within(pl).findByRole("button", { name: "플러그인 받기" });
-    await userEvent.click(button);
-    expect(await within(pl).findByRole("alert")).toHaveTextContent(
-      /서버에서 플러그인 파일을 찾지 못했습니다/,
-    );
-    expect(within(pl).getByRole("alert")).toHaveTextContent("pack:plugin");
-
-    reply = () =>
-      json(409, {
-        code: "CONFLICT",
-        message: "PLUGIN_FILE_CHANGED: restart the server to serve the rebuilt plugin",
-      });
-    await userEvent.click(button);
-    await waitFor(() =>
-      expect(within(pl).getByRole("alert")).toHaveTextContent(/다시 빌드됐습니다 — 서버를 재시작/),
-    );
+    // 번들 sha 를 보낸 플러그인이어도 서버 쪽을 모르면 「다시 돌리세요」라고 하지 않는다
+    expect(within(pl).queryByText(/설치 명령을 다시 돌리세요/)).not.toBeInTheDocument();
   });
 });
 
