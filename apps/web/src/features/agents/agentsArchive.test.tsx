@@ -228,8 +228,15 @@ describe("가져오기의 삭제된 항목", () => {
     );
     expect(server.count("POST", `/api/v1/agents/${gone.id}/restore`)).toBe(1);
     expect(server.count("GET", discoverUrl())).toBe(1);
-    // 대화상자가 열려 있어 뒤 페이지는 접근성 트리에서 가려진다
-    expect(screen.getByRole("switch", { name: "@fin 사용", hidden: true })).toBeInTheDocument();
+    // 대화상자가 열려 있어 뒤 페이지는 접근성 트리에서 가려진다 — 되살린 에이전트가 이 Gateway 의 「에이전트 N」에 돌아온다
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("gateway-detail")).getByRole("link", {
+          name: /Fin 에이전트/,
+          hidden: true,
+        }),
+      ).toBeInTheDocument(),
+    );
   });
 });
 

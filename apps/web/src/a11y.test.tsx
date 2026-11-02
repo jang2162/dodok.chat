@@ -10,9 +10,9 @@ import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../test/domStubs";
 import { AGENT, CH, msg, runState, textDelta, uid } from "../test/fixtures";
 import { stubScrollLayout } from "../test/scrollLayout";
-import { renderRoute } from "../test/shellApi";
+import { ME, TEST_GATEWAY, renderRoute } from "../test/shellApi";
 import { DEV_AGENT, FIN_AGENT, agentOf, memberOf, stubSettingsServer } from "../test/settingsServer";
-import { statusOf, stubSetupServer, tokenOf } from "../test/setupServer";
+import { gatewayDetailPath, statusOf, stubSetupServer, tokenOf } from "../test/setupServer";
 
 /**
  * 스펙 7.3 접근성 — 화면마다 (a) 이름 없는 버튼·링크·입력·그림이 없다(아이콘만 있는 버튼 포함),
@@ -229,9 +229,11 @@ describe("채널 설정 패널", () => {
   });
 });
 
-describe("에이전트 화면", () => {
-  it("목록·스위치·편집 버튼, 「Gateway 에서 가져오기」 대화상자(제목·닫기)까지 이름이 있다", async () => {
+describe("연결 탭 — 트리·에이전트 상세·Gateway 상세", () => {
+  it("트리 줄·스위치·편집 버튼, 「에이전트 가져오기」 대화상자(제목·닫기)까지 이름이 있다", async () => {
+    // admin — Gateway 상세가 wire 목록으로 그려져(setup API 는 owner 만) 「에이전트 가져오기」가 있다
     stubSettingsServer({
+      me: { ...ME, role: "admin" },
       override: ({ method, url }) =>
         method === "GET" && url.startsWith("/api/v1/agents/discover?provider=openclaw&gatewayId=")
           ? new Response(JSON.stringify({ agents: [{ providerAgentId: "ops", name: "Ops" }] }), {
@@ -239,12 +241,15 @@ describe("에이전트 화면", () => {
             })
           : undefined,
     });
-    renderRoute("/settings/agents");
-    const page = await screen.findByTestId("page-agents");
+    const { router } = renderRoute(`/settings/connection/agent/${DEV_AGENT.id}`);
+    const page = await screen.findByTestId("page-connection");
     await within(page).findByRole("switch", { name: "@dev 사용" });
+    await within(page).findByRole("navigation", { name: "연결 목록" });
     expect(unnamed()).toEqual(NONE);
 
-    await userEvent.click(within(page).getByRole("button", { name: "에이전트 가져오기" }));
+    // 에이전트 가져오기는 Gateway 상세에
+    await act(() => router.navigate({ to: `/settings/connection/gateway/${TEST_GATEWAY.id}` }));
+    await userEvent.click(await within(page).findByRole("button", { name: "에이전트 가져오기" }));
     const dialog = await screen.findByRole("dialog", { name: "에이전트 가져오기" });
     await userEvent.click(await within(dialog).findByRole("checkbox", { name: "Ops" }));
     expect(within(dialog).getByRole("button", { name: "닫기" })).toBeInTheDocument();
@@ -252,18 +257,20 @@ describe("에이전트 화면", () => {
   });
 });
 
-describe("연결 화면", () => {
-  it("섹션·복사·받기·폐기 버튼, 발급·폐기 대화상자까지 이름이 있다", async () => {
+describe("Gateway 상세", () => {
+  it("섹션·복사·폐기 버튼, 발급·폐기 대화상자까지 이름이 있다", async () => {
     stubSetupServer({
       status: statusOf({
         gateway: { state: "reconnecting", pairing: { requestId: "req-1", since: new Date().toISOString() } },
       }),
       tokens: [tokenOf(1, { label: "env", connected: true }), tokenOf(2)],
     });
-    renderRoute("/settings/connection");
+    renderRoute(gatewayDetailPath());
     const page = await screen.findByTestId("page-connection");
     await within(page).findByRole("listitem", { name: "env" });
-    await within(page).findByRole("region", { name: "플러그인 설치" });
+    await within(page).findByRole("region", { name: "플러그인" });
+    // 「?」 펼침에도 이름이 있다(「브리지 토큰 도움말」)
+    expect(within(page).getByRole("group", { name: "브리지 토큰 도움말" })).toBeInTheDocument();
     expect(unnamed()).toEqual(NONE);
 
     await userEvent.click(within(page).getByRole("button", { name: "새 토큰 발급" }));

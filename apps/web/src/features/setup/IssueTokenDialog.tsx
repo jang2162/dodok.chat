@@ -17,6 +17,7 @@ import {
 } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import { HelpDetails } from "@/features/connections/HelpDetails";
 import { llmsHandoffLine } from "./llms";
 import { useIssueToken } from "./mutations";
 import { CopyBlock, PACK_COMMAND, pluginInstallCommand } from "./sections";
@@ -260,7 +261,7 @@ export function IssueTokenDialog({
       triggerRef={triggerRef}
       triggerLabel="새 토큰 발급"
       title="새 브리지 토큰"
-      description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
+      description="알아볼 라벨(예: Gateway 호스트 이름)을 붙입니다. 원문은 발급 직후 한 번만 보입니다."
       path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
       handoff={(issued) => llmsHandoffLine("bridge", origin, issued.token)}
@@ -269,10 +270,16 @@ export function IssueTokenDialog({
           <div className="grid min-w-0 gap-1.5">
             <p className="text-sm font-medium">설치 명령</p>
             <p className="text-xs text-muted-foreground">
-              Gateway 호스트에서 붙여 넣으면 플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시
-              올립니다. 맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는
-              남을 수 있습니다). 토큰이 들어 있으니 원문처럼 다루세요.
+              Gateway 호스트에 붙여 넣으면 플러그인을 설치하고 이 토큰을 넣습니다. 토큰이 들어 있으니 원문처럼
+              다루세요.
             </p>
+            <HelpDetails label="설치 명령">
+              <p>플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시 올립니다.</p>
+              <p>
+                맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는 남을 수
+                있습니다).
+              </p>
+            </HelpDetails>
             <CopyBlock
               text={pluginInstallCommand(origin, issued.token)}
               label="설치 명령 복사"

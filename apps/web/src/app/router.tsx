@@ -279,7 +279,7 @@ export const connectionIndexRoute = createRoute({
 export const connectionGatewayRoute = createRoute({
   getParentRoute: () => connectionRoute,
   path: "gateway/$gatewayId",
-  component: lazyPage(() => import("@/features/connections/NotFoundDetail"), "NotFoundDetail"),
+  component: lazyPage(() => import("@/features/connections/GatewayDetail"), "GatewayDetail"),
 });
 export const connectionRunnerRoute = createRoute({
   getParentRoute: () => connectionRoute,

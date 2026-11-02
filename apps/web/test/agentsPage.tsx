@@ -1,6 +1,6 @@
 import type { Agent, OpenClawGatewayStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
@@ -175,6 +175,10 @@ export function stubServer(
     if (method === "GET" && /^\/api\/v1\/gateways\/[^/]+\/bridge-tokens$/.test(url))
       return json(200, { tokens: [] });
     if (method === "GET" && url === "/api/v1/setup/runner-tokens") return json(200, { tokens: [] });
+    // 「연결」 트리(admin 이상)의 러너 목록·프로젝트 — 러너 REST 를 주지 않은 시험은 러너가 없다
+    if (method === "GET" && url === "/api/v1/runners") return json(200, { runners: [] });
+    if (method === "GET" && /^\/api\/v1\/runners\/[^/]+\/projects$/.test(url))
+      return json(200, { projects: [] });
     const shell = shellGet(input, init);
     if (shell) return shell;
     throw new Error(`예상 밖 요청 ${method} ${url}`);
@@ -227,8 +231,15 @@ export function gate() {
   return { opened, open };
 }
 
-/** 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다 */
-export async function openDiscover() {
+/**
+ * 「에이전트 가져오기」를 연다 — 버튼은 Gateway 상세에 있다. 지금 화면에 없으면(트리) 트리에서 그 Gateway 를 눌러 상세로 간다.
+ * 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다
+ */
+export async function openDiscover(gateway: string = TEST_GATEWAY.name) {
+  if (!screen.queryByRole("button", { name: "에이전트 가져오기" })) {
+    const nav = await screen.findByRole("navigation", { name: "연결 목록" });
+    await userEvent.click(await within(nav).findByRole("link", { name: new RegExp(`^${gateway}`) }));
+  }
   const trigger = await screen.findByRole("button", { name: "에이전트 가져오기" });
   await waitFor(() => expect(trigger).toBeEnabled());
   await userEvent.click(trigger);

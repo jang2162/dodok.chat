@@ -65,16 +65,6 @@ export function Pending({
   );
 }
 
-/** 이름·값 한 줄 */
-export function Field({ name, children }: { name: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-wrap gap-x-2 text-sm">
-      <dt className="text-muted-foreground">{name}</dt>
-      <dd className="min-w-0 break-all">{children}</dd>
-    </div>
-  );
-}
-
 /**
  * 복사 버튼 — `navigator.clipboard.writeText`. 실패(권한·비보안 출처)하면 옆의 텍스트를 직접 선택해 복사하라고 알린다.
  * 결과 문구는 비어 있는 채로 늘 두는 라이브 영역에 쓴다(새로 끼운 영역은 스크린 리더가 놓칠 수 있다)
@@ -138,19 +128,6 @@ export function CopyBlock({
   );
 }
 
-export function ServerSection({ status }: { status: SetupStatus }) {
-  return (
-    <Section title="서버">
-      <dl>
-        <Field name="버전">{status.server.version}</Field>
-      </dl>
-    </Section>
-  );
-}
-
-/** Gateway 가 없을 때(멀티 Gateway 스펙 「웹」 절의 빈 상태) */
-export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다";
-
 /**
  * Gateway 호스트에 붙여 넣는 설치·업데이트 한 줄(설치 한 줄 명령 스펙 2026-11-02 「3. 웹」) — 서버의 설치 스크립트가 받기·sha256 대조·
  * Gateway 내리기·설치·계정 설정·올리기를 다 한다. 맨 앞 공백 한 칸은 우분투 기본 bash(`HISTCONTROL=ignoreboth`)가 이 줄을 히스토리에
@@ -163,25 +140,28 @@ export function pluginInstallCommand(origin: string, token: string): string {
 }
 
 /**
- * 「플러그인 설치」 — OpenClaw 블록 머리에 한 번(멀티 Gateway 스펙 결정 10 — tgz 는 서버에 하나다). 설치·업데이트는 Gateway 카드의
- * 「새 토큰 발급」이 주는 한 줄로 하므로 여기는 그 안내만 둔다. 서버에 파일이 없으면 만드는 법을 보인다
+ * 플러그인 설치 상자 — Gateway 상세의 「플러그인」 섹션 안(연결 탭 통합 스펙 3.3). 설치·업데이트는 「브리지 토큰」의 「새 토큰 발급」이
+ * 주는 한 줄로 한다(tgz 는 서버에 하나 — 같은 명령을 Gateway 마다 돌린다). 플러그인이 안 붙었으면 펼친 채(`open`), 붙었으면 「다시 설치」로
+ * 접는다. 서버에 파일이 없으면 만드는 법을 보인다
  */
-export function PluginInstall({ status }: { status: SetupStatus }) {
+export function PluginInstall({ status, open }: { status: SetupStatus; open: boolean }) {
   return (
-    <Section title="플러그인 설치" level={3} bare>
-      {status.pluginFile.available ? (
-        <p className="text-sm text-muted-foreground">
-          설치·업데이트는 각 Gateway 카드의 「새 토큰 발급」이 주는 명령 한 줄로 합니다. Gateway 가 여럿이면
-          호스트마다 그 카드에서 발급해 돌립니다.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-sm text-muted-foreground">
-            서버에 플러그인 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하세요.
+    <details aria-label="플러그인 설치" open={open || undefined} className="rounded-md border p-3 text-sm">
+      <summary className="cursor-pointer font-medium">{open ? "플러그인 설치" : "다시 설치"}</summary>
+      <div className="mt-2 flex flex-col gap-1.5">
+        {status.pluginFile.available ? (
+          <p className="text-muted-foreground">
+            아래 「새 토큰 발급」이 주는 명령 한 줄을 Gateway 호스트에서 돌립니다.
           </p>
-          <CopyBlock text={PACK_COMMAND} label="만드는 명령 복사" />
-        </div>
-      )}
-    </Section>
+        ) : (
+          <>
+            <p className="text-muted-foreground">
+              서버에 플러그인 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하세요.
+            </p>
+            <CopyBlock text={PACK_COMMAND} label="만드는 명령 복사" />
+          </>
+        )}
+      </div>
+    </details>
   );
 }

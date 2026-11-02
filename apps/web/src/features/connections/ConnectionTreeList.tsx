@@ -5,6 +5,7 @@ import { type Ref, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Badge } from "@/ui/badge";
+import { useConnections } from "./context";
 import type { ConnectionTree, TreeAgent, TreeConnection, TreeProject } from "./tree";
 
 const ROW =
@@ -234,5 +235,22 @@ function ArchivedGroup({
         </ul>
       )}
     </section>
+  );
+}
+
+/** 상세 화면의 「에이전트 N」 줄 — 트리 줄과 같은 꼴. 누르면 그 에이전트 상세의 제목으로 초점이 간다 */
+export function AgentLinks({ agents }: { agents: readonly Agent[] }) {
+  const { focusDetail } = useConnections();
+  const onNavigate = () => {
+    focusDetail.current = true;
+  };
+  return (
+    <ul className="flex flex-col">
+      {agents.map((agent) => (
+        <li key={agent.id}>
+          <AgentLink leaf={{ kind: "agent", agent }} onNavigate={onNavigate} />
+        </li>
+      ))}
+    </ul>
   );
 }

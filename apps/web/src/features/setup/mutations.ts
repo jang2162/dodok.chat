@@ -101,9 +101,10 @@ export function useDeleteGateway(id: string) {
   return useMutation({
     mutationFn: () => api<DeleteGatewayResult>("DELETE", `/gateways/${id}`),
     meta: gatewayErrorMeta,
+    // 다시 받기는 기다리지 않는다 — 상세는 응답을 받자마자 트리로 넘어간다(`mutateAsync` 가 곧바로 풀린다)
     onSuccess: () => {
       dropGateway(qc, id);
-      return Promise.all([gatewaysChanged(qc), qc.invalidateQueries({ queryKey: qk.agents })]);
+      void Promise.all([gatewaysChanged(qc), qc.invalidateQueries({ queryKey: qk.agents })]);
     },
     // 먼저 지운 쪽과 결과가 같다 — 카드를 걷고 에이전트(「Gateway 가 삭제됨」)를 다시 받는다
     onError: (e) => {
