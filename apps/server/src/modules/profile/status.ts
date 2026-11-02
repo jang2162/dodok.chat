@@ -149,6 +149,8 @@ export function startStatusExpiry(deps: {
   bus: ServerBus;
   workspaceId: string;
   onModeChanged?: (userId: string) => void;
+  /** 틱이 던지면 — 타이머 콜백의 예외는 프로세스를 죽인다 */
+  onError?: (err: unknown) => void;
   now?: () => Date;
   intervalMs?: number;
 }): { tick(): void; close(): void } {
@@ -161,7 +163,13 @@ export function startStatusExpiry(deps: {
       deps.bus.emit("me.status", { userId, status: readMyStatus(deps.db, userId, at) });
     for (const userId of modeUserIds) deps.onModeChanged?.(userId);
   };
-  const timer = setInterval(tick, deps.intervalMs ?? STATUS_EXPIRY_INTERVAL_MS);
+  const timer = setInterval(() => {
+    try {
+      tick();
+    } catch (err) {
+      deps.onError?.(err);
+    }
+  }, deps.intervalMs ?? STATUS_EXPIRY_INTERVAL_MS);
   timer.unref();
   return { tick, close: () => clearInterval(timer) };
 }

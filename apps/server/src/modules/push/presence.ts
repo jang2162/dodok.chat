@@ -7,7 +7,7 @@ export type Presence = ReturnType<typeof createPresence>;
  * 될 뿐이다. 세션 id 는 워크스페이스를 넘어 유일해 채널을 함께 보지 않는다. 새 세션 창(`new`)·채널 밖 화면은 세션이 없어 아무것도
  * 거르지 않는다. 메모리에만 있어 서버 재시작 직후 몇 초는 비어 있다(스펙 10장)
  */
-export function createPresence() {
+export function createPresence(opts: { onChange?: (userId: string) => void } = {}) {
   const bySocket = new Map<string, { userId: string; visible: boolean; conversationId?: string }>();
   return {
     set(socketId: string, userId: string, p: PresenceUpdate): void {
@@ -16,9 +16,26 @@ export function createPresence() {
         visible: p.visible,
         ...(p.conversationId === undefined ? {} : { conversationId: p.conversationId }),
       });
+      opts.onChange?.(userId);
     },
     drop(socketId: string): void {
+      const gone = bySocket.get(socketId);
       bySocket.delete(socketId);
+      if (gone) opts.onChange?.(gone.userId);
+    },
+    /**
+     * 그 사람의 소켓 수와 보이는 탭이 있는가 — 접속 점 계산(프로필 스펙 3.2)의 입력. presence.update 를 한 번이라도 보낸 소켓만
+     * 센다(웹은 연결마다 보낸다). 화면 위치(conversationId)는 보지 않는다
+     */
+    socketsOf(userId: string): { count: number; anyVisible: boolean } {
+      let count = 0;
+      let anyVisible = false;
+      for (const s of bySocket.values()) {
+        if (s.userId !== userId) continue;
+        count += 1;
+        anyVisible ||= s.visible;
+      }
+      return { count, anyVisible };
     },
     /** 그 사람의 소켓 중 보이는 탭이 그 세션에 있는 것이 하나라도 있는가 — 같은 채널의 다른 세션은 보고 있는 것이 아니다 */
     isWatching(userId: string, conversationId: string): boolean {

@@ -433,6 +433,16 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 });
 
 describe("종료·실패 정리", () => {
+  it("close() 뒤에는 상태 만료 타이머가 닫힌 DB 를 건드리지 않는다", async () => {
+    const app = await bootTestApp({}, { statusExpiryIntervalMs: 5 });
+    const errors = vi.spyOn(app.logger, "error");
+    await app.close();
+    const prepare = vi.spyOn(app.db.$client, "prepare");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalledWith(expect.anything(), "status expiry failed");
+  });
+
   it("close() 순서 — 새 wire 연결 거부 → orchestrator.stop → adapter.close → io.close → fastify.close → DB 닫기, 두 번 불러도 한 번만", async () => {
     const adapter = new FakeAdapter();
     const app = await bootTestApp({}, { adapters: [adapter] });
