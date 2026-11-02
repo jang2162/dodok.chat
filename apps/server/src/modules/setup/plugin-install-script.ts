@@ -32,7 +32,7 @@ export function renderPluginInstallScript(input: PluginInstallScriptInput): stri
 # dodok — OpenClaw 채널 플러그인 설치·업데이트(${origin})
 #
 # Gateway 호스트에서 연결 페이지 Gateway 카드의 「새 토큰 발급」이 주는 한 줄로 돌린다:
-#    curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='dbt_…' bash
+#    (set -o pipefail; curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='dbt_…' bash)
 #
 # 하는 일: 플러그인 받기 → 파일 sha256 대조 → Gateway 서비스 확인·내리기(openclaw gateway status·stop) → 설치 → 로드·번들 sha256 대조
 #          → 계정 설정(bridgeUrl·토큰, openclaw config patch --stdin) → Gateway 올리기(openclaw gateway start).
