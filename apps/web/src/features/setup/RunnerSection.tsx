@@ -206,7 +206,9 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
         <p className="font-medium">러너를 붙이면 드러나는 것</p>
         <ul className="flex list-disc flex-col gap-1 pl-5">
           <li>
-            러너 계정의 이메일이 에이전트 문맥에 들어갑니다(끌 방법이 없습니다). 러너 전용 계정을 권합니다.
+            러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다(끌 방법이 없습니다). 기본은 이
+            머신의 평소 계정입니다 — 걱정되면 러너 전용 계정으로 전용 로그인(설치 2단계의 「러너 전용 로그인을
+            따로 쓰려면」)을 씁니다.
           </li>
           <li>
             채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다. 그 에이전트를 어느

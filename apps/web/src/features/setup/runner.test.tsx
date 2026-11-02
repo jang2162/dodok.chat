@@ -47,7 +47,12 @@ describe("러너 블록 — 권한", () => {
     const block = await runnerRegion();
     const note = within(block).getByRole("note");
     expect(within(note).getAllByRole("listitem")).toHaveLength(4);
-    expect(note).toHaveTextContent("러너 계정의 이메일이 에이전트 문맥에 들어갑니다");
+    expect(note).toHaveTextContent("러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다");
+    // docker-deploy.md 「드러나는 것 넷」 1 과 같은 뜻 — 기본은 평소 계정, 전용 계정은 걱정될 때의 선택
+    expect(note).toHaveTextContent(
+      "기본은 이 머신의 평소 계정입니다 — 걱정되면 러너 전용 계정으로 전용 로그인(설치 2단계의 「러너 전용 로그인을 따로 쓰려면」)을 씁니다.",
+    );
+    expect(note).not.toHaveTextContent("러너 전용 계정을 권합니다");
     expect(note).toHaveTextContent("끌 방법이 없습니다");
     expect(note).toHaveTextContent(
       "채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다",
