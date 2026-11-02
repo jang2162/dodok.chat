@@ -125,7 +125,10 @@ describe("에이전트 프로필", () => {
     expect(p.getByText("허용 도구")).toBeInTheDocument();
     expect(p.getByText("금지 도구")).toBeInTheDocument();
     expect(p.getByText("기본 프롬프트")).toBeInTheDocument();
-    expect(p.getByRole("link", { name: "에이전트 설정" })).toBeInTheDocument();
+    expect(p.getByRole("link", { name: "에이전트 설정" })).toHaveAttribute(
+      "href",
+      `/settings/connection/agent/${CODER.id}`,
+    );
     expect(p.getByRole("link", { name: "DM 열기" })).toBeInTheDocument();
     // admin 이상은 패널에서 사진을 바꾼다
     expect(p.getByLabelText("사진 고르기")).toBeInTheDocument();

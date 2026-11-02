@@ -20,7 +20,8 @@ import { gatewayDown } from "./gatewayHealth";
  * 라이브 영역(alert — 할 일이 있는 것, status — 기다리면 되는 것)은 비어 있는 채로 늘 두고 안의 배너만 바꾼다 —
  * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다.
  * OpenClaw 배너는 끊긴 Gateway 를 이름으로 부르고 둘 이상이면 수로 묶는다(멀티 Gateway 스펙 「웹」 절) — Gateway 가 없거나 모두 꺼졌으면
- * 끊긴 연결이 없다. 「연결 설정 보기」는 owner 에게만 — 연결 페이지는 owner 만 쓴다
+ * 끊긴 연결이 없다. 「연결 설정 보기」는 owner 에게만(주소·토큰을 고치는 것은 owner 의 일) — 끊긴 Gateway 가 하나면 그 Gateway
+ * 상세로, 여럿이면 「연결」 탭으로
  */
 export function Banners() {
   const wire = useWireStatus((s) => s.status);
@@ -71,11 +72,20 @@ export function Banners() {
                 OpenClaw Gateway {which}에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다. 메시지는
                 저장됩니다.
               </p>
-              {owner && (
-                <Link to="/settings/connection" className="text-foreground underline underline-offset-4">
-                  연결 설정 보기
-                </Link>
-              )}
+              {owner &&
+                (down.length === 1 && first ? (
+                  <Link
+                    to="/settings/connection/gateway/$gatewayId"
+                    params={{ gatewayId: first.id }}
+                    className="text-foreground underline underline-offset-4"
+                  >
+                    연결 설정 보기
+                  </Link>
+                ) : (
+                  <Link to="/settings/connection" className="text-foreground underline underline-offset-4">
+                    연결 설정 보기
+                  </Link>
+                ))}
             </AlertDescription>
           </Alert>
         )}

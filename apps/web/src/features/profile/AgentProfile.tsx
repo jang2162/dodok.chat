@@ -122,7 +122,9 @@ export function AgentProfile({ agentId }: { agentId: string }) {
         )}
         {canManage && (
           <Button asChild variant="outline" size="sm">
-            <Link to="/settings/agents">에이전트 설정</Link>
+            <Link to="/settings/connection/agent/$agentId" params={{ agentId: agent.id }}>
+              에이전트 설정
+            </Link>
           </Button>
         )}
       </div>

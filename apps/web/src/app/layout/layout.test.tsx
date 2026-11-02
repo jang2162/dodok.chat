@@ -54,7 +54,7 @@ function renderWithAdapter(ui: ReactNode, gateways: OpenClawGatewayStatus[]) {
   const queryClient: QueryClient = createQueryClient(() => {});
   // 점은 wire 가 살아 있을 때만 값을 보인다 — 값 자체를 보는 테스트는 연결된 상태에서 본다
   useWireStatus.getState().setStatus("connected");
-  // 라우터는 문맥만 준다 — 배너의 「연결 설정 보기」 링크가 쓴다
+  // 라우터는 문맥만 준다 — 배너의 「연결 설정 보기」 링크(그 Gateway 상세)가 쓴다
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: ["/"] }));
   render(
     <QueryClientProvider client={queryClient}>
@@ -234,16 +234,28 @@ describe("Banners", () => {
     expect(screen.queryByText(/「사무실」/)).toBeNull();
   });
 
-  it("「연결 설정 보기」는 owner 에게만, 연결 페이지로", async () => {
+  it("「연결 설정 보기」는 owner 에게만 — 끊긴 Gateway 가 하나면 그 Gateway 상세로", async () => {
     const { queryClient } = renderWithAdapter(<Banners />, [gw({ gateway: "down" })]);
+    act(() => queryClient.setQueryData(qk.me, ME));
+    expect(await screen.findByRole("link", { name: "연결 설정 보기" })).toHaveAttribute(
+      "href",
+      `/settings/connection/gateway/${gw().id}`,
+    );
+    act(() => queryClient.setQueryData(qk.me, { ...ME, role: "member" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "연결 설정 보기" })).toBeNull());
+    expect(screen.getByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+  });
+
+  it("끊긴 Gateway 가 여럿이면 「연결 설정 보기」는 「연결」 탭으로", async () => {
+    const { queryClient } = renderWithAdapter(<Banners />, [
+      gw({ gateway: "down", bridge: "down" }),
+      HOME({ bridge: "down" }),
+    ]);
     act(() => queryClient.setQueryData(qk.me, ME));
     expect(await screen.findByRole("link", { name: "연결 설정 보기" })).toHaveAttribute(
       "href",
       "/settings/connection",
     );
-    act(() => queryClient.setQueryData(qk.me, { ...ME, role: "member" }));
-    await waitFor(() => expect(screen.queryByRole("link", { name: "연결 설정 보기" })).toBeNull());
-    expect(screen.getByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
   });
 
   it("Gateway 가 없거나 모두 꺼졌으면 OpenClaw 배너를 띄우지 않는다 — 꺼진 Gateway 는 끊김이 아니다", async () => {
