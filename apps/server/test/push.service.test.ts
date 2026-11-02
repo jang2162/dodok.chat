@@ -161,6 +161,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
   let respond: (call: SendCall) => Promise<{ statusCode: number }>;
   let cap: ReturnType<typeof captureLogger>;
   let presence: ReturnType<typeof createPresence>;
+  /** 사람마다 방해 금지 — 없으면 꺼짐 */
+  let dndOf: Map<string, { active: boolean; allowApprovals: boolean }>;
 
   const send: PushSend = (sub, body, opts) => {
     const call = { endpoint: sub.endpoint, keys: sub.keys, body, opts };
@@ -173,6 +175,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       logger: cap.logger,
       transports: { webpush: webPushTransport(send) },
       presence,
+      dnd: (userId) => dndOf.get(userId) ?? { active: false, allowApprovals: true },
       ops: { record: () => null },
     });
   const endpoints = (userId: string) =>
@@ -184,6 +187,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     db = newTestDb();
     const seeded = seedWorkspace(db, { userHandle: "alice" });
     alice = seeded.userId;
+    dndOf = new Map();
     bob = uuid();
     db.insert(users)
       .values({
@@ -252,6 +256,47 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     presence.set("s1", alice, { visible: false, channelId: CH, conversationId: CONV });
     await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention(CH) }]);
     expect(calls).toHaveLength(2);
+  });
+
+  describe("방해 금지(프로필 스펙 3.5)", () => {
+    const approval = (): PushPayload => ({ ...mention(), kind: "approval", tag: `approval:${CH}` });
+
+    it("방해 금지 + 승인 받기 켜짐 → mention 은 0, approval 은 보낸다", async () => {
+      dndOf.set(alice, { active: true, allowApprovals: true });
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
+      expect(calls).toHaveLength(0);
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: approval() }]);
+      expect(calls.map((c) => c.endpoint).sort()).toEqual([EP_A1, EP_A2].sort());
+    });
+
+    it("방해 금지 + 승인 받기 꺼짐 → approval 도 0, 다른 사람은 그대로", async () => {
+      dndOf.set(alice, { active: true, allowApprovals: false });
+      await dispatcher().dispatch([
+        { userId: alice, conversationId: CONV, payload: approval() },
+        { userId: bob, conversationId: CONV, payload: approval() },
+      ]);
+      expect(calls.map((c) => c.endpoint)).toEqual([EP_B]);
+    });
+
+    it("방해 금지가 아니면 지금과 같다", async () => {
+      dndOf.set(alice, { active: false, allowApprovals: false });
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
+      expect(calls).toHaveLength(2);
+    });
+
+    it("거르면 debug 한 줄 「push skipped — dnd」 — 필드는 정해진 것만", async () => {
+      dndOf.set(alice, { active: true, allowApprovals: true });
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
+      const skipped = cap.lines.filter((l) => l.msg === "push skipped — dnd");
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toMatchObject({ level: 20, userId: alice, kind: "mention" });
+      expect(fieldsOf(skipped[0] as Record<string, unknown>)).toEqual([
+        "channelId",
+        "conversationId",
+        "kind",
+        "userId",
+      ]);
+    });
   });
 
   it("[판정 PS7] 같은 채널의 다른 세션을 보고 있으면 보낸다 — 거르기는 채널이 아니라 세션 단위", async () => {
@@ -527,6 +572,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       logger: cap.logger,
       transports: { webpush: webPushTransport(send) },
       ops: { record: () => null },
+      dnd: () => ({ active: false, allowApprovals: true }),
       presence: {
         isWatching: () => {
           throw leaky;
@@ -657,6 +703,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
       logger: cap.logger,
       transports,
       presence,
+      dnd: () => ({ active: false, allowApprovals: true }),
       ops: {
         record: (input) => {
           recorded.push(input);
