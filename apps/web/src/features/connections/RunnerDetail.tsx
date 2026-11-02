@@ -1,6 +1,6 @@
 import { type Agent, type RunnerSummary, roleAtLeast } from "@dodok/shared";
 import { useParams } from "@tanstack/react-router";
-import { useRef } from "react";
+import { type RefObject, useRef } from "react";
 import { useAgents, useRole } from "@/api/queries";
 import { AddProjectDialog } from "@/features/runners/AddProjectDialog";
 import { ProjectList } from "@/features/runners/ProjectList";
@@ -82,7 +82,7 @@ function ManagedRunner({ id }: { id: string }) {
         <ProjectList runner={runner} runners={runners.data} afterRemove={afterRemove} />
       </Section>
       <UnboundAgents runnerId={runner.id} />
-      {owner && <OwnerSections runner={runner} />}
+      {owner && <OwnerSections runner={runner} heading={heading} />}
     </article>
   );
 }
@@ -106,7 +106,13 @@ function UnboundAgents({ runnerId }: { runnerId: string }) {
 }
 
 /** owner — 설치 안내와 이 러너의 토큰 한 줄 */
-function OwnerSections({ runner }: { runner: RunnerSummary }) {
+function OwnerSections({
+  runner,
+  heading,
+}: {
+  runner: RunnerSummary;
+  heading: RefObject<HTMLElement | null>;
+}) {
   const status = useSetupStatus();
   const tokens = useRunnerTokens();
   const token = tokens.data?.find((t) => t.id === runner.id);
@@ -128,7 +134,7 @@ function OwnerSections({ runner }: { runner: RunnerSummary }) {
       )}
       <Section title="러너 토큰" bare>
         {token ? (
-          <RunnerTokenList tokens={[token]} status={status.data} />
+          <RunnerTokenList tokens={[token]} status={status.data} issueButton={heading} />
         ) : tokens.data ? (
           <p className="text-sm text-muted-foreground">이 러너의 토큰을 찾을 수 없습니다.</p>
         ) : (

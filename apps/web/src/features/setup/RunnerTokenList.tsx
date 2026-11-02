@@ -54,7 +54,7 @@ export function RunnerTokenList({
 }: {
   tokens: RunnerTokenRecord[];
   status: SetupStatus | undefined;
-  issueButton?: RefObject<HTMLButtonElement | null>;
+  issueButton?: RefObject<HTMLElement | null>;
 }) {
   const revoke = useRevokeRunnerToken();
   const [target, setTarget] = useState<RunnerTokenRecord>();

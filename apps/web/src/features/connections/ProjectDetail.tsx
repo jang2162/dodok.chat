@@ -4,6 +4,7 @@ import { PlusIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useAgents, useRole } from "@/api/queries";
 import { RunnerAgentForm } from "@/features/agents/RunnerAgentForm";
+import { useRunners } from "@/features/runners/queries";
 import { projectPlace } from "@/features/runners/copy";
 import { ProjectRow } from "@/features/runners/ProjectList";
 import { Section } from "@/features/setup/sections";
@@ -39,6 +40,8 @@ export function ProjectDetail() {
 function ManagedProject() {
   const { projectId } = useParams({ strict: false });
   const tree = useConnectionTree();
+  // 같은 쿼리(캐시 공유) — 목록이 실패하면 「불러오는 중…」에 멈추지 않고 다시 시도를 보인다
+  const runnersQuery = useRunners();
   const agents = useAgents();
   const navigate = useNavigate();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -47,7 +50,8 @@ function ManagedProject() {
   // 보관한 프로젝트도 상세는 남는다 — 「보관됨」 배지, 동작 없이(열린 「에이전트 만들기」가 사유를 보이며 잠긴다)
   const project = projects?.find((p) => p.id === projectId);
   const runner = project ? runners?.find((r) => r.id === project.runnerId) : undefined;
-  if (!runners || !tree.projectsSettled) return <DetailPending failed={false} retry={tree.refetch} />;
+  if (!runners || !tree.projectsSettled)
+    return <DetailPending failed={runnersQuery.isError} retry={() => void runnersQuery.refetch()} />;
   if (!project || !runner) return <NotFoundDetail message="이 프로젝트를 찾을 수 없습니다" />;
   const backToRunner = () => {
     void navigate({ to: "/settings/connection/runner/$runnerId", params: { runnerId: runner.id } });

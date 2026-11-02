@@ -51,6 +51,23 @@ describe("owner", () => {
     expect(within(runner).getByRole("group", { name: "설치 안내" })).toHaveAttribute("open");
   });
 
+  it("토큰을 폐기하면 초점이 상세 머리로 간다 — body 로 떨어지지 않는다", async () => {
+    stubSetupServer({
+      status: statusOf({ runners: { list: [connectionOf(1, { label: "맥북" })] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", prefix: "mac123", connected: true })],
+    });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const runner = await detail();
+    const row = await within(runner).findByRole("listitem", { name: "맥북" });
+    await userEvent.click(within(row).getByRole("button", { name: "맥북 폐기" }));
+    const confirm = await screen.findByRole("dialog");
+    await userEvent.click(within(confirm).getByRole("button", { name: "폐기" }));
+    expect(await within(row).findByText("폐기됨")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toHaveFocus(),
+    );
+  });
+
   it.each([
     ["지금 붙어 있으면", { connected: true, lastUsedAt: null }],
     ["한 번이라도 붙었으면", { connected: false, lastUsedAt: "2026-09-26T00:00:00.000Z" }],
@@ -153,6 +170,28 @@ describe("프로젝트 상세", () => {
     expect(
       await within(await detail()).findByRole("heading", { level: 1, name: "맥북" }),
     ).toBeInTheDocument();
+  });
+
+  it("러너 목록을 못 받으면 「불러오는 중…」에 멈추지 않고 다시 시도를 보인다", async () => {
+    const server = stubRunners({ projects: [projectOf(1, { label: "dodok" })] }, async () =>
+      json(200, { agents: [] }),
+    );
+    let fail = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        fail && String(input) === "/api/v1/runners" && (init?.method ?? "GET") === "GET"
+          ? json(500, { code: "INTERNAL", message: "boom" })
+          : server.fetch(input, init),
+      ),
+    );
+    renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    // 사이드바 채널 목록에도 같은 단추가 있다 — 상세 칸의 것은 「불러오지 못했습니다」 곁에 있다
+    const notice = await screen.findByText("불러오지 못했습니다");
+    const retry = within(notice.parentElement!).getByRole("button", { name: "다시 시도" });
+    fail = false;
+    await userEvent.click(retry);
+    expect(await screen.findByTestId("project-detail")).toBeInTheDocument();
   });
 
   it("없는 프로젝트 id 면 「이 프로젝트를 찾을 수 없습니다」", async () => {
