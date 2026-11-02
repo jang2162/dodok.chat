@@ -154,11 +154,12 @@ export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이�
 /**
  * Gateway 호스트에 붙여 넣는 설치·업데이트 한 줄(설치 한 줄 명령 스펙 2026-11-02 「3. 웹」) — 서버의 설치 스크립트가 받기·sha256 대조·
  * Gateway 내리기·설치·계정 설정·올리기를 다 한다. 맨 앞 공백 한 칸은 우분투 기본 bash(`HISTCONTROL=ignoreboth`)가 이 줄을 히스토리에
- * 남기지 않게 한다. 토큰은 bash 의 환경 변수로만 간다(curl·스크립트의 argv 에 없다). `docs/guides/docker-deploy.md` 의 예시 줄과
- * `connection.test.tsx` 가 대조한다
+ * 남기지 않게 한다. 토큰은 bash 의 환경 변수로만 간다(curl·스크립트의 argv 에 없다). 서브셸의 `pipefail` 은 스크립트를 받지 못했을 때
+ * (404·429·연결 실패) 빈 입력을 받은 bash 의 0 대신 curl 의 실패 코드로 끝나게 한다 — 사람과 AI 가 끝 코드로 성패를 읽는다.
+ * `docs/guides/docker-deploy.md` 의 예시 줄과 `connection.test.tsx` 가 대조한다
  */
 export function pluginInstallCommand(origin: string, token: string): string {
-  return ` curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='${token}' bash`;
+  return ` (set -o pipefail; curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='${token}' bash)`;
 }
 
 /**
