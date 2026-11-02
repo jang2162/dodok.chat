@@ -7,20 +7,21 @@ import type {
   IssueRunnerTokenResult,
   ReissueRunnerTokenResult,
   RunnerConnection,
+  RunnerSummary,
   RunnerTokenRecord,
   SetupStatus,
 } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
-import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
-import { ConnectionPage } from "@/features/setup/ConnectionPage";
+import { TooltipProvider } from "@/ui/tooltip";
 import { ME, json, shellGet } from "./shellApi";
 
-/** 연결 페이지 테스트의 가짜 서버·렌더 도우미 */
+/** 「연결」 탭의 Gateway 상세·러너 토큰 시험의 가짜 서버·렌더 도우미 */
 
 export const OWNER = { ...ME, role: "owner" };
 export const SHA_A = "a".repeat(64);
@@ -296,6 +297,28 @@ export function stubSetupServer(
               "content-disposition": `attachment; filename="dodok-claude-runner-ffffffffffff.tgz"`,
             },
           });
+    // 「연결」 트리·러너 상세(admin 이상)가 부르는 러너 목록 — 러너 하나 = 러너 토큰 하나. 붙음은 setup 상태의 러너 줄로 가른다
+    if (method === "GET" && url === "/api/v1/runners") {
+      const status = typeof opts.status === "object" ? opts.status : undefined;
+      const live = new Set((status?.runners.list ?? []).map((r) => r.tokenId));
+      const runners: RunnerSummary[] = runnerTokens.map((t) => {
+        const connected = live.has(t.id) && t.revokedAt === null;
+        return {
+          id: t.id,
+          label: t.label,
+          connected,
+          revoked: t.revokedAt !== null,
+          runnerVersion: connected ? "0.0.0" : null,
+          browse: connected ? true : null,
+          roots: [],
+          programs: [],
+          projectCount: 0,
+        };
+      });
+      return json(200, { runners });
+    }
+    if (method === "GET" && /^\/api\/v1\/runners\/[^/]+\/projects$/.test(url))
+      return json(200, { projects: [] });
     // 라우트로 띄울 때 셸(사이드바·배너)이 부르는 것
     const shell = shellGet(input, init);
     if (shell) return shell;
@@ -311,21 +334,31 @@ export function stubSetupServer(
   };
 }
 
+/** 러너(= 러너 토큰) 상세 주소 */
+export const runnerDetailPath = (id: string) => `/settings/connection/runner/${id}`;
+
+/** n 번째 Gateway 의 상세 주소 — 기본은 첫 Gateway(`GATEWAY_ID`) */
+export const gatewayDetailPath = (id: string = GATEWAY_ID) => `/settings/connection/gateway/${id}`;
+
 /**
- * me 를 미리 넣고 페이지만 그린다 — 라우트 가드가 me 를 채운 뒤의 모습. 라우터는 문맥만 준다(원문이 보이는 동안의 이동 막기가
- * 라우터를 쓴다) — 셸까지 띄우는 이동 시나리오는 `renderRoute`
+ * me 를 미리 넣고 「연결」 탭의 그 주소를 셸째 띄운다 — 라우트 가드가 me 를 채운 뒤의 모습. 기본은 첫 Gateway 의 상세.
+ * 라우터를 돌려준다(원문이 보이는 동안의 이동 막기·삭제 뒤 이동을 잰다)
  */
-export function renderConnection(me: unknown = OWNER, qc: QueryClient = createQueryClient(() => {})) {
+export function renderConnection(
+  me: unknown = OWNER,
+  qc: QueryClient = createQueryClient(() => {}),
+  path: string = gatewayDetailPath(),
+) {
   qc.setQueryData(qk.me, me);
-  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/settings/connection"] }));
+  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: [path] }));
   render(
     <QueryClientProvider client={qc}>
-      <RouterContextProvider router={router}>
-        <ConnectionPage />
-      </RouterContextProvider>
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
-  return qc;
+  return Object.assign(qc, { router });
 }
 
 /** 캐시(쿼리·뮤테이션) 전체를 한 문자열로 — 원문이 어디에도 없는지 볼 때 */

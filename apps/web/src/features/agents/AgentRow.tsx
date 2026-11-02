@@ -38,11 +38,14 @@ export function AgentRow({
   readOnly = false,
   onArchived,
   focusRef,
+  as: Root = "li",
 }: {
   agent: Agent;
   readOnly?: boolean;
   onArchived?: () => void;
   focusRef?: Ref<HTMLButtonElement>;
+  /** 「연결」 탭의 에이전트 상세는 목록 밖에서 그린다 — `div` */
+  as?: "li" | "div";
 }) {
   const toggle = usePatchAgent();
   const owner = useIsOwner();
@@ -50,7 +53,7 @@ export function AgentRow({
   const handle = `@${agent.handle}`;
   const openclaw = agent.provider === "openclaw";
   return (
-    <li className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+    <Root className="flex flex-col gap-3 rounded-lg border bg-card p-4">
       {/* 좁은 화면(390px)에서는 버튼·스위치 묶음이 아랫줄로 감긴다 — 이름 칸이 한 글자 폭으로 눌리지 않게 최소 폭을 준다 */}
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex min-w-0 grow basis-48 items-start gap-3">
@@ -104,7 +107,7 @@ export function AgentRow({
       <BasePromptEditor agent={agent} readOnly={readOnly} />
       <DmAccessField agent={agent} readOnly={readOnly} />
       {!readOnly && <AgentAvatarField agent={agent} />}
-    </li>
+    </Root>
   );
 }
 
@@ -245,8 +248,8 @@ function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: 
 }
 
 /**
- * 러너 에이전트의 프로그램과 맡은 러너(묶인 러너 토큰의 라벨) — 누구나 본다. 토큰이 폐기됐으면 맡을 러너가 없다: 그 프로젝트를 「러너」
- * 탭에서 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8)
+ * 러너 에이전트의 프로그램과 맡은 러너(묶인 러너 토큰의 라벨) — 누구나 본다. 토큰이 폐기됐으면 맡을 러너가 없다: 그 프로젝트를
+ * 러너 상세(「연결」 탭)에서 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8)
  */
 function RunnerLine({ agent }: { agent: Agent }) {
   const program = agent.program ? `${RUNNER_PROGRAM_NAME[agent.program]} · ` : "";
@@ -260,8 +263,15 @@ function RunnerLine({ agent }: { agent: Agent }) {
     );
   return (
     <p className="text-xs font-medium text-destructive">
-      {program}러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다. 「러너」 탭에서 프로젝트를 다른
-      러너로 옮기세요
+      {program}러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다.{" "}
+      <Link
+        to="/settings/connection/runner/$runnerId"
+        params={{ runnerId: runner.tokenId }}
+        className="underline underline-offset-4"
+      >
+        그 러너 화면
+      </Link>
+      에서 프로젝트를 다른 러너로 옮기세요
     </p>
   );
 }

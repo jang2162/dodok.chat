@@ -201,7 +201,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
 });
 
 describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
-  it("연결 페이지 확인 주소만 웹 오리진이고, 설치 파일·serverUrl 은 공개 오리진 그대로", () => {
+  it("설정 → 연결 확인 주소만 웹 오리진이고, 설치 파일·serverUrl 은 공개 오리진 그대로", () => {
     const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
     const body = renderLlmsTxt({
       origin: "http://localhost:3000",
@@ -210,18 +210,21 @@ describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
       plugin: file,
     });
     const gateway = section(body, "OpenClaw Gateway 호스트");
-    expect(gateway).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+    expect(gateway).toContain("dodok 설정 → 연결(http://localhost:5173/settings/connection)");
     expect(gateway).not.toContain("http://localhost:3000/settings/connection");
     expect(gateway).toContain(`http://localhost:3000${PLUGIN_INSTALL_SCRIPT_PATH}`);
     expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
-    // 러너 5번의 「러너 탭」 확인 주소도 사람이 여는 웹 페이지다
-    expect(section(body, "러너 머신")).toContain("(http://localhost:5173/settings/runners)");
-    expect(section(body, "러너 머신")).not.toContain("http://localhost:3000/settings/runners");
+    // 러너 5번의 확인 주소(설정 → 연결)도 사람이 여는 웹 페이지다 — 옛 「러너」 탭 주소는 없다
+    expect(section(body, "러너 머신")).toContain(
+      "dodok 설정 → 연결(http://localhost:5173/settings/connection)",
+    );
+    expect(section(body, "러너 머신")).not.toContain("http://localhost:3000/settings/connection");
+    expect(body).not.toContain("/settings/runners");
   });
 });
 
 describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () => {
-  it("BRIDGE_PUBLIC_URL 로 서버가 갈려도 연결 페이지는 APP_ORIGIN 위", async () => {
+  it("BRIDGE_PUBLIC_URL 로 서버가 갈려도 설정 → 연결은 APP_ORIGIN 위", async () => {
     const dir = mkdtempSync(join(tmpdir(), "dodok-llms-web-"));
     writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE));
     const app = await bootTestApp(
@@ -230,7 +233,7 @@ describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () =
     );
     try {
       const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
-      expect(body).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+      expect(body).toContain("dodok 설정 → 연결(http://localhost:5173/settings/connection)");
       expect(body).toContain(`http://localhost:3000${PLUGIN_INSTALL_SCRIPT_PATH}`);
     } finally {
       await app.close();

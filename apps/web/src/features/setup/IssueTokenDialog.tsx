@@ -17,6 +17,7 @@ import {
 } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import { HelpDetails } from "@/features/connections/HelpDetails";
 import { llmsHandoffLine } from "./llms";
 import { useIssueToken } from "./mutations";
 import { CopyBlock, PACK_COMMAND, pluginInstallCommand } from "./sections";
@@ -51,7 +52,10 @@ export function IssueDialog<T extends Issued>({
   config,
   reservedLabel,
   handoff,
+  onDone,
 }: {
+  /** 「복사했습니다」로 닫힌 뒤 — 「연결 추가」가 발급한 러너 상세로 넘어간다 */
+  onDone?: (issued: T) => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
   /** 라벨 입력 화면의 제목·설명 */
@@ -77,6 +81,7 @@ export function IssueDialog<T extends Issued>({
   const trimmed = label.trim();
   const stayRef = useRef<HTMLButtonElement>(null);
   const leave = useLeaveGuard(issued !== undefined);
+  const finishedRef = useRef<T | undefined>(undefined);
 
   useEffect(() => {
     if (leave.status === "blocked") stayRef.current?.focus();
@@ -99,10 +104,18 @@ export function IssueDialog<T extends Issued>({
   /** 원문을 버리고 닫는다. 막아 둔 라우트 이동이 있으면 이어서 보낸다 — 떠나려던 사람이 복사를 마친 것이다 */
   function done() {
     const proceed = leave.status === "blocked" ? leave.proceed : undefined;
+    // 막아 둔 이동이 없으면 원문을 버린 뒤(이동 막기가 풀린 다음 그리기에서) `onDone` 을 부른다 — 같은 틱에 이동하면 아직 걸린 막기에 걸린다
+    if (!proceed && issued) finishedRef.current = issued;
     setOpen(false);
     reset();
     proceed?.();
   }
+  useEffect(() => {
+    const finished = finishedRef.current;
+    if (issued !== undefined || finished === undefined || leave.status === "blocked") return;
+    finishedRef.current = undefined;
+    onDone?.(finished);
+  });
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -260,7 +273,7 @@ export function IssueTokenDialog({
       triggerRef={triggerRef}
       triggerLabel="새 토큰 발급"
       title="새 브리지 토큰"
-      description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
+      description="알아볼 라벨(예: Gateway 호스트 이름)을 붙입니다. 원문은 발급 직후 한 번만 보입니다."
       path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
       handoff={(issued) => llmsHandoffLine("bridge", origin, issued.token)}
@@ -269,10 +282,16 @@ export function IssueTokenDialog({
           <div className="grid min-w-0 gap-1.5">
             <p className="text-sm font-medium">설치 명령</p>
             <p className="text-xs text-muted-foreground">
-              Gateway 호스트에서 붙여 넣으면 플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시
-              올립니다. 맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는
-              남을 수 있습니다). 토큰이 들어 있으니 원문처럼 다루세요.
+              Gateway 호스트에 붙여 넣으면 플러그인을 설치하고 이 토큰을 넣습니다. 토큰이 들어 있으니 원문처럼
+              다루세요.
             </p>
+            <HelpDetails label="설치 명령">
+              <p>플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시 올립니다.</p>
+              <p>
+                맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는 남을 수
+                있습니다).
+              </p>
+            </HelpDetails>
             <CopyBlock
               text={pluginInstallCommand(origin, issued.token)}
               label="설치 명령 복사"

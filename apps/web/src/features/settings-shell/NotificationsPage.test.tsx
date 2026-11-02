@@ -252,7 +252,7 @@ it("설정의 「알림」 탭 — /settings/notifications", async () => {
     if (String(input) === "/api/v1/auth/me") return json(200, ME);
     return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
   });
-  renderRoute("/settings/agents");
+  renderRoute("/settings/connection");
   const tabs = await screen.findByRole("navigation", { name: "설정" });
   await userEvent.click(within(tabs).getByRole("link", { name: "알림" }));
   const page = await screen.findByTestId("page-notifications");

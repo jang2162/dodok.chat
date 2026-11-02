@@ -31,7 +31,7 @@ export function renderPluginInstallScript(input: PluginInstallScriptInput): stri
   return `#!/usr/bin/env bash
 # dodok — OpenClaw 채널 플러그인 설치·업데이트(${origin})
 #
-# Gateway 호스트에서 연결 페이지 Gateway 카드의 「새 토큰 발급」이 주는 한 줄로 돌린다:
+# Gateway 호스트에서 설정 → 연결의 그 Gateway 화면 「새 토큰 발급」이 주는 한 줄로 돌린다:
 #    (set -o pipefail; curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='dbt_…' bash)
 #
 # 하는 일: 플러그인 받기 → 파일 sha256 대조 → Gateway 서비스 확인·내리기(openclaw gateway status·stop) → 설치 → 로드·번들 sha256 대조
@@ -73,7 +73,7 @@ dodok_plugin_install() {
   unset DODOK_BRIDGE_TOKEN
 
   # 1. 전제 — 토큰 꼴(dbt_ + 43자)과 도구
-  dodok_bad_token="DODOK_BRIDGE_TOKEN 이 비었거나 브리지 토큰(dbt_…) 꼴이 아닙니다 — 연결 페이지 Gateway 카드의 「새 토큰 발급」이 주는 명령을 그대로 붙여 넣으세요."
+  dodok_bad_token="DODOK_BRIDGE_TOKEN 이 비었거나 브리지 토큰(dbt_…) 꼴이 아닙니다 — 설정 → 연결의 그 Gateway 화면에서 「새 토큰 발급」이 주는 명령을 그대로 붙여 넣으세요."
   case "$dodok_token" in dbt_*) ;; *) dodok_fail "$dodok_bad_token" ;; esac
   case "\${dodok_token#dbt_}" in *[!A-Za-z0-9_-]*) dodok_fail "$dodok_bad_token" ;; esac
   [ "\${#dodok_token}" -eq 47 ] || dodok_fail "$dodok_bad_token"
@@ -103,7 +103,7 @@ dodok_plugin_install() {
     dodok_fail "플러그인을 받지 못했습니다(curl) — 이 호스트에서 $dodok_origin 에 닿는지 보세요."
   case "$dodok_code" in
     200) ;;
-    401) dodok_fail "토큰이 틀렸거나 폐기됐습니다(401) — 연결 페이지 Gateway 카드에서 토큰을 새로 발급해 그 명령을 다시 돌리세요." ;;
+    401) dodok_fail "토큰이 틀렸거나 폐기됐습니다(401) — 설정 → 연결의 그 Gateway 화면에서 토큰을 새로 발급해 그 명령을 다시 돌리세요." ;;
     404) dodok_fail "서버에 플러그인 파일이 없습니다(404 PLUGIN_FILE_MISSING) — 서버 관리자가 플러그인 파일을 만들고 서버를 다시 띄워야 합니다." ;;
     409) dodok_fail "서버의 플러그인 파일이 서버가 뜬 뒤 다시 빌드됐습니다(409) — 서버를 재시작한 뒤 이 명령을 다시 돌리세요." ;;
     429) dodok_fail "요청이 너무 많습니다(429) — 잠시 뒤 다시 돌리세요." ;;
@@ -166,7 +166,7 @@ process.stdin.on("data", (d) => (s += d)).on("end", () => {
   dodok_say "계정 설정(bridgeUrl·토큰)을 넣습니다(openclaw config patch --stdin)."
   printf '{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}\\n' "$dodok_bridge_url" "$dodok_token" |
     openclaw config patch --stdin ||
-    dodok_fail "계정 설정을 넣지 못했습니다(openclaw config patch). 이번에 발급한 토큰은 쓰이지 않았으니 연결 페이지 카드에서 폐기하세요."
+    dodok_fail "계정 설정을 넣지 못했습니다(openclaw config patch). 이번에 발급한 토큰은 쓰이지 않았으니 설정 → 연결의 그 Gateway 화면에서 폐기하세요."
   dodok_token=""
 
   # 9. Gateway 올리기
@@ -178,8 +178,8 @@ process.stdin.on("data", (d) => (s += d)).on("end", () => {
   else
     dodok_say "설치가 끝났습니다. Gateway 를 직접 올리세요."
   fi
-  dodok_say "끝 — 연결 페이지 그 Gateway 카드의 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 보세요."
-  dodok_say "카드에 기기 페어링 대기가 보이면 openclaw devices approve <요청 id>. 옛 토큰이 있으면 「이제 폐기해도 됩니다」가 뜬 뒤 폐기하세요."
+  dodok_say "끝 — 설정 → 연결의 그 Gateway 화면에서 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 보세요."
+  dodok_say "그 Gateway 화면에 기기 페어링 대기가 보이면 openclaw devices approve <요청 id>. 옛 토큰이 있으면 「이제 폐기해도 됩니다」가 뜬 뒤 폐기하세요."
 }
 
 dodok_plugin_install "$@"

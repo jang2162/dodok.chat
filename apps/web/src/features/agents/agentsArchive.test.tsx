@@ -7,6 +7,8 @@ import { createSubscriptions } from "@/realtime/subscriptions";
 import { createFakeSocket } from "../../../test/fakeSocket";
 import {
   ARCHIVED_AT,
+  agentDetail,
+  agentPath,
   dev,
   discoverUrl,
   fin,
@@ -30,11 +32,14 @@ afterEach(() => {
 /** 보관한 fin — 서버 목록은 보관한 것도 함께 준다(스펙 「에이전트 보관」 절 API 표) */
 const archivedFin = () => ({ ...fin(), archivedAt: ARCHIVED_AT });
 
+// 보관은 에이전트 상세에서, 「삭제된 에이전트 N」 묶음은 「연결」 트리에서, 되살리기는 보관한 에이전트의 상세에서(연결 탭 통합 스펙 3.2·3.3)
+const treeNav = () => screen.findByRole("navigation", { name: "연결 목록" });
+
 describe("삭제(보관)", () => {
-  it("admin 은 살아 있는 줄마다 「삭제」 — 확인 문구를 보이고, 확인하면 DELETE 한 번 뒤 목록에서 빠져 접힌 묶음으로 간다", async () => {
+  it("admin 은 상세에 「삭제」 — 확인 문구를 보이고, 확인하면 DELETE 한 번 뒤 트리로 돌아가 접힌 묶음으로 간다", async () => {
     const agent = dev();
     const server = stubServer({ agents: [agent] });
-    renderPage(undefined, "admin");
+    const { router } = renderPage(undefined, "admin", agentPath(agent));
     await userEvent.click(await screen.findByRole("button", { name: "@dev 삭제" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(CONFIRM)).toBeInTheDocument();
@@ -43,8 +48,9 @@ describe("삭제(보관)", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.count("DELETE", `/api/v1/agents/${agent.id}`)).toBe(1);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connection"));
     expect(screen.queryByRole("button", { name: "@dev 삭제" })).toBeNull();
-    const group = screen.getByRole("button", { name: "삭제된 에이전트 1" });
+    const group = await within(await treeNav()).findByRole("button", { name: "삭제된 에이전트 1" });
     expect(group).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -58,7 +64,7 @@ describe("삭제(보관)", () => {
         return fallback(id);
       },
     });
-    renderPage(undefined, "admin");
+    renderPage(undefined, "admin", agentPath(agent));
     await userEvent.click(await screen.findByRole("button", { name: "@dev 삭제" }));
     const confirm = within(await screen.findByRole("dialog")).getByRole("button", { name: "삭제" });
 
@@ -75,41 +81,48 @@ describe("삭제(보관)", () => {
   it("취소하면 요청 없이 닫힌다", async () => {
     const agent = dev();
     const server = stubServer({ agents: [agent] });
-    renderPage(undefined, "admin");
+    renderPage(undefined, "admin", agentPath(agent));
     await userEvent.click(await screen.findByRole("button", { name: "@dev 삭제" }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "취소" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.count("DELETE", `/api/v1/agents/${agent.id}`)).toBe(0);
   });
 
-  it("member 에게는 「삭제」·「되살리기」가 없다 — 삭제된 묶음은 이름만", async () => {
-    stubServer({ agents: [dev(), archivedFin()] });
-    renderPage(undefined, "member");
-    expect(await screen.findByText("@dev")).toBeInTheDocument();
+  it("member 에게는 「삭제」·「되살리기」가 없다 — 삭제된 에이전트의 상세는 값만", async () => {
+    const live = dev();
+    const gone = archivedFin();
+    stubServer({ agents: [live, gone] });
+    const { router } = renderPage(undefined, "member", agentPath(live));
+    expect(await within(await agentDetail()).findByText("@dev")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /삭제$/ })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "삭제된 에이전트 1" }));
-    expect(screen.getByText("@fin")).toBeInTheDocument();
+    await userEvent.click(await within(await treeNav()).findByRole("button", { name: "삭제된 에이전트 1" }));
+    await userEvent.click(within(await treeNav()).getByRole("link", { name: /Fin 에이전트/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(agentPath(gone)));
+    expect(await within(await agentDetail()).findByText(/@fin/)).toBeInTheDocument();
+    expect(screen.getByText("삭제된 에이전트", { selector: "[data-slot=badge]" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /되살리기/ })).toBeNull();
   });
 });
 
 describe("삭제된 에이전트 묶음", () => {
-  it("접혀 있고 펼치면 줄마다 「되살리기」 — 누르면 restore 뒤 살아 있는 목록으로 돌아온다", async () => {
+  it("트리에서 접혀 있고 펼치면 줄마다 상세 링크 — 상세의 「되살리기」를 누르면 restore 뒤 살아 있는 에이전트로 돌아온다", async () => {
     const gone = archivedFin();
     const server = stubServer({ agents: [dev(), gone] });
-    renderPage(undefined, "admin");
-    const group = await screen.findByRole("button", { name: "삭제된 에이전트 1" });
-    // 접힌 동안 보관한 줄은 보이지 않는다 — 살아 있는 목록에도 없다
-    expect(screen.queryByText("@fin")).toBeNull();
-    expect(screen.queryByRole("switch", { name: "@fin 사용" })).toBeNull();
+    const { router } = renderPage(undefined, "admin");
+    const nav = await treeNav();
+    const group = await within(nav).findByRole("button", { name: "삭제된 에이전트 1" });
+    // 접힌 동안 보관한 줄은 보이지 않는다 — 살아 있는 줄에도 없다
+    expect(within(nav).queryByRole("link", { name: /Fin 에이전트/ })).toBeNull();
 
     await userEvent.click(group);
     expect(group).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(screen.getByRole("button", { name: "@fin 되살리기" }));
+    await userEvent.click(within(nav).getByRole("link", { name: /Fin 에이전트/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(agentPath(gone)));
+    await userEvent.click(await screen.findByRole("button", { name: "@fin 되살리기" }));
 
     expect(await screen.findByRole("switch", { name: "@fin 사용" })).toBeInTheDocument();
     expect(server.count("POST", `/api/v1/agents/${gone.id}/restore`)).toBe(1);
-    expect(screen.queryByRole("button", { name: /^삭제된 에이전트/ })).toBeNull();
+    await waitFor(() => expect(within(nav).queryByRole("button", { name: /^삭제된 에이전트/ })).toBeNull());
   });
 
   it("「되살리기」를 같은 틱에 두 번 눌러도 restore 는 한 번", async () => {
@@ -122,9 +135,8 @@ describe("삭제된 에이전트 묶음", () => {
         return fallback(id);
       },
     });
-    renderPage(undefined, "admin");
-    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 1" }));
-    const restore = screen.getByRole("button", { name: "@fin 되살리기" });
+    renderPage(undefined, "admin", agentPath(gone));
+    const restore = await screen.findByRole("button", { name: "@fin 되살리기" });
     act(() => {
       fireEvent.click(restore);
       fireEvent.click(restore);
@@ -137,42 +149,55 @@ describe("삭제된 에이전트 묶음", () => {
   it("살아 있는 에이전트가 없고 삭제된 것만 있어도 묶음은 보인다", async () => {
     stubServer({ agents: [archivedFin()] });
     renderPage(undefined, "admin");
-    expect(await screen.findByRole("button", { name: "삭제된 에이전트 1" })).toBeInTheDocument();
+    expect(
+      await within(await treeNav()).findByRole("button", { name: "삭제된 에이전트 1" }),
+    ).toBeInTheDocument();
   });
 });
 
-describe("삭제·되살리기 뒤 초점 — 누른 단추의 줄이 사라져도 body 로 떨어지지 않는다", () => {
-  it("삭제하면 초점은 「삭제된 에이전트 N」 묶음 단추로", async () => {
-    stubServer({ agents: [dev(), fin()] });
-    renderPage(undefined, "admin");
+describe("삭제·되살리기 뒤 초점 — 누른 단추가 사라져도 body 로 떨어지지 않는다", () => {
+  it("삭제하면 초점은 트리의 「삭제된 에이전트 N」 묶음 단추로", async () => {
+    const agent = dev();
+    stubServer({ agents: [agent, fin()] });
+    renderPage(undefined, "admin", agentPath(agent));
     await userEvent.click(await screen.findByRole("button", { name: "@dev 삭제" }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "삭제" }));
 
-    const group = await screen.findByRole("button", { name: "삭제된 에이전트 1" });
+    const group = await within(await treeNav()).findByRole("button", { name: "삭제된 에이전트 1" });
     await waitFor(() => expect(group).toHaveFocus());
   });
 
-  it("되살린 뒤 묶음이 남으면 초점은 묶음 단추로", async () => {
-    const ops = makeAgent({ providerAgentId: "ops", handle: "ops", name: "Ops", archivedAt: ARCHIVED_AT });
-    stubServer({ agents: [dev(), archivedFin(), ops] });
-    renderPage(undefined, "admin");
-    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 2" }));
-    await userEvent.click(screen.getByRole("button", { name: "@fin 되살리기" }));
+  it("되살리면 초점은 그 에이전트 상세의 제목으로", async () => {
+    const gone = archivedFin();
+    stubServer({ agents: [dev(), gone] });
+    renderPage(undefined, "admin", agentPath(gone));
+    await userEvent.click(await screen.findByRole("button", { name: "@fin 되살리기" }));
 
     expect(await screen.findByRole("switch", { name: "@fin 사용" })).toBeInTheDocument();
-    const group = screen.getByRole("button", { name: "삭제된 에이전트 1" });
-    await waitFor(() => expect(group).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1, name: "Fin 에이전트" })).toHaveFocus(),
+    );
   });
 
-  it("마지막 하나를 되살려 묶음이 사라지면 초점은 살아 있는 목록에 돌아온 그 줄의 「사용」 스위치로", async () => {
-    stubServer({ agents: [dev(), archivedFin()] });
-    renderPage(undefined, "admin");
-    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 1" }));
-    await userEvent.click(screen.getByRole("button", { name: "@fin 되살리기" }));
-
-    const restored = await screen.findByRole("switch", { name: "@fin 사용" });
-    await waitFor(() => expect(restored).toHaveFocus());
-    expect(screen.queryByRole("button", { name: /^삭제된 에이전트/ })).toBeNull();
+  it("프로젝트가 없는 옛 러너 에이전트는 되살릴 수 없다 — 단추 대신 안내", async () => {
+    const old = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-old",
+      handle: "old",
+      name: "Old",
+      archivedAt: ARCHIVED_AT,
+      runnerAgent: {
+        projectId: null,
+        model: null,
+        permissionMode: "default",
+        allowedTools: null,
+        disallowedTools: [],
+      },
+    });
+    stubServer({ agents: [old] });
+    renderPage(undefined, "admin", agentPath(old));
+    expect(await within(await agentDetail()).findByText(/@old/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /되살리기/ })).toBeNull();
   });
 });
 
@@ -203,8 +228,15 @@ describe("가져오기의 삭제된 항목", () => {
     );
     expect(server.count("POST", `/api/v1/agents/${gone.id}/restore`)).toBe(1);
     expect(server.count("GET", discoverUrl())).toBe(1);
-    // 대화상자가 열려 있어 뒤 페이지는 접근성 트리에서 가려진다
-    expect(screen.getByRole("switch", { name: "@fin 사용", hidden: true })).toBeInTheDocument();
+    // 대화상자가 열려 있어 뒤 페이지는 접근성 트리에서 가려진다 — 되살린 에이전트가 이 Gateway 의 「에이전트 N」에 돌아온다
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("gateway-detail")).getByRole("link", {
+          name: /Fin 에이전트/,
+          hidden: true,
+        }),
+      ).toBeInTheDocument(),
+    );
   });
 });
 
@@ -286,14 +318,17 @@ describe("다른 탭", () => {
         },
       }),
     );
-    renderPage(qc, "admin");
+    renderPage(qc, "admin", agentPath(agent));
     expect(await screen.findByRole("switch", { name: "@dev 사용" })).toBeInTheDocument();
 
-    // 다른 탭이 보관했다
+    // 다른 탭이 보관했다 — 열린 상세가 「삭제된 에이전트」로, 트리에 묶음이 생긴다
     server.state[0] = { ...agent, archivedAt: ARCHIVED_AT };
     act(() => fake.serverEmit("agents.changed", {}));
 
-    expect(await screen.findByRole("button", { name: "삭제된 에이전트 1" })).toBeInTheDocument();
+    expect(
+      await within(await treeNav()).findByRole("button", { name: "삭제된 에이전트 1" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "@dev 사용" })).toBeNull();
+    expect(screen.getByText("삭제된 에이전트", { selector: "[data-slot=badge]" })).toBeInTheDocument();
   });
 });

@@ -56,18 +56,19 @@ describe("추가·제거", () => {
     // owner 는 admin 이상이라 등록 링크가 있다(o4 — member 는 없다, roleView.test.tsx)
     expect(within(section).getByRole("link", { name: "에이전트 등록" })).toHaveAttribute(
       "href",
-      "/settings/agents",
+      "/settings/connection",
     );
     expect(server.count("GET", membersUrl)).toBe(1);
   });
 
-  it("등록된 에이전트가 없으면 /settings/agents 로 안내", async () => {
+  it("등록된 에이전트가 없으면 설정 → 연결로 안내", async () => {
     stubSettingsServer({ agents: [] });
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
-    expect(
-      await within(section).findByRole("link", { name: "에이전트 화면에서 등록하세요" }),
-    ).toHaveAttribute("href", "/settings/agents");
+    expect(await within(section).findByRole("link", { name: "설정 → 연결에서 데려오세요" })).toHaveAttribute(
+      "href",
+      "/settings/connection",
+    );
     expect(within(section).queryByRole("combobox")).not.toBeInTheDocument();
   });
 

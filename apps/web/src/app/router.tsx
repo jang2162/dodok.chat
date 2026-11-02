@@ -13,6 +13,7 @@ import { conversationsQuery, meQuery, qk } from "@/api/queries";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import type { RecentConversations } from "@/pwa/persist";
 import { SETTINGS_SCROLL_ID, SettingsIndex, SettingsLayout } from "@/features/settings-shell/SettingsLayout";
+import { CONNECTION_DETAIL_SCROLL_ID } from "@/features/connections/context";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
 import { AppShell, PAGE_SCROLL_ID } from "./layout/AppShell";
@@ -261,10 +262,62 @@ export const notificationsRoute = createRoute({
   path: "notifications",
   component: lazyPage(() => import("@/features/settings-shell/NotificationsPage"), "NotificationsPage"),
 });
-export const agentsRoute = createRoute({
+/**
+ * 「연결」 탭(연결 탭 통합 스펙 3장) — 누구나. 레이아웃이 트리를, 자식이 상세를 그린다. 상세 주소마다 화면이 있어 새로 고침·링크·뒤로
+ * 가기가 그대로 된다. 역할에 없는 것은 상세가 가른다(서버도 막는다)
+ */
+export const connectionRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "connection",
+  component: lazyPage(() => import("@/features/connections/ConnectionsLayout"), "ConnectionsLayout"),
+});
+export const connectionIndexRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "/",
+  component: lazyPage(() => import("@/features/connections/ConnectionsLayout"), "ConnectionIndex"),
+});
+export const connectionGatewayRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "gateway/$gatewayId",
+  component: lazyPage(() => import("@/features/connections/GatewayDetail"), "GatewayDetail"),
+});
+export const connectionRunnerRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "runner/$runnerId",
+  component: lazyPage(() => import("@/features/connections/RunnerDetail"), "RunnerDetail"),
+});
+export const connectionProjectRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "project/$projectId",
+  component: lazyPage(() => import("@/features/connections/ProjectDetail"), "ProjectDetail"),
+});
+export const connectionAgentRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "agent/$agentId",
+  component: lazyPage(() => import("@/features/connections/AgentDetail"), "AgentDetail"),
+});
+export const connectionNewRoute = createRoute({
+  getParentRoute: () => connectionRoute,
+  path: "new",
+  component: lazyPage(() => import("@/features/connections/NewConnection"), "NewConnection"),
+});
+/**
+ * 옛 탭 주소(에이전트·러너) — 즐겨찾기·옛 링크가 깨지지 않게 「연결」로 넘긴다. 기록을 바꿔 쓴다(뒤로 가기가 이 주소에 걸려 다시
+ * 넘겨지지 않게)
+ */
+export const legacyAgentsTabRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "agents",
-  component: lazyPage(() => import("@/features/agents/AgentsPage"), "AgentsPage"),
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/connection", replace: true });
+  },
+});
+export const legacyRunnersTabRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "runners",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/connection", replace: true });
+  },
 });
 /** 보관한 채널(누구나 — 「보관 해제」만 admin 이상, 채널 보관 스펙 「웹」 절) */
 export const channelsRoute = createRoute({
@@ -284,18 +337,6 @@ export const membersRoute = createRoute({
   path: "members",
   component: lazyPage(() => import("@/features/members/MembersPage"), "MembersPage"),
 });
-/** 러너·러너 프로젝트(admin 이상 — 페이지가 가른다, 러너 일반화 스펙 7장) */
-export const runnersRoute = createRoute({
-  getParentRoute: () => settingsRoute,
-  path: "runners",
-  component: lazyPage(() => import("@/features/runners/RunnersPage"), "RunnersPage"),
-});
-/** 연결 설정(owner 만 — 페이지가 가른다) */
-export const connectionRoute = createRoute({
-  getParentRoute: () => settingsRoute,
-  path: "connection",
-  component: lazyPage(() => import("@/features/setup/ConnectionPage"), "ConnectionPage"),
-});
 /** 운영(admin 이상 — 페이지가 가른다, 스펙 7장·팀 스펙 2장) */
 export const operationsRoute = createRoute({
   getParentRoute: () => settingsRoute,
@@ -311,7 +352,7 @@ export const legacyAgentsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/agents",
   beforeLoad: () => {
-    throw redirect({ to: "/settings/agents", replace: true });
+    throw redirect({ to: "/settings/connection", replace: true });
   },
 });
 
@@ -338,12 +379,19 @@ const routeTree = rootRoute.addChildren([
       settingsIndexRoute,
       accountRoute,
       notificationsRoute,
-      agentsRoute,
+      connectionRoute.addChildren([
+        connectionIndexRoute,
+        connectionGatewayRoute,
+        connectionRunnerRoute,
+        connectionProjectRoute,
+        connectionAgentRoute,
+        connectionNewRoute,
+      ]),
+      legacyAgentsTabRoute,
+      legacyRunnersTabRoute,
       channelsRoute,
       automationsRoute,
       membersRoute,
-      runnersRoute,
-      connectionRoute,
       operationsRoute,
     ]),
     legacyAgentsRoute,
@@ -355,7 +403,7 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     routeTree,
     context: { queryClient },
     defaultNotFoundComponent: NotFound,
-    scrollToTopSelectors: [`#${PAGE_SCROLL_ID}`, `#${SETTINGS_SCROLL_ID}`],
+    scrollToTopSelectors: [`#${PAGE_SCROLL_ID}`, `#${SETTINGS_SCROLL_ID}`, `#${CONNECTION_DETAIL_SCROLL_ID}`],
     ...(history ? { history } : {}),
   });
 }

@@ -7,20 +7,25 @@ import { qk } from "@/api/queries";
  * 「러너」 탭의 서버 상태(러너 일반화 스펙 7장, admin 이상) — 러너는 runner_tokens 행 하나다. 연결·hello 내용은 서버 메모리에만
  * 있어 끊긴 러너는 판본·루트·프로그램이 비어 온다. wire `adapter.status`(러너)가 오면 러너 목록·프로젝트가 낡는다(realtime/handlers — 둘러보기는 빼고)
  */
-export const useRunners = () =>
+export const useRunners = ({ enabled = true }: { enabled?: boolean } = {}) =>
   useQuery({
     queryKey: qk.runners(),
     queryFn: async () => (await api<{ runners: RunnerSummary[] }>("GET", "/runners")).runners,
+    enabled,
   });
 
+/** 러너 하나의 프로젝트 조회 옵션 — 「연결」 트리가 러너마다 한꺼번에 부른다(`useQueries`) */
+export const runnerProjectsQuery = (runnerId: string) => ({
+  queryKey: qk.runnerProjects(runnerId),
+  queryFn: async () =>
+    (await api<{ projects: RunnerProject[] }>("GET", `/runners/${runnerId}/projects`)).projects,
+});
+
 /** 그 러너의 프로젝트 — 보관한 것도 함께 온다(더한 차례) */
-export const useRunnerProjects = (runnerId: string | undefined) =>
-  useQuery({
-    queryKey: qk.runnerProjects(runnerId ?? ""),
-    queryFn: async () =>
-      (await api<{ projects: RunnerProject[] }>("GET", `/runners/${runnerId}/projects`)).projects,
-    enabled: runnerId !== undefined,
-  });
+export const useRunnerProjects = (
+  runnerId: string | undefined,
+  { enabled = true }: { enabled?: boolean } = {},
+) => useQuery({ ...runnerProjectsQuery(runnerId ?? ""), enabled: enabled && runnerId !== undefined });
 
 /**
  * 루트 안 디렉터리 하나의 하위 디렉터리(러너 fs.list). 403(둘러보기 꺼짐)·404(없는 디렉터리)·503(끊김)은 둘러보기 칸이 그리므로

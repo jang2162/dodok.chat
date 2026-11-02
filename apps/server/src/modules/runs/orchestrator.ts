@@ -1594,7 +1594,7 @@ function runErrorBody(
     case "DROPPED:bot-loop-protection":
       return `@${handle} ${josa(handle, "이", "가")} 봇 루프 보호로 메시지를 받지 않았습니다`;
     case PLUGIN_OUTDATED:
-      return `@${handle} ${josa(handle, "이", "가")} 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)`;
+      return `@${handle} ${josa(handle, "이", "가")} 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(설정 → 연결)`;
     case INVALID_AGENT_ID:
       return `@${handle} 실행이 실패했습니다: ${INVALID_AGENT_ID_REASON}`;
     case PROVIDER_AUTH:

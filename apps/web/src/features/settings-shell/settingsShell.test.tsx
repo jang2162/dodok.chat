@@ -79,9 +79,9 @@ describe("사이드바 하단", () => {
 
 describe("탭 — 역할대로", () => {
   it.each([
-    ["member", ["내 계정", "알림", "에이전트", "채널"]],
-    ["admin", ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "러너", "운영"]],
-    ["owner", ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "러너", "연결", "운영"]],
+    ["member", ["내 계정", "알림", "연결", "채널"]],
+    ["admin", ["내 계정", "알림", "연결", "채널", "자동화", "멤버", "운영"]],
+    ["owner", ["내 계정", "알림", "연결", "채널", "자동화", "멤버", "운영"]],
   ])("%s — %j", async (role, tabs) => {
     stubShell({ role });
     renderRoute("/settings/account");
@@ -90,16 +90,9 @@ describe("탭 — 역할대로", () => {
 
   // 보이지 않는 탭은 직접 주소로 와도 탭 목록에 끼지 않는다 — 내용 자리만 「권한이 없습니다」
   it.each([
-    ["member", "/settings/members", ["내 계정", "알림", "에이전트", "채널"]],
-    ["member", "/settings/connection", ["내 계정", "알림", "에이전트", "채널"]],
-    ["member", "/settings/operations", ["내 계정", "알림", "에이전트", "채널"]],
-    ["member", "/settings/automations", ["내 계정", "알림", "에이전트", "채널"]],
-    ["member", "/settings/runners", ["내 계정", "알림", "에이전트", "채널"]],
-    [
-      "admin",
-      "/settings/connection",
-      ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "러너", "운영"],
-    ],
+    ["member", "/settings/members", ["내 계정", "알림", "연결", "채널"]],
+    ["member", "/settings/operations", ["내 계정", "알림", "연결", "채널"]],
+    ["member", "/settings/automations", ["내 계정", "알림", "연결", "채널"]],
   ])("%s 가 숨은 탭 %s 로 직접 오면 — 탭 목록은 %j 그대로", async (role, path, tabs) => {
     stubShell({ role });
     renderRoute(path);
@@ -120,12 +113,20 @@ describe("탭 — 역할대로", () => {
 });
 
 describe("주소", () => {
-  it("옛 /agents 는 /settings/agents 로 넘긴다", async () => {
-    stubShell();
-    const { router } = renderRoute("/agents");
-    expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/settings/agents");
-  });
+  // 옛 탭 주소는 「연결」로 — 기록을 바꿔 쓴다(뒤로 가기가 옛 주소에 걸리지 않게)
+  it.each(["/agents", "/settings/agents", "/settings/runners"])(
+    "옛 %s 는 /settings/connection 으로 넘긴다(replace)",
+    async (path) => {
+      stubShell();
+      const { router, history } = renderRoute("/settings/account");
+      await screen.findByRole("heading", { level: 1, name: "내 계정" });
+      await act(() => router.navigate({ to: path }));
+      expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/settings/connection");
+      // 내 계정 → 연결 둘뿐 — 옛 주소가 기록에 남지 않는다
+      expect(history.length).toBe(2);
+    },
+  );
 
   it("넓은 화면의 /settings 는 /settings/account 로 넘긴다", async () => {
     stubShell();
@@ -146,8 +147,8 @@ describe("넓은 화면 레이아웃", () => {
   // jsdom 은 레이아웃을 재지 않는다 — 실제 스크롤은 브라우저 확인이 보고, 여기서는 구조를 고정한다
   it("탭 목록은 고정, 내용 칸만 따로 스크롤한다 — 둘 다 셸의 스크롤 상자 안", async () => {
     stubShell();
-    renderRoute("/settings/agents");
-    const page = await screen.findByTestId("page-agents");
+    renderRoute("/settings/channels");
+    const page = await screen.findByTestId("page-channels");
     const content = screen.getByTestId("settings-content");
     expect(content).toContainElement(page);
     expect(content).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
@@ -169,8 +170,8 @@ describe("넓은 화면 레이아웃", () => {
     const { router } = renderRoute("/settings/account");
     await screen.findByRole("heading", { level: 1, name: "내 계정" });
     scrollTo.mockClear();
-    await act(() => router.navigate({ to: "/settings/agents" }));
-    await screen.findByTestId("page-agents");
+    await act(() => router.navigate({ to: "/settings/connection" }));
+    await screen.findByTestId("page-connection");
     await waitFor(() => expect(scrollTo.mock.contexts).toContain(screen.getByTestId("settings-content")));
   });
 });
@@ -208,9 +209,9 @@ describe("좁은 화면 — 단계 이동", () => {
     await userEvent.click(back);
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));
     await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "설정" })).toHaveFocus());
-    await userEvent.click(within(await tabsNav()).getByRole("link", { name: "에이전트" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
-    expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+    await userEvent.click(within(await tabsNav()).getByRole("link", { name: "연결" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connection"));
+    expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
 
     act(() => history.back());
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));

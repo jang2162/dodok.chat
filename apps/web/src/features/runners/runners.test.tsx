@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeAgent } from "../../../test/agentsPage";
@@ -7,8 +7,10 @@ import {
   json,
   programOf,
   projectOf,
+  projectPath,
   renderRunnersPage,
   runnerOf,
+  runnerPath,
   runnerId,
   stubRunners,
 } from "../../../test/runnersServer";
@@ -29,12 +31,30 @@ function stub(opts: Parameters<typeof stubRunners>[0] = {}, agents = [] as Retur
   return server;
 }
 
+/** 러너 상세(「연결」 탭의 `/settings/connection/runner/<id>`) — 상세 본문은 러너 라벨을 이름으로 한 article */
 const card = (name: string) => screen.findByRole("article", { name });
 
-describe("「러너」 탭 — 권한", () => {
-  it("member 는 「권한이 없습니다」이고 러너 API 를 부르지 않는다", async () => {
-    const server = stub();
+describe("러너 상세 — 권한", () => {
+  it("member 는 러너·프로젝트 API 를 부르지 않는다 — 에이전트의 러너 요약으로 머리와 경고만", async () => {
+    const coder = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-coder",
+      handle: "coder",
+      name: "Coder",
+      runner: { tokenId: runnerId(1), label: "맥북", revoked: false },
+    });
+    const server = stub({}, [coder]);
     renderRunnersPage("member");
+    const detail = await screen.findByTestId("runner-detail");
+    expect(within(detail).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: /Coder/ })).toBeInTheDocument();
+    expect(within(detail).queryByRole("button", { name: "프로젝트 추가" })).toBeNull();
+    expect(server.calls).toEqual([]);
+  });
+
+  it("member 가 프로젝트 상세를 열면 「권한이 없습니다」 — 러너 API 를 부르지 않는다", async () => {
+    const server = stub();
+    renderRunnersPage("member", undefined, projectPath(projectOf(1).id));
     expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
     expect(server.calls).toEqual([]);
   });
@@ -102,17 +122,18 @@ describe("러너 카드", () => {
     expect(within(home).getByText("끊김")).toBeInTheDocument();
     expect(home).not.toHaveTextContent("프로그램");
     expect(within(home).getByRole("button", { name: "프로젝트 추가" })).toBeDisabled();
+    cleanup();
+    renderRunnersPage("admin", undefined, runnerPath(runnerId(2)));
     const old = await card("옛것");
     expect(within(old).getByText("폐기됨")).toBeInTheDocument();
     expect(old).toHaveTextContent("프로젝트를 다른 러너로 옮기면");
     expect(within(old).getByRole("button", { name: "프로젝트 추가" })).toBeDisabled();
   });
 
-  it("러너가 없으면 연결 페이지 안내", async () => {
+  it("없는 러너 id 면 「이 연결을 찾을 수 없습니다」", async () => {
     stub({ runners: [] });
     renderRunnersPage("owner");
-    expect(await screen.findByText(/러너가 없습니다/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "연결 페이지" })).toHaveAttribute("href", "/settings/connection");
+    expect(await screen.findByText("이 연결을 찾을 수 없습니다")).toBeInTheDocument();
   });
 });
 
@@ -148,7 +169,10 @@ describe("프로젝트 줄", () => {
       [a, "내 저장소들/dodok"],
       [b, "내 저장소들/.config/dodok"],
     ] as const) {
-      expect(within(row).getByText("dodok", { selector: "span" })).toBeInTheDocument();
+      expect(within(row).getByRole("link", { name: "dodok" })).toHaveAttribute(
+        "href",
+        projectPath(row === a ? projectOf(1).id : projectOf(2).id),
+      );
       expect(within(row).getByRole("button", { name: `dodok (${place}) 확인` })).toHaveTextContent(/^확인$/);
       expect(within(row).getByRole("button", { name: `dodok (${place}) 보관` })).toHaveTextContent(/^보관$/);
       expect(within(row).getByRole("button", { name: `dodok (${place}) 옮기기` })).toHaveTextContent(
@@ -286,18 +310,23 @@ describe("다른 러너로 옮기기", () => {
     await waitFor(() => expect(alert).toHaveFocus());
   });
 
-  it("옮기면 줄이 그 러너의 카드로 간다", async () => {
+  it("옮기면 줄이 그 러너의 상세로 간다", async () => {
     const server = stub({ runners, projects: [projectOf(1, { label: "dodok" })] });
-    renderRunnersPage();
+    const { router } = renderRunnersPage();
     const row = await within(await card("맥북")).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 옮기기$/ }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: "데스크톱" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("runner-detail")).queryByRole("listitem", { name: /^dodok \(/ }),
+      ).toBeNull(),
+    );
+    await act(() => router.navigate({ to: runnerPath(runnerId(2)) }));
     expect(
       await within(await card("데스크톱")).findByRole("listitem", { name: /^dodok \(/ }),
     ).toBeInTheDocument();
-    expect(within(await card("맥북")).queryByRole("listitem", { name: /^dodok \(/ })).toBeNull();
     expect(server.calls.find((c) => c.url.endsWith("/move"))?.body).toEqual({ runnerId: runnerId(2) });
   });
 });

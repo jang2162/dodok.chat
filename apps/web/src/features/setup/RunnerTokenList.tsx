@@ -35,15 +35,15 @@ function RunnerBuild({
     return <p className="text-xs text-muted-foreground">서버와 같은 빌드입니다</p>;
   return (
     <p className="text-xs text-muted-foreground">
-      서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 아래 「서버와 같은 빌드로
-      설치」를 쓰세요.
+      서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 「설치 안내」의 「서버와
+      같은 빌드로 설치」를 쓰세요.
     </p>
   );
 }
 
 /**
  * 러너 토큰 목록(러너 스펙 5장) — 라벨·`drn_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」(붙어 있으면 같은 빌드인지)·폐기됨과
- * 「다시 발급」·「폐기」. 러너의 연결 상태·프로젝트는 「러너」 탭이 맡는다(러너 일반화 스펙 7장). 폐기는 확인을 거친다 — 붙어 있으면
+ * 「다시 발급」·「폐기」. 러너 상세가 그 러너의 토큰 한 줄로 그린다(연결 탭 통합 스펙 3.3 — 러너 하나 = 러너 토큰 하나). 폐기는 확인을 거친다 — 붙어 있으면
  * 그 러너가 곧바로 끊긴다고 알린다. 러너는 서로 대신하지 않으므로 브리지 토큰의 「마지막 활성 토큰」 한 번 더 묻기는 없다.
  * 폐기한 줄에는 「폐기」 버튼이 없어 초점을 돌려줄 자리가 사라진다 — 아래 줄의 「폐기」, 없으면 `issueButton` 으로 옮긴다
  */
@@ -54,7 +54,7 @@ export function RunnerTokenList({
 }: {
   tokens: RunnerTokenRecord[];
   status: SetupStatus | undefined;
-  issueButton?: RefObject<HTMLButtonElement | null>;
+  issueButton?: RefObject<HTMLElement | null>;
 }) {
   const revoke = useRevokeRunnerToken();
   const [target, setTarget] = useState<RunnerTokenRecord>();

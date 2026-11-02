@@ -1966,7 +1966,7 @@ describe("orchestrator", () => {
       expect(systemMessages(t.db)).toEqual([
         expect.objectContaining({
           threadRootId: root.id,
-          bodyMd: "@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)",
+          bodyMd: "@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(설정 → 연결)",
           systemMeta: { kind: "run_error", runId: run.id },
           components: expect.objectContaining({
             blocks: [expect.objectContaining({ items: [expect.objectContaining({ id: "retry_run" })] })],

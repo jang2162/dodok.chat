@@ -1,4 +1,10 @@
-import { type GatewaySetup, GatewayName, GatewayUrl, type UpdateGatewayBody } from "@dodok/shared";
+import {
+  type GatewaySetup,
+  type GatewaySummary,
+  GatewayName,
+  GatewayUrl,
+  type UpdateGatewayBody,
+} from "@dodok/shared";
 import { type ComponentProps, type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { detailField, validationField } from "@/api/formErrors";
@@ -123,6 +129,19 @@ export function GatewayForm({
 }
 
 function AddForm({ onDone }: { onDone: () => void }) {
+  return <GatewayFormBody onSaved={onDone} />;
+}
+
+/**
+ * Gateway 추가 폼 본문 — 「연결 추가」 화면이 대화상자 없이 그린다(`embedded`). 저장하면 서버가 준 요약(id)을 넘긴다
+ */
+export function GatewayFormBody({
+  onSaved,
+  embedded = false,
+}: {
+  onSaved: (gateway: GatewaySummary) => void;
+  embedded?: boolean;
+}) {
   const create = useCreateGateway();
   return (
     <GatewayFields
@@ -133,8 +152,9 @@ function AddForm({ onDone }: { onDone: () => void }) {
       initial={{ name: "", url: "" }}
       tokenRequired
       pending={create.isPending}
+      embedded={embedded}
       onSubmit={(values, fail) =>
-        create.mutate(values, { onSuccess: onDone, onError: (e) => fail(serverErrors(e)) })
+        create.mutate(values, { onSuccess: onSaved, onError: (e) => fail(serverErrors(e)) })
       }
     />
   );
@@ -172,7 +192,10 @@ function GatewayFields({
   tokenRequired,
   pending,
   onSubmit,
+  embedded = false,
 }: {
+  /** 대화상자 밖(「연결 추가」 화면)에 그린다 — 제목·버튼 줄을 대화상자 부품 없이 */
+  embedded?: boolean;
   title: string;
   description: string;
   submitLabel: string;
@@ -216,11 +239,15 @@ function GatewayFields({
   }
 
   return (
-    <form onSubmit={submit} noValidate className="grid gap-4">
-      <DialogHeader>
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
+    <form onSubmit={submit} noValidate className="grid gap-4" aria-label={embedded ? title : undefined}>
+      {embedded ? (
+        <p className="text-sm text-muted-foreground">{description}</p>
+      ) : (
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+      )}
       <Field
         label="이름"
         placeholder="예: 사무실"
@@ -245,11 +272,19 @@ function GatewayFields({
         error={errors.token}
       />
       <FieldError>{errors.form}</FieldError>
-      <DialogFooter>
-        <Button type="submit" disabled={pending}>
-          {pending ? pendingLabel : submitLabel}
-        </Button>
-      </DialogFooter>
+      {embedded ? (
+        <div>
+          <Button type="submit" disabled={pending}>
+            {pending ? pendingLabel : submitLabel}
+          </Button>
+        </div>
+      ) : (
+        <DialogFooter>
+          <Button type="submit" disabled={pending}>
+            {pending ? pendingLabel : submitLabel}
+          </Button>
+        </DialogFooter>
+      )}
     </form>
   );
 }

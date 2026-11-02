@@ -7,11 +7,12 @@ import type {
 } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
-import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
-import { RunnersPage } from "@/features/runners/RunnersPage";
+import { TooltipProvider } from "@/ui/tooltip";
+import { shellGet } from "./shellApi";
 
 /** 「러너」 탭·러너 에이전트 만들기 시험의 가짜 서버 조각 — 러너·프로젝트·둘러보기 REST(러너 일반화 태스크 4 보고 1절의 꼴) */
 
@@ -167,21 +168,35 @@ export function stubRunners(opts: Parameters<typeof runnersRoutes>[0] = {}, extr
     const hit = routes.handle(method, url, body);
     if (hit) return hit;
     if (extra) return extra(input, init);
+    // 셸째 띄울 때 사이드바·트리가 부르는 것
+    const shell = shellGet(input, init);
+    if (shell) return shell;
     throw new Error(`예상 밖 요청 ${method} ${url}`);
   };
   return { ...routes, fetch };
 }
 
-/** 「러너」 탭만 그린다 — 라우터는 문맥만(연결 페이지·러너 탭 링크) */
-export function renderRunnersPage(role = "admin", qc: QueryClient = createQueryClient(() => {})) {
+/** 러너 상세·프로젝트 상세 주소 */
+export const runnerPath = (id: string = runnerId(1)) => `/settings/connection/runner/${id}`;
+export const projectPath = (id: string) => `/settings/connection/project/${id}`;
+
+/**
+ * 「연결」 탭의 그 주소를 셸째 띄운다 — 기본은 첫 러너의 상세. 라우터를 돌려준다. 셸이 부르는 나머지(채널·에이전트·어댑터)는
+ * 넘긴 fetch 가 shellGet 으로 받는다
+ */
+export function renderRunnersPage(
+  role = "admin",
+  qc: QueryClient = createQueryClient(() => {}),
+  path: string = runnerPath(),
+) {
   qc.setQueryData(qk.me, { user: { id: "u", handle: "me" }, workspaceId: "w", role });
-  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/settings/runners"] }));
+  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: [path] }));
   render(
     <QueryClientProvider client={qc}>
-      <RouterContextProvider router={router}>
-        <RunnersPage />
-      </RouterContextProvider>
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
-  return qc;
+  return Object.assign(qc, { router });
 }

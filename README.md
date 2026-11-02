@@ -20,7 +20,7 @@
 - **웹**(`apps/web`) — React + Vite PWA.
 - **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·읽지 않음·반응·자동화(예약 틱·웹훅 수신)·런·릴레이 라우터·components·첨부·푸시·멤버(초대·역할)·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
 - **플러그인**(`packages/openclaw-plugin`, 채널 id `dodok`) — 원격 Gateway 프로세스 안에서 도는 OpenClaw 채널 플러그인. 서버의 `/bridge` 로 **나가는** 연결만 쓴다 — Gateway 쪽에 포트를 열지 않는다. 에이전트 답의 정본은 이 경로로 온다.
-- **러너**(`packages/claude-runner`, 명령 `dodok-runner`) — 사람의 머신에서 앱이 만든 에이전트를 그 머신의 프로젝트 디렉터리에서 돌려(지금 프로그램은 Claude Code — Claude Agent SDK) 서버 `/runner` 로 **나가는** 연결 하나로 붙는다. 러너 설정은 허용 루트·권한 상한만 쥐고, 프로젝트·러너 에이전트는 앱의 「러너」·「에이전트」 탭에서 만든다. 서버 쪽은 `packages/runner-adapter` 다. 에이전트의 `provider` 로 어댑터가 갈리고 한 채널에서 OpenClaw 에이전트와 서로 릴레이한다.
+- **러너**(`packages/claude-runner`, 명령 `dodok-runner`) — 사람의 머신에서 앱이 만든 에이전트를 그 머신의 프로젝트 디렉터리에서 돌려(지금 프로그램은 Claude Code — Claude Agent SDK) 서버 `/runner` 로 **나가는** 연결 하나로 붙는다. 러너 설정은 허용 루트·권한 상한만 쥐고, 프로젝트·러너 에이전트는 앱의 「연결」 탭에서 만든다. 서버 쪽은 `packages/runner-adapter` 다. 에이전트의 `provider` 로 어댑터가 갈리고 한 채널에서 OpenClaw 에이전트와 서로 릴레이한다.
 - **계약**(`packages/shared`) — 도메인 타입·Zod 스키마·components v1·wire·브리지 계약. 브라우저·Node·Gateway 세 곳에서 읽힌다.
 
 패키지별 책임과 핵심 파일은 `docs/guides/project-structure.md`.
@@ -47,7 +47,7 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 
 ### 운영 — 한 호스트에 올리고 원격 Gateway 잇기
 
-`docs/guides/docker-deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. 저장소 루트의 `compose.yaml` 로 앱 컨테이너 하나(서버가 웹까지 낸다)를 올리고, 그 서버의 리버스 프록시가 HTTPS 를 끝내 앱 포트로 넘기게 하고(같은 문서의 「프록시 붙이기」 절), 웹의 연결 페이지에서 플러그인 파일과 브리지 토큰을 받아 Gateway 호스트에 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 멤버 초대·비밀번호 재설정·백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다. Komodo 로 올리면 같은 문서의 「부록 — Komodo Git Repo Stack」 절을 함께 본다.
+`docs/guides/docker-deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. 저장소 루트의 `compose.yaml` 로 앱 컨테이너 하나(서버가 웹까지 낸다)를 올리고, 그 서버의 리버스 프록시가 HTTPS 를 끝내 앱 포트로 넘기게 하고(같은 문서의 「프록시 붙이기」 절), 웹의 설정 → 연결에서 Gateway 를 붙이고 브리지 토큰 발급 대화상자의 설치 명령으로 Gateway 호스트에 플러그인을 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 멤버 초대·비밀번호 재설정·백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다. Komodo 로 올리면 같은 문서의 「부록 — Komodo Git Repo Stack」 절을 함께 본다.
 
 설치가 끝나면 `docs/guides/agent-guide.md` 로 에이전트에게 dodok 쓰는 법을 알려 준다.
 
@@ -58,7 +58,7 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | `docs/guides/plan.md` | 무엇을 왜 만드는가 — 요구사항·아키텍처·로드맵·확정된 결정(「결정 사항」)·남은 문제(「로드맵」 장의 「이월」) |
 | `docs/guides/project-structure.md` | 어느 코드가 어디에 있고 무슨 책임을 지는가 |
 | `docs/guides/docker-deploy.md` | 설치·설정(`.env`)·프록시 붙이기(덮어쓰기 파일·`TRUST_PROXY`)·러너 설치·멤버 초대·자동화 웹훅·백업·복원·업데이트·운영 화면·배포 검사, 부록으로 Komodo Stack 설정 — 설치 절차의 정본 |
-| `docs/manual/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·세션·다이렉트 메시지·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·자동화·멤버·알림·연결 페이지, 역할별 권한 표, 자주 겪는 문제 |
+| `docs/manual/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·세션·다이렉트 메시지·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·자동화·멤버·알림·연결(Gateway·러너·에이전트), 역할별 권한 표, 자주 겪는 문제 |
 | `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(헤더·반응·자동화가 게시한 글·릴레이·components·파일·승인·러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·러너·모델로 돌려 보는 절차, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·러너) |
 | `docs/guides/runner-release.md` | 러너 npm 패키지 `@dodok/runner` 를 배포하는 법 — 판본 올리기·`runner-v*` 태그·GitHub Actions·npm 쪽 사전 준비·실패할 때 볼 것 |

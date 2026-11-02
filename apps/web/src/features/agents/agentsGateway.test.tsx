@@ -1,8 +1,10 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOME_GATEWAY,
+  agentDetail,
+  agentPath,
   apiErr,
   discoverUrl,
   json,
@@ -28,18 +30,24 @@ const mainHome = () =>
   makeAgent({ providerAgentId: "main", handle: "main-home", name: "Main 집", gateway: HOME });
 
 describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", () => {
-  it("두 Gateway 의 같은 id(main)는 두 줄로, 핸들 옆에 Gateway 이름", async () => {
-    stubServer({ agents: [mainOffice(), mainHome()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
-    renderPage();
+  it("두 Gateway 의 같은 id(main)는 트리에서 각 Gateway 아래 한 줄씩, 상세의 핸들 옆에 Gateway 이름", async () => {
+    const office = mainOffice();
+    stubServer({ agents: [office, mainHome()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage(undefined, "owner", agentPath(office));
+    const nav = await screen.findByRole("navigation", { name: "연결 목록" });
+    const under = async (gateway: RegExp) =>
+      (await within(nav).findByRole("link", { name: gateway })).parentElement as HTMLElement;
+    expect(within(await under(/^사무실/)).getByRole("link", { name: /Main 사무실/ })).toBeInTheDocument();
+    expect(within(await under(/^사무실/)).queryByRole("link", { name: /Main 집/ })).toBeNull();
+    expect(within(await under(/^집/)).getByRole("link", { name: /Main 집/ })).toBeInTheDocument();
     expect(await handleLine("@main-office · 사무실")).toBeInTheDocument();
-    expect(await handleLine("@main-home · 집")).toBeInTheDocument();
-    expect(screen.getAllByText("main", { selector: "code" })).toHaveLength(2);
+    expect(within(await agentDetail()).getByText("main", { selector: "code" })).toBeInTheDocument();
   });
 
   it("연결이 빈 OpenClaw 에이전트 — owner 에게는 「다른 Gateway 로 옮기세요」와 「Gateway 옮기기」", async () => {
     const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
     stubServer({ agents: [orphan] });
-    renderPage();
+    renderPage(undefined, "owner", agentPath(orphan));
     expect(await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "@main Gateway 옮기기" })).toBeInTheDocument();
   });
@@ -49,11 +57,11 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
     async (role) => {
       const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
       stubServer({ agents: [orphan] });
-      renderPage(undefined, role);
+      renderPage(undefined, role, agentPath(orphan));
       expect(
         await screen.findByText("Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"),
       ).toBeInTheDocument();
-      expect(screen.getByText("@main")).toBeInTheDocument();
+      expect(within(await agentDetail()).getByText("@main")).toBeInTheDocument();
       expect(screen.queryByText(/다른 Gateway 로 옮기세요/)).toBeNull();
       expect(screen.queryByRole("button", { name: "@main Gateway 옮기기" })).toBeNull();
     },
@@ -62,7 +70,7 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
   it("owner 는 「Gateway 옮기기」로 다른 Gateway 를 골라 PUT — 줄이 새 Gateway 이름으로 바뀐다", async () => {
     const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
     const server = stubServer({ agents: [orphan], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
-    renderPage();
+    renderPage(undefined, "owner", agentPath(orphan));
     await userEvent.click(await screen.findByRole("button", { name: "@main Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
     await userEvent.click(within(dialog).getByRole("radio", { name: "집" }));
@@ -79,7 +87,7 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
       agents: [orphan],
       move: () => apiErr(409, "CONFLICT", "providerAgentId main 는 그 Gateway 에 이미 등록돼 있다"),
     });
-    renderPage();
+    renderPage(undefined, "owner", agentPath(orphan));
     await userEvent.click(await screen.findByRole("button", { name: "@main Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
@@ -95,7 +103,7 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
       agents: [orphan],
       move: () => apiErr(400, "VALIDATION", "body — gatewayId: gateway not found"),
     });
-    renderPage();
+    renderPage(undefined, "owner", agentPath(orphan));
     await userEvent.click(await screen.findByRole("button", { name: "@main Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
     await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
@@ -106,8 +114,9 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
   });
 
   it("옮기기 안내는 실제 규칙 — 그 Gateway 에 OpenClaw 에이전트는 있어야 하고, 이미 등록된 같은 id 는 없어야 한다", async () => {
-    stubServer({ agents: [mainOffice()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
-    renderPage();
+    const office = mainOffice();
+    stubServer({ agents: [office], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage(undefined, "owner", agentPath(office));
     await userEvent.click(await screen.findByRole("button", { name: "@main-office Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
     expect(dialog).toHaveAccessibleDescription(
@@ -116,8 +125,9 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
   });
 
   it("옮기기 대화상자는 지금 Gateway 를 후보에서 뺀다", async () => {
-    stubServer({ agents: [mainOffice()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
-    renderPage();
+    const office = mainOffice();
+    stubServer({ agents: [office], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage(undefined, "owner", agentPath(office));
     await userEvent.click(await screen.findByRole("button", { name: "@main-office Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
     expect(within(dialog).getAllByRole("radio")).toHaveLength(1);
@@ -125,8 +135,8 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
   });
 });
 
-describe("에이전트 가져오기 — Gateway 고르기", () => {
-  it("Gateway 를 고르면 그 Gateway 의 목록 — 이미 등록한 것은 「같은 Gateway + 같은 id」로만 숨긴다", async () => {
+describe("에이전트 가져오기 — 그 Gateway 상세에 고정", () => {
+  it("Gateway 상세의 가져오기는 그 Gateway 의 목록 — 이미 등록한 것은 「같은 Gateway + 같은 id」로만 숨긴다", async () => {
     const server = stubServer({
       agents: [mainOffice()],
       gateways: [TEST_GATEWAY, HOME_GATEWAY],
@@ -139,16 +149,23 @@ describe("에이전트 가져오기 — Gateway 고르기", () => {
         }),
     });
     renderPage();
-    const dialog = await openDiscover();
-    // 첫 Gateway(사무실)가 골라져 있다 — 사무실의 main 은 이미 등록돼 숨는다
-    expect(within(dialog).getByRole("radio", { name: "사무실" })).toBeChecked();
+    const dialog = await openDiscover("사무실");
+    // 고르기 없이 그 Gateway 하나 — 사무실의 main 은 이미 등록돼 숨는다
+    expect(dialog).toHaveAccessibleDescription(
+      "「사무실」 Gateway 의 에이전트 중 아직 등록하지 않은 것을 고릅니다.",
+    );
+    expect(within(dialog).queryByRole("radio")).toBeNull();
     await within(dialog).findByRole("checkbox", { name: "fin" });
     expect(within(dialog).queryByRole("checkbox", { name: "Main" })).toBeNull();
+    expect(server.count("GET", discoverUrl(HOME_GATEWAY.id))).toBe(0);
 
-    await userEvent.click(within(dialog).getByRole("radio", { name: "집" }));
+    cleanup();
+    renderPage();
+    const home = await openDiscover("집");
     // 집의 main 은 같은 id 라도 다른 Gateway 라 보인다
-    await within(dialog).findByRole("checkbox", { name: "Main" });
-    expect(within(dialog).getByRole("checkbox", { name: "dev" })).toBeInTheDocument();
+    await within(home).findByRole("checkbox", { name: "Main" });
+    const dialog2 = home;
+    expect(within(dialog2).getByRole("checkbox", { name: "dev" })).toBeInTheDocument();
     expect(server.count("GET", discoverUrl(HOME_GATEWAY.id))).toBe(1);
   });
 
@@ -179,7 +196,10 @@ describe("에이전트 가져오기 — Gateway 고르기", () => {
         name: "Main",
       },
     ]);
-    expect(await handleLine("@main-office · 사무실")).toBeInTheDocument();
+    // 등록한 에이전트는 그 Gateway 상세의 「에이전트 N」에
+    expect(
+      await within(screen.getByTestId("gateway-detail")).findByRole("link", { name: /Main.*@main-office/ }),
+    ).toBeInTheDocument();
   });
 
   it("서버가 핸들 겹침(409 field handle)으로 막으면 같은 고정 문구 — 서버 문구는 보이지 않는다", async () => {
@@ -198,50 +218,27 @@ describe("에이전트 가져오기 — Gateway 고르기", () => {
     expect(within(dialog).queryByText(/이미 쓰이고 있다/)).toBeNull();
   });
 
-  it("Gateway 가 0개면 「Gateway 를 먼저 추가하세요」 — 찾기를 부르지 않고, owner 에게는 연결 페이지 링크", async () => {
-    const server = stubServer({ gateways: [] });
-    renderPage();
-    const dialog = await openDiscover();
-    expect(await within(dialog).findByText(/Gateway 를 먼저 추가하세요/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "연결 페이지" })).toHaveAttribute(
-      "href",
-      "/settings/connection",
-    );
-    expect(within(dialog).queryByRole("button", { name: "직접 입력" })).toBeNull();
-    expect(server.count("GET", discoverUrl())).toBe(0);
-  });
+  it.each(["owner", "admin"])(
+    "Gateway 가 0개면(%s) 트리에 「아직 연결이 없습니다」 — 가져오기 버튼이 없고 찾기를 부르지 않는다",
+    async (role) => {
+      const server = stubServer({ gateways: [] });
+      renderPage(undefined, role);
+      const nav = await screen.findByRole("navigation", { name: "연결 목록" });
+      expect(await within(nav).findByText("아직 연결이 없습니다.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "에이전트 가져오기" })).toBeNull();
+      // 연결 추가는 1단계에서 owner 만
+      expect(Boolean(screen.queryByRole("link", { name: "연결 추가" }))).toBe(role === "owner");
+      expect(server.count("GET", discoverUrl())).toBe(0);
+    },
+  );
 
-  it("Gateway 가 0개일 때 admin 에게는 링크 없이 안내만", async () => {
-    stubServer({ gateways: [] });
-    renderPage(undefined, "admin");
-    const dialog = await openDiscover();
-    expect(await within(dialog).findByText(/Gateway 를 먼저 추가하세요/)).toBeInTheDocument();
-    expect(within(dialog).queryByRole("link")).toBeNull();
-  });
-
-  it("직접 입력 중에 Gateway 를 바꾸면 그 Gateway 의 목록으로 돌아간다", async () => {
-    stubServer({
-      gateways: [TEST_GATEWAY, HOME_GATEWAY],
-      discover: () => json(200, { agents: [{ providerAgentId: "ops" }] }),
-    });
-    renderPage();
-    const dialog = await openDiscover();
-    await within(dialog).findByRole("checkbox", { name: "ops" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "직접 입력" }));
-    expect(within(dialog).getByRole("textbox", { name: "OpenClaw id" })).toBeInTheDocument();
-    await userEvent.click(within(dialog).getByRole("radio", { name: "집" }));
-    expect(await within(dialog).findByRole("checkbox", { name: "ops" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("textbox", { name: "OpenClaw id" })).toBeNull();
-  });
-
-  it("직접 입력도 고른 Gateway 로 등록한다", async () => {
+  it("직접 입력도 그 상세의 Gateway 로 등록한다", async () => {
     const server = stubServer({
       gateways: [TEST_GATEWAY, HOME_GATEWAY],
       discover: () => apiErr(503, "ADAPTER_UNAVAILABLE", "gateway not connected"),
     });
     renderPage();
-    const dialog = await openDiscover();
-    await userEvent.click(within(dialog).getByRole("radio", { name: "집" }));
+    const dialog = await openDiscover("집");
     const id = await within(dialog).findByRole("textbox", { name: "OpenClaw id" });
     await userEvent.type(id, "ops");
     await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));

@@ -1,9 +1,8 @@
-import type { AdapterProvider, Agent, OpenClawGatewayStatus } from "@dodok/shared";
+import type { Agent } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { qk, useAdapterStatus, useIsOwner } from "@/api/queries";
+import { qk } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
@@ -17,7 +16,6 @@ import {
   DialogTrigger,
 } from "@/ui/dialog";
 import { Label } from "@/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { handleFrom } from "./handleFrom";
 import {
   AgentFields,
@@ -28,10 +26,9 @@ import {
   nameProblem,
 } from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
-import { PROVIDER_ID_LABEL, PROVIDER_NAME } from "./providerLabels";
+import { PROVIDER_ID_LABEL } from "./providerLabels";
 import { isArchived } from "./archived";
 import { type DiscoveredAgent, useCreateAgent, useDiscover, useRestoreAgent } from "./mutations";
-import { RunnerAgentForm } from "./RunnerAgentForm";
 
 /**
  * 목록을 못 받았을 때의 문구 — 서버 문구는 보이지 않는다. OpenClaw(스펙 6.1): 503 은 Gateway 끊김, 403 은 agents.list 권한 없음.
@@ -46,60 +43,32 @@ function discoverErrorText(e: Error): string {
   return "Gateway 에서 목록을 가져오지 못했습니다";
 }
 
-/** OpenClaw Gateway 가 없을 때(멀티 Gateway 스펙 「웹」 절) — 찾기도 직접 입력도 Gateway 가 있어야 한다. Gateway 는 연결 페이지(owner)에서 더한다 */
-function NoGateways() {
-  const owner = useIsOwner();
-  return (
-    <p className="text-sm text-muted-foreground">
-      Gateway 를 먼저 추가하세요 —{" "}
-      {owner ? (
-        <Link to="/settings/connection" className="underline underline-offset-4">
-          연결 페이지
-        </Link>
-      ) : (
-        "연결 페이지"
-      )}
-      에서 추가할 수 있습니다{owner ? "." : "(워크스페이스 owner 가 할 수 있습니다)."}
-    </p>
-  );
-}
-
-/** 처음 고를 Gateway — 켜진 것 가운데 첫째, 없으면 첫째 */
-const firstGateway = (gateways: readonly OpenClawGatewayStatus[]) =>
-  (gateways.find((g) => g.enabled) ?? gateways[0])?.id;
-
 /**
- * 「에이전트 가져오기」 버튼과 대화상자 — 제공자(OpenClaw · 러너)를 고른다. 열 때마다 OpenClaw 부터.
- * OpenClaw 는 Gateway 의 목록에서 고른다 — 목록은 열 때·제공자를 바꿀 때마다 새로 부르고, 실패하면 직접 입력 폼을 보인다.
- * 러너는 알린 목록이 없다 — 러너 → 프로젝트 → 프로그램을 골라 새로 만든다(`RunnerAgentForm`, 러너 일반화 스펙 7장).
- * OpenClaw 는 Gateway 를 먼저 고른다(멀티 Gateway 스펙 「웹」 절) — 목록은 어댑터 상태의 Gateway(누구나 읽는다, 연결 점과 같은 캐시),
- * 이미 등록한 것은 「같은 Gateway + 같은 id」로 가른다. Gateway 가 없으면 「Gateway 를 먼저 추가하세요」.
- * 등록된 목록은 페이지가 넘긴다 — 여기서 `useAgents()` 를 새로 붙이면 열 때마다 목록을 다시 불러오고,
+ * 「에이전트 가져오기」 버튼과 대화상자 — 그 Gateway 하나의 OpenClaw 에이전트 중 아직 등록하지 않은 것을 고른다(연결 탭 통합 스펙 3.3
+ * Gateway 상세 「에이전트 N」). 목록은 열 때마다 새로 부르고, 실패하면 직접 입력 폼을 보인다. 이미 등록한 것은 「이 Gateway + 같은 id」로
+ * 가른다. 러너 에이전트는 프로젝트 상세의 「＋ 에이전트」가 만든다(`RunnerAgentForm`).
+ * 등록된 목록은 화면이 넘긴다 — 여기서 `useAgents()` 를 새로 붙이면 열 때마다 목록을 다시 불러오고,
  * 그 응답이 등록(POST) 응답보다 늦게 오면 방금 넣은 에이전트를 옛 목록으로 덮는다.
- * 페이지가 목록을 받기 전엔 `disabled` — 등록된 것을 가를 수 없고, 등록한 것을 넣을 캐시도 없다
+ * 화면이 목록을 받기 전엔 `disabled` — 등록된 것을 가를 수 없고, 등록한 것을 넣을 캐시도 없다
  */
 export function DiscoverDialog({
   agents,
+  gatewayId,
+  gatewayName,
   disabled = false,
 }: {
   agents: readonly Agent[];
+  gatewayId: string;
+  gatewayName: string;
   disabled?: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [manual, setManual] = useState(false);
-  const [provider, setProvider] = useState<AdapterProvider>("openclaw");
-  const [picked, setPicked] = useState<string>();
   // 일괄 등록 중. 이 동안엔 닫지 않는다 — 닫아도 루프는 남은 POST 를 보내고, 그 폼 오류는 보일 곳이 없다
   const [busy, setBusy] = useState(false);
-  const adapter = useAdapterStatus();
-  const gateways = adapter.data?.provider === "openclaw" ? adapter.data.gateways : [];
-  // 고른 Gateway 가 목록에서 빠졌으면(지움) 처음 것으로
-  const gatewayId = gateways.some((g) => g.id === picked) ? picked : firstGateway(gateways);
-  const discover = useDiscover(open && provider === "openclaw", gatewayId);
-  const providerId = useId();
-  const gatewayFieldId = useId();
-  // 고른 Gateway 의 에이전트 — 살아 있는 것은 등록됨, 보관(삭제)한 것은 등록 대신 되살린다(스펙 「에이전트 보관」 절)
+  const discover = useDiscover(open, gatewayId);
+  // 이 Gateway 의 에이전트 — 살아 있는 것은 등록됨, 보관(삭제)한 것은 등록 대신 되살린다(스펙 「에이전트 보관」 절)
   const { registeredIds, archivedIds } = useMemo(() => {
     const here = agents.filter((a) => a.provider === "openclaw" && a.gateway?.id === gatewayId);
     return {
@@ -114,28 +83,12 @@ export function DiscoverDialog({
     if (next) {
       // 닫을 때가 아니라 열 때 되돌린다 — 닫히는 애니메이션 동안 목록 화면이 비치지 않게
       setManual(false);
-      setProvider("openclaw");
-      setPicked(undefined);
       // 지난번에 받은 목록은 버린다 — 열 때마다 「불러오는 중」부터, 목록은 이번에 받은 것만 그린다
       void qc.resetQueries({ queryKey: qk.discover });
     }
     setOpen(next);
   }
-  function pick(next: AdapterProvider) {
-    if (busy || next === provider) return;
-    setManual(false);
-    // 바꿀 때도 지난 목록은 버린다 — 고른 항목·편집은 목록과 함께 새로 시작한다
-    void qc.resetQueries({ queryKey: qk.discover });
-    setProvider(next);
-  }
-  function pickGateway(next: string) {
-    if (busy || next === gatewayId) return;
-    setManual(false);
-    void qc.resetQueries({ queryKey: [...qk.discoverOf("openclaw"), next] });
-    setPicked(next);
-  }
   const close = () => setOpen(false);
-  const noGateways = provider === "openclaw" && adapter.data !== undefined && gateways.length === 0;
 
   // 이번에 받은 목록이 있으면 다시 불러오는 중에도(재조회 실패여도) 목록을 둔다 — 고른 항목·편집이 사라지지 않게.
   // 로딩은 isPending — 오프라인이라 멈춘(paused) 첫 조회도 여기 든다
@@ -149,18 +102,7 @@ export function DiscoverDialog({
       onCreated={close}
     />
   );
-  if (provider === "runner") {
-    body = <RunnerAgentForm takenHandles={takenHandles} onCreated={close} />;
-  } else if (noGateways) {
-    body = <NoGateways />;
-  } else if (gatewayId === undefined) {
-    // 어댑터 상태를 아직 못 받았다 — 받으면 Gateway 를 고른다(실패는 전역 토스트가 알린다)
-    body = (
-      <p role="status" className="text-sm text-muted-foreground">
-        Gateway 목록을 불러오는 중…
-      </p>
-    );
-  } else if (manual) {
+  if (manual) {
     body = (
       <div className="flex flex-col gap-4">
         {manualForm}
@@ -219,43 +161,9 @@ export function DiscoverDialog({
         <DialogHeader>
           <DialogTitle>에이전트 가져오기</DialogTitle>
           <DialogDescription>
-            OpenClaw 는 Gateway 를 고르고 그 에이전트 중 아직 등록하지 않은 것을 고릅니다. 러너는
-            러너·프로젝트·프로그램을 골라 새 에이전트를 만듭니다.
+            「{gatewayName}」 Gateway 의 에이전트 중 아직 등록하지 않은 것을 고릅니다.
           </DialogDescription>
         </DialogHeader>
-        <fieldset className="grid gap-2" disabled={busy}>
-          <legend className="mb-1 text-sm font-medium">제공자</legend>
-          <RadioGroup
-            value={provider}
-            onValueChange={(v) => pick(v as AdapterProvider)}
-            className="flex flex-wrap gap-4"
-          >
-            {(["openclaw", "runner"] as const).map((p) => (
-              <div key={p} className="flex items-center gap-2">
-                <RadioGroupItem id={`${providerId}-${p}`} value={p} />
-                <Label htmlFor={`${providerId}-${p}`} className="font-normal">
-                  {PROVIDER_NAME[p]}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
-        </fieldset>
-        {provider === "openclaw" && gateways.length > 0 && (
-          <fieldset className="grid gap-2" disabled={busy}>
-            <legend className="mb-1 text-sm font-medium">Gateway</legend>
-            <RadioGroup value={gatewayId ?? ""} onValueChange={pickGateway} className="flex flex-wrap gap-4">
-              {gateways.map((g) => (
-                <div key={g.id} className="flex items-center gap-2">
-                  <RadioGroupItem id={`${gatewayFieldId}-${g.id}`} value={g.id} />
-                  <Label htmlFor={`${gatewayFieldId}-${g.id}`} className="font-normal">
-                    {g.name}
-                    {!g.enabled && <span className="text-muted-foreground"> (꺼짐)</span>}
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
-          </fieldset>
-        )}
         {body}
       </DialogContent>
     </Dialog>

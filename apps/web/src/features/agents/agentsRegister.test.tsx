@@ -53,6 +53,8 @@ describe("에이전트 가져오기 — OpenClaw", () => {
     await userEvent.clear(opsName);
     await userEvent.type(opsName, "Ops");
 
+    // 트리에서 상세로 들어올 때 받은 목록까지 — 등록은 응답으로 캐시를 고치고 다시 받지 않는다
+    const listed = server.count("GET", "/api/v1/agents");
     await userEvent.click(within(dialog).getByRole("button", { name: "2개 등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(server.bodies("POST")).toEqual([
@@ -71,9 +73,9 @@ describe("에이전트 가져오기 — OpenClaw", () => {
         name: "Ops",
       },
     ]);
-    expect(screen.getByText("@fin-bot")).toBeInTheDocument();
-    expect(screen.getByText("@ops")).toBeInTheDocument();
-    expect(server.count("GET", "/api/v1/agents")).toBe(1);
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@fin-bot")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@ops")).toBeInTheDocument();
+    expect(server.count("GET", "/api/v1/agents")).toBe(listed);
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -94,7 +96,7 @@ describe("에이전트 가져오기 — OpenClaw", () => {
     await waitFor(() => expect(opsHandle).toHaveAccessibleDescription(HANDLE_TAKEN));
     expect(opsHandle).toHaveAttribute("aria-invalid", "true");
     expect(within(dialog).queryByRole("checkbox", { name: "Fin" })).not.toBeInTheDocument();
-    expect(screen.getByText("@fin-bot")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@fin-bot")).toBeInTheDocument();
     expect(toastError).not.toHaveBeenCalled();
 
     await userEvent.clear(opsHandle);
@@ -102,7 +104,7 @@ describe("에이전트 가져오기 — OpenClaw", () => {
     expect(within(dialog).queryByText(HANDLE_TAKEN)).not.toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "1개 등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByText("@ops2")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@ops2")).toBeInTheDocument();
     expect(server.bodies("POST")).toHaveLength(3);
   });
 
@@ -159,7 +161,7 @@ describe("에이전트 가져오기 — OpenClaw", () => {
       },
     });
     const qc = renderPage();
-    await screen.findByText("@dev");
+    await screen.findAllByText("@dev");
     onlineManager.setOnline(false);
     const dialog = await openDiscover();
     expect(within(dialog).getByRole("status")).toHaveTextContent("Gateway 에서 불러오는 중…");
@@ -237,7 +239,7 @@ describe("에이전트 가져오기 — OpenClaw", () => {
     const opsHandle = within(dialog).getByRole("textbox", { name: "ops 핸들" });
     await waitFor(() => expect(opsHandle).toHaveAccessibleDescription(HANDLE_TAKEN));
     expect(server.bodies("POST")).toHaveLength(2);
-    expect(screen.getByText("@fin-bot")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@fin-bot")).toBeInTheDocument();
     expect(closeButton).toBeEnabled();
     await userEvent.click(closeButton);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -326,7 +328,7 @@ describe("직접 입력", () => {
         name: "Main Agent!",
       },
     ]);
-    expect(screen.getByText("@main2")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-detail")).getByText("@main2")).toBeInTheDocument();
   });
 
   it("OpenClaw id 칸에 규칙 안내가 있고, 서버가 그 id 를 VALIDATION 으로 거절하면 id 칸 아래에 서버 message(토스트 없음)", async () => {

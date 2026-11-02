@@ -85,9 +85,10 @@ describe("발급 대화상자의 「AI 에게 맡기기」", () => {
   it("러너 — 서버가 준 serverUrl 의 /llms.txt, 「러너 머신」 절", async () => {
     stubSetupServer();
     stubClipboard();
-    renderConnection();
-    const block = await screen.findByRole("region", { name: "러너" });
-    await userEvent.click(await within(block).findByRole("button", { name: "새 러너 토큰 발급" }));
+    // 러너 토큰은 「연결 추가」의 러너 갈래에서 발급한다
+    renderConnection(undefined, undefined, "/settings/connection/new");
+    await userEvent.click(await screen.findByRole("radio", { name: "러너" }));
+    await userEvent.click(await screen.findByRole("button", { name: "새 러너 토큰 발급" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByText("AI 에게 맡기기")).not.toBeInTheDocument();
     await userEvent.type(within(dialog).getByLabelText("라벨"), "맥북");

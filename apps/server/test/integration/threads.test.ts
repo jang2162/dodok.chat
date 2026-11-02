@@ -260,7 +260,7 @@ describe("통합 — 스레드 런", () => {
     );
     expect(card).toMatchObject({
       threadRootId: root.id,
-      bodyMd: "@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)",
+      bodyMd: "@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(설정 → 연결)",
     });
     const failed = await runOf(log, dev.id, root.id);
     expect(await log.terminal(failed.id)).toMatchObject({

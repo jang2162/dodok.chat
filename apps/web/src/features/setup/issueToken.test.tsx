@@ -15,6 +15,7 @@ import {
   PUBLIC_URL,
   RAW_TOKEN,
   cacheDump,
+  gatewayDetailPath,
   renderConnection,
   statusOf,
   stubSetupServer,
@@ -227,54 +228,54 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
 
   it("라우트 이동은 대화상자 안에서 묻는다 — 머무르면 원문이 그대로, 떠나면 원문을 버리고 이동한다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
-    const { router } = renderRoute("/settings/connection");
+    const { router } = renderRoute(gatewayDetailPath());
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
 
-    act(() => void router.navigate({ to: "/settings/agents" }));
+    act(() => void router.navigate({ to: "/settings/channels" }));
     const alert = await within(dialog).findByRole("alert");
     expect(alert).toHaveTextContent("토큰 원문을 다시 볼 수 없습니다");
     expect(alert).toHaveTextContent("「복사했습니다」를 누르세요. 닫고 이어서 이동합니다");
     await waitFor(() => expect(within(alert).getByRole("button", { name: "머무르기" })).toHaveFocus());
-    expect(router.state.location.pathname).toBe("/settings/connection");
+    expect(router.state.location.pathname).toBe(gatewayDetailPath());
 
     await userEvent.click(within(alert).getByRole("button", { name: "머무르기" }));
     await waitFor(() => expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument());
-    expect(router.state.location.pathname).toBe("/settings/connection");
+    expect(router.state.location.pathname).toBe(gatewayDetailPath());
     expect(within(dialog).getByText(RAW_TOKEN)).toBeInTheDocument();
 
-    act(() => void router.navigate({ to: "/settings/agents" }));
+    act(() => void router.navigate({ to: "/settings/channels" }));
     await userEvent.click(await within(dialog).findByRole("button", { name: "원문을 버리고 떠나기" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/channels"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
     expect(beforeUnloadPrevented()).toBe(false);
   });
 
   it("「복사했습니다」 뒤에는 이동을 막지 않는다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
-    const { router } = renderRoute("/settings/connection");
+    const { router } = renderRoute(gatewayDetailPath());
     const dialog = await issue("새것");
     await userEvent.click(await within(dialog).findByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    act(() => void router.navigate({ to: "/settings/agents" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
+    act(() => void router.navigate({ to: "/settings/channels" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/channels"));
   });
 
   it("막힌 이동이 있을 때 「복사했습니다」를 누르면 닫고 이어서 이동한다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
-    const { router } = renderRoute("/settings/connection");
+    const { router } = renderRoute(gatewayDetailPath());
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
-    act(() => void router.navigate({ to: "/settings/agents" }));
+    act(() => void router.navigate({ to: "/settings/channels" }));
     await within(dialog).findByRole("alert");
     await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/channels"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
   });
 
   it("원문이 보이는 동안 세션이 끝나면(401) 묻지 않고 바로 로그인 화면으로 간다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
-    const history = createMemoryHistory({ initialEntries: ["/settings/connection"] });
+    const history = createMemoryHistory({ initialEntries: [gatewayDetailPath()] });
     const app = createApp(history);
     render(<App app={app} />);
     const dialog = await issue("새것");
@@ -299,14 +300,14 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
 
   it("이동이 막힌 채 대화상자가 사라지면(owner 가 아니게 됨) 막아 둔 이동을 이어서 보낸다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
-    const { router, queryClient } = renderRoute("/settings/connection");
+    const { router, queryClient } = renderRoute(gatewayDetailPath());
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
-    act(() => void router.navigate({ to: "/settings/agents" }));
+    act(() => void router.navigate({ to: "/settings/channels" }));
     await within(dialog).findByRole("alert");
 
     act(() => queryClient.setQueryData(qk.me, { ...OWNER, role: "member" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/channels"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
   });
 });

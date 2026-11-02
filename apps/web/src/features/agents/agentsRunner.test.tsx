@@ -1,12 +1,28 @@
 import type { Agent } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { NO_PROJECT_RESTORE } from "@/features/runners/copy";
-import { ARCHIVED_AT, makeAgent, renderPage, stubServer } from "../../../test/agentsPage";
+import {
+  ARCHIVED_AT,
+  agentDetail,
+  agentPath,
+  makeAgent,
+  renderPage as renderAt,
+  stubServer as serve,
+} from "../../../test/agentsPage";
 import { programOf, projectOf, runnerOf, runnersRoutes } from "../../../test/runnersServer";
 import { CEILING_REFUSED } from "./RunnerAgentForm";
+
+/** 시험마다 첫 에이전트의 상세를 띄운다 — 러너 에이전트 줄은 「연결」 탭의 에이전트 상세가 그린다 */
+let shown: Agent | undefined;
+const stubServer = (opts: NonNullable<Parameters<typeof serve>[0]>) => {
+  shown = opts.agents?.[0];
+  return serve(opts);
+};
+const renderPage = (qc = createQueryClient(() => {}), role = "owner") =>
+  renderAt(qc, role, shown ? agentPath(shown) : undefined);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -54,7 +70,7 @@ const routes = (max: "plan" | "dontAsk" | "default" | "acceptEdits" = "acceptEdi
   }).handle;
 
 async function openEdit() {
-  const row = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+  const row = await agentDetail();
   await userEvent.click(within(row).getByRole("button", { name: "@coder 러너 설정 고치기" }));
   return row;
 }
@@ -71,7 +87,7 @@ describe("러너 에이전트 줄", () => {
       createQueryClient(() => {}),
       "admin",
     );
-    const row = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    const row = await agentDetail();
     expect(row).toHaveTextContent("권한 default · 모델 sonnet · 허용 도구 Read");
     expect(within(row).getByRole("button", { name: "@coder 러너 설정 고치기" })).toBeInTheDocument();
   });
@@ -82,7 +98,7 @@ describe("러너 에이전트 줄", () => {
       createQueryClient(() => {}),
       "member",
     );
-    const row = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    const row = await agentDetail();
     expect(row).toHaveTextContent("Claude Code · 러너 맥북");
     expect(row).not.toHaveTextContent("권한");
     expect(within(row).queryByRole("button", { name: /러너 설정 고치기/ })).toBeNull();
@@ -99,7 +115,7 @@ describe("러너 에이전트의 지시(basePrompt) — 만들 때와 같은 「
       createQueryClient(() => {}),
       "admin",
     );
-    const row = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    const row = await agentDetail();
     expect(within(row).getByText("지시 없음")).toBeInTheDocument();
     expect(row).not.toHaveTextContent("전달되지 않음");
     expect(row).not.toHaveTextContent("메모");
@@ -256,7 +272,7 @@ describe("러너 에이전트 고치기 — 기다림·빈 도구 [리뷰 L8]", 
   it("allowedTools: [] 는 요약에 「없음」, 다른 칸만 바꾼 저장은 [] 를 null 로 바꾸지 않는다", async () => {
     const server = stubServer({ agents: [coder({ allowedTools: [] })], runners: routes() });
     renderPage();
-    const summary = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    const summary = await agentDetail();
     expect(summary).toHaveTextContent("허용 도구 없음");
     const row = await openEdit();
     await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
@@ -279,11 +295,13 @@ describe("보관한 러너 에이전트", () => {
     };
     stubServer({ agents: [orphan, kept] });
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 2" }));
-    const orphanRow = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    const orphanRow = await agentDetail();
     expect(orphanRow).toHaveTextContent(NO_PROJECT_RESTORE);
     expect(within(orphanRow).queryByRole("button", { name: /되살리기/ })).toBeNull();
-    const keptRow = screen.getByText("@kept").closest("li") as HTMLElement;
+    cleanup();
+    stubServer({ agents: [kept] });
+    renderPage();
+    const keptRow = await agentDetail();
     expect(within(keptRow).getByRole("button", { name: "@kept 되살리기" })).toBeInTheDocument();
   });
 });

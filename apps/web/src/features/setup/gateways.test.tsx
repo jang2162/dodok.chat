@@ -6,6 +6,7 @@ import { json } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
 import {
   GATEWAY_ID,
+  gatewayDetailPath,
   gatewayId,
   gatewayOf,
   renderConnection,
@@ -15,7 +16,7 @@ import {
   tokensPath,
 } from "../../../test/setupServer";
 
-// 연결 페이지의 Gateway 카드 목록(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」)
+// 「연결」 탭의 Gateway 상세(연결 탭 통합 스펙 3.3) — Gateway 마다 상세 주소 하나. Gateway 추가는 연결 추가(newConnection.test)
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -24,7 +25,10 @@ afterEach(() => {
 
 const region = (name: string, root: HTMLElement = document.body) =>
   within(root).findByRole("region", { name });
-const block = () => region("OpenClaw Gateway");
+/** Gateway 상세 본문 */
+const detail = () => screen.findByTestId("gateway-detail");
+const HOME = gatewayDetailPath(gatewayId(2));
+const OFFICE = gatewayDetailPath();
 
 /** 「사무실」(첫 Gateway, 플러그인 접속)과 「집」(페어링 대기) */
 const TWO = statusOf({
@@ -41,186 +45,56 @@ const TWO = statusOf({
   ],
 });
 
-async function openAdd() {
-  await userEvent.click(within(await block()).getByRole("button", { name: "Gateway 추가" }));
-  return screen.findByRole("dialog");
-}
-
-describe("Gateway 추가", () => {
-  it("빈 상태에서도 「Gateway 추가」 — 이름·주소·토큰을 보내고, 대화상자를 닫고 상태를 다시 받는다", async () => {
-    const server = stubSetupServer({ status: statusOf({ noGateway: true, plugin: null }) });
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), " 집 ");
-    await userEvent.type(within(dialog).getByLabelText("주소"), " wss://home.example.com ");
-    await userEvent.type(within(dialog).getByLabelText("토큰"), " gw-secret ");
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(server.calls.find((c) => c.method === "POST")).toEqual({
-      method: "POST",
-      url: "/api/v1/gateways",
-      body: { name: "집", url: "wss://home.example.com", token: "gw-secret" },
-    });
-    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(2));
-  });
-
-  it("비운 칸은 칸마다 고정 문구, 보내지 않는다", async () => {
-    const server = stubSetupServer();
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    expect(within(dialog).getByLabelText("이름")).toHaveAccessibleDescription("이름은 1~32자로 적어 주세요.");
-    expect(within(dialog).getByLabelText("주소")).toHaveAccessibleDescription(
-      "ws:// 또는 wss:// 로 시작하는 주소를 입력하세요.",
-    );
-    expect(within(dialog).getByLabelText("토큰")).toHaveAccessibleDescription("Gateway 토큰을 입력하세요.");
-    expect(server.count("POST", "/api/v1/gateways")).toBe(0);
-  });
-
+describe("Gateway 상세", () => {
   it.each([
-    ["http://", "http://gateway.example.com", "ws:// 또는 wss:// 로 시작하는 주소를 입력하세요."],
-    ["사용자 정보", "wss://u:p@gateway.example.com", "주소에 사용자 이름·비밀번호를 넣을 수 없습니다."],
-  ])("주소 — %s 는 거절한다", async (_name, url, message) => {
-    const server = stubSetupServer();
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
-    await userEvent.type(within(dialog).getByLabelText("주소"), url);
-    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    expect(within(dialog).getByLabelText("주소")).toHaveAccessibleDescription(message);
-    expect(within(dialog).getByLabelText("주소")).toHaveAttribute("aria-invalid", "true");
-    expect(server.count("POST", "/api/v1/gateways")).toBe(0);
-  });
-
-  it("33자 이름은 거절한다", async () => {
-    const server = stubSetupServer();
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), "가".repeat(33));
-    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://a.example.com");
-    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    expect(within(dialog).getByLabelText("이름")).toHaveAccessibleDescription("이름은 1~32자로 적어 주세요.");
-    expect(server.count("POST", "/api/v1/gateways")).toBe(0);
-  });
-
-  it("서버가 이름 겹침(409 field name)이면 이름 칸에 고정 문구 — 서버 문구는 보이지 않는다", async () => {
-    stubSetupServer({
-      createGateway: () =>
-        json(409, {
-          code: "CONFLICT",
-          message: "gateway name is already used",
-          details: { field: "name" },
-        }),
-    });
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), "사무실");
-    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://a.example.com");
-    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    await waitFor(() =>
-      expect(within(dialog).getByLabelText("이름")).toHaveAccessibleDescription(
-        "이미 쓰이는 이름입니다 — 다른 이름을 입력하세요.",
-      ),
-    );
-    expect(dialog).not.toHaveTextContent("already used");
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-  });
-});
-
-describe("두 번 보내지 않기(태스크 6 리뷰 Minor 1)", () => {
-  it("「추가」를 같은 틱에 두 번 내도 POST 는 한 번 — 둘째가 409 로 대화상자를 붙잡지 않게", async () => {
-    const server = stubSetupServer();
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
-    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://home.example.com");
-    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
-    const form = dialog.querySelector("form");
-    if (!form) throw new Error("form 이 없다");
-    act(() => {
-      fireEvent.submit(form);
-      fireEvent.submit(form);
-    });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(server.count("POST", "/api/v1/gateways")).toBe(1);
-  });
-
-  it("실패한 뒤에는 다시 보낼 수 있다", async () => {
-    let first = true;
-    const server = stubSetupServer({
-      createGateway: (body) => {
-        if (!first) return json(201, { ...gatewayOf(2), ...(body as object) });
-        first = false;
-        return json(409, { code: "CONFLICT", message: "dup", details: { field: "name" } });
-      },
-    });
-    renderConnection();
-    const dialog = await openAdd();
-    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
-    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://home.example.com");
-    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    await waitFor(() =>
-      expect(within(dialog).getByLabelText("이름")).toHaveAccessibleDescription(
-        "이미 쓰이는 이름입니다 — 다른 이름을 입력하세요.",
-      ),
-    );
-    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(server.count("POST", "/api/v1/gateways")).toBe(2);
-  });
-});
-
-describe("카드 목록", () => {
-  it("Gateway 마다 카드 하나 — 같은 블록(상태·플러그인·브리지 토큰·메뉴)이 카드마다", async () => {
+    ["사무실", OFFICE],
+    ["집", HOME],
+  ])("%s — 같은 블록(상태·플러그인·브리지 토큰·메뉴)이 상세마다", async (name, path) => {
     stubSetupServer({ status: TWO });
-    renderConnection();
-    const office = await region("사무실");
-    const home = await region("집");
-    for (const card of [office, home]) {
-      expect(await region("플러그인", card)).toBeInTheDocument();
-      expect(await region("브리지 토큰", card)).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: "새 토큰 발급" })).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: /수정$/ })).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: /끄기$/ })).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: /삭제$/ })).toBeInTheDocument();
-    }
-    expect(office).toHaveTextContent("연결됨");
-    expect(office).toHaveTextContent("gateway.example.com");
-    expect(within(await region("플러그인", office)).getByText("서버와 같은 빌드입니다")).toBeInTheDocument();
-    expect(home).toHaveTextContent("페어링 대기");
-    expect(home).toHaveTextContent("home.lan");
-    expect(
-      within(await region("플러그인", home)).getByText(/접속한 플러그인이 없습니다/),
-    ).toBeInTheDocument();
-    // 플러그인 설치 안내는 카드가 아니라 블록 머리에 하나(설치 명령은 카드마다의 「새 토큰 발급」이 준다)
-    expect(screen.getAllByRole("region", { name: "플러그인 설치" })).toHaveLength(1);
+    renderConnection(undefined, undefined, path);
+    const card = await detail();
+    expect(within(card).getByRole("heading", { level: 1, name })).toBeInTheDocument();
+    expect(await region("플러그인", card)).toBeInTheDocument();
+    expect(await region("브리지 토큰", card)).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "새 토큰 발급" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: `${name} 수정` })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: `${name} 끄기` })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: `${name} 삭제` })).toBeInTheDocument();
+    // 설치 상자는 상세마다 하나 — 설치 명령은 그 상세의 「새 토큰 발급」이 준다
+    expect(within(card).getAllByText(/^(플러그인 설치|다시 설치)$/)).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
+    if (name === "사무실") {
+      expect(card).toHaveTextContent("연결됨");
+      expect(card).toHaveTextContent("wss://gateway.example.com");
+      expect(within(await region("플러그인", card)).getByText("서버와 같은 빌드입니다")).toBeInTheDocument();
+    } else {
+      expect(card).toHaveTextContent("페어링 대기");
+      expect(card).toHaveTextContent("ws://home.lan:18789");
+      expect(
+        within(await region("플러그인", card)).getByText(/접속한 플러그인이 없습니다/),
+      ).toBeInTheDocument();
+    }
   });
 
-  it("페어링 대기 카드는 그 Gateway 의 요청 id 로 승인 명령을 복사한다", async () => {
+  it("페어링 대기 Gateway 의 상세는 그 Gateway 의 요청 id 로 승인 명령을 복사한다", async () => {
     stubSetupServer({ status: TWO });
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    renderConnection();
-    const home = await region("집");
+    renderConnection(undefined, undefined, HOME);
+    const home = await detail();
     expect(within(home).getByText("openclaw devices approve req-home")).toBeInTheDocument();
-    expect(within(await region("사무실")).queryByText(/devices approve/)).not.toBeInTheDocument();
     await userEvent.click(within(home).getByRole("button", { name: "승인 명령 복사" }));
     expect(writeText).toHaveBeenCalledWith("openclaw devices approve req-home");
   });
 
-  it("브리지 토큰 목록·발급은 그 카드의 Gateway 경로로", async () => {
+  it("브리지 토큰 목록·발급은 그 상세의 Gateway 경로로", async () => {
     const server = stubSetupServer({
       status: TWO,
       tokens: [tokenOf(1, { label: "사무실-토큰", connected: true })],
       gatewayTokens: { [gatewayId(2)]: [tokenOf(2, { label: "집-토큰" })] },
     });
-    renderConnection();
-    const home = await region("집");
+    renderConnection(undefined, undefined, HOME);
+    const home = await detail();
     const homeTokens = await region("브리지 토큰", home);
     expect(await within(homeTokens).findByRole("listitem", { name: "집-토큰" })).toBeInTheDocument();
     expect(within(homeTokens).queryByRole("listitem", { name: "사무실-토큰" })).not.toBeInTheDocument();
@@ -238,14 +112,14 @@ describe("카드 목록", () => {
 
 describe("수정", () => {
   async function openEdit(name: string) {
-    const card = await region(name);
+    const card = await detail();
     await userEvent.click(within(card).getByRole("button", { name: `${name} 수정` }));
     return screen.findByRole("dialog");
   }
 
   it("지금 이름·주소로 열리고, 토큰 칸은 비어 「바꾸려면 입력」 — 비워 두면 본문에 토큰이 없다", async () => {
     const server = stubSetupServer({ status: TWO });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const dialog = await openEdit("집");
     expect(within(dialog).getByLabelText("이름")).toHaveValue("집");
     expect(within(dialog).getByLabelText("주소")).toHaveValue("ws://home.lan:18789");
@@ -264,7 +138,7 @@ describe("수정", () => {
 
   it("토큰을 입력하면 그것만 싣는다", async () => {
     const server = stubSetupServer({ status: TWO });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const dialog = await openEdit("집");
     await userEvent.type(within(dialog).getByLabelText("토큰"), " new-secret ");
     await userEvent.click(within(dialog).getByRole("button", { name: "저장" }));
@@ -274,7 +148,7 @@ describe("수정", () => {
 
   it("수정에서도 http:// 주소는 거절한다", async () => {
     const server = stubSetupServer({ status: TWO });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const dialog = await openEdit("집");
     await userEvent.clear(within(dialog).getByLabelText("주소"));
     await userEvent.type(within(dialog).getByLabelText("주소"), "http://home.lan");
@@ -287,7 +161,7 @@ describe("수정", () => {
 
   it("바꾼 것이 없으면 보내지 않고 닫는다", async () => {
     const server = stubSetupServer({ status: TWO });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const dialog = await openEdit("집");
     await userEvent.click(within(dialog).getByRole("button", { name: "저장" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -304,14 +178,16 @@ describe("끄기·켜기", () => {
         ],
       }),
     });
-    renderConnection();
-    const office = await region("사무실");
-    const home = await region("집");
-    expect(within(home).getByText("꺼짐")).toBeInTheDocument();
-    expect(within(home).queryByRole("button", { name: "집 끄기" })).not.toBeInTheDocument();
-
+    const first = renderConnection(undefined, undefined, OFFICE);
+    const office = await detail();
     await userEvent.click(within(office).getByRole("button", { name: "사무실 끄기" }));
-    await userEvent.click(within(home).getByRole("button", { name: "집 켜기" }));
+    await waitFor(() => expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    await act(() => first.router.navigate({ to: HOME }));
+    const home = await within(await detail()).findByRole("heading", { level: 1, name: "집" });
+    const homeDetail = home.closest("[data-testid=gateway-detail]") as HTMLElement;
+    expect(within(homeDetail).getByText("꺼짐")).toBeInTheDocument();
+    expect(within(homeDetail).queryByRole("button", { name: "집 끄기" })).not.toBeInTheDocument();
+    await userEvent.click(within(homeDetail).getByRole("button", { name: "집 켜기" }));
     await waitFor(() => expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
     expect(server.calls.filter((c) => c.method === "PATCH")).toEqual([
       { method: "PATCH", url: `/api/v1/gateways/${GATEWAY_ID}`, body: { enabled: false } },
@@ -327,8 +203,8 @@ describe("지워진 Gateway·서버 실패 문구(태스크 6 리뷰 Minor 2)", 
       status: TWO,
       updateGateway: () => json(404, { code: "NOT_FOUND", message: "gateway not found" }),
     });
-    renderConnection();
-    await userEvent.click(within(await region("집")).getByRole("button", { name: "집 끄기" }));
+    renderConnection(undefined, undefined, HOME);
+    await userEvent.click(within(await detail()).getByRole("button", { name: "집 끄기" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("이미 삭제된 Gateway 입니다"));
     expect(toastError).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(2));
@@ -340,8 +216,8 @@ describe("지워진 Gateway·서버 실패 문구(태스크 6 리뷰 Minor 2)", 
       status: TWO,
       updateGateway: () => json(500, { code: "INTERNAL", message: "sqlite busy" }),
     });
-    renderConnection();
-    await userEvent.click(within(await region("집")).getByRole("button", { name: "집 끄기" }));
+    renderConnection(undefined, undefined, HOME);
+    await userEvent.click(within(await detail()).getByRole("button", { name: "집 끄기" }));
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Gateway 를 바꾸지 못했습니다. 다시 시도해 주세요."),
     );
@@ -365,18 +241,18 @@ describe("삭제", () => {
   const HOME_TOKENS = [tokenOf(2), tokenOf(3), tokenOf(4, { revokedAt: "2026-09-24T00:00:00.000Z" })];
 
   async function openDelete() {
-    const home = await region("집");
+    const home = await detail();
     await userEvent.click(within(home).getByRole("button", { name: "집 삭제" }));
     return { home, confirm: await within(home).findByRole("group", { name: "「집」 Gateway 삭제" }) };
   }
 
-  it("페이지 안에서 한 번 더 묻는다 — 그 Gateway 의 에이전트 N개·브리지 토큰 M개(폐기된 것 포함)", async () => {
+  it("상세 안에서 한 번 더 묻는다 — 그 Gateway 의 에이전트 N개·브리지 토큰 M개(폐기된 것 포함)", async () => {
     const server = stubSetupServer({
       status: TWO,
       agents: AGENTS,
       gatewayTokens: { [gatewayId(2)]: HOME_TOKENS },
     });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const menu = within(home).getByRole("button", { name: "집 삭제" });
@@ -393,7 +269,7 @@ describe("삭제", () => {
 
   it("취소하면 보내지 않고 확인을 접고, 초점은 「삭제」 메뉴로 돌아간다", async () => {
     const server = stubSetupServer({ status: TWO, gatewayTokens: { [gatewayId(2)]: HOME_TOKENS } });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
     await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
     expect(within(home).queryByRole("group", { name: "「집」 Gateway 삭제" })).not.toBeInTheDocument();
@@ -413,7 +289,7 @@ describe("삭제", () => {
         return json(200, { unboundAgents: 0, deletedTokens: 3 });
       },
     });
-    renderConnection();
+    const { router } = renderConnection(undefined, undefined, HOME);
     const { confirm } = await openDelete();
     const del = within(confirm).getByRole("button", { name: "삭제" });
     await waitFor(() => expect(del).toBeEnabled());
@@ -421,11 +297,12 @@ describe("삭제", () => {
       fireEvent.click(del);
       fireEvent.click(del);
     });
-    await waitFor(() => expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("gateway-detail")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe("/settings/connection");
     expect(server.count("DELETE", `/api/v1/gateways/${gatewayId(2)}`)).toBe(1);
   });
 
-  it("그새 다른 곳에서 지워졌으면(404) 서버 문구 대신 「이미 삭제된 Gateway 입니다」 — 카드를 걷는다", async () => {
+  it("그새 다른 곳에서 지워졌으면(404) 서버 문구 대신 「이미 삭제된 Gateway 입니다」 — 상세를 걷는다", async () => {
     const toastError = vi.spyOn(toast, "error");
     let gone = false;
     stubSetupServer({
@@ -437,17 +314,19 @@ describe("삭제", () => {
         return json(404, { code: "NOT_FOUND", message: "gateway not found" });
       },
     });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const { confirm } = await openDelete();
     const del = within(confirm).getByRole("button", { name: "삭제" });
     await waitFor(() => expect(del).toBeEnabled());
     await userEvent.click(del);
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("이미 삭제된 Gateway 입니다"));
     expect(toastError).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("gateway-detail")).not.toBeInTheDocument());
+    // 지워진 것을 알게 된 자리에서 「이 연결을 찾을 수 없습니다」(Review Focus 2)
+    expect(await screen.findByText("이 연결을 찾을 수 없습니다")).toBeInTheDocument();
   });
 
-  it("다시 받기를 기다리지 않고 카드를 걷는다 — 응답이 늦어도 지운 카드가 남지 않는다", async () => {
+  it("다시 받기를 기다리지 않고 트리로 간다 — 응답이 늦어도 지운 Gateway 가 남지 않는다", async () => {
     let deleted = false;
     let release: (r: Response) => void = () => {};
     stubSetupServer({
@@ -458,17 +337,20 @@ describe("삭제", () => {
         return json(200, { unboundAgents: 0, deletedTokens: 3 });
       },
     });
-    renderConnection();
+    const { router } = renderConnection(undefined, undefined, HOME);
     const { confirm } = await openDelete();
     const del = within(confirm).getByRole("button", { name: "삭제" });
     await waitFor(() => expect(del).toBeEnabled());
     await userEvent.click(del);
-    await waitFor(() => expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument());
-    expect(screen.getByRole("region", { name: "사무실" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("gateway-detail")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe("/settings/connection");
+    const nav = await screen.findByRole("navigation", { name: "연결 목록" });
+    expect(within(nav).getByRole("link", { name: /사무실/ })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: /^집/ })).not.toBeInTheDocument();
     release(json(200, statusOf()));
   });
 
-  it("「삭제」를 누르면 DELETE 한 번 — 카드를 곧바로 걷어 지운 Gateway 를 다시 부르지 않고, 「Gateway 추가」로 초점을 옮긴다", async () => {
+  it("「삭제」를 누르면 DELETE 한 번 — 트리로 돌아가 지운 Gateway 를 다시 부르지 않고, 「연결 추가」로 초점을 옮기고 트리 머리에 알린다", async () => {
     let deleted = false;
     const server = stubSetupServer({
       status: () => (deleted ? statusOf() : TWO),
@@ -479,7 +361,7 @@ describe("삭제", () => {
         return json(200, { unboundAgents: 2, deletedTokens: 3 });
       },
     });
-    renderConnection();
+    renderConnection(undefined, undefined, HOME);
     const { confirm } = await openDelete();
     const del = within(confirm).getByRole("button", { name: "삭제" });
     await waitFor(() => expect(del).toBeEnabled());
@@ -487,15 +369,9 @@ describe("삭제", () => {
     const tokensBefore = server.count("GET", tokensPath(gatewayId(2)));
     await userEvent.click(del);
     await waitFor(() => expect(server.count("DELETE", `/api/v1/gateways/${gatewayId(2)}`)).toBe(1));
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("region", { name: "OpenClaw Gateway" })).getByRole("button", {
-          name: "Gateway 추가",
-        }),
-      ).toHaveFocus(),
-    );
-    expect(await block()).toHaveTextContent("「집」 Gateway 를 삭제했습니다");
-    expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("link", { name: "연결 추가" })).toHaveFocus());
+    expect(screen.getByTestId("connection-tree")).toHaveTextContent("「집」 Gateway 를 삭제했습니다");
+    expect(screen.queryByTestId("gateway-detail")).not.toBeInTheDocument();
     expect(server.count("GET", "/api/v1/setup/status")).toBeGreaterThanOrEqual(2);
     expect(server.count("GET", "/api/v1/agents")).toBeGreaterThan(agentsBefore);
     // 지운 Gateway 의 토큰 목록을 다시 부르면 404 가 전역 토스트(서버 문구)로 뜬다

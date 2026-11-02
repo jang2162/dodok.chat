@@ -3,25 +3,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ME, renderRoute } from "../../../test/shellApi";
 import { stubMembersServer } from "../../../test/membersServer";
 
-// 설정 탭과 역할(팀 스펙 6장): 「멤버」·「운영」은 admin 이상, 「연결」은 owner 만
+// 설정 탭과 역할(팀 스펙 6장): 「멤버」·「운영」은 admin 이상, 「연결」은 누구나(연결 탭 통합 스펙 3.1)
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 const nav = async () => {
-  await screen.findByRole("link", { name: "에이전트" });
+  await screen.findByRole("link", { name: "내 계정" });
   return (name: RegExp) => screen.queryByRole("link", { name });
 };
 
 describe("설정 탭", () => {
   it.each([
     ["owner", true, true, true],
-    ["admin", true, true, false],
-    ["member", false, false, false],
+    ["admin", true, true, true],
+    ["member", false, false, true],
   ])("%s — 멤버 %s · 운영 %s · 연결 %s", async (role, members, ops, connection) => {
     stubMembersServer({ me: { ...ME, role } });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const link = await nav();
     expect(Boolean(link(/^멤버$/))).toBe(members);
     expect(Boolean(link(/^운영/))).toBe(ops);
@@ -30,7 +30,7 @@ describe("설정 탭", () => {
 
   it("「멤버」는 /settings/members 로 간다", async () => {
     stubMembersServer();
-    const { router } = renderRoute("/settings/agents");
+    const { router } = renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: "멤버" });
     link.click();
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/members"));

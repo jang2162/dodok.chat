@@ -54,7 +54,7 @@ function renderWithAdapter(ui: ReactNode, gateways: OpenClawGatewayStatus[]) {
   const queryClient: QueryClient = createQueryClient(() => {});
   // 점은 wire 가 살아 있을 때만 값을 보인다 — 값 자체를 보는 테스트는 연결된 상태에서 본다
   useWireStatus.getState().setStatus("connected");
-  // 라우터는 문맥만 준다 — 배너의 「연결 설정 보기」 링크가 쓴다
+  // 라우터는 문맥만 준다 — 배너의 「연결 설정 보기」 링크(그 Gateway 상세)가 쓴다
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: ["/"] }));
   render(
     <QueryClientProvider client={queryClient}>
@@ -234,16 +234,28 @@ describe("Banners", () => {
     expect(screen.queryByText(/「사무실」/)).toBeNull();
   });
 
-  it("「연결 설정 보기」는 owner 에게만, 연결 페이지로", async () => {
+  it("「연결 설정 보기」는 owner 에게만 — 끊긴 Gateway 가 하나면 그 Gateway 상세로", async () => {
     const { queryClient } = renderWithAdapter(<Banners />, [gw({ gateway: "down" })]);
+    act(() => queryClient.setQueryData(qk.me, ME));
+    expect(await screen.findByRole("link", { name: "연결 설정 보기" })).toHaveAttribute(
+      "href",
+      `/settings/connection/gateway/${gw().id}`,
+    );
+    act(() => queryClient.setQueryData(qk.me, { ...ME, role: "member" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "연결 설정 보기" })).toBeNull());
+    expect(screen.getByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+  });
+
+  it("끊긴 Gateway 가 여럿이면 「연결 설정 보기」는 「연결」 탭으로", async () => {
+    const { queryClient } = renderWithAdapter(<Banners />, [
+      gw({ gateway: "down", bridge: "down" }),
+      HOME({ bridge: "down" }),
+    ]);
     act(() => queryClient.setQueryData(qk.me, ME));
     expect(await screen.findByRole("link", { name: "연결 설정 보기" })).toHaveAttribute(
       "href",
       "/settings/connection",
     );
-    act(() => queryClient.setQueryData(qk.me, { ...ME, role: "member" }));
-    await waitFor(() => expect(screen.queryByRole("link", { name: "연결 설정 보기" })).toBeNull());
-    expect(screen.getByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
   });
 
   it("Gateway 가 없거나 모두 꺼졌으면 OpenClaw 배너를 띄우지 않는다 — 꺼진 Gateway 는 끊김이 아니다", async () => {
@@ -302,7 +314,7 @@ describe("AppShell", () => {
         return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
       }),
     );
-    const { queryClient } = renderRoute("/settings/agents");
+    const { queryClient } = renderRoute("/settings/connection");
     expect(await screen.findByText("두독 팀")).toBeInTheDocument();
 
     // workspace 없이 답하는 서버(ME 그대로)면 기본 이름으로 돌아간다
@@ -404,8 +416,8 @@ describe("AppShell", () => {
   // jsdom 은 레이아웃을 재지 않는다 — 실제 높이·스크롤은 브라우저 확인이 보고, 여기서는 그 구조를 고정한다
   it("긴 화면은 셸 안 스크롤 상자에서만 스크롤한다 — 사이드바·배너는 그 밖에 남는다", async () => {
     stubChannels();
-    renderRoute("/settings/agents");
-    const page = await screen.findByTestId("page-agents");
+    renderRoute("/settings/connection");
+    const page = await screen.findByTestId("page-connection");
     const scroller = screen.getByTestId("page-scroll");
 
     expect(screen.getByTestId("app-shell")).toHaveClass("h-dvh");
@@ -427,8 +439,8 @@ describe("AppShell", () => {
   it("화면을 옮기면 스크롤 상자를 맨 위로 돌린다", async () => {
     const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
     stubChannels();
-    const { router } = renderRoute("/settings/agents");
-    await screen.findByTestId("page-agents");
+    const { router } = renderRoute("/settings/connection");
+    await screen.findByTestId("page-connection");
     scrollTo.mockClear();
 
     await act(() =>

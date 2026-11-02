@@ -83,7 +83,7 @@ function watchLeaks(secret: string) {
 describe("권한·탭", () => {
   it("admin 은 설정 탭에 「자동화」가 있고 누르면 /settings/automations", async () => {
     stubAutomationsServer({ me: ADMIN });
-    const { router } = renderRoute("/settings/agents");
+    const { router } = renderRoute("/settings/account");
     await user().click(await screen.findByRole("link", { name: "자동화" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(PATH));
     expect(await screen.findByRole("heading", { level: 1, name: "자동화" })).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("권한·탭", () => {
     renderRoute(PATH);
     const page = await screen.findByTestId("page-automations");
     expect(await within(page).findByText(/권한이 없습니다/)).toBeInTheDocument();
-    await screen.findByRole("link", { name: "에이전트" });
+    await screen.findByRole("link", { name: "내 계정" });
     expect(screen.queryByRole("link", { name: "자동화" })).toBeNull();
     expect(within(page).queryByRole("button", { name: "만들기" })).toBeNull();
     expect(server.automationCalls()).toEqual([]);

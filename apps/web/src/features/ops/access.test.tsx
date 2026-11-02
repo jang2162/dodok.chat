@@ -29,14 +29,14 @@ async function expectNoPolling(server: ReturnType<typeof stubOpsServer>) {
 describe("진입점과 권한 — admin 이상(팀 스펙 2장)", () => {
   it("admin 도 설정 탭 「운영」으로 들어가 상태를 본다", async () => {
     stubOpsServer({ me: { ...ME, role: "admin" } });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     await userEvent.click(await screen.findByRole("link", { name: /^운영/ }));
     expect(await screen.findByRole("region", { name: "상태" })).toBeInTheDocument();
   });
 
   it("owner 는 설정 탭 「운영」으로 /settings/operations 에 간다", async () => {
     stubOpsServer();
-    const { router } = renderRoute("/settings/agents");
+    const { router } = renderRoute("/settings/account");
     await userEvent.click(await screen.findByRole("link", { name: /^운영/ }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/operations"));
     expect(await screen.findByRole("heading", { level: 1, name: "운영" })).toBeInTheDocument();
@@ -45,8 +45,8 @@ describe("진입점과 권한 — admin 이상(팀 스펙 2장)", () => {
 
   it("member 는 설정 탭에 「운영」이 없고 ops API 를 부르지 않는다", async () => {
     const server = stubOpsServer({ me: MEMBER });
-    renderRoute("/settings/agents");
-    await screen.findByRole("link", { name: "에이전트" });
+    renderRoute("/settings/account");
+    await screen.findByRole("link", { name: "내 계정" });
     expect(opsLink()).not.toBeInTheDocument();
     expect(server.opsCalls()).toEqual([]);
   });
@@ -62,7 +62,7 @@ describe("진입점과 권한 — admin 이상(팀 스펙 2장)", () => {
 describe("배지 — 확인 안 한 warn·error 수", () => {
   it("warn + error 를 보이고 info 는 세지 않는다(서버가 이미 뺐다)", async () => {
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 2, error: 1 } }) });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: /^운영/ });
     await waitFor(() => expect(badgeOf(link)).toHaveTextContent("3"));
     expect(link).toHaveAccessibleName(/확인 안 한 사건 3건/);
@@ -70,7 +70,7 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
 
   it("0 이면 배지가 없다", async () => {
     const server = stubOpsServer();
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: /^운영/ });
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
     expect(badgeOf(link)).toBeNull();
@@ -81,14 +81,14 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
     [{ warn: 60, error: 40 }, "99+"],
   ])("경계 — %o 이면 「%s」", async (unacked, text) => {
     stubOpsServer({ status: opsStatusOf({ unacked }) });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: /^운영/ });
     await waitFor(() => expect(badgeOf(link)?.textContent).toBe(text));
   });
 
   it("100 이상이면 99+", async () => {
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 120, error: 5 } }) });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: /^운영/ });
     await waitFor(() => expect(badgeOf(link)).toHaveTextContent("99+"));
   });
@@ -96,14 +96,14 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
   it("운영 화면 밖의 배지(사이드바 「설정」·운영 탭)만 있으면 상태를 주기로 다시 받지 않는다", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const server = stubOpsServer();
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     await screen.findByRole("link", { name: /^운영/ });
     await expectNoPolling(server);
   });
 
   it("상태 캐시의 unacked 가 바뀌면(ops.event) 곧바로 늘어난다", async () => {
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 1, error: 0 } }) });
-    const { queryClient } = renderRoute("/settings/agents");
+    const { queryClient } = renderRoute("/settings/account");
     const link = await screen.findByRole("link", { name: /^운영/ });
     await waitFor(() => expect(badgeOf(link)).toHaveTextContent("1"));
     act(() => {
@@ -144,7 +144,7 @@ describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린�
   it("owner 에게 확인 안 한 warn·error 가 있으면 점을 찍고 접근성 이름에 그 수", async () => {
     narrow();
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 2, error: 1 } }) });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const button = await menu();
     await waitFor(() => expect(button).toHaveAccessibleName("채널 목록 열기 (확인 안 한 운영 사건 3)"));
     expect(button.querySelector("[data-ops-dot]")).not.toBeNull();
@@ -153,7 +153,7 @@ describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린�
   it("없으면 점도 수도 없다", async () => {
     narrow();
     const server = stubOpsServer();
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const button = await menu();
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBeGreaterThan(0));
     expect(button).toHaveAccessibleName("채널 목록 열기");
@@ -164,7 +164,7 @@ describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린�
     vi.useFakeTimers({ shouldAdvanceTime: true });
     narrow();
     const server = stubOpsServer();
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     await menu();
     await expectNoPolling(server);
   });
@@ -172,7 +172,7 @@ describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린�
   it("member 는 표시가 없고 ops API 를 부르지 않는다", async () => {
     narrow();
     const server = stubOpsServer({ me: MEMBER });
-    renderRoute("/settings/agents");
+    renderRoute("/settings/account");
     const button = await menu();
     expect(button).toHaveAccessibleName("채널 목록 열기");
     expect(button.querySelector("[data-ops-dot]")).toBeNull();

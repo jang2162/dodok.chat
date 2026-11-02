@@ -1,16 +1,19 @@
 import type { Agent, OpenClawGatewayStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
-import { AgentsPage } from "@/features/agents/AgentsPage";
-import { ADAPTER_OK, TEST_GATEWAY, adapterStatusBody } from "./shellApi";
+import { TooltipProvider } from "@/ui/tooltip";
+import { gatewayOf } from "./setupServer";
+import { ADAPTER_OK, TEST_GATEWAY, adapterStatusBody, shellGet } from "./shellApi";
 
-/** 에이전트 페이지 테스트의 가짜 서버·렌더 도우미 — 목록 쪽과 등록 쪽 테스트가 함께 쓴다 */
+/**
+ * 에이전트 시험의 가짜 서버·렌더 도우미 — 「연결」 탭(트리·에이전트 상세·Gateway 상세)을 셸째 띄운다. 목록 쪽과 등록 쪽 시험이 함께 쓴다
+ */
 
 export type Body = Record<string, unknown>;
 export type Reply = Response | Promise<Response>;
@@ -153,6 +156,31 @@ export function stubServer(
     if (method === "PATCH" && m?.[1])
       return (opts.patch ?? ((i, b, f) => f(i, b)))(m[1], body ?? {}, patchDefault);
     if (method === "DELETE" && m?.[1]) return (opts.archive ?? ((i, f) => f(i)))(m[1], archiveDefault);
+    // owner 의 「연결」 트리·Gateway 상세가 부르는 연결 설정 — wire Gateway 목록과 같은 Gateway, 토큰 없음
+    if (method === "GET" && url === "/api/v1/setup/status")
+      return json(200, {
+        server: { version: "0.1.0" },
+        bridge: { publicUrl: "wss://chat.example.com/bridge" },
+        pluginFile: { available: false },
+        gateways: gateways.map((g) =>
+          gatewayOf(1, {
+            id: g.id,
+            name: g.name,
+            enabled: g.enabled,
+            gateway: { state: g.gateway },
+          }),
+        ),
+        runners: { list: [], runnerFile: { available: false } },
+      });
+    if (method === "GET" && /^\/api\/v1\/gateways\/[^/]+\/bridge-tokens$/.test(url))
+      return json(200, { tokens: [] });
+    if (method === "GET" && url === "/api/v1/setup/runner-tokens") return json(200, { tokens: [] });
+    // 「연결」 트리(admin 이상)의 러너 목록·프로젝트 — 러너 REST 를 주지 않은 시험은 러너가 없다
+    if (method === "GET" && url === "/api/v1/runners") return json(200, { runners: [] });
+    if (method === "GET" && /^\/api\/v1\/runners\/[^/]+\/projects$/.test(url))
+      return json(200, { projects: [] });
+    const shell = shellGet(input, init);
+    if (shell) return shell;
     throw new Error(`예상 밖 요청 ${method} ${url}`);
   });
   vi.stubGlobal("fetch", fetch);
@@ -164,20 +192,34 @@ export function stubServer(
   };
 }
 
-/** 로그인한 사람은 owner — 라우트 가드가 받아 둔 me 를 흉내 낸다(이미 있으면 그대로). member 화면은 `role` 을 넘긴다 */
-export function renderPage(qc: QueryClient = createQueryClient(() => {}), role = "owner") {
+/** 에이전트 상세의 본문 — 트리 줄에도 핸들이 보이므로 핸들 글자로 찾을 때는 이 안에서 */
+export const agentDetail = () => screen.findByTestId("agent-detail");
+
+/** 에이전트 상세·Gateway 상세 주소 */
+export const agentPath = (agent: Pick<Agent, "id">) => `/settings/connection/agent/${agent.id}`;
+export const gatewayPath = (id: string = TEST_GATEWAY.id) => `/settings/connection/gateway/${id}`;
+
+/**
+ * 로그인한 사람은 owner — 라우트 가드가 받아 둔 me 를 흉내 낸다(이미 있으면 그대로). member 화면은 `role` 을 넘긴다.
+ * 「연결」 탭의 그 주소를 셸째 띄운다 — 기본은 탭 주소(트리). 에이전트 하나를 보려면 `agentPath(agent)`
+ */
+export function renderPage(
+  qc: QueryClient = createQueryClient(() => {}),
+  role = "owner",
+  path = "/settings/connection",
+) {
   if (qc.getQueryData(qk.me) === undefined)
     qc.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w", role });
-  // 라우터는 문맥만 준다 — 「러너 없음」 안내의 연결 페이지 링크가 쓴다
-  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/agents"] }));
+  const history = createMemoryHistory({ initialEntries: [path] });
+  const router = createAppRouter(qc, history);
   render(
     <QueryClientProvider client={qc}>
-      <RouterContextProvider router={router}>
-        <AgentsPage />
-      </RouterContextProvider>
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
-  return qc;
+  return Object.assign(qc, { router });
 }
 
 /** 풀릴 때까지 응답을 붙잡는다 */
@@ -189,8 +231,15 @@ export function gate() {
   return { opened, open };
 }
 
-/** 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다 */
-export async function openDiscover() {
+/**
+ * 「에이전트 가져오기」를 연다 — 버튼은 Gateway 상세에 있다. 지금 화면에 없으면(트리) 트리에서 그 Gateway 를 눌러 상세로 간다.
+ * 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다
+ */
+export async function openDiscover(gateway: string = TEST_GATEWAY.name) {
+  if (!screen.queryByRole("button", { name: "에이전트 가져오기" })) {
+    const nav = await screen.findByRole("navigation", { name: "연결 목록" });
+    await userEvent.click(await within(nav).findByRole("link", { name: new RegExp(`^${gateway}`) }));
+  }
   const trigger = await screen.findByRole("button", { name: "에이전트 가져오기" });
   await waitFor(() => expect(trigger).toBeEnabled());
   await userEvent.click(trigger);

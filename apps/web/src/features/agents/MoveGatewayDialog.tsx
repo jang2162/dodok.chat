@@ -70,7 +70,7 @@ export function MoveGatewayDialog({ agent }: { agent: Agent }) {
         </DialogHeader>
         {targets.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            옮길 다른 Gateway 가 없습니다 — 연결 페이지에서 Gateway 를 추가하세요.
+            옮길 다른 Gateway 가 없습니다 — 설정 → 연결의 「연결 추가」로 Gateway 를 추가하세요.
           </p>
         ) : (
           <fieldset className="grid gap-2" disabled={move.isPending}>

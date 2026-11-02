@@ -35,7 +35,7 @@ export function SettingsLayout() {
           {!atIndex && (
             <div data-testid="settings-header" className={NARROW_HEADER}>
               <OpenSidebarButton />
-              <BackLink />
+              <BackLink rendered={rendered} />
             </div>
           )}
           <Outlet />
@@ -61,16 +61,20 @@ export function SettingsLayout() {
   );
 }
 
-/** 좁은 화면 탭 페이지 머리의 「← 설정」 — 화살표는 그림이라 읽지 않는다 */
-function BackLink() {
+/**
+ * 좁은 화면 탭 페이지 머리의 「← 설정」 — 화살표는 그림이라 읽지 않는다. 「연결」 탭의 상세(`/settings/connection/…`)에서는 한 칸
+ * 위인 트리로 가는 「← 연결」이 이 자리를 갖는다(연결 탭 통합 스펙 3.3 — 뒤로 가기 단추가 둘이 되지 않게)
+ */
+function BackLink({ rendered }: { rendered: string | undefined }) {
   const markFocus = useMarkSettingsFocus();
+  const to = rendered && /^\/settings\/connection\/./.test(rendered) ? "/settings/connection" : "/settings";
   return (
     <Link
-      to="/settings"
-      onClick={() => markFocus("/settings")}
+      to={to}
+      onClick={() => markFocus(to)}
       className="flex h-9 items-center gap-1 rounded-md px-2 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span aria-hidden>←</span> 설정
+      <span aria-hidden>←</span> {to === "/settings" ? "설정" : "연결"}
     </Link>
   );
 }
