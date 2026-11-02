@@ -341,7 +341,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 | 5 어댑터 자리 | `AgentAdapter` 계약을 `packages/shared/src/adapter/` 로 옮기고 서버가 `provider`(`"openclaw" \| "claude"`)로 어댑터를 고른다(`AdapterRegistry`) |
 | 6 승인 | 그대로 — 기한은 러너 어댑터가 쥔 10분, 지나면 러너에 `deny`(모델에게 「승인 시간이 지났습니다」). 「항상 허용」은 제안을 `destination: "session"` 으로 바꿔 싣는다. 승인 종류 `tool`. 요약은 Bash 명령·파일 도구 상대 경로·입력 JSON 앞부분이고, 제어·양방향·보이지 않는 폭 글자를 부류로 이스케이프한다 |
 | 7 도구 노출 | `mcp__dodok__post` 하나(`{ text?, components?, files? }`) — `createSdkMcpServer({ alwaysLoad: true })`, 늘 `allowedTools`. `files` 는 작업 디렉터리 안만, 연 fd 가 검사한 경로 그대로인지 macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd` 로 보고 그 밖 플랫폼은 거절 |
-| 8 격리 | 그대로에 더해 env 허용 목록에 프록시(`HTTPS_PROXY` 등 대·소문자)·`NODE_EXTRA_CA_CERTS`·`SSL_CERT_FILE`·`LC_ALL`·`TERM`. `ANTHROPIC_*` 는 넘기지 않는다 |
+| 8 격리 | 그대로에 더해 env 허용 목록에 프록시(`HTTPS_PROXY` 등 대·소문자)·`NODE_EXTRA_CA_CERTS`·`SSL_CERT_FILE`·`LC_ALL`·`TERM`. `ANTHROPIC_*` 는 넘기지 않는다. `CLAUDE_CONFIG_DIR` 은 기본이 평소 자리(넘기지 않음), 설정 `configDir` 을 적으면 전용 — 2026-11-02 `docs/superpowers/specs/2026-11-02-runner-default-claude-login-design.md` |
 | 9 동시 상한 | 설정 `maxConcurrentRuns`(기본 3), 넘치면 `run.ack` 의 `queuedPosition` → 서버 `RUN_QUEUED` |
 | 10 비용 | 런 비용은 `total_cost_usd` 의 런 전후 차이(러너 메모리), `costKind` 는 `system/init` 의 `apiKeySource` 로 가른다(`none` 이면 구독 환산). 운영 화면은 제공자별로 믿음을 가른다 — 러너 런만 토큰·금액을 더한다 |
 | 11 라이선스 | 러너 tgz 는 SDK 를 품지 않는다(esbuild `external`) — 설치할 때 npm 에서 받는다 |

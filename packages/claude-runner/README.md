@@ -18,9 +18,10 @@ npm 판은 서버와 다른 빌드일 수 있다 — 연결 페이지(설정 →
 ## 준비와 실행
 
 1. **러너 토큰** — dodok 앱의 연결 페이지(`/settings/connection`, owner)에서 「새 러너 토큰 발급」. 원문 `drn_…` 을 `~/.dodok-runner/token` 에 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(또는 env `DODOK_RUNNER_TOKEN`).
-2. **러너 전용 Claude 로그인** — 러너는 평소 `~/.claude` 가 아니라 전용 디렉터리의 로그인을 쓴다.
+2. **Claude 로그인** — 러너는 이 머신의 평소 Claude Code 로그인(`~/.claude`)을 쓴다. `claude` 로 로그인돼 있으면 건너뛰고, 아니면 `claude` 를 열어 `/login` 을 마치고 나온다. 러너 전용 로그인을 따로 쓰려면 그 디렉터리로 로그인하고 설정의 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다(대화 기록도 그 디렉터리에 따로 남는다).
    ```bash
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude   # /login 을 마치고 나온다
+   claude                                            # 평소 로그인 — /login 을 마치고 나온다
+   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude   # 전용 로그인을 원할 때만
    ```
 3. **설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 연결 페이지의 토큰 발급 대화상자가 뼈대를 준다.
    ```json
@@ -29,7 +30,7 @@ npm 판은 서버와 다른 빌드일 수 있다 — 연결 페이지(설정 →
      "tokenFile": "~/.dodok-runner/token",
      "roots": [{ "id": "src", "path": "~/src", "label": "내 저장소들" }],
      "programs": {
-       "claude": { "configDir": "~/.dodok-runner/claude", "maxPermissionMode": "default" }
+       "claude": { "maxPermissionMode": "default" }
      }
    }
    ```

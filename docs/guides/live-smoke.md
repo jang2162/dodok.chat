@@ -946,7 +946,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 ### 모델 런으로 도는 러너 실연
 
 이 절의 하네스를 먼저 끝까지 돌린 뒤에 한다. 모델 런은 사용자가 승인한 상한 안에서 센다(러너가 연 `query()` 하나 = 1회 — 릴레이·카드 누르기가 만드는 러너 런도 센다).
-- **감싸개를 두지 않는다**(실제 API). 프로그램의 `configDir` 는 러너 전용 로그인 `~/.dodok-runner/claude`(`docs/guides/docker-deploy.md` 「러너 설치」 절의 로그인)이고, 러너 env 의 `HOME` 은 실제 홈이다(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증).
+- **감싸개를 두지 않는다**(실제 API). 평소 로그인이면 프로그램의 `configDir` 을 빼고, 러너 전용 로그인이면 `~/.dodok-runner/claude` 를 적는다(`docs/guides/docker-deploy.md` 「러너 설치」 절의 로그인). 러너 env 의 `HOME` 은 실제 홈이다(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증).
 - OpenClaw 모델 런을 0 으로 지키려면 OpenClaw 쪽은 `dev:fake` 의 가짜 Gateway·에이전트로 둔다. 가짜 `dev` 는 부른 에이전트를 늘 되부르므로 채널 `relayPolicy.maxRelayTurns` 를 1 로 둬 러너 런이 더 생기지 않게 한다.
 - 운영 화면의 러너 런 비용(구독이면 「환산 포함」)을 같이 본다.
 - 런마다 러너 로그에 세션 길 줄(`dodok-runner: 런 <runId> 세션 resume|새로 열기`, 재시도면 `… 이미 있는 세션이라 resume 으로 다시 엽니다`)이 나오는지 본다(위 「절차 메모」 — 그 연결은 시험이 잡지 않는다).
