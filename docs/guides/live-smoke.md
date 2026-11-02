@@ -57,14 +57,14 @@
 | OpenClaw CLI | **스크래치 디렉터리에 설치한 `openclaw@2026.9.5`** 를 저장소 mise Node 24.21 로 돌린다(설치·`oc` 정의는 「절차」 절 머리). `OpenClaw.app` 번들에는 CLI 가 없다 — 앱 2026.9.6(2026-09-24 자동 업데이트)의 `Resources/node-worker/*/lib/node_modules/openclaw` 는 맥 노드 워커 전용이라 `bin/openclaw`·`openclaw.mjs` 가 없고 `package.json` 의 `bin` 이 비었다. 저장소 devDependency(`2026.9.4`)는 dev 설정을 `Config was last written by OpenClaw 2026.9.5, but you are running 2026.9.4` 로 거부하므로 쓰지 않는다 — 그 메시지가 권하는 `doctor --fix` 는 dev 설정을 옛 판으로 고쳐 쓰니 하지 않는다. `gateway install`·글로벌 설치·시스템 Node 교체 금지, 설치본은 스크래치에만 두고 끝나면 지운다. ⚠ npm 의 `2026.9.5` 는 빌드 `ec9c1a1`(`gatewayBuildId` `2026.9.5-release-ec9c1a13db89-2026-09-18T18-51-37.323Z`)로, 앱 번들 9.5 의 `f396007` 과 버전 문자열은 같고 빌드가 다르다. 저장소 핀은 `2026.9.4` 그대로라 **실연 전에 `oc --version` 을 적는다**. 서버 로그로도 보인다: `"gateway connected"`·`"bridge plugin hello"` 의 `gatewayVersion`. ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 이름 `sdkVersion`)는 **빌드 때 박힌 devDependency 상수**라 9.5 위에서도 `2026.9.4` 다 — Gateway 버전으로 읽지 않는다. 9.5 dist 를 코드로 읽어야 하는 리뷰가 남아 있으면 그 설치본을 지우기 전에 끝내거나, 다시 설치해 읽는다 — 저장소 핀 9.4 의 `node_modules/openclaw/dist` 만 읽었으면 리뷰 보고에 「9.4 dist 로만 확인」 이라고 적는다 |
 | 프로필 | **dev 만**: 모든 CLI 호출에 `--dev`(상태 `~/.openclaw-dev`). 원격 프로필 `~/.openclaw` 는 건드리지 않는다. Gateway 를 여럿 띄우거나 사람의 dev 상태를 건드리지 않으려면 `--dev` 대신 `OPENCLAW_HOME=<스크래치 디렉터리>`(상태가 `<그 디렉터리>/.openclaw` 로 간다)로 가른다 — 「Gateway 를 여럿 띄울 때」 절 |
 | 에이전트 | `dev`·`fin`, 모델 `anthropic/claude-opus-5` + `agentRuntime claude-cli`(ADR 0002 2절) |
-| 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <브리지 토큰> }` — 토큰은 연결 페이지의 그 Gateway 카드에서 발급한 것(「절차」 절 (e)) |
-| Gateway 공유 토큰 | 실연 쪽이 만들어 0600 파일 `data/dev-gateway.token` 에만 둔다(「절차」 절 (c)) — Gateway 를 띄울 때 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로 넘기고, 연결 페이지 「Gateway 추가」의 토큰 칸에 같은 값을 넣는다. 서버는 Gateway 주소·토큰을 `.env` 에서 읽지 않는다(DB). **`.env` 는 고치지 않는다** |
+| 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <브리지 토큰> }` — 토큰은 설정 → 연결의 그 Gateway 상세에서 발급한 것(「절차」 절 (e)) |
+| Gateway 공유 토큰 | 실연 쪽이 만들어 0600 파일 `data/dev-gateway.token` 에만 둔다(「절차」 절 (c)) — Gateway 를 띄울 때 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로 넘기고, 설정 → 연결의 「＋ 연결 추가」(OpenClaw Gateway)의 토큰 칸에 같은 값을 넣는다. 서버는 Gateway 주소·토큰을 `.env` 에서 읽지 않는다(DB). **`.env` 는 고치지 않는다** |
 | 저장소 | Node 24.21.0 · pnpm 11.16.0, `pnpm install` 끝 |
 
 ### 시크릿 규칙
 
 - `.env`·`~/.openclaw-dev/openclaw.json`·`~/.openclaw/openclaw.json` 은 cat·grep 하지 않는다. 값은 서브셸에서 `. ./.env` 로 **셸 변수**로만 읽고 echo 하지 않는다.
-- Gateway 토큰은 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로만 넘긴다(인자 금지 — ps 에 남는다). 자식 환경에서 원격 `OPENCLAW_GATEWAY_URL` 은 뺀다(둘 다 OpenClaw CLI 가 읽는 변수다 — dodok 서버는 읽지 않는다). 서버에는 연결 페이지(또는 `POST /api/v1/gateways` 본문 — 파일에서 `jq --rawfile` 로)로만 넣는다.
+- Gateway 토큰은 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로만 넘긴다(인자 금지 — ps 에 남는다). 자식 환경에서 원격 `OPENCLAW_GATEWAY_URL` 은 뺀다(둘 다 OpenClaw CLI 가 읽는 변수다 — dodok 서버는 읽지 않는다). 서버에는 설정 → 연결(또는 `POST /api/v1/gateways` 본문 — 파일에서 `jq --rawfile` 로)로만 넣는다.
 - `config get` 은 URL 키만(`channels.dodok.accounts.default.bridgeUrl`). `config get channels.dodok` 처럼 토큰이 딸려 나오는 조회는 하지 않는다.
 - `openclaw … cron` 같은 Gateway RPC CLI 는 `--url` 을 주면 `--token` 인자를 요구한다 — `--url` 대신 `--port 19001` 을 쓴다.
 - 로그(`data/dev-gateway.log`·`data/phase1-live-<날짜>.log`)는 커밋하지 않지만, 옮기기 전에 토큰 값이 0번 나오는지 `grep -c -F -- "$TOK"` 로 개수만 확인한다.
@@ -154,7 +154,7 @@ EOF
 
 ### (e) Gateway 추가·브리지 토큰·연결 확인
 
-화면으로 해도 된다 — 연결 페이지(`http://localhost:5173/settings/connection`)의 「Gateway 추가」(주소 `ws://127.0.0.1:19001`, 토큰은 `data/dev-gateway.token` 의 값) → 그 Gateway 카드의 「새 토큰 발급」 → 설정 조각을 패치 파일로. 아래는 같은 일을 값을 화면에 찍지 않고 하는 꼴이다.
+화면으로 해도 된다 — 설정 → 연결(`http://localhost:5173/settings/connection`)의 「＋ 연결 추가」 → 「OpenClaw Gateway」(주소 `ws://127.0.0.1:19001`, 토큰은 `data/dev-gateway.token` 의 값) → 그 Gateway 상세의 「새 토큰 발급」 → 설정 조각을 패치 파일로. 아래는 같은 일을 값을 화면에 찍지 않고 하는 꼴이다.
 
 ```bash
 W() { (set -a; . data/live-smoke.env; set +a; export DODOK_LOCAL_TOKEN="$LOCAL_AUTH_TOKEN"; pnpm -s wire-cli http://127.0.0.1:$PORT "$@"); }
@@ -189,7 +189,7 @@ curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/stat
 kill -INT <서버 node pid>          # lsof -nP -iTCP:$PORT -sTCP:LISTEN -t. close() 는 10s 상한, 플러그인이 system.notice shutdown 을 받는다
 kill <tsx watch·pnpm 부모 pid>     # tsx watch 는 자식이 끝나도 남는다
 kill <Gateway pid>                  # lsof -nP -iTCP:19001 -sTCP:LISTEN -t
-# 실연 DB(data/live-smoke.sqlite*)를 지우면 data/gateways/ 아래 그 Gateway 의 디렉터리도 지운다 — 연결 페이지에서 Gateway 를 지우면 서버가 지운다
+# 실연 DB(data/live-smoke.sqlite*)를 지우면 data/gateways/ 아래 그 Gateway 의 디렉터리도 지운다 — 설정 → 연결에서 Gateway 를 지우면 서버가 지운다
 oc --dev config unset channels.dodok.channels
 oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loaded"
 ```
@@ -225,9 +225,9 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 ## 5. 원격 Gateway 에서 같은 절차를 돌릴 때 다른 점
 
 - 플러그인은 **사용자가 Gateway 호스트에 설치**한다(ADR 0002 9.2~9.5: `pack:plugin` → tarball 복사 → `openclaw plugins install … --force --accept-capabilities` → 계정 설정은 패치 파일). 워커는 원격 호스트를 만지지 않는다.
-- 서버: 연결 페이지 「Gateway 추가」로 원격 주소(`wss://…`)·공유 토큰을 넣는다. 디바이스 디렉터리는 그 Gateway 행의 것(`data/gateways/<Gateway id>/`)이라 dev Gateway 와 따로다.
+- 서버: 설정 → 연결의 「＋ 연결 추가」(OpenClaw Gateway)로 원격 주소(`wss://…`)·공유 토큰을 넣는다. 디바이스 디렉터리는 그 Gateway 행의 것(`data/gateways/<Gateway id>/`)이라 dev Gateway 와 따로다.
   원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15 — 스코프 승급 자동 승인).
-- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 연결 페이지의 그 원격 Gateway 카드에서 발급한 것 — 브리지 토큰의 정본은 DB 고 Gateway 마다 따로다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/docker-deploy.md` 「브리지 토큰 교체」).
+- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 설정 → 연결의 그 원격 Gateway 상세에서 발급한 것 — 브리지 토큰의 정본은 DB 고 Gateway 마다 따로다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/docker-deploy.md` 「브리지 토큰 교체」).
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. 지연(사람 메시지 → 플러그인 ack → 첫 델타 → 정본)을 다시 재고 결과는 `docs/superpowers/reports/` 의 리포트로 남긴다.
 - **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`·`gatewayBuildId`(hello-ok `server.version`·`server.buildId`)와 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
   원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 「런 0회 하네스 — 모델 없이 모델 런의 툴 경로를 두드리기」 절을 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(「전제」 절).
@@ -270,7 +270,7 @@ DODOK_API_ORIGIN=http://127.0.0.1:$PORT pnpm -F @dodok/web dev      # 5173, stri
   입력칸은 제어 컴포넌트라 `value` 를 그냥 넣으면 React 가 되돌린다 — `HTMLInputElement.prototype` 의 네이티브 setter 로 넣고 `input` 이벤트를 쏜다.
 - **프레임 원본은 늘 남긴다.** `data/live-smoke.env` 에 `OPENCLAW_FRAME_DUMP_PATH=data/frames-<날짜>.jsonl` 을 더한다(파일은 Gateway 연결마다 `<경로>.<연결 id>` — `.env` 의 Gateway 는 `data/frames-<날짜>.jsonl.env`). usage 출처는 이 덤프로 가른다 — `docs/adr/0005-usage-values.md`.
 - 「절차」 절 (a) 가 `Config path not found: channels.dodok.channels. Nothing was changed.` 를 찍으면 **이미 깨끗하다는 뜻**이다(정상 — 오류가 아니다).
-- 에이전트는 웹에서 등록한다: `/settings/agents` → 「에이전트 가져오기」 → `dev`·`fin`. dev 의 표시 이름은 `C3-PO` 이고 **핸들 칸은 `dev` 로 채워진다**(멘션은 `@dev`).
+- 에이전트는 웹에서 등록한다: 설정 → 연결 → 그 Gateway 상세의 「에이전트 가져오기」 → `dev`·`fin`. dev 의 표시 이름은 `C3-PO` 이고 **핸들 칸은 `dev` 로 채워진다**(멘션은 `@dev`).
 - **스크린샷·콘솔·WS 프레임.** BrowserOS neo 는 스크린샷을 파일로 주지 않고 `console.log`·네트워크·WS 프레임을 못 본다(browser-verification.md).
   저장소 `.mcp.json` 의 `playwright-neo` 가 세션에 붙지 않았으면, neo 의 CDP(`~/Library/Application Support/BrowserClaw/.browseros/config.json` 의 `ports.cdp`, 기본 9110)에
   **Node 24 내장 `WebSocket`** 으로 직접 붙어 `Page.captureScreenshot`·`Runtime.enable`·`Network.enable` 로 대신한다 — 의존성이 필요 없다.
@@ -823,10 +823,10 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 
 **붙이기** — 「절차」 절 (d)~(e) 에 더한다.
 1. **Gateway 추가** — `POST /api/v1/gateways { name, url: "ws://127.0.0.1:<포트>", token }`(본문은 `jq --rawfile` 로 토큰 파일에서, 「절차」 절 (e)). 화면의 「Gateway 추가」와 같은 경로다.
-2. **플러그인** — `GET /api/v1/setup/plugin.tgz`(owner 세션으로 — 연결 페이지 Gateway 카드 「새 토큰 발급」 대화상자의 한 줄 명령이 브리지 토큰으로 받는 것과 같은 파일)로 받은 파일 → **Gateway 둘을 내린 뒤** `gw plugins install <받은 파일> --force --accept-capabilities` 를 Gateway 마다 → 설치본 `dist/index.js` sha 를 대조.
+2. **플러그인** — `GET /api/v1/setup/plugin.tgz`(owner 세션으로 — 설정 → 연결의 Gateway 상세 「새 토큰 발급」 대화상자의 한 줄 명령이 브리지 토큰으로 받는 것과 같은 파일)로 받은 파일 → **Gateway 둘을 내린 뒤** `gw plugins install <받은 파일> --force --accept-capabilities` 를 Gateway 마다 → 설치본 `dist/index.js` sha 를 대조.
 3. **브리지 토큰** — Gateway 마다 `POST /api/v1/gateways/<id>/bridge-tokens` → 응답의 `pluginConfig` 를 0600 파일로 → `gw config patch --file …` → 파일 삭제 → Gateway 를 다시 띄운다.
 4. **에이전트** — 화면 「에이전트 가져오기」에서 Gateway 「사무실」의 `main` 을 핸들 `main` 으로, 「집」의 `main` 을 핸들 `main-home` 으로. 채널 하나에 둘 다 넣는다(`POST /channels/:id/members`).
-5. **멘션·끄기·삭제** — `wire-cli send` 로 `@main`·`@main-home` 을 각각, 「집」 Gateway 프로세스를 내린 채(`kill <PID>`) 둘을 다시, 「집」을 다시 띄운 뒤 run_error 카드 「다시 실행」(`wire-cli interact … retry_run`), 연결 페이지 「사무실 끄기」 뒤 둘을 다시, 다시 켠 뒤 「집」 삭제·옮기기.
+5. **멘션·끄기·삭제** — `wire-cli send` 로 `@main`·`@main-home` 을 각각, 「집」 Gateway 프로세스를 내린 채(`kill <PID>`) 둘을 다시, 「집」을 다시 띄운 뒤 run_error 카드 「다시 실행」(`wire-cli interact … retry_run`), 사무실 Gateway 상세의 「사무실 끄기」 뒤 둘을 다시, 다시 켠 뒤 「집」 삭제·옮기기.
 - 웹을 얹을 때 브라우저는 독립 Chromium(Playwright `chromium.launch`)이 낫다 — 쿠키는 포트를 가리지 않아 다른 포트의 `localhost` 로그인이 neo 에 살아 있는 다른 `localhost` 인스턴스의 세션 쿠키를 덮는다(`docs/guideline/browser/04-shared-profile.md`). 로그인 토큰을 스크립트가 파일에서 읽어 화면·도구 입력에 싣지 않으려고도 그렇다.
 
 ---
@@ -1074,10 +1074,10 @@ await page.evaluate(async () =>
 
 dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.openclaw-dev` 다. 원격 Gateway 호스트는 `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」의 [B] 와 같은 자리에서 한다. 정본 절차는 `docs/guides/docker-deploy.md` 「브리지 토큰 교체」다.
 
-1. 연결 페이지의 그 Gateway 카드 「브리지 토큰」 → 「새 토큰 발급」 → 라벨. 대화상자의 「설정 복사」로 `pluginConfig` 조각을 복사한다(원문은 이때 한 번만 보인다).
+1. 설정 → 연결의 그 Gateway 상세 「브리지 토큰」 → 「새 토큰 발급」 → 라벨. 대화상자의 「설정 복사」로 `pluginConfig` 조각을 복사한다(원문은 이때 한 번만 보인다).
 2. Gateway 호스트에서 조각을 **파일로** 저장한다 — `umask 077` 인 셸에서 편집기로 붙여 넣는다. 셸 인자·`echo` 로 넘기지 않는다(`ps`·셸 기록에 남는다).
 3. `openclaw config patch --file <파일> && rm <파일>`. 조각에는 `bridgeUrl` 도 들어 있다 — 서버의 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN` 에서 만든 값)이 그 Gateway 가 서버에 닿는 주소와 다르면 조각 그대로 넣으면 안 된다. 2026.9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(`Change will apply without restarting the gateway.`) — 브리지가 한 번 끊겼다가 새 토큰으로 곧 붙는다. 출력이 재기동 없이 적용된다고 말하지 않으면 Gateway 를 재기동한다.
-4. 연결 페이지에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그 `"bridge plugin hello"` 의 `tokenId` 가 새 토큰 id 인지 본다(화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로도 본다).
+4. 그 Gateway 상세에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그 `"bridge plugin hello"` 의 `tokenId` 가 새 토큰 id 인지 본다(화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로도 본다).
 5. 옛 토큰 줄 「폐기」. 지금 연결은 끊기지 않는다. 옛 토큰으로 붙는 것은 그 뒤로 `UNAUTHORIZED` 다.
 
 ---
@@ -1122,7 +1122,7 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
    node_sh $SP/blocks/gw-1.sh < <0600 브리지 토큰 파일>   # 첫 블록만 표준 입력에 토큰 한 줄
    node_sh $SP/blocks/gw-2.sh                             # 나머지는 차례대로 — 사람 몫 단계는 위처럼 손으로
    ```
-4. 판정 — 연결 페이지의 Gateway 카드 「연결됨」·플러그인 「접속됨 · 서버와 같은 빌드입니다」, 「러너」 탭의 러너 카드 「연결됨」. 러너 절은 npm 레지스트리의 `@dodok/runner` 를 까므로(npm 레지스트리에 닿는 네트워크가 있어야 한다) 연결 페이지 러너 토큰 줄은 「서버와 같은 빌드입니다」 대신 안내 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」일 수 있다 — 판정에 넣지 않는다.
+4. 판정 — 설정 → 연결의 Gateway 상세 「연결됨」·플러그인 「접속됨 · 서버와 같은 빌드입니다」, 러너 상세 「연결됨」. 러너 절은 npm 레지스트리의 `@dodok/runner` 를 까므로(npm 레지스트리에 닿는 네트워크가 있어야 한다) 러너 상세의 「러너 토큰」 줄은 「서버와 같은 빌드입니다」 대신 안내 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」일 수 있다 — 판정에 넣지 않는다.
 
 ---
 

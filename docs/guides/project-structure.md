@@ -501,7 +501,7 @@ src/
 │  │                      부팅 때 한 번 렌더. Gateway 절은 설치 스크립트를 받아 토큰 환경 변수로 돌린다. 명령·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다, 머리 주석) ·
 │  │                      installer-auth.ts(requireOwnerOrToken — 살아 있는 세션이면 owner 규칙 그대로(아니면 403), 세션이 없을 때만 Bearer 를 http/agent-token.ts 에 넘긴다.
 │  │                      Bearer 가 없으면 세지 않는 401. plugin.tgz 는 브리지 토큰(꺼진 Gateway 면 세지 않는 401), runner.tgz 는 러너 토큰 — 다른 종류는 센 401)
-│  ├─ runners/            러너(runner_tokens 행 하나 = 러너 하나) — 연결 페이지 러너 블록(owner)과 「러너」 탭(admin 이상).
+│  ├─ runners/            러너(runner_tokens 행 하나 = 러너 하나) — 「연결」 탭의 러너 상세(토큰·설치 안내는 owner, 프로젝트는 admin 이상).
 │  │                      tokens.ts(runner_tokens 저장소 — bridge_tokens 와 같은 규칙, 원문 `drn_`, `.env` 이어받기 없음 · verifyRunnerTokenDb 는 id·라벨 ·
 │  │                      activeRunnerTokenCount(어댑터 상태 runners.tokens) · isActiveRunnerTokenId(runner_down 이 폐기된 토큰에 사건을 남기지 않게) · 다시 발급은 같은 행의 해시·접두사만) ·
 │  │                      runner-file.ts(runnerDirCandidates — DODOK_RUNNER_DIR(이미지 /app/runner), 소스 실행이면 packages/claude-runner/dist ·
@@ -668,7 +668,7 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 가짜 Gateway 는 둘이다(`DEV_FAKE_GATEWAYS`) — 「사무실」(고정 id `DEV_FAKE_OFFICE_GATEWAY_ID`, 에이전트 `dev`·`fin`, 고정 브리지 토큰 `dev-fake-bridge-token-office`)·
 「집」(`DEV_FAKE_HOME_GATEWAY_ID`, `main`·`dev`, `dev-fake-bridge-token-home`). `dev` 가 두 Gateway 에 일부러 겹친다. 시작 때 둘을 DB 에 넣고(`--keep` 이면 주소·토큰만 이번 가짜로 — 지운 고정 Gateway 는 다시 만들되 그 이름을 사람이 다른 Gateway 에 썼으면 「<이름> (dev:fake)」)
 Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. 시작은 가짜 플러그인이 붙은 고정 짝만 기다린다 — 사람이 더한 Gateway 는 닿지 않아도 되고, 사람이 끈 고정 Gateway·폐기한 고정 토큰이면 그 짝의 플러그인은 warn 만 남기고 붙지 않는다. 그 밖의 원인(사람 손이 닿지 않은 새 DB 등)으로 고정 짝이 못 붙으면 시작이 실패한다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
-대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 같은 기본 대본으로 답한다 — 「Gateway 삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 본다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
+대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 같은 기본 대본으로 답한다 — 「Gateway 삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 본다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 설정 → 연결 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 보관하지 않은 채널이 하나도 없으면(새 DB, 또는 `--keep` DB 의 채널이 모두 보관됨) 씨앗 채널 「세션」(`DEV_FAKE_CHANNEL_NAME`, 에이전트 `dev`·`coder`)을 만들고 그 채널에만 「이전 대화」(`DEV_FAKE_LEGACY_TITLE`, id = 채널 id — 0025 가 만드는 꼴)와 「dev:fake 새 세션」(`DEV_FAKE_SESSION_TITLE`)을 owner 글 하나씩과 함께 넣는다(`ensureDevFakeSessions`). 살아 있는 채널이 하나라도 있으면 아무것도 더하지 않는다 — `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 그대로다(실제 서버처럼 세션 기능 뒤 만든 채널에는 「이전 대화」가 없다). 새 DB(`--keep` 없이)에서는 사무실 `dev` 를 처음 등록할 때 `dmAccess: everyone` 으로 두고(나머지는 기본 `admins` — mia 는 dev 와만 DM 을 연다), mia ↔ dev DM 에 세션 하나(mia 글 + 대본 답)를 만든다(`ensureDevFakeDm` — `--keep`·사무실 플러그인이 못 붙음·dev 보관·꺼짐이면 경고만 남기고 건너뛴다, 씨앗 채널 조건은 DM 을 세지 않고 씨앗 채널은 보관한 에이전트를 빼고 만든다). 인바운드 로그 줄 `dev:fake inbound reactions` 은 DM 런이면 `dm`(헤더 DM 줄)과 `session`·`participants` 를 싣는다. 가짜 Gateway·플러그인·러너 대본은 서버가 실은 `delivery.sessionKey`·`conversationId` 를 그대로 쓴다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
@@ -680,16 +680,16 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 스레드(Phase 4 ①)는 따로 키워드가 없다 — 스레드에서 멘션하면 대본이 그 스레드로 답하고(정본에 `threadId`, 델타 포함), 스레드 안 답의 「@핸들 이어서 부탁해요」는 같은 스레드에서 릴레이한다. 가짜 플러그인 hello 는 `threads` 를 싣는다.
 리액션도 키워드가 없다 — 가짜 Gateway·가짜 러너가 받은 인바운드마다 `dev:fake inbound reactions` 한 줄(`connection`·`agentId`·`runId`·`threadId`·`sender`(보낸 사람 `<type>:<handle>` — 자동화 글이면 `system:automation`)·`senderName`·`reactions`(「@핸들 이모지 메시지 id "발췌"」)·`reactionsOmitted`, 반응이 없어도 빈 배열)을 남긴다 — 「에이전트 답에 단 반응이 다음 런에 실리고 그다음 런에는 없다」를 이 줄로 본다.
 웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
-가짜 플러그인은 `.env` 가 아니라 그 Gateway 의 고정 브리지 토큰(라벨 `dev-fake`)으로 붙는다 — 연결 페이지의 각 Gateway 카드 토큰 목록에 그 줄이 있다.
+가짜 플러그인은 `.env` 가 아니라 그 Gateway 의 고정 브리지 토큰(라벨 `dev-fake`)으로 붙는다 — 설정 → 연결의 각 Gateway 상세 토큰 목록에 그 줄이 있다.
 Gateway 를 고르는 훅(`plugin-token`·`plugin-capabilities`·`gateway`)은 본문에 `gatewayId`(사무실·집의 고정 id)가 있어야 한다 — 없거나 그 둘이 아니면 400 `VALIDATION`(문구에 고를 수 있는 id 가 실린다).
-**개발 전용 훅 `POST /__devfake/plugin-token { "gatewayId": "<id>", "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때. 다른 Gateway 의 플러그인은 그대로다. 다른 Gateway 에 묶인 토큰이면 400 `VALIDATION`(받으면 이 플러그인이 그 Gateway 자리를 차지해 그 Gateway 의 런에 이 짝의 대본이 답한다). DB 에 없는 토큰은 받아 `{ ok: false, reason: "UNAUTHORIZED" }` 를 돌려준다.
+**개발 전용 훅 `POST /__devfake/plugin-token { "gatewayId": "<id>", "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 설정 → 연결의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때. 다른 Gateway 의 플러그인은 그대로다. 다른 Gateway 에 묶인 토큰이면 400 `VALIDATION`(받으면 이 플러그인이 그 Gateway 자리를 차지해 그 Gateway 의 런에 이 짝의 대본이 답한다). DB 에 없는 토큰은 받아 `{ ok: false, reason: "UNAUTHORIZED" }` 를 돌려준다.
 응답은 200 `{ ok: true }` 또는 `{ ok: false, reason }`(예 `UNAUTHORIZED` — 모르는 토큰을 주면 가짜 플러그인이 끊긴 채 남아 임계 뒤 `plugin_down` 이 열린다).
 **개발 전용 훅 `POST /__devfake/plugin-capabilities { "gatewayId": "<id>", "threads": boolean }`**(`DEV_FAKE_PLUGIN_CAPABILITIES_PATH`): 옛 플러그인 흉내 — false 면 그 Gateway 의 가짜 플러그인을 끊고 hello capabilities 에서 `threads` 를 뺀 채 다시 붙는다(스레드 멘션은 곧바로 `PLUGIN_OUTDATED` run_error 카드, 채널 멘션은 그대로), true 면 되돌린다(재설치 — 그 카드의 「다시 실행」이 스레드에서 답한다). 토큰은 그대로. 응답은 200 `{ ok: true, capabilities }` 또는 `{ ok: false, reason }`. 값은 메모리에만 있어 다시 띄우면 `threads` 가 있다.
 **운영 훅**(Phase 3 ③) — 운영 화면의 배지·끊김·디스크를 브라우저로 잴 때:
 - `POST /__devfake/ops/event { kind, key, severity, detail? }`(`DEV_FAKE_OPS_EVENT_PATH`) — `app.ops.record` 만 부른다(ops_events 를 직접 쓰지 않아 unacked 캐시·`ops.event`·로그가 함께 돈다). 200 `{ ok: true, event }`.
 - `POST /__devfake/gateway { gatewayId, state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 그 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)과 다른 Gateway 는 그대로. 200 `{ ok: true, status }`(`status` 는 그 Gateway 한 줄), 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
 - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }`(`DEV_FAKE_DISK_PATH`) — 디스크 감시의 statfs 를 그 값으로 바꾸고 곧바로 다시 잰다(error 면 응답 전에 `disk_low`·첨부 507 이 반영된다). reset 이면 실제 statfs. 값은 메모리에만 있어 다시 띄우면 실제로 돌아간다.
-- `POST /__devfake/runner { connected: boolean, token?: string, runner?: "main" | "limited", maxPermissionMode?, roots? }`(`DEV_FAKE_RUNNER_PATH`) — false 면 그 가짜 러너(`runner` 기본 `main`)를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 연결 페이지에서 발급·다시 발급한 토큰). `roots`(그 러너의 고정 루트 id 가운데 알릴 것 — 밖이면 400)·`maxPermissionMode`(Claude Code 상한)는 `connected: true` 와만(아니면 400) — 그 hello 로 다시 붙고 다음 바꿈까지 남는다(머신 주인이 설정을 바꾼 흉내 — 루트를 빼면 그 프로젝트가 「루트 없음」). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`.
+- `POST /__devfake/runner { connected: boolean, token?: string, runner?: "main" | "limited", maxPermissionMode?, roots? }`(`DEV_FAKE_RUNNER_PATH`) — false 면 그 가짜 러너(`runner` 기본 `main`)를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 설정 → 연결에서 발급·다시 발급한 토큰). `roots`(그 러너의 고정 루트 id 가운데 알릴 것 — 밖이면 400)·`maxPermissionMode`(Claude Code 상한)는 `connected: true` 와만(아니면 400) — 그 hello 로 다시 붙고 다음 바꿈까지 남는다(머신 주인이 설정을 바꾼 흉내 — 루트를 빼면 그 프로젝트가 「루트 없음」). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`.
   가짜 러너는 둘(`DEV_FAKE_RUNNERS`, 고정 토큰 행 id 로 찾는다 — 「다시 발급」으로 해시가 바뀐 행은 시작 때 고정 토큰으로 되돌리고 warn, 폐기한 행은 되살리지 않는다): 「dev-fake」(`dev-fake-runner-token`, 루트 `src` 「내 저장소들」·`work` 「회사」, 둘러보기 켬, Claude Code 상한 `acceptEdits`·`available: false` 인 Codex 「설치되지 않음」, 고정 나무 `devFakeRunnerTree()` — git 저장소·하위 600개 `src/many`·특수 문자 이름·숨김·루트 밖 링크·파일)와 「dev-fake 제한」(`dev-fake-runner-token-limited`, 루트 `sandbox`·`src`, 둘러보기 끔, Claude Code 상한 `plan`·허용 도구 상한 `Read`·`Grep`·`Glob`, 처음 만들 때 프로젝트 `sandbox/demo`). 둘 다 실제 러너처럼 런마다 천장을 본다(`test/fakes/fake-runner.ts` 의 `tree` 옵션). 에이전트 `coder`(provider runner·program claude)는 새 DB 에서 「dev-fake」의 프로젝트 `src/dodok` 로 만든다. 대본 키워드 「천장」은 `RUNNER_CEILING(permissionMode)` 카드.
 
 여섯 훅 공통: owner 세션(쿠키 또는 Bearer) — 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다, 본문은 판정 뒤에 읽는다, `content-type` 이 `application/json` 이 아니면 415(단순 요청으로 못 부르게), 경로는 쿼리 앞까지 정확히 일치(아니면 원래 리스너 → 앱 404), 본문 16 KB 상한, 모양이 틀리면 400 `VALIDATION`.
@@ -718,7 +718,7 @@ run_error 「다시 실행」 카드는 대본 「실패」 키워드(코드 `un
 src/
 ├─ index.ts               배럴: adapter-types · createOpenClawAdapter(+ GatewayConnectionConfig·GatewayStatusEntry·GatewaySetupEntry) · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다) · BridgeAuthGuard · OPENCLAW_PINNED_VERSION
 ├─ version.ts             OPENCLAW_PINNED_VERSION — 저장소가 검증한 OpenClaw 버전. package.json 의 OpenClaw 패키지 정확 핀과 같아야 한다(test/version.test.ts).
-│                         서버가 접속한 Gateway 버전과 비교해 gateway_version_untested·운영 화면·연결 페이지의 드리프트 문구를 낸다
+│                         서버가 접속한 Gateway 버전과 비교해 gateway_version_untested·운영 화면·설정 → 연결의 드리프트 문구를 낸다
 ├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent(+ kind:"approval")·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet),
 │                         resolveApproval(providerApprovalId, kind, decision), AdapterError
 ├─ openclaw-adapter.ts    createOpenClawAdapter: 브리지 + Gateway 연결 목록(connection/manager) 조립 — 어댑터 하나가 Gateway 연결 여럿을 품는다(멀티 Gateway 스펙 5장).
@@ -830,7 +830,7 @@ src/
 
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
 
-배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack` — 배포 서버 이미지가 같은 커밋의 tgz 를 `/app/plugin/` 에 품고 웹 연결 페이지가 내려준다(`docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절), `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰 — 토큰은 연결 페이지에서 발급한 `dbt_…`, 발급 대화상자가 설정 조각을 준다)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
+배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack` — 배포 서버 이미지가 같은 커밋의 tgz 를 `/app/plugin/` 에 품고 웹 설정 → 연결이 내려준다(`docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절), `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰 — 토큰은 설정 → 연결에서 발급한 `dbt_…`, 발급 대화상자가 설정 조각을 준다)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
 
 ### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
 
@@ -843,7 +843,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
 
-사람의 머신에서 앱이 만든 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 로컬 설정은 천장(허용 루트·프로그램·권한 상한)만 쥐고, 서버가 `run.start` 에 실은 에이전트 정의를 런마다 천장과 견준 뒤 프로그램 드라이버에 넘긴다(무상태). 지금 드라이버는 Claude Code(Claude Agent SDK) 하나다. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/docker-deploy.md` 「러너 설치」 절.
+사람의 머신에서 앱이 만든 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 로컬 설정은 천장(허용 루트·프로그램·권한 상한)만 쥐고, 서버가 `run.start` 에 실은 에이전트 정의를 런마다 천장과 견준 뒤 프로그램 드라이버에 넘긴다(무상태). 지금 드라이버는 Claude Code(Claude Agent SDK) 하나다. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 설정 → 연결이 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/docker-deploy.md` 「러너 설치」 절.
 - `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict — `roots`·`browse`·`programs`, 옛 `agents` 키는 `LEGACY_AGENTS_MESSAGE` 로 거절, 루트는 realpath)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello(루트는 `{ id, label }` 뿐 — 경로 원문 없음)·`fs.list`·`project.check` 응답·`run.start` 마다 천장 검사(걸리면 ack `dispatch` 뒤 `run.error RUNNER_CEILING <항목>`)·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
 - `src/ceiling.ts` — `checkCeiling`(root → path → program → permissionMode → allowedTools, realpath 로 루트 안 디렉터리인지). `src/fs-browse.ts` — 둘러보기(디렉터리만·숨김 제외·루트 밖 링크 제외·코드 포인트 순 500 + truncated, `browse: false` 면 FORBIDDEN)·프로젝트 확인(네 사유).
 - `src/driver.ts` — 드라이버 계약 `ProgramDriver`·`RunSpec`(작업 디렉터리는 러너 안에서만 쓰는 풀린 경로). `src/sink.ts` — `RunSink`(서버로 내보내는 한 자리 — 호스트 경로 가림을 맡는다, `src/mask.ts` 의 가림 규칙·못 알아보는 모양은 그 머리 주석).
@@ -859,7 +859,7 @@ Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-des
 Phase 2 ② components v1 렌더러(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md`, 계획 `docs/superpowers/plans/2026-09-21-components-v1.md`)와
 Phase 2 ③ 첨부·이미지(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 계획 `docs/superpowers/plans/2026-09-23-attachments.md`)와
 Phase 2 ④ PWA·푸시(스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`, 계획 `docs/superpowers/plans/2026-09-23-pwa-push.md`, 구현과 달라진 것은 스펙 11장)와
-Phase 3 ② 설정 마법사의 연결 페이지(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 계획 `docs/superpowers/plans/2026-09-24-setup-wizard.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)와
+Phase 3 ② 설정 마법사의 설정 → 연결(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 계획 `docs/superpowers/plans/2026-09-24-setup-wizard.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)와
 Phase 3 ③ 운영 화면(스펙 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`, 계획 `docs/superpowers/plans/2026-09-25-ops-hardening.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)과
 Phase 4 ① 스레드·검색(스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`, 계획 `docs/superpowers/plans/2026-09-25-threads-search.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)이 얹혔다.
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 웹 MVP 태스크 2 에서 한 번에 넣었다(Phase 2 ③ 은 0).
@@ -895,7 +895,7 @@ src/
 │  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized(`/login?next=` 로 replace, `ignoreBlocker` — 원문 대화상자의 이동 막기를 건너뛴다. 로그인 없이 여는 화면(isPublicPath — `/join/`·`/reset/`)이면 상태만 비우고 머문다) (테스트는 메모리 히스토리를 넘긴다). notify(승인 알림의 화면 사정 + 채널 이동 알림 onLocationChange —
 │  │                       router.subscribe("onResolved")), 서비스 워커의 navigate 메시지 → safeNotificationUrl → router.navigate, captureInstallPrompt
 │  ├─ boot.tsx             bootApp — onlineManager.setOnline(navigator.onLine) → 오프라인 사본 복원(최대 1초) → registerSessionReset(사본 지우기) → 렌더. main 과 테스트가 같은 것을 부른다
-│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(채널 주소 자체는 `toLatestSession` 이 최근 열린 세션 또는 `/s/new` 로 넘기고 그 사정 화면은 `features/messages/ChannelRedirect.tsx` — 로딩·없음·오프라인은 `ChannelStatus.tsx`)·/c/$channelId/s/$conversationId(+/settings·/activity·/t/$rootId — `new` 는 아직 대화가 없는 새 세션 창, 주소의 채널과 세션의 채널이 다르면 세션의 채널 주소로 replace)·세션 전의 옛 주소 `/c/$channelId/settings`·`/activity`·`/t/$rootId`(최근 세션의 같은 탭으로, 스레드는 대화 id = 채널 id 로 replace)·/settings 레이아웃 라우트(자식 /·account·notifications·agents·channels·automations·members·connection·operations — features/settings-shell)·옛 /agents → /settings/agents(beforeLoad redirect replace), scrollToTopSelectors 에 `#settings-scroll`), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
+│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(채널 주소 자체는 `toLatestSession` 이 최근 열린 세션 또는 `/s/new` 로 넘기고 그 사정 화면은 `features/messages/ChannelRedirect.tsx` — 로딩·없음·오프라인은 `ChannelStatus.tsx`)·/c/$channelId/s/$conversationId(+/settings·/activity·/t/$rootId — `new` 는 아직 대화가 없는 새 세션 창, 주소의 채널과 세션의 채널이 다르면 세션의 채널 주소로 replace)·세션 전의 옛 주소 `/c/$channelId/settings`·`/activity`·`/t/$rootId`(최근 세션의 같은 탭으로, 스레드는 대화 id = 채널 id 로 replace)·/settings 레이아웃 라우트(자식 /·account·notifications·agents·channels·automations·members·connection·operations — features/settings-shell)·옛 /agents·/settings/agents·/settings/runners → /settings/connection(beforeLoad redirect replace), scrollToTopSelectors 에 `#settings-scroll`), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인.
 │  │                       403 FORBIDDEN 은 「권한이 없습니다」(토스트 id `forbidden` 하나) + `silent` 와 무관하게 me 를 다시 받아 관리 화면을 잠근다(역할이 내려간 직후 남은 버튼).
 │  │                       409 CHANNEL_ARCHIVED 는 「보관된 채널입니다」(토스트 id `channel-archived` 하나) + 채널 상세·사이드바 목록을 다시 받는다(보관을 놓친 탭이 읽기 전용으로).
@@ -1104,23 +1104,28 @@ src/
 │  ├─ runs/                runStore.ts(Zustand, seq 중복 제거·재생. 런의 스레드 소속 = run.state.threadRootId 1순위, 없으면 RUN_STARTED.sessionKey 를 parseDodokSessionKey 로 —
 │  │                       런 id → 루트는 remove 뒤에도 남겨 확정 승인 카드가 채널로 새지 않게, selectScopeRuns(ch, root?) 로 버블·`/stop` 을 가른다)·bubblePhase.ts(상태 → 버블 모양)·
 │  │                       StreamingBubble.tsx·useChannelBubbles(범위별 — 끝난 런은 그 범위를 볼 때만 지운다)·abortError
+│  ├─ connections/         「연결」 탭 `/settings/connection`(연결 탭 통합 스펙 2026-11-02) — 누구나. ConnectionsLayout.tsx(넓은 화면 트리 칸 | 상세 `Outlet`(`#connection-detail-scroll`), 좁은 화면 한 칸씩 —
+│  │                       상세의 「← 연결」은 설정 셸 머리 BackLink 가 단다) · tree.ts(buildConnectionTree — 순수 함수, 역할마다 모르는 칸은 null) · useConnectionTree.ts(역할마다 부를 수 있는 API 만 —
+│  │                       member: 에이전트 + wire Gateway, admin: + `GET /runners`·러너마다 프로젝트, owner: + `GET /setup/status`) · ConnectionTreeList.tsx(줄 = 링크, 「연결 없음」·접힌 「삭제된 에이전트 N」) ·
+│  │                       GatewayDetail·RunnerDetail·ProjectDetail(admin 이상)·AgentDetail·NewConnection(owner) — 상세 주소마다, 없는 id 는 NotFoundDetail 「이 연결을 찾을 수 없습니다」 ·
+│  │                       DetailHeader(h1 — 트리 줄을 눌러 오면 초점) · HelpDetails(「?」 펼침 — 접근 이름 「<섹션> 도움말」) · context.ts(트리 머리 라이브 영역·초점 돌려주기)
 │  ├─ composer/            Composer.tsx(Tiptap — `/stop` 은 그 세션(스레드 작성기면 그 스레드)의 런만, `/new` 는 명령이 아니다. 새 세션 창에서 첫 ack 뒤 그 세션으로 넘어가면 초안·첨부를 들고 간다 —
 │  │                       `useSendMessage` 의 settleNew 가 남기는 표 `["composerSettled"]`, 메인 작성기가 `new` 를 떠날 때 지운다) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(membership 없는 사람·비활성 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
 │  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`) · useSendMessage(channelId, conversationId, threadRootId? — conversationId 가 NEW_CONVERSATION("new")이면 newConversation 으로 보내고 ack 의 세션 주소로 바꿔 간다, 같은 틱의 둘째 글은 그 세션으로(「만드는 중」 표지 `composerCreating` — 결과 불명(TIMEOUT)인 첫 글은 그 항목이 `/s/new` 창에 있을 때만 같은 clientMsgId 로 다시 보낸다), ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, CHANNEL_ARCHIVED 면 사유 channel_archived(토스트 없이)·채널 다시 받기, CONVERSATION_CLOSED 면 사유 conversation_closed(「다시 보내기」 없음)·세션 다시 받기, FORBIDDEN 이면 「다시 보내기」 없음, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 세션 단위) ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
-│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 「러너」 탭에서 옮기라는 안내), admin 이상이면 RunnerDefinition(정의 요약 + 「러너 설정 고치기」 → RunnerAgentForm.tsx RunnerDefinitionForm — 프로그램·프로젝트는 읽기만)) · DiscoverDialog(「에이전트 가져오기」 — 제공자, 러너면 RunnerAgentForm(러너 → 프로젝트 → 프로그램 → 핸들·이름·모델·권한 모드(상한까지)·허용 도구(상한 부분집합)·지시·DM 허용, 폼을 연 뒤 고른 러너가 끊기거나 폐기되면 잠김), OpenClaw 면 Gateway 고르기(Gateway 목록은 어댑터 상태 — admin 도 읽는다, `GET /gateways` 는 owner 전용), 같은 Gateway·같은 id 만 숨김,
+│  ├─ agents/              에이전트 부품 — 「연결」 탭의 에이전트 상세(features/connections AgentDetail)가 쓴다. AgentRow(`as="div"` 로 상세 본문 — 사용 토글·기본 프롬프트 — member 에게는 값만 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 그 러너 상세 링크와 옮기라는 안내), admin 이상이면 RunnerDefinition(정의 요약 + 「러너 설정 고치기」 → RunnerAgentForm.tsx RunnerDefinitionForm — 프로그램·프로젝트는 읽기만)) · RunnerAgentForm(프로젝트 상세의 「에이전트 만들기」 — 러너·프로젝트 고정(runnerId·projectId) → 프로그램 → 핸들·이름·모델·권한 모드(상한까지)·허용 도구(상한 부분집합)·지시·DM 허용, 폼을 연 뒤 러너가 끊기거나 폐기되거나 프로젝트가 보관되면 잠김) · DiscoverDialog(Gateway 상세의 「에이전트 가져오기」 — 그 Gateway 하나로 고정(gatewayId), 같은 Gateway·같은 id 만 숨김,
 │  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
 │  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
 │  │                       admin·member 「…owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다」) · ManualAgentForm·handleFrom ·
 │  │                       mutations(등록·수정·옮기기, useArchiveAgent·useRestoreAgent — 같은 틱 두 번은 한 요청).
-│  │                       보관(삭제)·되살리기 — 살아 있는 목록 아래 접힌 「삭제된 에이전트 N」(ArchivedAgents, admin 이상이면 줄마다 「되살리기」), 줄의 「삭제」는 ConfirmDialog
+│  │                       보관(삭제)·되살리기 — 「연결」 트리의 접힌 「삭제된 에이전트 N」, 그 에이전트 상세의 「되살리기」(admin 이상), 상세의 「삭제」는 ConfirmDialog
 │  │                       (「에이전트 삭제」). 고르는 자리의 거름은 archived.ts isArchived(`Boolean(archivedAt)` — 보관 열 이전 오프라인 사본에는 키가 없다) 한곳 —
 │  │                       멘션 후보·채널 멤버 줄·「에이전트 추가」 셀렉트·채널 머리 아바타가 쓴다. 가져오기의 archivedAgentId 항목은 「삭제됨 — 되살리기」, 직접 입력·409 AGENT_ARCHIVED 는
 │  │                       id 칸 「삭제된 에이전트입니다」+「되살리기」. ArchivedTag(멘션 칩·운영 표 이름 뒤 「삭제됨」 — 보이는 글자는 aria-hidden, 스크린 리더에는 「 (삭제됨)」)
-│  ├─ runners/             「러너」 탭 `/settings/runners` — admin 이상(아니면 러너 API 를 부르지 않고 「권한이 없습니다 — 러너는 관리자만 볼 수 있습니다.」). RunnersPage.tsx(러너 카드 — 연결 배지·판본·루트·프로그램 줄,
-│  │                       끊기면 「끊김」 하나)·ProjectList.tsx(프로젝트 줄 — 확인·이름 바꾸기·옮기기·보관, 붙은 러너가 그 루트를 안 알리면 「루트 없음」, 줄을 빼는 mutation 뒤 초점은 `.then` 에서)·
+│  ├─ runners/             러너·프로젝트 부품 — 「연결」 탭의 러너 상세·프로젝트 상세(features/connections)가 쓴다(admin 이상 — 러너 API). RunnerParts.tsx(RunnerFacts — 판본·루트·프로그램 줄 ProgramLine「(평소 로그인)/(전용 로그인)」)·
+│  │                       ProjectList.tsx(프로젝트 줄 — 라벨은 프로젝트 상세 링크, 확인·이름 바꾸기·옮기기·보관 — ProjectRow 를 프로젝트 상세도 쓴다, 붙은 러너가 그 루트를 안 알리면 「루트 없음」, 줄을 빼는 mutation 뒤 초점은 `.then` 에서)·
 │  │                       AddProjectDialog.tsx(루트 → 둘러보기(빵 부스러기·git·truncated, 열린 동안 다시 받지 않는다)/직접 입력 → 「확인하고 추가」)·MoveProjectDialog.tsx·copy.ts(확인 실패 사유 넷 등 문구)·
 │  │                       queries.ts·mutations.ts(키는 `src/api/queries.ts` 의 `qk.runners()`·`qk.runnerProjects(id)`·`qk.runnerFs(id, root, rel)`, 무효화 앞머리 `runnersAll`(wire `adapter.status` runner)·`runnerProjectsAll`(agents.changed)·`runnerFsOf`).
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 세션(지금 세션이 아니어도)·스레드로, 닫으면 연 자리로 초점 —
@@ -1128,16 +1133,15 @@ src/
 │  │                       429·오류는 대화상자 안 한 줄, 다음 쪽 실패는 받은 결과를 두고 목록 아래 한 줄, 입력이 2글자 미만이면 옛 결과를 곧바로 숨긴다) ·
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
-│  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
-│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · 러너 블록(RunnerSection — 토큰 목록·발급·다시 발급(ReissueRunnerTokenDialog)·폐기, 드러나는 것 넷, 설치 안내 — 상태·프로젝트는 「러너」 탭). OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginInstall 한 번,
-│  │                       그 아래 Gateway 카드 목록 — Gateway 가 없으면 빈 상태 한 줄 NO_GATEWAY) ·
-│  │                       GatewayCard.tsx(Gateway 하나 — 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
+│  ├─ setup/               Phase 3 ②. 연결 설정 부품(owner — setup API) — 「연결」 탭의 Gateway 상세·러너 상세·연결 추가(features/connections)가 쓴다.
+│  │                       RunnerSection.tsx(InstallSteps — 러너 상세 「설치 안내」 · RunnerExposure — 드러나는 것 넷) · RunnerTokenList.tsx(러너 상세가 그 러너의 토큰 한 줄로) ·
+│  │                       GatewayCard.tsx(Gateway 상세의 섹션 — GatewayMeta 한 줄·PairingNotice·PluginStatus(설치 상자 PluginInstall — 플러그인이 없으면 펼침)·BridgeTokens(한 줄 + 「?」) · 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
 │  │                       (접근 이름 「<이름> 수정」 등 — 드롭다운 메뉴가 아니다)·주소·호스트·버전(drift 문구)·페어링 대기면 `openclaw devices approve <requestId>`,
 │  │                       requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 · 플러그인(같은 빌드 문구 넷) · 이 Gateway 의 브리지 토큰(TokenList·IssueTokenDialog),
 │  │                       활성 토큰 0 이면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」) ·
 │  │                       GatewayForm.tsx(추가·수정 대화상자 — 이름·주소·토큰(수정이면 「바꾸려면 입력」), 서버 400·409 를 칸 오류로, 문구는 고정(스키마 문구를 보이지 않는다)) ·
-│  │                       DeleteGatewayConfirm.tsx(카드 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
-│  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 · ServerSection ·
+│  │                       DeleteGatewayConfirm.tsx(상세 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
+│  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 ·
 │  │                       PluginInstall — 「새 토큰 발급」의 설치 명령을 가리키는 안내 한 줄, 파일이 없으면 PACK_COMMAND ·
 │  │                       pluginInstallCommand — 발급 대화상자의 한 줄(맨 앞 공백 · `(set -o pipefail; curl -fsS <오리진>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='…' bash)` — 받기 실패면 0 이 아닌 끝 코드),
 │  │                       `connection.test.tsx` 가 `docs/guides/docker-deploy.md` 의 예시 줄과 대조한다) ·
@@ -1156,7 +1160,7 @@ src/
 │  │                       threadOpener.ts(스레드를 연 자리 — 칩·「스레드에서 답하기」가 누른 요소를 적고 PanelTabs 가 닫을 때 돌려준다)
 │  ├─ settings-shell/      `/settings` 레이아웃 라우트(SettingsLayout — 넓은 화면은 왼쪽 탭 목록 고정 + 내용 칸 `#settings-scroll` 만 스크롤, 좁은 화면은 `/settings` 가 탭 목록 페이지
 │  │                       (SettingsIndex — 넓은 화면이면 「내 계정」으로 replace)이고 탭 페이지는 위에 붙는 머리에 메뉴 단추 + 「← 설정」 — 탭 페이지는 메뉴 단추를 그리지 않는다) ·
-│  │                       tabs.ts(SETTINGS_TABS — 경로·이름·아이콘·역할별 보임: 내 계정·알림·에이전트·채널 누구나, 자동화·멤버·운영 admin 이상, 연결 owner. 숨은 탭은 직접 주소로 가도 목록에 없다 —
+│  │                       tabs.ts(SETTINGS_TABS — 경로·이름·아이콘·역할별 보임: 내 계정·알림·연결·채널 누구나, 자동화·멤버·운영 admin 이상. 숨은 탭은 직접 주소로 가도 목록에 없다 —
 │  │                       내용 자리가 「권한이 없습니다」) · SettingsNav.tsx(`nav aria-label="설정"`, 지금 탭 `aria-current="page"`, 운영 탭 배지) · OpsBadge.tsx(사이드바 「설정」과 운영 탭이 같이 쓴다) ·
 │  │                       focus.ts(설정 안의 이동 — 탭 목록·「← 설정」 — 뒤에만 초점을 내용 h1 로. 판정은 라우터 matches 의 그려진 화면, 제목이 늦게 붙으면 기다린다) ·
 │  │                       AccountPage.tsx(표시 이름·비밀번호 바꾸기 — owner 는 비밀번호 칸 대신 `.env` 의 LOCAL_AUTH_TOKEN 안내·「로그아웃」) ·
@@ -1216,9 +1220,9 @@ src/
                                                    └─ operator 클라이언트 ⇒ wss:// ⇒ [OpenClaw Gateway]   ← 본인 서버 B (원격)
 ```
 
-- 기본값: 본인이 운영하는 원격 Gateway에 연결(연결 페이지에서 Gateway 주소 `wss://...`·공유 토큰을 추가 — 여럿 붙일 수 있다). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속하고, 서버는 브리지 토큰으로 어느 Gateway 의 플러그인인지 가른다.
+- 기본값: 본인이 운영하는 원격 Gateway에 연결(설정 → 연결에서 Gateway 주소 `wss://...`·공유 토큰을 추가 — 여럿 붙일 수 있다). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속하고, 서버는 브리지 토큰으로 어느 Gateway 의 플러그인인지 가른다.
 - 배포: 루트 `compose.yaml` 로 서버 A 에 앱 컨테이너 `app` 하나를 띄운다(`docs/guides/docker-deploy.md`). 서버가 웹 화면·`/api`·`/socket.io`(wire·브리지·러너 WebSocket)·`/bridge/*`·`/runner/*`(첨부 HTTP)·`/hooks/*`·`/mcp`·`/healthz`·`/llms.txt` 를 한 포트로 내고, HTTPS 는 서버 A 의 리버스 프록시가 끝내 모든 경로를 그 포트로 넘긴다(`TRUST_PROXY` 는 그 프록시 주소). Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
-- 로컬 개발: Gateway 는 원격에 붙거나 로컬 dev Gateway 를 연결 페이지 「Gateway 추가」로 붙인다(`docs/guides/live-smoke.md` 「전제」 — 상태 디렉터리를 갈라 여럿 띄울 수 있다). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
+- 로컬 개발: Gateway 는 원격에 붙거나 로컬 dev Gateway 를 설정 → 연결의 「＋ 연결 추가」(OpenClaw Gateway)로 붙인다(`docs/guides/live-smoke.md` 「전제」 — 상태 디렉터리를 갈라 여럿 띄울 수 있다). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
 - 응답 정본은 플러그인 경로, WS 경로는 미리보기(델타)·툴 이벤트·승인. `runId`로 dedupe.
 
 ---
@@ -1226,7 +1230,7 @@ src/
 ## 4. 환경 변수 (`.env.example`)
 
 정본은 `apps/server/src/config.ts`(zod). 소스 실행의 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다(운영 번들은 `.env` 파일을 읽지 않고 compose 의 `env_file` 로 받는다 — 배포 값은 `docs/guides/docker-deploy.md` 「설정 — `.env`」) — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
-OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 DB 다(연결 페이지 — `modules/gateways/`). 서버는 Gateway 가 0개여도 뜨고, 옛 `.env` 에 남은 `OPENCLAW_*`·`BRIDGE_TOKEN` 은 읽지 않는다.
+OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 DB 다(설정 → 연결 — `modules/gateways/`). 서버는 Gateway 가 0개여도 뜨고, 옛 `.env` 에 남은 `OPENCLAW_*`·`BRIDGE_TOKEN` 은 읽지 않는다.
 
 | 변수 | 기본값 | 뜻 |
 | --- | --- | --- |
@@ -1244,7 +1248,7 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
 | `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(`docs/adr/0005-usage-values.md`) |
-| `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
+| `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 설정 → 연결이 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
 | `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | — | iOS 앱 푸시(APNs) 인증 키(.p8) 경로·키 id·팀 id. 없으면 `<DATA_DIR>/apns/key.p8`·`config.json`(`{ keyId, teamId }`)을 읽고, 둘 다 없으면 통로가 꺼진다(부팅은 막지 않는다). 키는 ES256(P-256)만. 발급·배치는 `docs/guides/docker-deploy.md` 「네이티브 푸시 자격 증명」 |
 | `FCM_SERVICE_ACCOUNT_PATH` | — | Android 앱 푸시(FCM) 서비스 계정 JSON 경로. 없으면 `<DATA_DIR>/fcm/service-account.json`, 둘 다 없으면 통로가 꺼진다 |
@@ -1252,8 +1256,8 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `PUSH_RELAY_URL` | — | 중앙 푸시 중계 자리 — 아직 구현이 없어 값이 있으면 부팅 때 warn 후 무시한다 |
 | `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 「원격 배포에서 VAPID 키 옮기기」) |
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
-| `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
-| `DODOK_RUNNER_DIR` | — | 연결 페이지가 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
+| `DODOK_PLUGIN_DIR` | — | 설정 → 연결이 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
+| `DODOK_RUNNER_DIR` | — | 설정 → 연결이 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
 | `DODOK_WEB_DIR` | — | 빌드된 웹 디렉터리 — 있으면 서버가 웹을 낸다(`http/web-static.ts`), 없으면 개발처럼 Vite 가 낸다. 가리키는 곳에 `index.html` 이 없으면 부팅 로그 error 한 줄 뒤 끈다. 배포에서는 이미지·compose 가 `/app/web` 으로 고정한다 |
 | `DODOK_HTTP_PORT` · `DODOK_PROXY_NETWORK` · `DODOK_ENV_FILE` | — | **배포 전용**(서버는 읽지 않음, compose 변수 치환) — 호스트 루프백 포트(기본 3000)·서버 덮어쓰기 파일이 붙을 프록시 네트워크 이름·`compose.yaml` 이 `.env` 대신 읽을 env 파일(로컬 검사 전용 — 운영은 `.env`) |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
@@ -1263,7 +1267,7 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 
 Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
-우리가 관리하는 OpenClaw 설정 조각(사용자가 Gateway 호스트에 적용 — 연결 페이지의 토큰 발급이 `accounts.default` 의 `bridgeUrl`·`token` 조각을 만들어 주고, 나머지는 손으로):
+우리가 관리하는 OpenClaw 설정 조각(사용자가 Gateway 호스트에 적용 — 설정 → 연결의 토큰 발급이 `accounts.default` 의 `bridgeUrl`·`token` 조각을 만들어 주고, 나머지는 손으로):
 
 ```json5
 {
@@ -1271,7 +1275,7 @@ Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
   tools: { agentToAgent: { enabled: false }, sessions: { visibility: "tree" } },   // 루트 sessions 키는 거부된다 (ADR 0002)
   channels: {
     dodok: {
-      accounts: { default: { bridgeUrl: "wss://dodok.example.com/bridge", token: "dbt_…" /* 연결 페이지 발급 */ /* , mediaMaxMb: 20 (선택) */ } },
+      accounts: { default: { bridgeUrl: "wss://dodok.example.com/bridge", token: "dbt_…" /* 설정 → 연결 발급 */ /* , mediaMaxMb: 20 (선택) */ } },
       channels: { "<channelId>": { requireMention: true, systemPrompt: "..." } }
     }
   }
