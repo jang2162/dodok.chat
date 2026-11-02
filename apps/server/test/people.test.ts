@@ -166,6 +166,37 @@ describe("listPeople·broadcastPeople", () => {
   });
 });
 
+describe("listPeople — 상태", () => {
+  it("상태 메시지는 싣고, 수동 모드·만료(invisible 포함)는 어느 키로도 싣지 않는다", () => {
+    const { db, workspaceId, alice } = setup();
+    db.update(users)
+      .set({
+        statusMode: "invisible",
+        statusModeUntil: new Date(Date.now() + 3_600_000),
+        statusEmoji: "🌙",
+        statusText: "조용히",
+        dndAllowApprovals: false,
+      })
+      .where(eq(users.id, alice))
+      .run();
+    const row = listPeople(db, workspaceId).find((p) => p.id === alice);
+    expect(row?.statusMessage).toEqual({ emoji: "🌙", text: "조용히", until: null });
+    expect(Object.keys(row ?? {}).sort()).toEqual(
+      ["deactivatedAt", "displayName", "handle", "id", "role", "statusMessage"].sort(),
+    );
+    expect(JSON.stringify(row)).not.toMatch(/invisible|statusMode|dndAllowApprovals/);
+  });
+
+  it("만료가 지난 상태 메시지는 싣지 않는다", () => {
+    const { db, workspaceId, alice } = setup();
+    db.update(users)
+      .set({ statusText: "지난 것", statusTextUntil: new Date(Date.now() - 1000) })
+      .where(eq(users.id, alice))
+      .run();
+    expect(listPeople(db, workspaceId).find((p) => p.id === alice)?.statusMessage).toBeNull();
+  });
+});
+
 describe("채널 자동 참여", () => {
   it("joinChannelIfAbsent — 없으면 넣고 true, 있으면 false", () => {
     const { db, channelId, alice } = setup();

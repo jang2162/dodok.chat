@@ -676,6 +676,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
     },
+    // 상태(프로필 스펙 3.2) — 누구나, 자기 것만
+    {
+      name: "PUT /me/status",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: "/api/v1/me/status",
+        payload: { mode: "busy", modeUntil: null },
+      }),
+    },
     // 개인 토큰(제어 MCP 스펙 「권한」 장) — 누구나, 자기 것만. DELETE 는 아래 「개인 토큰」 묶음이 주인별로 본다
     {
       name: "GET /me/tokens",

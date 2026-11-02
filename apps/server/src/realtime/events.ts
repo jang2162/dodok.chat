@@ -205,6 +205,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       io.to(channelRoom(p.conversation.channelId)).emit("conversation.updated", p),
     ),
     on("people.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("people.changed", p)),
+    on("me.status", ({ userId, ...p }) => io.to(userRoom(userId)).emit("me.status", p)),
     on("agents.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("agents.changed", p)),
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),
     on("adapter.status", (p) => io.emit("adapter.status", p)),

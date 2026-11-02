@@ -37,6 +37,8 @@ export type BusEvents = {
   "setup.status": Payload<"setup.status">;
   // 운영 사건 — owner·admin 사용자 룸으로(events.ts)
   "ops.event": Payload<"ops.event">;
+  // 본인 상태가 바뀌었다 — 그 사람의 user 룸으로(다른 탭·기기가 맞춘다, events.ts). userId 는 팬아웃이 룸을 고르는 데만 쓴다
+  "me.status": Payload<"me.status"> & { userId: Id };
 };
 
 /** 프로세스 안 타입드 이벤트 버스. 모듈은 Socket.IO 를 직접 만지지 않고 여기로 알린다. */

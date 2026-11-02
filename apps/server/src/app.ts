@@ -96,6 +96,8 @@ import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
+import { registerProfileRoutes } from "./modules/profile/routes";
+import { startStatusExpiry } from "./modules/profile/status";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire, disconnectSessions, disconnectUser, sweepExpiredSessions } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
@@ -210,6 +212,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   const startedAt = new Date();
   let previousClean: boolean | null = null;
   const undo: Array<{ step: string; run: () => unknown }> = [];
+  /** 접속 점 허브가 뒤에 생긴다 — 그 전에 만든 라우트·타이머가 이 자리를 부른다(허브가 채운다) */
+  const presenceHooks: { modeChanged(userId: string): void } = { modeChanged: () => {} };
   try {
     // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
     if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -486,6 +490,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       disconnectUser: (userId) => disconnectUser(io, userId),
       disconnectSessions: (sessionIds) => disconnectSessions(io, sessionIds),
     });
+    // 상태(프로필 스펙 3.2) — 수동 모드가 바뀌면(사람이 바꾸거나 만료가 지나면) 접속 점을 다시 계산한다
+    const onModeChanged = (userId: string) => presenceHooks.modeChanged(userId);
+    registerProfileRoutes(fastify, { auth, db, bus, workspaceId, onModeChanged });
+    const statusExpiry = startStatusExpiry({ db, bus, workspaceId, onModeChanged });
+    undo.push({ step: "status-expiry", run: () => statusExpiry.close() });
     const routeContext = {
       auth,
       db,
