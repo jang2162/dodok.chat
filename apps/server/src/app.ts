@@ -41,6 +41,7 @@ import { registerMcpRoute } from "./modules/control/mcp";
 import { type Principal, principalForBridge, principalForRunner } from "./modules/control/principal";
 import { type ControlService, createControlService } from "./modules/control/service";
 import { getChannel } from "./modules/channels/service";
+import { registerConnectionRoutes } from "./modules/connections/routes";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
 import { bootGateways, getGatewayRow, listGatewayRows } from "./modules/gateways/service";
 import { registerMemberManageRoutes } from "./modules/members/manage.routes";
@@ -686,13 +687,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         serverVersion: packageJson.version,
         publicUrl,
       });
-    // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤)·Gateway 저장·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
+    // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤 — 러너 붙음·끊김 포함)·Gateway 저장·승인·토큰 발급·폐기 때 다시 읽은 상태를 보내고
+    // (팬아웃이 사람마다 거른다) 연결 목록이 바뀌었다고 알린다(연결 탭 통합 스펙 5.3)
     const emitSetupStatus = () => {
       try {
         bus.emit("setup.status", { status: setupStatus() });
       } catch (err) {
         logger.error({ err }, "setup status emit failed");
       }
+      bus.emit("connections.changed", {});
     };
     const offSetup = registry.onEvent((event) => {
       if (event.kind === "setup") emitSetupStatus();
@@ -752,6 +755,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         route: "installer",
       }),
       changed: emitSetupStatus,
+    });
+    registerConnectionRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      connectedRunnerIds: () => new Set(runnerDetail().map((runner) => runner.tokenId)),
     });
     registerRunnerAdminRoutes(fastify, {
       auth,

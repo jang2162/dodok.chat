@@ -14,6 +14,7 @@ export * from "./wire";
 export * from "./push";
 export * from "./setup";
 export * from "./gateways";
+export * from "./connections";
 export * from "./ops";
 export * from "./search";
 export * from "./reads";

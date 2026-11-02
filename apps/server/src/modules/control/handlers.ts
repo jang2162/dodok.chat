@@ -174,7 +174,7 @@ function basePromptLabel(ctx: HandlerContext, agentId: string): string {
 /**
  * 러너 에이전트는 이름·아바타만 — 핸들·지시는 받지 않는다(러너 일반화 스펙 6장 「제어 도구는 러너 구성을 바꾸지 못한다」: 채널 안
  * 에이전트가 확인 카드 하나로 자기 지시를 바꾸는 길을 닫는다). 정의 필드(model 등)는 도구 입력 스키마에 없어 strict 파싱이 막는다.
- * 러너 구성은 웹의 「러너」 탭·REST PATCH 에서만 바꾼다
+ * 러너 구성은 웹의 「연결」 탭(에이전트 상세)·REST PATCH 에서만 바꾼다
  */
 const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set(["agentId", "name", "avatarUrl"]);
 function assertControlPatchable(ctx: HandlerContext, input: Record<string, unknown>, agentId: string): void {

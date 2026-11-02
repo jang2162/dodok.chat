@@ -22,11 +22,13 @@ const RECORD = {
   revokedAt: null,
   connected: false,
 };
+const RUNNER_RECORD = { ...RECORD, ownerUserId: ID };
 const GATEWAY = {
   id: ID,
   name: "사무실",
   url: "wss://gw.example",
   enabled: true,
+  approved: true,
   gateway: {
     state: "connected",
     host: "gw.example",
@@ -134,11 +136,17 @@ describe("IssueRunnerTokenResult", () => {
   const runnerConfig = { serverUrl: "https://chat.example", tokenFile: "~/.dodok-runner/token" };
   it("drn_ + base64url 43자 토큰은 통과한다", () => {
     const token = `drn_${"A".repeat(40)}_-9`;
-    expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD, runnerConfig }).success).toBe(true);
+    expect(IssueRunnerTokenResult.safeParse({ token, record: RUNNER_RECORD, runnerConfig }).success).toBe(
+      true,
+    );
+    // 러너 토큰 기록에는 주인이 있다(연결 탭 통합 스펙 5.1) — 브리지 토큰 꼴만으로는 안 된다
+    expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD, runnerConfig }).success).toBe(false);
   });
   it("브리지 토큰 접두어·길이가 틀린 토큰은 거부한다", () => {
     for (const token of [TOKEN, `drn_${"A".repeat(42)}`, `drn_${"A".repeat(42)}=`]) {
-      expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD, runnerConfig }).success).toBe(false);
+      expect(IssueRunnerTokenResult.safeParse({ token, record: RUNNER_RECORD, runnerConfig }).success).toBe(
+        false,
+      );
     }
   });
   it("runnerConfig 가 없으면 거부한다", () => {

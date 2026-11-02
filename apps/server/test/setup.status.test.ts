@@ -208,7 +208,8 @@ describe("buildSetupStatus", () => {
     tokenId: "01999999-0000-7000-8000-000000000001",
     connectedAt: "2026-09-24T00:00:00.000Z",
   };
-  const row = { id: GW, name: "사무실", url: "wss://gw.example:443", enabled: true };
+  const APPROVED = new Date("2026-10-01T00:00:00.000Z");
+  const row = { id: GW, name: "사무실", url: "wss://gw.example:443", enabled: true, approvedAt: APPROVED };
   const entry = (
     p: GatewaySetupEntry["bridge"]["plugin"],
     version: string | null = "2026.9.5",
@@ -241,7 +242,11 @@ describe("buildSetupStatus", () => {
       pluginFile: { available: true, sha256: file.sha256, bundleSha256: BUNDLE_SHA, bytes: 1234 },
       gateways: [
         {
-          ...row,
+          id: row.id,
+          name: row.name,
+          url: row.url,
+          enabled: true,
+          approved: true,
           gateway: {
             state: "connected",
             host: "gw.example:443",
@@ -273,12 +278,14 @@ describe("buildSetupStatus", () => {
       name: "집",
       url: "ws://home:18789",
       enabled: false,
+      approvedAt: APPROVED,
     };
     const unknown = {
       id: "01999999-0000-7000-8000-0000000000a3",
       name: "새로",
       url: "ws://new:1",
       enabled: true,
+      approvedAt: APPROVED,
     };
     const status = buildSetupStatus({
       ...base,
@@ -294,6 +301,22 @@ describe("buildSetupStatus", () => {
       ["새로", "down", "down", "new:1"],
     ]);
     expect(status.gateways[0]?.bridge.plugin).toBeNull();
+  });
+
+  it("승인 전 Gateway 는 켜져 있어도 disabled·플러그인 없음 — 어댑터의 상세가 붙은 것처럼 남아 있어도(연결 탭 통합 스펙 5.4)", () => {
+    const pending = { ...row, approvedAt: null };
+    const gateway = first(
+      buildSetupStatus({ ...base, gateways: [pending], details: [entry(plugin)], pluginFile: null }),
+    );
+    expect(gateway).toMatchObject({
+      enabled: true,
+      approved: false,
+      gateway: { state: "disabled", pairing: null },
+      bridge: { state: "down", plugin: null },
+    });
+    expect(
+      first(buildSetupStatus({ ...base, gateways: [row], details: [entry(plugin)], pluginFile: null })),
+    ).toMatchObject({ approved: true, gateway: { state: "connected" } });
   });
 
   it("러너 블록 — 붙은 러너 목록을 그대로, 러너 파일은 경로 없이", () => {

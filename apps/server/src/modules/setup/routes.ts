@@ -1,5 +1,6 @@
 /**
- * 설정 마법사 API(스펙 3장) — 연결 상태는 owner 세션만, 품은 플러그인 tgz 는 owner 세션 또는 브리지 토큰(설정 통합 스펙 「토큰으로
+ * 설정 마법사 API(스펙 3장) — 연결 상태는 멤버 누구나 받되 사람마다 거른다(자기 연결만, admin 이상은 모두 — 연결 탭 통합 스펙 5.3), 품은
+ * 플러그인 tgz 는 owner 세션 또는 브리지 토큰(설정 통합 스펙 「토큰으로
  * 설치 파일 받기」 절). Gateway·브리지 토큰은 `modules/gateways/` 가 맡는다(멀티 Gateway 계획 판정 PG6). 로그인 없는 `GET /llms.txt`·
  * 플러그인 설치 스크립트(설치 한 줄 명령 스펙 2026-11-02)도 여기다
  */
@@ -8,10 +9,13 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestHookHandle
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Auth } from "../../auth";
-import { requireOwner } from "../../auth/routes";
+import { requireSession } from "../../auth/roles";
+import { sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
+import { connectionOwners, readableConnections } from "../connections/owner";
 import { requireOwnerOrToken } from "./installer-auth";
+import { setupStatusFor } from "./status";
 import type { PluginFile } from "./plugin-file";
 
 export type SetupRouteContext = {
@@ -34,9 +38,12 @@ export type SetupRouteContext = {
 const pluginFileMissing = () => apiError("NOT_FOUND", "PLUGIN_FILE_MISSING");
 
 export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteContext): void {
-  const owner = { preHandler: requireOwner(ctx) };
-
-  fastify.get("/api/v1/setup/status", owner, async () => ctx.status());
+  fastify.get("/api/v1/setup/status", { preHandler: requireSession(ctx) }, async (request) =>
+    setupStatusFor(
+      ctx.status(),
+      readableConnections(connectionOwners(ctx.db, ctx.workspaceId), sessionUser(request)),
+    ),
+  );
 
   fastify.get(
     "/api/v1/setup/plugin.tgz",

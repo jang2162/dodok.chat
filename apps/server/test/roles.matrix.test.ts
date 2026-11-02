@@ -400,7 +400,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "GET /setup/runner-tokens",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/runner-tokens" }),
     },
@@ -629,8 +629,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
       request: () => ({ method: "PATCH", url: "/api/v1/ops/settings", payload: { dailyRunLimit: 300 } }),
     },
     {
+      name: "GET /connections",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/connections" }),
+    },
+    {
       name: "GET /setup/status",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/status" }),
     },

@@ -92,6 +92,8 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     throw apiError("RATE_LIMITED", "둘러보기 요청이 너무 많습니다");
   };
 
+  // 트리의 프로젝트 줄이 바뀌었다 — 열린 「연결」 탭이 GET /connections 를 다시 받게(연결 탭 통합 스펙 5.3)
+  const connectionsChanged = () => ctx.bus.emit("connections.changed", {});
   const live = (tokenId: string): RunnerLive | null => ctx.runners?.runnerInfo(tokenId) ?? null;
   /** 이 워크스페이스의 러너(토큰 행) — 없으면 404. 폐기한 러너도 돌려준다(목록·프로젝트 보기는 된다) */
   const runnerRow = (id: string) => {
@@ -230,6 +232,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
       createdBy: sessionUser(request).id,
     });
     ctx.logger.info({ runnerId: id, projectId: row.id, rootId: row.rootId }, "runner project added");
+    connectionsChanged();
     return reply.code(201).send({ project: apiProject(row) });
   });
 
@@ -237,14 +240,18 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     const { id } = parseParams(ProjectParams, request.params);
     manageProject(request, id);
     const { label } = parseBody(RenameRunnerProjectBody, request.body);
-    return { project: apiProject(renameProject(ctx.db, { workspaceId: ctx.workspaceId, id, label })) };
+    const renamed = renameProject(ctx.db, { workspaceId: ctx.workspaceId, id, label });
+    connectionsChanged();
+    return { project: apiProject(renamed) };
   });
 
   /** 보관 — 목록 정리일 뿐 이미 있는 에이전트는 남고 런도 돈다(스펙 8장). 그 프로젝트로 새 에이전트는 못 만든다 */
   fastify.post("/api/v1/runner-projects/:id/archive", { preHandler: session }, async (request) => {
     const { id } = parseParams(ProjectParams, request.params);
     manageProject(request, id);
-    return { project: apiProject(archiveProject(ctx.db, { workspaceId: ctx.workspaceId, id })) };
+    const archived = archiveProject(ctx.db, { workspaceId: ctx.workspaceId, id });
+    connectionsChanged();
+    return { project: apiProject(archived) };
   });
 
   /** 확인 — 그 러너의 project.check 결과 그대로(쓸 수 없는 자리도 200 — ok:false 와 사유) */
@@ -316,6 +323,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     );
     // 에이전트 응답의 runner(묶인 러너 라벨)가 바뀌었다
     if (agentIds.length > 0) ctx.bus.emit("agents.changed", {});
+    connectionsChanged();
     return { project: apiProject(moved) };
   });
 }

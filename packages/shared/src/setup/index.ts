@@ -65,8 +65,8 @@ export const ReissueRunnerTokenResult = IssueRunnerTokenResult;
 export type ReissueRunnerTokenResult = z.infer<typeof ReissueRunnerTokenResult>;
 
 /**
- * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 runner 변형과 연결 페이지 러너 블록이 같은 모양을 쓴다.
- * claudeCodeVersion 은 hello 의 claude 프로그램 판본(없으면 빈 문자열). 러너의 프로젝트·에이전트는 「러너」 탭 REST(GET /api/v1/runners)
+ * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 runner 변형과 「연결」 탭 러너 상세가 같은 모양을 쓴다.
+ * claudeCodeVersion 은 hello 의 claude 프로그램 판본(없으면 빈 문자열). 러너의 프로젝트·에이전트는 러너 REST(GET /api/v1/runners)
  */
 export const RunnerConnection = z.object({
   tokenId: Id,
@@ -91,14 +91,16 @@ const PackedFile = z.discriminatedUnion("available", [
   z.object({ available: z.literal(false) }),
 ]);
 
-/** 연결 페이지의 Gateway 하나(멀티 Gateway 계획 판정 PG7) — 공유 토큰은 싣지 않는다 */
+/** 「연결」 탭 Gateway 상세의 Gateway 하나(멀티 Gateway 계획 판정 PG7) — 공유 토큰은 싣지 않는다 */
 export const GatewaySetup = z.object({
   id: Id,
   name: z.string(),
   url: z.string(),
   enabled: z.boolean(),
+  // admin 이상이 승인했는가 — 아니면 켜져 있어도 연결하지 않는다(state disabled, 연결 탭 통합 스펙 5.4)
+  approved: z.boolean(),
   gateway: z.object({
-    // disabled — 꺼 둔 Gateway(연결하지 않는다)
+    // disabled — 꺼 두었거나 승인 전인 Gateway(연결하지 않는다)
     state: z.enum(["connected", "reconnecting", "down", "disabled"]),
     host: z.string(), // URL 의 호스트만 — 자격 증명·경로·쿼리·Gateway 토큰은 싣지 않는다
     version: z.string().nullable(),

@@ -1008,8 +1008,9 @@ function isJson(req: IncomingMessage): boolean {
 }
 
 /**
- * 훅 하나를 받는다. 세션은 앱의 owner 경로(`/api/v1/setup/status`)에 같은 헤더로 물어 판정한다 —
- * 그 경로의 `requireOwner` 가 401·403 을 내면 그 응답을 그대로 돌려준다. 본문은 판정 뒤에 읽는다
+ * 훅 하나를 받는다. 세션은 앱의 `/api/v1/auth/me` 에 같은 헤더로 물어 판정한다 — 401 이면 그 응답을 그대로, owner 가 아니면
+ * 앱의 requireOwner 와 같은 403 을 돌려준다(`/setup/status` 는 멤버 누구나 걸러 받게 되어 가드로 쓸 수 없다 — 연결 탭 통합 스펙
+ * 5.3). 본문은 판정 뒤에 읽는다
  */
 async function handleDevFakeRoute(
   app: App,
@@ -1020,13 +1021,18 @@ async function handleDevFakeRoute(
   const { cookie, authorization } = req.headers;
   const guard = await app.fastify.inject({
     method: "GET",
-    url: "/api/v1/setup/status",
+    url: "/api/v1/auth/me",
     headers: { ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) },
   });
   if (guard.statusCode !== 200) {
     res
       .writeHead(guard.statusCode, { "content-type": String(guard.headers["content-type"]) })
       .end(guard.body);
+    return;
+  }
+  if ((guard.json() as { role?: unknown }).role !== "owner") {
+    req.resume();
+    sendJson(res, 403, { code: "FORBIDDEN", message: "owner 만 쓸 수 있다" });
     return;
   }
   if (!isJson(req)) {

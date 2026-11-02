@@ -118,3 +118,14 @@ export function ownerOfAgent(agent: Agent, owners: ReturnType<typeof connectionO
   if (agent.runner) return owners.runners.get(agent.runner.tokenId) ?? null;
   return null;
 }
+
+/** 보는 사람이 주소·토큰을 볼 수 있는 연결 — 목록·설정 상태·실시간을 사람마다 거를 때(연결 주인 표는 한 번만 읽는다) */
+export function readableConnections(
+  owners: ReturnType<typeof connectionOwners>,
+  user: { id: string; role: TeamRole | undefined },
+): { gateway(id: string): boolean; runner(tokenId: string): boolean } {
+  return {
+    gateway: (id) => canReadConnection(user, owners.gateways.get(id) ?? null),
+    runner: (tokenId) => canReadConnection(user, owners.runners.get(tokenId) ?? null),
+  };
+}

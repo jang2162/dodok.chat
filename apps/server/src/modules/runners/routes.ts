@@ -15,13 +15,13 @@ import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
 import { authorizeConnectionCreate, authorizeConnectionManage } from "../../auth/policies";
 import { requireSession } from "../../auth/roles";
-import { requireOwner, sessionUser } from "../../auth/routes";
+import { sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
-import { findRunner, isOwner } from "../connections/owner";
+import { canReadConnection, findRunner, isOwner } from "../connections/owner";
 import { requireOwnerOrToken } from "../setup/installer-auth";
 import { sendPackedFile } from "../setup/routes";
 import type { RunnerFile } from "./runner-file";
@@ -61,7 +61,6 @@ const TokenParams = z.object({ id: Id });
 const runnerFileMissing = () => apiError("NOT_FOUND", "RUNNER_FILE_MISSING");
 
 export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteContext): void {
-  const owner = { preHandler: requireOwner(ctx) };
   const session = { preHandler: requireSession(ctx) };
   /** 그 러너의 주인·admin 이상 — 없는 id 는 정책보다 먼저 404(다른 사람이 id 로 있는지 떠보지 못하게 판정 순서를 맞춘다) */
   const manageable = (request: FastifyRequest, id: string) => {
@@ -75,9 +74,15 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     return new Set(detail?.provider === "runner" ? detail.runners.map((r) => r.tokenId) : []);
   };
 
-  fastify.get("/api/v1/setup/runner-tokens", owner, async () => ({
-    tokens: listRunnerTokens(ctx.db, ctx.workspaceId, connectedTokenIds()),
-  }));
+  /** 그 사람이 볼 수 있는 러너만 — member 는 자기 것, admin 이상은 모두(연결 탭 통합 스펙 5.3) */
+  fastify.get("/api/v1/setup/runner-tokens", session, async (request) => {
+    const user = sessionUser(request);
+    return {
+      tokens: listRunnerTokens(ctx.db, ctx.workspaceId, connectedTokenIds()).filter((token) =>
+        canReadConnection(user, token.ownerUserId),
+      ),
+    };
+  });
 
   fastify.post("/api/v1/setup/runner-tokens", session, async (request, reply) => {
     authorizeConnectionCreate(sessionUser(request).role);
