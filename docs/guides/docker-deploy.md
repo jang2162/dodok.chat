@@ -147,13 +147,13 @@ docker compose logs app | grep -E 'gateway connected|pairing required'
   1. 토큰 꼴(`dbt_…`)과 `openclaw`·`curl`·`node`·`mktemp`·sha256 도구(`sha256sum`, 없으면 `shasum -a 256`)를 확인한다.
   2. 그 토큰으로 서버가 품은 플러그인 tgz 를 `mktemp -d` 자리에 받는다(끝나면 지운다). 401 이면 「토큰이 틀렸거나 폐기됐습니다」, 404 면 서버에 파일이 없음, 409 면 서버를 재시작하라고 말하고 멈춘다.
   3. 받은 파일의 sha256 을 서버가 알린 값과 대조한다 — 어긋나면 Gateway 를 건드리지 않고 멈춘다.
-  4. Gateway 를 내린다(`openclaw gateway stop --force` — 2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다 실패하면서 파일도 안 바꾼다, `docs/guides/live-smoke.md` 「절차」 절 (b)).
+  4. Gateway 가 서비스로 깔렸는지 보고(`openclaw gateway status --json --no-probe` 의 `service.loaded`) 내린다(`openclaw gateway stop --force` — 2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다 실패하면서 파일도 안 바꾼다, `docs/guides/live-smoke.md` 「절차」 절 (b)).
   5. 설치한다(`openclaw plugins install <tgz> --force --accept-capabilities`).
   6. 로드(`openclaw plugins inspect dodok --json` 의 status `loaded`, channelIds 에 `dodok`)와 **번들 sha256**(설치된 `dist/index.js` — inspect 가 알려 준 자리, 없으면 `${OPENCLAW_STATE_DIR:-~/.openclaw}/extensions/dodok/dist/index.js`)을 대조한다.
   7. 계정 설정(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 `openclaw config patch --stdin` 으로 넣는다.
   8. Gateway 를 올린다(`openclaw gateway start`).
   - 4번 뒤 어디서 실패하든 내린 Gateway 를 다시 올리고 실패로 끝난다. 7번이 실패하면 「이번에 발급한 토큰은 카드에서 폐기하세요」를 덧붙인다 — 그 토큰은 폐기하고 새로 발급해 다시 돌린다.
-- **Gateway 가 서비스(systemd·launchd)가 아니면** 4번에서 「Gateway 서비스를 내리지 못해 설치하지 않았습니다」로 멈춘다(아무것도 바꾸지 않았다). Gateway 를 직접 내린 뒤 같은 줄의 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여(`… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash`) 다시 돌리고, 끝나면 Gateway 를 직접 올린다.
+- **Gateway 가 서비스(systemd·launchd)가 아니면** 4번에서 「이 호스트의 Gateway 가 서비스로 깔려 있지 않아 설치하지 않았습니다」(또는 「Gateway 서비스를 내리지 못해 …」)로 멈춘다(아무것도 바꾸지 않았다). 서비스가 없을 때의 `openclaw gateway stop` 은 실패하지 않고 떠 있는 Gateway 를 내리는데 `gateway start` 로는 다시 올릴 수 없어서, 스크립트가 먼저 잰다. Gateway 를 직접 내린 뒤 같은 줄의 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여(`… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash`) 다시 돌리고, 끝나면 Gateway 를 직접 올린다.
 - 상태 디렉터리를 바꿔 쓰는 호스트(`OPENCLAW_STATE_DIR`)면 같은 셸에 그 값이 있어야 번들 대조가 맞는 파일을 본다.
 - `--accept-capabilities` 가 없으면 설치되지 않는다(스크립트가 붙인다). 호스트에 `security.installPolicy` 가 있으면 archive 설치(`provenance-invalid`)가 막힐 수 있다 — ADR 0002 「원격 배포 절차」.
 - 첨부를 쓰기 전에 [B] 의 `attachments.ttlHours`·`tools.fs.workspaceOnly` 를 정한다 — `docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절의 첨부 항목.
@@ -790,7 +790,7 @@ docker compose ps     # app (healthy)
 | 연결 페이지 Gateway 카드 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | 그 Gateway 의 [B] 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 그 카드에서 새 토큰을 발급해 체크리스트 4 의 설치 명령 |
 | 설치 명령이 「서버의 플러그인 파일이 서버가 뜬 뒤 다시 빌드됐습니다(409)」로 멈춤 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 뒤 설치 명령을 다시 |
 | 설치 명령이 「토큰이 틀렸거나 폐기됐습니다(401)」로 멈춤 | 붙여 넣은 토큰이 폐기됐거나, 그 Gateway 가 꺼져 있다 | 그 카드에서 새 토큰을 발급해 다시 |
-| 설치 명령이 「Gateway 서비스를 내리지 못해 설치하지 않았습니다」로 멈춤 | [B] 의 Gateway 가 systemd·launchd 서비스가 아니다(`openclaw gateway stop` 실패) | Gateway 를 직접 내리고 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여 다시, 끝나면 직접 올린다(체크리스트 4) |
+| 설치 명령이 「…서비스로 깔려 있지 않아 설치하지 않았습니다」·「Gateway 서비스를 내리지 못해 설치하지 않았습니다」로 멈춤 | [B] 의 Gateway 가 systemd·launchd 서비스가 아니다(`openclaw gateway status` 의 `service.loaded` 가 false, 또는 `stop` 실패) | Gateway 를 직접 내리고 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여 다시, 끝나면 직접 올린다(체크리스트 4) |
 | 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·비활성화·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 「설정」 → 「알림」 탭에서 「푸시 알림 켜기」 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
 | 백업 `백업 실패: …` exit 1 | 한 줄 사유(디스크 부족이면 부분 디렉터리는 지워진다) | 공간 확보 뒤 다시 |

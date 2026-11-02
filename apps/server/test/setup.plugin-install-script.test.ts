@@ -67,6 +67,8 @@ beforeEach(() => {
   ]);
   stub(join(bin, "openclaw"), [
     'case "$1 $2" in',
+    // gateway status — 서비스(launchd·systemd)로 깔렸는가. 2026.9.4 의 `gateway stop` 은 서비스가 없으면 실패하지 않고 떠 있는 비관리 Gateway 를 내린다
+    '  "gateway status") [ -n "$STUB_STATUS_FAIL" ] && exit 1; printf \'{"service":{"loaded":%s}}\\n\' "${STUB_LOADED:-true}"; exit 0;;',
     '  "gateway stop") [ -n "$STUB_STOP_FAIL" ] && exit 1; exit 0;;',
     '  "gateway start") exit 0;;',
     '  "plugins install")',
@@ -121,11 +123,12 @@ describe("plugin-install.sh", () => {
     expect(res.status, res.stderr).toBe(0);
   });
 
-  it("정상 — stop → install → inspect → patch → start 순서, 끝 코드 0", () => {
+  it("정상 — status → stop → install → inspect → patch → start 순서, 끝 코드 0", () => {
     const res = run(script());
     expect(res.status, res.stderr).toBe(0);
     const calls = openclawCalls();
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
+    expect(calls.shift()).toBe("openclaw gateway status --json --no-probe");
     expect(calls[0]).toBe("openclaw gateway stop --force");
     expect(calls[1]).toMatch(
       new RegExp(`^openclaw plugins install ${tmp}/[^ ]+\\.tgz --force --accept-capabilities$`),
@@ -182,8 +185,21 @@ describe("plugin-install.sh", () => {
   it("gateway stop 이 실패하면 설치하지 않고 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
     const res = run(script(), { STUB_STOP_FAIL: "1" });
     expect(res.status).not.toBe(0);
-    expect(openclawCalls()).toEqual(["openclaw gateway stop --force"]);
+    expect(openclawCalls()).toEqual([
+      "openclaw gateway status --json --no-probe",
+      "openclaw gateway stop --force",
+    ]);
     expect(res.stderr).toContain("DODOK_GATEWAY_SERVICE=0");
+  });
+
+  it("Gateway 가 서비스가 아니면(status 의 service.loaded 가 false) 내리지도 설치하지도 않고 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
+    for (const env of [{ STUB_LOADED: "false" }, { STUB_STATUS_FAIL: "1" }]) {
+      rmSync(log, { force: true });
+      const res = run(script(), env);
+      expect(res.status, JSON.stringify(env)).not.toBe(0);
+      expect(openclawCalls(), JSON.stringify(env)).toEqual(["openclaw gateway status --json --no-probe"]);
+      expect(res.stderr).toContain("DODOK_GATEWAY_SERVICE=0");
+    }
   });
 
   it("DODOK_GATEWAY_SERVICE=0 이면 stop·start 없이 설치·patch 하고 직접 올리라고 알린다", () => {
@@ -203,7 +219,7 @@ describe("plugin-install.sh", () => {
     const res = run(script(), { STUB_INSTALL_FAIL: "1" });
     expect(res.status).not.toBe(0);
     const calls = openclawCalls();
-    expect(calls[0]).toBe("openclaw gateway stop --force");
+    expect(calls[1]).toBe("openclaw gateway stop --force");
     expect(calls.at(-1)).toBe("openclaw gateway start");
     expect(calls.some((c) => c.startsWith("openclaw config patch"))).toBe(false);
   });

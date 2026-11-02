@@ -495,7 +495,7 @@ src/
 │  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Vite 프록시·SW denylist·web-static 의 BACKEND_PREFIXES 에도 이 경로) ·
 │  │                      `GET /api/v1/setup/plugin-install.sh`(shared PLUGIN_INSTALL_SCRIPT_PATH — 로그인 없음, llms.txt 와 같은 머리·같은 IP 버킷, 품은 tgz 가 없으면 404 `PLUGIN_FILE_MISSING`)) ·
 │  │                      plugin-install-script.ts(renderPluginInstallScript — Gateway 호스트가 `curl … | DODOK_BRIDGE_TOKEN='…' bash` 로 돌리는 설치 스크립트, 부팅 때 한 번 렌더.
-│  │                      받기(`curl -K -`)·파일 sha·`gateway stop`·설치·로드·번들 sha·`config patch --stdin`·`gateway start`, 내린 뒤 실패하면 다시 올린다. 본문 전체가 함수 하나 —
+│  │                      받기(`curl -K -`)·파일 sha·서비스 확인(`gateway status`)·`gateway stop`·설치·로드·번들 sha·`config patch --stdin`·`gateway start`, 내린 뒤 실패하면 다시 올린다. 본문 전체가 함수 하나 —
 │  │                      `test/setup.plugin-install-script.test.ts` 가 가짜 openclaw·curl 위에서 bash 로 돌린다) ·
 │  │                      llms.ts(노드 설치 안내서 `llms.txt` 의 본문 틀 한곳 — renderLlmsTxt 의 인자는 공개 오리진·웹 오리진·bridgeUrl·플러그인 파일의 해시뿐(러너 절은 npm 설치라 해시가 없다)이라 토큰·Gateway·사람이 실릴 길이 없다.
 │  │                      부팅 때 한 번 렌더. Gateway 절은 설치 스크립트를 받아 토큰 환경 변수로 돌린다. 명령·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다, 머리 주석) ·

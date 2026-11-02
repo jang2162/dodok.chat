@@ -34,7 +34,7 @@ export function renderPluginInstallScript(input: PluginInstallScriptInput): stri
 # Gateway 호스트에서 연결 페이지 Gateway 카드의 「새 토큰 발급」이 주는 한 줄로 돌린다:
 #    curl -fsS ${origin}${PLUGIN_INSTALL_SCRIPT_PATH} | DODOK_BRIDGE_TOKEN='dbt_…' bash
 #
-# 하는 일: 플러그인 받기 → 파일 sha256 대조 → Gateway 내리기(openclaw gateway stop) → 설치 → 로드·번들 sha256 대조
+# 하는 일: 플러그인 받기 → 파일 sha256 대조 → Gateway 서비스 확인·내리기(openclaw gateway status·stop) → 설치 → 로드·번들 sha256 대조
 #          → 계정 설정(bridgeUrl·토큰, openclaw config patch --stdin) → Gateway 올리기(openclaw gateway start).
 # Gateway 를 내린 뒤 실패하면 Gateway 를 다시 올리고 실패로 끝난다.
 # Gateway 가 서비스(systemd·launchd)가 아니면 직접 내린 뒤 bash 앞에 DODOK_GATEWAY_SERVICE=0 을 붙여 돌리고, 끝나면 직접 올린다.
@@ -119,9 +119,19 @@ dodok_plugin_install() {
   if [ "\${DODOK_GATEWAY_SERVICE:-1}" = 0 ]; then
     dodok_say "DODOK_GATEWAY_SERVICE=0 — Gateway 를 내리고 올리는 일은 하지 않습니다(이미 직접 내려 두었어야 합니다)."
   else
+    dodok_not_service="Gateway 가 서비스(systemd·launchd)가 아니면 직접 내린 뒤, 같은 명령의 bash 앞에 DODOK_GATEWAY_SERVICE=0 을 붙여(… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash) 다시 돌리고 끝나면 직접 올리세요."
+    # 서비스인지 먼저 잰다 — 서비스가 없으면 gateway stop 은 실패하지 않고 떠 있는 비관리 Gateway 를 내리는데, 그것은 gateway start 로 다시 올릴 수 없다
+    dodok_status="$(openclaw gateway status --json --no-probe </dev/null)" ||
+      dodok_fail "Gateway 서비스 상태를 읽지 못해(openclaw gateway status) 설치하지 않았습니다. $dodok_not_service"
+    printf '%s' "$dodok_status" | node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const j = JSON.parse(s.slice(s.indexOf("{")));
+  process.exit(j.service && j.service.loaded === true ? 0 : 1);
+});' || dodok_fail "이 호스트의 Gateway 가 서비스로 깔려 있지 않아 설치하지 않았습니다(아무것도 바꾸지 않았습니다). $dodok_not_service"
     dodok_say "Gateway 를 내립니다(openclaw gateway stop)."
     openclaw gateway stop --force </dev/null ||
-      dodok_fail "Gateway 서비스를 내리지 못해 설치하지 않았습니다. Gateway 가 서비스(systemd·launchd)가 아니면 직접 내린 뒤, 같은 명령의 bash 앞에 DODOK_GATEWAY_SERVICE=0 을 붙여(… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash) 다시 돌리고 끝나면 직접 올리세요."
+      dodok_fail "Gateway 서비스를 내리지 못해 설치하지 않았습니다. $dodok_not_service"
     dodok_stopped=1
   fi
 
