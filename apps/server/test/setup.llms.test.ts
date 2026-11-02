@@ -215,7 +215,9 @@ describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
     expect(gateway).toContain(`http://localhost:3000${PLUGIN_INSTALL_SCRIPT_PATH}`);
     expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
     // 러너 5번의 확인 주소(설정 → 연결)도 사람이 여는 웹 페이지다 — 옛 「러너」 탭 주소는 없다
-    expect(section(body, "러너 머신")).toContain("dodok 설정 → 연결(http://localhost:5173/settings/connection)");
+    expect(section(body, "러너 머신")).toContain(
+      "dodok 설정 → 연결(http://localhost:5173/settings/connection)",
+    );
     expect(section(body, "러너 머신")).not.toContain("http://localhost:3000/settings/connection");
     expect(body).not.toContain("/settings/runners");
   });
