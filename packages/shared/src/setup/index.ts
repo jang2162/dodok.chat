@@ -3,6 +3,12 @@ import { Id, IsoDateTime } from "../common";
 
 // 설정 마법사 계약(스펙 2026-09-24-setup-wizard-design.md 2.6·3장). 브리지 토큰 원문은 IssueBridgeTokenResult.token 에만 있다
 
+/**
+ * OpenClaw 플러그인 설치 스크립트(로그인 없음) — 서버 라우트·발급 대화상자의 한 줄 명령·`llms.txt` 가 이 경로 하나를 쓴다
+ * (설치 한 줄 명령 스펙 2026-11-02 1절)
+ */
+export const PLUGIN_INSTALL_SCRIPT_PATH = "/api/v1/setup/plugin-install.sh";
+
 /** sha256 hex(소문자 64자) — 플러그인 번들·tgz 가 같은 빌드인지 가르는 값(스펙 결정 5) */
 export const Sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 export type Sha256Hex = z.infer<typeof Sha256Hex>;
