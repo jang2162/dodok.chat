@@ -67,6 +67,7 @@ export function useAuthors(): {
         handle: me.handle,
         displayName: me.displayName ?? me.handle,
         deactivatedAt: null,
+        statusMessage: null,
         ...(me.avatarUrl ? { avatarUrl: me.avatarUrl } : {}),
       });
     return map;

@@ -28,6 +28,8 @@ const agent = (id: string, handle: string, enabled = true): Agent => ({
   archivedAt: null,
   dmAccess: "admins",
   program: null,
+  createdBy: null,
+  model: null,
 });
 const member = (memberId: string, extra: Partial<ChannelMember> = {}): ChannelMember => ({
   id: ID(20),

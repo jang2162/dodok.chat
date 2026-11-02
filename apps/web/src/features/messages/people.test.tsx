@@ -16,6 +16,7 @@ const MINA: Person = {
   displayName: "미나",
   role: "member",
   deactivatedAt: null,
+  statusMessage: null,
 };
 const GONE: Person = {
   id: uid(31),
@@ -23,6 +24,7 @@ const GONE: Person = {
   displayName: "지훈",
   role: "member",
   deactivatedAt: "2026-10-06T00:00:00.000Z",
+  statusMessage: null,
 };
 
 describe("사람 작성자", () => {

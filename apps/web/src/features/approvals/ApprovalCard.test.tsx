@@ -592,6 +592,7 @@ const MIA_PERSON = {
   displayName: "미아",
   role: "member",
   deactivatedAt: null,
+  statusMessage: null,
 } as const;
 const control = (over: Partial<Approval> = {}) =>
   approval({

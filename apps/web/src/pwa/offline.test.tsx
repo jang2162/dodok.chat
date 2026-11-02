@@ -248,11 +248,22 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
       displayName: "지훈",
       role: "member",
       deactivatedAt: "2026-10-06T00:00:00.000Z",
+      statusMessage: null,
     };
     const storage = await savedCopy(
       msg(60, { authorId: gone.id, bodyMd: `마지막 말 <@u:${gone.id}>` }),
       [],
-      [{ id: ME.user.id, handle: "owner", displayName: "주인", role: "owner", deactivatedAt: null }, gone],
+      [
+        {
+          id: ME.user.id,
+          handle: "owner",
+          displayName: "주인",
+          role: "owner",
+          deactivatedAt: null,
+          statusMessage: null,
+        },
+        gone,
+      ],
     );
     vi.stubGlobal(
       "fetch",

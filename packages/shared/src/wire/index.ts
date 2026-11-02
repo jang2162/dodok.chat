@@ -16,6 +16,7 @@ import {
 import { RunEvent } from "../events";
 import type { Person } from "../members";
 import type { OpsEvent, OpsUnacked } from "../ops";
+import type { MyStatus, PresenceEntry } from "../profile";
 import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../reads";
 import type { SetupStatus } from "../setup";
 
@@ -167,4 +168,8 @@ export interface ServerToClientEvents {
   "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만
   "ops.event": (p: { event: OpsEvent; unacked: OpsUnacked }) => void; // owner·admin 사용자 룸에만
   "system.notice": (p: { level: "info" | "warn" | "error"; message: string }) => void;
+  // 접속 점(프로필 스펙 3.3) — snapshot 은 연결 직후 그 소켓에만(재접속 포함, 통째로 바꾼다), changed 는 workspace 룸에 바뀐 줄만
+  "presence.snapshot": (p: { entries: PresenceEntry[] }) => void;
+  "presence.changed": (p: { entries: PresenceEntry[] }) => void;
+  "me.status": (p: { status: MyStatus }) => void; // user 룸 — 본인의 다른 탭·기기가 「내 계정」·내 패널을 맞춘다
 }

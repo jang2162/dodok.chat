@@ -44,6 +44,9 @@ describe("wire event maps", () => {
       | "setup.status"
       | "ops.event"
       | "system.notice"
+      | "presence.snapshot"
+      | "presence.changed"
+      | "me.status"
     >();
   });
   it("setup.status 페이로드는 { status } 로 감싼다", () => {
