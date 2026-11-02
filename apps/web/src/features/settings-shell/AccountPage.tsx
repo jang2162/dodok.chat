@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { detailField } from "@/api/formErrors";
 import { useMe } from "@/api/queries";
 import { McpTokensSection } from "@/features/account/McpTokensSection";
+import { ProfileSection } from "@/features/account/ProfileSection";
 import { useChangePassword, useUpdateMe } from "@/features/account/mutations";
 import {
   AuthField,
@@ -19,7 +20,7 @@ import { Button } from "@/ui/button";
 import { Separator } from "@/ui/separator";
 
 /**
- * 설정 「내 계정」 탭(`/settings/account`, 팀 스펙 3.5·6장) — 표시 이름, 비밀번호 바꾸기, MCP 토큰(제어 MCP 스펙 「웹」 장), 로그아웃. owner 는 비밀번호 칸 대신 안내만:
+ * 설정 「내 계정」 탭(`/settings/account`, 팀 스펙 3.5·6장) — 프로필(사진·표시 이름·상태, 프로필 스펙 3.8), 비밀번호 바꾸기, MCP 토큰(제어 MCP 스펙 「웹」 장), 로그아웃. owner 는 비밀번호 칸 대신 안내만:
  * owner 의 비밀번호는 로컬 토큰이라 서버가 `POST /me/password` 를 403 으로 막는다. 칸은 탭에 들어올 때마다 처음부터다
  */
 export function AccountPage() {
@@ -35,7 +36,7 @@ export function AccountPage() {
       </header>
       {me && (
         <div className="flex max-w-md flex-col gap-6">
-          <DisplayNameForm current={me.user.displayName} />
+          <ProfileSection displayName={<DisplayNameForm current={me.user.displayName} />} />
           <Separator />
           {me.role === "owner" ? (
             <section className="flex flex-col gap-2">

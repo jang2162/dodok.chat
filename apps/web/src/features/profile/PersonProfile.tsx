@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { MemberRow } from "@dodok/shared";
 import { api } from "@/api/http";
 import { qk, useCanManage, useMe, usePeople } from "@/api/queries";
+import { StatusForm } from "@/features/account/StatusForm";
 import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { isDeactivated } from "@/features/members/deactivated";
 import { PRESENCE_LABEL, SELF_INVISIBLE_LABEL, WithPresence } from "@/features/presence/PresenceDot";
@@ -100,6 +101,7 @@ export function PersonProfile({ userId }: { userId: string }) {
           </Button>
         )}
       </div>
+      {mine && editing && <StatusForm status={me?.status} onSaved={() => setEditing(false)} />}
     </div>
   );
 }

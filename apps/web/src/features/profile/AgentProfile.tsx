@@ -1,6 +1,7 @@
 import { type Agent, type DmAccess, RUNNER_PROGRAM_NAME } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { useAgents, useCachedMe, useCanManage, usePeople } from "@/api/queries";
+import { AgentAvatarField } from "@/features/agents/AgentRow";
 import { isArchived } from "@/features/agents/archived";
 import { canOpenDm } from "@/features/dms/queries";
 import { DeactivatedTag } from "@/features/members/DeactivatedTag";
@@ -95,6 +96,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
           </>
         )}
       </dl>
+      {canManage && !archived && <AgentAvatarField agent={agent} />}
       {canManage && agent.basePrompt && (
         <details className="text-sm">
           <summary className="cursor-pointer text-xs text-muted-foreground">기본 프롬프트</summary>

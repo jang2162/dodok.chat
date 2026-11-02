@@ -28,12 +28,25 @@ export class NetworkError extends Error {
 
 /** 같은 출처 REST(`/api/v1` + path). 인증은 httpOnly 쿠키가 자동으로 붙는다 — 토큰을 다루지 않는다 */
 export async function api<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = {
+  return send<T>(path, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  };
+  });
+}
+
+/** 바이트 본문(아바타 그림) — Content-Type 은 그 Blob 의 형식. 오류 처리는 `api` 와 같다 */
+export async function apiBytes<T>(method: HttpMethod, path: string, body: Blob): Promise<T> {
+  return send<T>(path, {
+    method,
+    credentials: "same-origin",
+    headers: { "content-type": body.type || "application/octet-stream" },
+    body,
+  });
+}
+
+async function send<T>(path: string, init: RequestInit): Promise<T> {
   // 요청을 보내고 본문을 다 받기까지만 네트워크 실패로 본다 — 직렬화 같은 코드 오류는 그대로 올라간다
   let res: Response;
   let text: string;

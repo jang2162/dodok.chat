@@ -113,6 +113,7 @@ describe("에이전트 프로필", () => {
     // DM 허용이 admin 이상이라 member 는 열 수 없다
     expect(p.queryByRole("link", { name: "DM 열기" })).toBeNull();
     expect(p.queryByRole("link", { name: "에이전트 설정" })).toBeNull();
+    expect(p.queryByLabelText("사진 고르기")).toBeNull();
     expect(p.getByRole("button", { name: "멘션" })).toBeInTheDocument();
   });
 
@@ -126,6 +127,8 @@ describe("에이전트 프로필", () => {
     expect(p.getByText("기본 프롬프트")).toBeInTheDocument();
     expect(p.getByRole("link", { name: "에이전트 설정" })).toBeInTheDocument();
     expect(p.getByRole("link", { name: "DM 열기" })).toBeInTheDocument();
+    // admin 이상은 패널에서 사진을 바꾼다
+    expect(p.getByLabelText("사진 고르기")).toBeInTheDocument();
   });
 
   it("소유자 기록이 없으면 「기록 없음」, OpenClaw 에는 모델 줄이 없다(러너만)", async () => {
@@ -177,10 +180,13 @@ describe("사람 프로필", () => {
     expect(p.queryByText("ada@example.com")).toBeNull();
   });
 
-  it("「상태 바꾸기」는 내 패널에만", async () => {
+  it("「상태 바꾸기」는 내 패널에만 — 누르면 상태 폼이 패널 안에 열린다", async () => {
     serve("member");
     open("u", ME.user.id);
-    expect(await (await panel()).findByRole("button", { name: "상태 바꾸기" })).toBeInTheDocument();
+    const p = await panel();
+    await userEvent.click(await p.findByRole("button", { name: "상태 바꾸기" }));
+    expect(p.getByRole("form", { name: "상태 바꾸기" })).toBeInTheDocument();
+    expect(p.getByRole("checkbox", { name: "도구 승인 요청은 계속 받기" })).toBeChecked();
   });
 
   it("남의 패널에는 「상태 바꾸기」가 없다", async () => {
