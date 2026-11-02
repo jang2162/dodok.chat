@@ -294,7 +294,7 @@ export const connectionProjectRoute = createRoute({
 export const connectionAgentRoute = createRoute({
   getParentRoute: () => connectionRoute,
   path: "agent/$agentId",
-  component: lazyPage(() => import("@/features/connections/NotFoundDetail"), "NotFoundDetail"),
+  component: lazyPage(() => import("@/features/connections/AgentDetail"), "AgentDetail"),
 });
 export const connectionNewRoute = createRoute({
   getParentRoute: () => connectionRoute,
