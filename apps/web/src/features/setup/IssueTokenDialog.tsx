@@ -52,7 +52,10 @@ export function IssueDialog<T extends Issued>({
   config,
   reservedLabel,
   handoff,
+  onDone,
 }: {
+  /** 「복사했습니다」로 닫힌 뒤 — 「연결 추가」가 발급한 러너 상세로 넘어간다 */
+  onDone?: (issued: T) => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
   /** 라벨 입력 화면의 제목·설명 */
@@ -78,6 +81,7 @@ export function IssueDialog<T extends Issued>({
   const trimmed = label.trim();
   const stayRef = useRef<HTMLButtonElement>(null);
   const leave = useLeaveGuard(issued !== undefined);
+  const finishedRef = useRef<T | undefined>(undefined);
 
   useEffect(() => {
     if (leave.status === "blocked") stayRef.current?.focus();
@@ -100,10 +104,18 @@ export function IssueDialog<T extends Issued>({
   /** 원문을 버리고 닫는다. 막아 둔 라우트 이동이 있으면 이어서 보낸다 — 떠나려던 사람이 복사를 마친 것이다 */
   function done() {
     const proceed = leave.status === "blocked" ? leave.proceed : undefined;
+    // 막아 둔 이동이 없으면 원문을 버린 뒤(이동 막기가 풀린 다음 그리기에서) `onDone` 을 부른다 — 같은 틱에 이동하면 아직 걸린 막기에 걸린다
+    if (!proceed && issued) finishedRef.current = issued;
     setOpen(false);
     reset();
     proceed?.();
   }
+  useEffect(() => {
+    const finished = finishedRef.current;
+    if (issued !== undefined || finished === undefined || leave.status === "blocked") return;
+    finishedRef.current = undefined;
+    onDone?.(finished);
+  });
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
