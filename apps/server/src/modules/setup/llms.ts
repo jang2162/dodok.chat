@@ -19,7 +19,7 @@ export type LlmsFileInfo = { sha256: string; bundleSha256: string };
 export type LlmsInput = {
   /** 공개 오리진(`https://…`) — 설치 파일·러너 serverUrl 이 이 위에 선다 */
   origin: string;
-  /** 웹 오리진(APP_ORIGIN) — 사람이 확인할 연결 페이지 주소. 배포(한 오리진)는 origin 과 같고 dev 는 웹·서버가 갈린다 */
+  /** 웹 오리진(APP_ORIGIN) — 사람이 확인할 설정 → 연결 주소. 배포(한 오리진)는 origin 과 같고 dev 는 웹·서버가 갈린다 */
   webOrigin: string;
   /** 플러그인 계정 설정의 bridgeUrl — 발급 대화상자의 플러그인 설정 조각과 같은 값 */
   bridgeUrl: string;
@@ -37,7 +37,7 @@ const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
  * UUID 를 `***` 로 가려 찍어 깨진다. docker-deploy.md 「러너 설치」 3번이 같은 식을 쓴다(setup.llms.test 가 대조한다)
  */
 export const RUNNER_PKG_DIR = `$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")`;
-/** 러너 설치 — npm 레지스트리의 `@dodok/runner`(연결 페이지의 설치 명령과 같은 패키지) */
+/** 러너 설치 — npm 레지스트리의 `@dodok/runner`(설정 → 연결의 러너 설치 안내와 같은 패키지) */
 export const RUNNER_NPM_INSTALL = "npm i -g @dodok/runner";
 const NO_FILE =
   "서버에 파일이 없습니다. 이 절의 설치를 멈추고 사람에게 알린다(서버 관리자가 파일을 만든 뒤 서버를 재시작해야 한다).";
@@ -84,7 +84,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    )
    \`\`\`
 
-4. 사람에게 dodok 연결 페이지(${webOrigin}/settings/connection)의 그 Gateway 카드 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 카드에 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
+4. 사람에게 dodok 설정 → 연결(${webOrigin}/settings/connection)에서 그 Gateway 의 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 거기 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
 
    \`\`\`bash
    openclaw devices approve <요청 id>
@@ -142,7 +142,7 @@ function runnerSection(input: LlmsInput): string {
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}
    \`\`\`
 
-5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${webOrigin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
+5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정 → 연결(${webOrigin}/settings/connection)에서 이 머신의 러너가 「연결됨」으로 보이는지 확인받는다.
 
    \`\`\`bash
    dodok-runner
