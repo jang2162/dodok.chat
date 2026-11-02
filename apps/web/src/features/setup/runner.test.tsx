@@ -1,19 +1,19 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { json } from "../../../test/shellApi";
 import {
   RAW_REISSUED_TOKEN,
-  RAW_RUNNER_TOKEN,
   RUNNER_SERVER_URL,
   SHA_B,
   SHA_FILE,
   SHA_A,
   cacheDump,
-  renderConnection,
+  renderConnection as renderRunner,
+  runnerDetailPath,
   runnerOf,
   statusOf,
-  stubSetupServer,
+  stubSetupServer as serve,
   tokenId,
   tokenOf,
 } from "../../../test/setupServer";
@@ -30,22 +30,39 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const runnerRegion = () => screen.findByRole("region", { name: "러너" });
+// 러너 토큰·설치 안내는 「연결」 탭의 러너 상세(러너 하나 = 러너 토큰 하나)에 있다(연결 탭 통합 스펙 3.3)
 
-describe("러너 블록 — 권한", () => {
-  it("owner 가 아니면 러너 블록이 없고 러너 API 를 부르지 않는다", async () => {
+/** 토큰을 주지 않은 시험은 러너 「맥북」(토큰 1) 하나 */
+const stubSetupServer = (opts: Parameters<typeof serve>[0] = {}) =>
+  serve({ ...opts, runnerTokens: opts.runnerTokens ?? [tokenOf(1, { label: "맥북" })] });
+/** 러너 상세를 띄운다 — 기본은 토큰 1 */
+const renderConnection = (me: unknown = { ...ME, role: "owner" }, n = 1) =>
+  renderRunner(me, undefined, runnerDetailPath(tokenId(n)));
+const runnerRegion = () => screen.findByTestId("runner-detail");
+
+describe("러너 상세 — 권한·경고", () => {
+  it("owner 가 아니면 러너 토큰·설치 안내가 없고 setup API 를 부르지 않는다", async () => {
     const server = stubSetupServer();
     renderConnection({ ...ME, role: "admin" });
-    expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "러너" })).not.toBeInTheDocument();
-    expect(server.calls.filter((c) => c.url.includes("runner"))).toEqual([]);
+    const block = await runnerRegion();
+    expect(within(block).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
+    expect(within(block).queryByRole("region", { name: "러너 토큰" })).not.toBeInTheDocument();
+    expect(within(block).queryByRole("group", { name: "설치 안내" })).not.toBeInTheDocument();
+    expect(server.calls.filter((c) => c.url.startsWith("/api/v1/setup"))).toEqual([]);
   });
 
-  it("owner 는 러너 블록과 드러나는 것 넷을 본다 [최종 리뷰 M5·러너 일반화 스펙 7장]", async () => {
+  it("경고 한 줄은 늘 보이고, 「?」 안에 드러나는 것 넷 [최종 리뷰 M5·러너 일반화 스펙 7장]", async () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    const note = within(block).getByRole("note");
+    expect(
+      within(block).getByText(
+        "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.",
+      ),
+    ).toBeInTheDocument();
+    const help = within(block).getByRole("group", { name: "러너 경고 도움말" });
+    expect(help).not.toHaveAttribute("open");
+    const note = within(help).getByRole("note");
     expect(within(note).getAllByRole("listitem")).toHaveLength(4);
     expect(note).toHaveTextContent("러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다");
     // docker-deploy.md 「드러나는 것 넷」 1 과 같은 뜻 — 기본은 평소 계정, 전용 계정은 걱정될 때의 선택
@@ -65,27 +82,28 @@ describe("러너 블록 — 권한", () => {
   });
 });
 
-describe("러너 블록 — 토큰·설치 안내만", () => {
-  it("러너 카드(판본·에이전트)·「이 러너로 묶기」가 없고, 상태·프로젝트는 러너 탭 링크로", async () => {
+describe("러너 토큰 — 이 러너의 토큰 한 줄", () => {
+  it("러너 토큰 섹션에는 이 러너의 토큰만 — 다른 러너의 토큰은 그 러너 상세에", async () => {
     stubSetupServer({
       status: statusOf({ runners: { list: [runnerOf(1, { label: "맥북" })] } }),
-      runnerTokens: [tokenOf(1, { label: "맥북", prefix: "mac123", connected: true })],
+      runnerTokens: [
+        tokenOf(1, { label: "맥북", prefix: "mac123", connected: true }),
+        tokenOf(2, { label: "데스크톱" }),
+      ],
     });
     renderConnection();
-    const block = await runnerRegion();
-    await within(block).findByRole("listitem", { name: "맥북" });
-    expect(within(block).queryByRole("article")).not.toBeInTheDocument();
-    expect(block).not.toHaveTextContent("2.1.283");
-    expect(within(block).queryByRole("button", { name: /이 러너로 묶기/ })).not.toBeInTheDocument();
-    expect(within(block).getByRole("link", { name: "러너 탭" })).toHaveAttribute("href", "/settings/runners");
+    const tokens = await within(await runnerRegion()).findByRole("region", { name: "러너 토큰" });
+    expect(await within(tokens).findByRole("listitem", { name: "맥북" })).toBeInTheDocument();
+    expect(within(tokens).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(tokens).queryByRole("button", { name: /이 러너로 묶기/ })).not.toBeInTheDocument();
   });
 
   it("붙은 토큰 줄에 같은 빌드인지 — 다른 빌드는 경고가 아니라 정보(npm 판이면 정상일 수 있다)", async () => {
-    stubSetupServer({
+    const opts = {
       status: statusOf({
         runners: {
           list: [runnerOf(1, { label: "맥북" }), runnerOf(2, { label: "데스크톱", bundleSha256: SHA_B })],
-          runnerFile: { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 2048 },
+          runnerFile: { available: true as const, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 2048 },
         },
       }),
       runnerTokens: [
@@ -93,25 +111,33 @@ describe("러너 블록 — 토큰·설치 안내만", () => {
         tokenOf(2, { label: "데스크톱" }),
         tokenOf(3, { label: "끊긴" }),
       ],
-    });
-    renderConnection();
-    const block = await runnerRegion();
-    expect(await within(block).findByRole("listitem", { name: "맥북" })).toHaveTextContent(
+    };
+    stubSetupServer(opts);
+    renderConnection(undefined, 1);
+    expect(await within(await runnerRegion()).findByRole("listitem", { name: "맥북" })).toHaveTextContent(
       "서버와 같은 빌드입니다",
     );
-    const desk = within(block).getByRole("listitem", { name: "데스크톱" });
+    cleanup();
+    stubSetupServer(opts);
+    renderConnection(undefined, 2);
+    const desk = await within(await runnerRegion()).findByRole("listitem", { name: "데스크톱" });
     expect(desk).toHaveTextContent(
-      "서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 아래 「서버와 같은 빌드로 설치」를 쓰세요.",
+      "서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 「설치 안내」의 「서버와 같은 빌드로 설치」를 쓰세요.",
     );
     expect(desk).not.toHaveTextContent("다시 설치하세요");
     expect(within(desk).queryByRole("alert")).not.toBeInTheDocument();
-    expect(within(block).getByRole("listitem", { name: "끊긴" })).not.toHaveTextContent("빌드");
+    cleanup();
+    stubSetupServer(opts);
+    renderConnection(undefined, 3);
+    expect(await within(await runnerRegion()).findByRole("listitem", { name: "끊긴" })).not.toHaveTextContent(
+      "빌드",
+    );
   });
 });
 
 describe("러너 토큰", () => {
-  it("목록 — 라벨·drn_ 앞 6자·마지막 사용·연결 여부(setup.status 를 믿는다)·폐기됨", async () => {
-    stubSetupServer({
+  it("줄 — 라벨·drn_ 앞 6자·마지막 사용·연결 여부(setup.status 를 믿는다)·폐기됨", async () => {
+    const opts = {
       status: statusOf({ runners: { list: [runnerOf(2)] } }),
       runnerTokens: [
         // 목록 응답의 connected 는 낡았을 수 있다 — 상태가 먼저 옳다
@@ -119,74 +145,25 @@ describe("러너 토큰", () => {
         tokenOf(2, { label: "데스크톱", prefix: "dsk456", lastUsedAt: "2026-09-26T00:00:00.000Z" }),
         tokenOf(3, { label: "옛것", prefix: "old000", revokedAt: "2026-09-24T00:00:00.000Z" }),
       ],
-    });
-    renderConnection();
-    const block = await runnerRegion();
-    const mac = await within(block).findByRole("listitem", { name: "맥북" });
+    };
+    stubSetupServer(opts);
+    renderConnection(undefined, 1);
+    const mac = await within(await runnerRegion()).findByRole("listitem", { name: "맥북" });
     expect(mac).toHaveTextContent("drn_mac123…");
     expect(mac).not.toHaveTextContent("지금 접속 중");
     expect(mac).toHaveTextContent("마지막 사용 없음");
-    const desk = within(block).getByRole("listitem", { name: "데스크톱" });
+    cleanup();
+    stubSetupServer(opts);
+    renderConnection(undefined, 2);
+    const desk = await within(await runnerRegion()).findByRole("listitem", { name: "데스크톱" });
     expect(desk).toHaveTextContent("지금 접속 중");
     expect(desk).not.toHaveTextContent("마지막 사용 없음");
-    const old = within(block).getByRole("listitem", { name: "옛것" });
+    cleanup();
+    stubSetupServer(opts);
+    renderConnection(undefined, 3);
+    const old = await within(await runnerRegion()).findByRole("listitem", { name: "옛것" });
     expect(old).toHaveTextContent("폐기됨");
     expect(within(old).queryByRole("button", { name: /폐기/ })).not.toBeInTheDocument();
-  });
-
-  it("발급 — 원문과 설정 파일 예시가 대화상자에 한 번, 닫으면 목록에는 prefix 만, 캐시에도 원문이 없다", async () => {
-    const server = stubSetupServer();
-    const qc = renderConnection();
-    const block = await runnerRegion();
-    await userEvent.click(await within(block).findByRole("button", { name: "새 러너 토큰 발급" }));
-    const dialog = await screen.findByRole("dialog");
-    await userEvent.type(within(dialog).getByLabelText("라벨"), " 맥북 ");
-    await userEvent.click(within(dialog).getByRole("button", { name: "발급" }));
-
-    expect(await within(dialog).findByText(RAW_RUNNER_TOKEN)).toBeInTheDocument();
-    expect(server.calls.find((c) => c.method === "POST")).toMatchObject({
-      url: "/api/v1/setup/runner-tokens",
-      body: { label: "맥북" },
-    });
-    const config = JSON.parse(within(dialog).getByTestId("runner-config").textContent ?? "");
-    // 러너 RunnerConfig 꼴 — 에이전트는 앱에서 만든다(agents 키가 있으면 러너가 거절한다), 루트 label 을 적는 예
-    expect(config).toEqual({
-      serverUrl: RUNNER_SERVER_URL,
-      tokenFile: "~/.dodok-runner/token",
-      maxConcurrentRuns: 3,
-      roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
-      browse: true,
-      programs: {
-        claude: {
-          maxPermissionMode: "default",
-          disallowedTools: [],
-          allowedToolsCeiling: null,
-        },
-      },
-    });
-    // 기본은 평소 claude 로그인 — 예시에 configDir 이 없다(적으면 전용 로그인)
-    expect("configDir" in config.programs.claude).toBe(false);
-    // 설정 파일에는 원문을 두지 않는다 — tokenFile 에 둔다
-    expect(JSON.stringify(config)).not.toContain("drn_");
-    expect(dialog).toHaveTextContent("~/.dodok-runner/token");
-    expect(cacheDump(qc)).not.toContain("drn_");
-
-    // 원문이 보이는 동안은 Esc 로 닫히지 않는다
-    await userEvent.keyboard("{Escape}");
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-
-    const row = await within(block).findByRole("listitem", { name: "맥북" });
-    expect(row).toHaveTextContent(`drn_${RAW_RUNNER_TOKEN.slice(4, 10)}…`);
-    expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
-    expect(cacheDump(qc)).not.toContain(RAW_RUNNER_TOKEN);
-
-    // 다시 열면 라벨 입력부터 — 옛 원문이 되살아나지 않는다(브리지 대화상자와 같은 본체)
-    await userEvent.click(within(block).getByRole("button", { name: "새 러너 토큰 발급" }));
-    const again = await screen.findByRole("dialog");
-    expect(within(again).getByLabelText("라벨")).toHaveValue("");
-    expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
   });
 
   it("폐기 — 확인을 거치고, 연결 중이면 그 러너가 끊긴다고 알린다", async () => {
@@ -203,7 +180,7 @@ describe("러너 토큰", () => {
     expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(0);
     await userEvent.click(within(confirm).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(1));
-    expect(await within(block).findByText("폐기됨")).toBeInTheDocument();
+    expect(await within(row).findByText("폐기됨")).toBeInTheDocument();
   });
 });
 
@@ -361,7 +338,9 @@ describe("러너 설치 안내", () => {
     expect(step.parentElement?.children[1]).toBe(step);
     expect(step).toHaveTextContent("claude 로 로그인돼 있으면 건너뜁니다.");
     expect(RUNNER_LOGIN_COMMAND).toBe("claude");
-    const blocks = [...step.querySelectorAll("pre")].filter((pre) => !pre.closest("details"));
+    // 단계는 모두 러너 상세의 「설치 안내」 펼침 안 — 그 안에서 또 접힌 안내(전용 로그인·같은 빌드)는 뺀다
+    const outer = step.closest('details[aria-label="설치 안내"]');
+    const blocks = [...step.querySelectorAll("pre")].filter((pre) => pre.closest("details") === outer);
     expect(blocks.map((pre) => pre.textContent)).toEqual([
       RUNNER_LOGIN_COMMAND,
       RUNNER_LOGIN_BUNDLED_COMMAND,
@@ -373,7 +352,9 @@ describe("러너 설치 안내", () => {
 
   it("설치 2단계 — 전용 로그인은 접힌 안내 안에", async () => {
     const step = await loginStep();
-    const details = step.querySelector("details") as HTMLDetailsElement;
+    const details = step.querySelector(
+      'details[aria-label="러너 전용 로그인을 따로 쓰려면"]',
+    ) as HTMLDetailsElement;
     expect(details).not.toBeNull();
     expect(details.open).toBe(false);
     await userEvent.click(within(details).getByText("러너 전용 로그인을 따로 쓰려면"));
@@ -386,7 +367,7 @@ describe("러너 설치 안내", () => {
   it("설치 2단계 — 이메일·--resume 경고", async () => {
     const step = await loginStep();
     const warning = within(step).getByText(/계정 이메일이 에이전트에게 보이고/);
-    expect(warning.closest("details")).toBeNull();
+    expect(warning.closest("details")).toBe(step.closest('details[aria-label="설치 안내"]'));
     expect(warning).toHaveTextContent("claude --resume 목록에도 남습니다");
   });
 

@@ -1,4 +1,5 @@
 import type { RunnerProject, RunnerProjectCheck, RunnerSummary } from "@dodok/shared";
+import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
@@ -29,8 +30,8 @@ function a11yName(project: Pick<RunnerProject, "label" | "rootId" | "rootLabel" 
 }
 
 /**
- * 러너 카드 안의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨·자리·에이전트 수와 「확인」·이름 바꾸기·옮기기·보관, 보관한 것은 아래
- * 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove()`(그 카드의 「프로젝트 추가」, 잠겼으면 카드 머리)로 옮긴다
+ * 러너 상세의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨(그 프로젝트 상세 링크)·자리·에이전트 수와 「확인」·이름 바꾸기·옮기기·보관,
+ * 보관한 것은 아래 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove()`(「프로젝트 추가」, 잠겼으면 상세 머리)로 옮긴다
  */
 export function ProjectList({
   runner,
@@ -86,16 +87,19 @@ export function ProjectList({
  * 바꾸거나 지움). 러너가 끊겨 있으면 루트 라벨을 모를 뿐이라 「루트 없음」을 달지 않는다(카드에 「끊김」이 있다).
  * git 여부는 프로젝트 행에 없다 — 「확인」(러너 project.check) 결과로 보인다
  */
-function ProjectRow({
+export function ProjectRow({
   project,
   runner,
   runners,
   afterRemove,
+  linked = true,
 }: {
   project: RunnerProject;
   runner: RunnerSummary;
   runners: readonly RunnerSummary[];
   afterRemove: () => HTMLElement | null;
+  /** 라벨이 그 프로젝트 상세로 가는 링크인가 — 프로젝트 상세 안에서는 아니다 */
+  linked?: boolean;
 }) {
   const check = useCheckRunnerProject();
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
@@ -129,7 +133,17 @@ function ProjectRow({
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
           <div className="flex min-w-0 flex-col gap-0.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium break-all">{project.label}</span>
+              {linked ? (
+                <Link
+                  to="/settings/connection/project/$projectId"
+                  params={{ projectId: project.id }}
+                  className="font-medium break-all underline-offset-4 hover:underline"
+                >
+                  {project.label}
+                </Link>
+              ) : (
+                <span className="font-medium break-all">{project.label}</span>
+              )}
               {rootMissing && <Badge variant="destructive">{ROOT_MISSING}</Badge>}
             </div>
             <p className="text-xs break-all text-muted-foreground">

@@ -64,5 +64,7 @@ export function useConnectionTree() {
     setup: owner ? setup.data : undefined,
     runners: admin ? runners.data : undefined,
     projects: projectList,
+    /** 러너 목록과 러너마다의 프로젝트를 다 받았는가(실패 포함) — 프로젝트 상세가 「찾을 수 없습니다」를 가를 때 */
+    projectsSettled: admin && runners.data !== undefined && projects.every((q) => !q.isPending),
   };
 }

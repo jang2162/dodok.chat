@@ -1,0 +1,164 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeAgent } from "../../../test/agentsPage";
+import {
+  json,
+  projectOf,
+  projectPath,
+  renderRunnersPage,
+  runnerId,
+  runnerOf,
+  runnerPath,
+  stubRunners,
+} from "../../../test/runnersServer";
+import {
+  OWNER,
+  renderConnection,
+  runnerDetailPath,
+  runnerOf as connectionOf,
+  statusOf,
+  stubSetupServer,
+  tokenId,
+  tokenOf,
+} from "../../../test/setupServer";
+import { RUNNER_WARNING } from "./RunnerDetail";
+
+// 러너 상세·프로젝트 상세(연결 탭 통합 스펙 3.3). 토큰·설치 안내의 자세한 동작은 setup/runner.test, 프로젝트 줄은 runners/runners.test
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+const detail = () => screen.findByTestId("runner-detail");
+
+describe("owner", () => {
+  it("owner sees warning line, projects, install steps and its token — 섹션 차례대로", async () => {
+    stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const runner = await detail();
+    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
+    expect(RUNNER_WARNING).toBe(
+      "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.",
+    );
+    await within(runner).findByRole("region", { name: "러너 토큰" });
+    const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
+      (el) => el.getAttribute("aria-label") ?? el.textContent,
+    );
+    expect(order).toEqual(["프로젝트 0", "설치 안내", "러너 토큰"]);
+    // 붙은 적이 없는 러너 — 설치 안내가 펼친 채
+    expect(within(runner).getByRole("group", { name: "설치 안내" })).toHaveAttribute("open");
+  });
+
+  it.each([
+    ["지금 붙어 있으면", { connected: true, lastUsedAt: null }],
+    ["한 번이라도 붙었으면", { connected: false, lastUsedAt: "2026-09-26T00:00:00.000Z" }],
+  ])("install steps are collapsed once the runner has connected — %s", async (_name, over) => {
+    stubSetupServer({
+      status: statusOf({ runners: { list: over.connected ? [connectionOf(1, { label: "맥북" })] : [] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", lastUsedAt: over.lastUsedAt })],
+    });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const runner = await detail();
+    await within(runner).findByRole("region", { name: "러너 토큰" });
+    expect(within(runner).getByRole("group", { name: "설치 안내" })).not.toHaveAttribute("open");
+  });
+
+  it("warning help contains the four exposure lines", async () => {
+    stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const help = await within(await detail()).findByRole("group", { name: "러너 경고 도움말" });
+    expect(within(help).getAllByRole("listitem")).toHaveLength(4);
+  });
+
+  it("unknown runner id shows not found", async () => {
+    stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(9)));
+    expect(await screen.findByText("이 연결을 찾을 수 없습니다")).toBeInTheDocument();
+  });
+});
+
+describe("member", () => {
+  it("member sees only header, warning and agents and no runner API call", async () => {
+    const coder = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-coder",
+      handle: "coder",
+      name: "Coder",
+      runner: { tokenId: runnerId(1), label: "맥북", revoked: false },
+    });
+    const server = stubRunners({}, async (input) =>
+      String(input) === "/api/v1/agents" ? json(200, { agents: [coder] }) : json(404, {}),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("member", undefined, runnerPath());
+    const runner = await detail();
+    expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
+    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
+    expect(within(runner).getByRole("region", { name: "에이전트 1" })).toBeInTheDocument();
+    expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();
+    expect(server.calls).toEqual([]);
+  });
+
+  it("member 가 모르는 러너면 「이 연결을 찾을 수 없습니다」", async () => {
+    const server = stubRunners({}, async () => json(200, { agents: [] }));
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("member", undefined, runnerPath());
+    expect(await screen.findByText("이 연결을 찾을 수 없습니다")).toBeInTheDocument();
+  });
+});
+
+describe("프로젝트 상세", () => {
+  it("project detail is admin only", async () => {
+    const server = stubRunners({ projects: [projectOf(1, { label: "dodok" })] }, async () =>
+      json(200, { agents: [] }),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("member", undefined, projectPath(projectOf(1).id));
+    expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
+    expect(server.calls).toEqual([]);
+  });
+
+  it("admin 은 머리·자리·줄의 동작·「에이전트 만들기」 — 러너 이름은 그 러너 상세 링크", async () => {
+    const server = stubRunners(
+      {
+        runners: [runnerOf(1, { label: "맥북" })],
+        projects: [projectOf(1, { label: "dodok", relPath: "dodok" })],
+      },
+      async () => json(200, { agents: [] }),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    const project = await screen.findByTestId("project-detail");
+    expect(within(project).getByRole("heading", { level: 1, name: "dodok" })).toBeInTheDocument();
+    expect(within(project).getByRole("link", { name: "맥북" })).toHaveAttribute("href", runnerPath());
+    expect(project).toHaveTextContent("내 저장소들/dodok");
+    expect(within(project).getByRole("button", { name: /^dodok \(.+\) 보관$/ })).toBeInTheDocument();
+    expect(within(project).getByRole("button", { name: "에이전트 만들기" })).toBeEnabled();
+  });
+
+  it("archiving a project returns to the runner detail", async () => {
+    const server = stubRunners(
+      { runners: [runnerOf(1, { label: "맥북" })], projects: [projectOf(1, { label: "dodok" })] },
+      async () => json(200, { agents: [] }),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    const { router } = renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    const project = await screen.findByTestId("project-detail");
+    await userEvent.click(within(project).getByRole("button", { name: /^dodok \(.+\) 보관$/ }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "보관" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(runnerPath()));
+    expect(
+      await within(await detail()).findByRole("heading", { level: 1, name: "맥북" }),
+    ).toBeInTheDocument();
+  });
+
+  it("없는 프로젝트 id 면 「이 프로젝트를 찾을 수 없습니다」", async () => {
+    const server = stubRunners({ projects: [] }, async () => json(200, { agents: [] }));
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("admin", undefined, projectPath(projectOf(9).id));
+    expect(await screen.findByText("이 프로젝트를 찾을 수 없습니다")).toBeInTheDocument();
+  });
+});

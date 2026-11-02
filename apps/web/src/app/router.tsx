@@ -284,12 +284,12 @@ export const connectionGatewayRoute = createRoute({
 export const connectionRunnerRoute = createRoute({
   getParentRoute: () => connectionRoute,
   path: "runner/$runnerId",
-  component: lazyPage(() => import("@/features/connections/NotFoundDetail"), "NotFoundDetail"),
+  component: lazyPage(() => import("@/features/connections/RunnerDetail"), "RunnerDetail"),
 });
 export const connectionProjectRoute = createRoute({
   getParentRoute: () => connectionRoute,
   path: "project/$projectId",
-  component: lazyPage(() => import("@/features/connections/NotFoundDetail"), "NotFoundDetail"),
+  component: lazyPage(() => import("@/features/connections/ProjectDetail"), "ProjectDetail"),
 });
 export const connectionAgentRoute = createRoute({
   getParentRoute: () => connectionRoute,
@@ -299,7 +299,7 @@ export const connectionAgentRoute = createRoute({
 export const connectionNewRoute = createRoute({
   getParentRoute: () => connectionRoute,
   path: "new",
-  component: lazyPage(() => import("@/features/connections/NotFoundDetail"), "NotFoundDetail"),
+  component: lazyPage(() => import("@/features/connections/NewConnection"), "NewConnection"),
 });
 /**
  * 옛 탭 주소(에이전트·러너) — 즐겨찾기·옛 링크가 깨지지 않게 「연결」로 넘긴다. 기록을 바꿔 쓴다(뒤로 가기가 이 주소에 걸려 다시

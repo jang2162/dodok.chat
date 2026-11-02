@@ -6,14 +6,11 @@ import {
   type RunnerPermissionMode,
   type RunnerProgram,
   type RunnerProgramStatus,
-  type RunnerSummary,
   permissionModeRank,
 } from "@dodok/shared";
-import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { detailField, formError } from "@/api/formErrors";
-import { useIsOwner } from "@/api/queries";
 import {
   PERMISSION_MODE_LABEL,
   ROOT_MISSING,
@@ -264,45 +261,28 @@ function serverDefinitionError(err: unknown): { field: string; message: string }
   return { field, message: CEILING_REFUSED };
 }
 
-/** 러너 없음 — 러너는 연결 페이지(owner)에서 붙인다. owner 에게만 링크 */
-function NoRunners() {
-  const owner = useIsOwner();
-  return (
-    <p className="text-sm text-muted-foreground">
-      연결된 러너가 없습니다 —{" "}
-      {owner ? (
-        <Link to="/settings/connection" className="underline underline-offset-4">
-          연결 페이지
-        </Link>
-      ) : (
-        "연결 페이지"
-      )}
-      에서 러너를 붙이세요{owner ? "." : "(워크스페이스 owner 가 할 수 있습니다)."}
-    </p>
-  );
-}
-
-/** 처음 고를 러너 — 붙은 것 가운데 첫째 */
-const firstLive = (runners: readonly RunnerSummary[]) => runners.find((r) => r.connected && !r.revoked)?.id;
-
 /**
- * 러너 에이전트 만들기(러너 일반화 스펙 7장 — 에이전트 추가의 「러너」 갈래): 러너 → 프로젝트 → 프로그램 → 이름·핸들·모델·권한 모드·
- * 허용 도구·지시·DM 허용. 끊긴 러너는 고를 수 없다(프로그램 목록이 없다). 프로그램은 그 러너가 알린 것만, 못 쓰는 것은 흐리게 사유와
+ * 러너 에이전트 만들기(러너 일반화 스펙 7장) — 프로젝트 상세의 「에이전트 만들기」가 그 러너·프로젝트로 고정해 연다(연결 탭 통합 스펙
+ * 3.3). 프로그램 → 이름·핸들·모델·권한 모드·허용 도구·지시·DM 허용. 프로그램은 그 러너가 알린 것만, 못 쓰는 것은 흐리게 사유와
  * 함께. 권한 모드는 그 프로그램의 상한까지만 고른다. 서버 400 의 천장 칸은 그 칸 아래, 핸들 409 는 핸들 칸 아래, 그 밖은 폼 아래.
- * 러너·프로젝트·프로그램은 처음 한 번만 첫 것을 고르고 그 뒤로는 고른 것을 쥔다 — 고른 것이 끊기거나 보관되거나 못 쓰게 되면 다른
- * 것으로 바꾸지 않고 그 칸에 사유를 보이며 「만들기」를 잠근다(에이전트가 어느 머신에서 돌지가 모르는 사이에 바뀌지 않게)
+ * 러너·프로젝트는 고정이고 프로그램은 처음 한 번만 첫 것을 고른다 — 러너가 끊기거나 폐기되거나 프로젝트가 보관되거나 프로그램을 못 쓰게
+ * 되면 그 칸에 사유를 보이며 「만들기」를 잠근다(에이전트가 어느 머신에서 돌지가 모르는 사이에 바뀌지 않게)
  */
 export function RunnerAgentForm({
+  runnerId,
+  projectId,
   takenHandles,
   onCreated,
 }: {
+  runnerId: string;
+  projectId: string;
   takenHandles: ReadonlySet<string>;
   onCreated: () => void;
 }) {
   const runners = useRunners();
   const create = useCreateAgent({ silent: true });
-  const [runnerPick, setRunnerPick] = useState<string>();
-  const [projectPick, setProjectPick] = useState<string>();
+  const runnerPick: string = runnerId;
+  const projectPick: string = projectId;
   const [programPick, setProgramPick] = useState<RunnerProgram>();
   const [handle, setHandle] = useState("");
   const [name, setName] = useState<string>(); // undefined 면 핸들을 따른다
@@ -317,29 +297,18 @@ export function RunnerAgentForm({
   const ids = useId();
 
   const list = useMemo(() => (runners.data ?? []).filter((r) => !r.revoked), [runners.data]);
-  // 처음 고르는 것만 렌더 중에 정한다(앞 렌더에서 온 정보로 상태 맞추기) — 한 번 정한 뒤로는 바꾸지 않는다
-  const firstRunner = runnerPick === undefined ? firstLive(list) : undefined;
-  if (firstRunner !== undefined) setRunnerPick(firstRunner);
+  // 고른 프로그램만 렌더 중에 정한다(앞 렌더에서 온 정보로 상태 맞추기) — 한 번 정한 뒤로는 바꾸지 않는다
   const runner = list.find((r) => r.id === runnerPick);
   const live = runner?.connected === true;
-  const runnerIssue =
-    runnerPick === undefined
-      ? undefined
-      : runner === undefined
-        ? PICKED_RUNNER_REVOKED
-        : live
-          ? undefined
-          : PICKED_RUNNER_OFFLINE;
+  const runnerIssue = runner === undefined ? PICKED_RUNNER_REVOKED : live ? undefined : PICKED_RUNNER_OFFLINE;
   const projects = useRunnerProjects(runner?.id);
   const activeProjects = (projects.data ?? []).filter((p) => p.archivedAt === null);
   // 붙은 러너가 그 루트를 알리지 않는 프로젝트 — 보이되 고를 수 없다(거기 만든 에이전트는 첫 런부터 천장 밖이다)
   const rootMissing = (p: { rootLabel: string | null }) => live && p.rootLabel === null;
   const selectable = activeProjects.filter((p) => !rootMissing(p));
-  const firstProject = projectPick === undefined && projects.data ? selectable[0]?.id : undefined;
-  if (firstProject !== undefined) setProjectPick(firstProject);
   const project = selectable.find((p) => p.id === projectPick);
   const projectIssue =
-    projectPick === undefined || project !== undefined || projects.data === undefined
+    project !== undefined || projects.data === undefined
       ? undefined
       : activeProjects.some((p) => p.id === projectPick)
         ? PICKED_PROJECT_ROOT_MISSING
@@ -432,98 +401,36 @@ export function RunnerAgentForm({
         </Button>
       </div>
     );
-  if (list.length === 0) return <NoRunners />;
-
+  const fixedProject = (projects.data ?? []).find((p) => p.id === projectPick);
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <fieldset className="grid gap-2" disabled={pending}>
-        <legend className="mb-1 text-sm font-medium">러너</legend>
-        <RadioGroup
-          value={runnerPick ?? ""}
-          onValueChange={(v) => {
-            clear();
-            setRunnerPick(v);
-            setProjectPick(undefined);
-            setProgramPick(undefined);
-          }}
-          className="flex flex-wrap gap-4"
-        >
-          {list.map((r) => (
-            <div key={r.id} className="flex items-center gap-2">
-              <RadioGroupItem
-                id={`${ids}-runner-${r.id}`}
-                value={r.id}
-                disabled={!r.connected}
-                aria-describedby={r.id === runnerPick && runnerIssue ? `${ids}-runner-error` : undefined}
-              />
-              <Label
-                htmlFor={`${ids}-runner-${r.id}`}
-                className={r.connected ? "font-normal" : "font-normal text-muted-foreground"}
-              >
-                {r.label}
-                {!r.connected && " (끊김)"}
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
+      <dl className="grid gap-1.5 text-sm">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-muted-foreground">러너</dt>
+          <dd aria-describedby={runnerIssue ? `${ids}-runner-error` : undefined}>
+            {runner?.label ?? (runners.data ?? []).find((r) => r.id === runnerPick)?.label ?? "—"}
+          </dd>
+        </div>
         <FieldError id={`${ids}-runner-error`}>{runnerIssue}</FieldError>
-      </fieldset>
-      {runnerPick === undefined ? (
-        <p className="text-sm text-muted-foreground">
-          붙어 있는 러너가 없습니다 — 러너를 띄운 뒤 다시 여세요.
-        </p>
-      ) : runner === undefined ? null : (
-        <>
-          <Row
-            label="프로젝트"
-            error={
-              projectIssue ?? (serverError?.field === "runnerProjectId" ? serverError.message : undefined)
-            }
-            hint={
-              selectable.length === 0 && !projects.isPending ? (
-                <>
-                  이 러너에 고를 수 있는 프로젝트가 없습니다 —{" "}
-                  <Link to="/settings/runners" className="underline underline-offset-4">
-                    러너 탭
-                  </Link>
-                  에서 프로젝트를 추가하세요.
-                </>
-              ) : undefined
-            }
-          >
-            {(id, describedBy) => (
-              <select
-                id={id}
-                className={SELECT}
-                value={projectPick ?? ""}
-                aria-invalid={projectIssue !== undefined || serverError?.field === "runnerProjectId"}
-                aria-describedby={describedBy}
-                disabled={pending || activeProjects.length === 0}
-                onChange={(e) => {
-                  clear();
-                  setProjectPick(e.target.value);
-                }}
-              >
-                {projectPick === undefined && activeProjects.length > 0 && (
-                  <option value="" disabled>
-                    프로젝트 고르기
-                  </option>
-                )}
-                {projectPick !== undefined && !activeProjects.some((p) => p.id === projectPick) && (
-                  // 고른 뒤 보관·옮기기로 빠진 것 — 고를 수 없는 줄로 남겨 지금 상태가 보이게 한다
-                  <option value={projectPick} disabled>
-                    고른 프로젝트(보관됐거나 없음)
-                  </option>
-                )}
-                {activeProjects.map((p) => (
-                  <option key={p.id} value={p.id} disabled={rootMissing(p)}>
-                    {p.label} — {projectPlace(p)}
-                    {rootMissing(p) ? ` (${ROOT_MISSING})` : ""}
-                  </option>
-                ))}
-              </select>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-muted-foreground">프로젝트</dt>
+          <dd className="min-w-0 break-all">
+            {fixedProject ? (
+              <>
+                {fixedProject.label} — {projectPlace(fixedProject)}
+                {rootMissing(fixedProject) ? ` (${ROOT_MISSING})` : ""}
+              </>
+            ) : (
+              "—"
             )}
-          </Row>
+          </dd>
+        </div>
+        <FieldError id={`${ids}-project-error`}>
+          {projectIssue ?? (serverError?.field === "runnerProjectId" ? serverError.message : undefined)}
+        </FieldError>
+      </dl>
+      {runner === undefined ? null : (
+        <>
           <fieldset className="grid gap-2" disabled={pending}>
             <legend className="mb-1 text-sm font-medium">프로그램</legend>
             {!live ? (
@@ -648,7 +555,7 @@ export function RunnerAgentForm({
 
 /**
  * 러너 에이전트 고치기(admin 이상) — 만들기와 같은 정의 칸(모델·권한 모드·허용 도구). 프로그램·프로젝트는 읽기만 한다 — 프로젝트는
- * 「러너」 탭의 옮기기로만, 프로그램을 바꾸려면 새 에이전트(러너 일반화 계획 판정 PR10). PATCH 는 바뀐 정의 칸만 싣고 프로그램·
+ * 프로젝트 상세의 옮기기로만, 프로그램을 바꾸려면 새 에이전트(러너 일반화 계획 판정 PR10). PATCH 는 바뀐 정의 칸만 싣고 프로그램·
  * 프로젝트는 싣지 않는다(서버 400). 권한 모드는 지금 붙은 러너의 상한까지 — 끊겨 있으면 넷 다(서버도 건너뛰고 런에서 러너가 거절한다)
  */
 export function RunnerDefinitionForm({
@@ -729,7 +636,8 @@ export function RunnerDefinitionForm({
         </div>
       </dl>
       <p className="text-xs text-muted-foreground">
-        프로그램은 바꿀 수 없습니다(새 에이전트를 만드세요). 프로젝트는 「러너」 탭에서 다른 러너로 옮깁니다.
+        프로그램은 바꿀 수 없습니다(새 에이전트를 만드세요). 프로젝트는 프로젝트 화면에서 다른 러너로
+        옮깁니다.
       </p>
       <DefinitionFields
         draft={draft}

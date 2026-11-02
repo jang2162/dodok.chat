@@ -7,6 +7,7 @@ import type {
   IssueRunnerTokenResult,
   ReissueRunnerTokenResult,
   RunnerConnection,
+  RunnerSummary,
   RunnerTokenRecord,
   SetupStatus,
 } from "@dodok/shared";
@@ -296,8 +297,28 @@ export function stubSetupServer(
               "content-disposition": `attachment; filename="dodok-claude-runner-ffffffffffff.tgz"`,
             },
           });
-    // 「연결」 트리(admin 이상)가 부르는 러너 목록 — 이 가짜 서버에는 러너가 없다
-    if (method === "GET" && url === "/api/v1/runners") return json(200, { runners: [] });
+    // 「연결」 트리·러너 상세(admin 이상)가 부르는 러너 목록 — 러너 하나 = 러너 토큰 하나. 붙음은 setup 상태의 러너 줄로 가른다
+    if (method === "GET" && url === "/api/v1/runners") {
+      const status = typeof opts.status === "object" ? opts.status : undefined;
+      const live = new Set((status?.runners.list ?? []).map((r) => r.tokenId));
+      const runners: RunnerSummary[] = runnerTokens.map((t) => {
+        const connected = live.has(t.id) && t.revokedAt === null;
+        return {
+          id: t.id,
+          label: t.label,
+          connected,
+          revoked: t.revokedAt !== null,
+          runnerVersion: connected ? "0.0.0" : null,
+          browse: connected ? true : null,
+          roots: [],
+          programs: [],
+          projectCount: 0,
+        };
+      });
+      return json(200, { runners });
+    }
+    if (method === "GET" && /^\/api\/v1\/runners\/[^/]+\/projects$/.test(url))
+      return json(200, { projects: [] });
     // 라우트로 띄울 때 셸(사이드바·배너)이 부르는 것
     const shell = shellGet(input, init);
     if (shell) return shell;
@@ -312,6 +333,9 @@ export function stubSetupServer(
       calls.filter((c) => c.url.startsWith("/api/v1/setup") || c.url.startsWith("/api/v1/gateways")),
   };
 }
+
+/** 러너(= 러너 토큰) 상세 주소 */
+export const runnerDetailPath = (id: string) => `/settings/connection/runner/${id}`;
 
 /** n 번째 Gateway 의 상세 주소 — 기본은 첫 Gateway(`GATEWAY_ID`) */
 export const gatewayDetailPath = (id: string = GATEWAY_ID) => `/settings/connection/gateway/${id}`;
