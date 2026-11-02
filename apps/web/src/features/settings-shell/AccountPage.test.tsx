@@ -75,7 +75,7 @@ async function openAccount() {
 describe("AccountPage", () => {
   it("설정의 「내 계정」 탭으로 들어가 핸들·이메일을 보인다", async () => {
     stubServer(MEMBER);
-    renderRoute("/settings/agents");
+    renderRoute("/settings/connection");
     await userEvent.click(
       within(await screen.findByRole("navigation", { name: "설정" })).getByRole("link", { name: "내 계정" }),
     );

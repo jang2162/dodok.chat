@@ -49,8 +49,8 @@ it("로그인돼 있으면 앱 레이아웃 안의 페이지가 뜬다", async (
     vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
   renderAt("/agents");
-  expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-  expect(screen.getByTestId("app-shell")).toContainElement(screen.getByTestId("page-agents"));
+  expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
+  expect(screen.getByTestId("app-shell")).toContainElement(screen.getByTestId("page-connection"));
 });
 
 it("/c/$channelId/s/$conversationId/settings 는 세션 화면의 Outlet 자리에 설정 패널을 둔다", async () => {
@@ -243,11 +243,11 @@ it("/auth/me 가 네트워크 실패면 재시도 뒤 오류 화면 — 「다�
 
   expect(await screen.findByText("서버에 연결할 수 없습니다")).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(3);
-  expect(screen.queryByTestId("page-agents")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("page-connection")).not.toBeInTheDocument();
 
   up = true;
   await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
-  expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+  expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
 });
 
 it("오류 화면은 코드 오류(TypeError)를 서버 연결 문제로 보지 않는다", async () => {

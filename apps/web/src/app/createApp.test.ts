@@ -89,7 +89,7 @@ describe("onUnauthorized(세션 만료 401)", () => {
   }
 
   it("/login?next=<지금 경로> 로 옮긴 뒤(새 경로를 넣은 커밋에서) 비운다 — 비우기 전에 옮긴다", async () => {
-    const history = createMemoryHistory({ initialEntries: ["/settings/agents?tab=x"] });
+    const history = createMemoryHistory({ initialEntries: ["/settings/connection?tab=x"] });
     const app = createApp(history);
     app.queryClient.setQueryData(qk.me, ME);
     const at = watchReset(app);
@@ -98,7 +98,7 @@ describe("onUnauthorized(세션 만료 401)", () => {
 
     await vi.waitFor(() => expect(at).toEqual(["/login"]));
     expect(history.location.pathname).toBe("/login");
-    expect(app.router.latestLocation.search).toEqual({ next: "/settings/agents?tab=x" });
+    expect(app.router.latestLocation.search).toEqual({ next: "/settings/connection?tab=x" });
     expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
   });
 
@@ -167,9 +167,9 @@ describe("onUnauthorized(세션 만료 401)", () => {
         throw new Error(`예상 밖 요청 ${url}`);
       }),
     );
-    const app = createApp(createMemoryHistory({ initialEntries: ["/settings/agents"] }));
+    const app = createApp(createMemoryHistory({ initialEntries: ["/settings/connection"] }));
     render(createElement(App, { app }));
-    expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+    expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
 
     expired = true;
     const mark = requests.length;

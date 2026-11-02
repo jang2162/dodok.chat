@@ -154,8 +154,8 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
     const queryClient = createQueryClient(() => {});
     const router = renderAt("/login?next=%2Fsettings%2Fagents", queryClient);
     await submitEmail("mia@example.com", "correct-horse-battery");
-    expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/settings/agents");
+    expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/settings/connection");
     await waitFor(() => expect(mutationStates(queryClient)).not.toContain("correct-horse-battery"));
   });
 
@@ -236,8 +236,8 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
     const fetch = stubServer(() => json(200, { sessionToken: "s", user: ME.user }));
     const router = renderAt("/login?next=%2Fsettings%2Fagents");
     await submitToken("right");
-    expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/settings/agents");
+    expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/settings/connection");
     const meCalls = fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/auth/me");
     expect(meCalls.length).toBeGreaterThanOrEqual(2); // 로그인 전 401 → 로그인 뒤 200
   });
@@ -272,7 +272,7 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
       const queryClient = createQueryClient(() => {});
       renderAt("/login?next=%2Fsettings%2Fagents", queryClient);
       await submitToken("secret-token");
-      expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+      expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
       await waitFor(() => expect(mutationStates(queryClient)).not.toContain("secret-token"));
       expect(mutationStates(queryClient)).not.toContain("session-secret");
     });

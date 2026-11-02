@@ -30,7 +30,7 @@ afterEach(() => {
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w" };
 
-/** /settings/agents 에 로그인한 채로 App 을 띄우고, 같은 QueryClient·Router 위에서 useLogout 을 건다 */
+/** /settings/connection 에 로그인한 채로 App 을 띄우고, 같은 QueryClient·Router 위에서 useLogout 을 건다 */
 async function loggedInAt(
   path: string,
   logout: () => Response,
@@ -66,7 +66,7 @@ async function loggedInAt(
   const moves: string[] = [];
   history.subscribe(({ location }) => moves.push(location.href));
   render(<App app={app} />);
-  expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+  expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
   const { result } = renderHook(() => useLogout(), { wrapper: wrapperFor(app) });
   return { app, history, moves, logout: result };
 }
@@ -81,7 +81,9 @@ const wrapperFor = (app: AppClient) =>
   };
 
 it("로그아웃은 등록된 정리·Query 캐시를 비우고 /login 으로 간다(next 없음)", async () => {
-  const { app, history, moves, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+  const { app, history, moves, logout } = await loggedInAt("/settings/connection", () =>
+    json(200, { ok: true }),
+  );
   const reset = vi.fn();
   unregisters.push(registerSessionReset(reset));
 
@@ -100,7 +102,7 @@ it("로그아웃은 등록된 정리·Query 캐시를 비우고 /login 으로 �
  * 화면을 먼저 /login 으로 내리고 그다음에 비운다 — 로그아웃 뒤 나가는 요청은 로그인 화면의 me 확인뿐이다
  */
 it("로그아웃 뒤 셸 쿼리를 다시 받지 않는다 — 나가는 요청은 로그인 화면의 me 확인뿐(D11)", async () => {
-  const { app, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+  const { app, logout } = await loggedInAt("/settings/connection", () => json(200, { ok: true }));
   const reset = vi.fn();
   unregisters.push(registerSessionReset(reset));
 
@@ -120,7 +122,7 @@ it("로그아웃 뒤 셸 쿼리를 다시 받지 않는다 — 나가는 요청�
 });
 
 it("이동 막기가 걸려 있어도 로그아웃은 상태를 비우고 /login 으로 간다(ignoreBlocker)", async () => {
-  const { app, history, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+  const { app, history, logout } = await loggedInAt("/settings/connection", () => json(200, { ok: true }));
   const reset = vi.fn();
   unregisters.push(registerSessionReset(reset));
   const unblock = app.router.history.block({ blockerFn: () => true, enableBeforeUnload: false });
@@ -135,7 +137,7 @@ it("이동 막기가 걸려 있어도 로그아웃은 상태를 비우고 /login
 });
 
 it("세션이 이미 끊겨 로그아웃이 401 이어도 로그인 화면으로 한 번만 간다", async () => {
-  const { history, moves, logout } = await loggedInAt("/settings/agents", () =>
+  const { history, moves, logout } = await loggedInAt("/settings/connection", () =>
     json(401, { code: "UNAUTHORIZED", message: "x" }),
   );
 
@@ -148,7 +150,7 @@ it("세션이 이미 끊겨 로그아웃이 401 이어도 로그인 화면으로
 
 it("로그아웃이 실패해도(500) 토스트 없이 로그인 화면으로 간다", async () => {
   const toastError = vi.spyOn(toast, "error").mockImplementation(() => 0);
-  const { history, logout } = await loggedInAt("/settings/agents", () =>
+  const { history, logout } = await loggedInAt("/settings/connection", () =>
     json(500, { code: "INTERNAL", message: "서버 내부 오류" }),
   );
 
@@ -164,7 +166,7 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
     const sub = fakeSubscription();
     push = stubPush({ permission: "granted", subscription: sub });
     localStorage.setItem("dodok.push", "u");
-    const { history, logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+    const { history, logout } = await loggedInAt("/settings/connection", () => json(200, { ok: true }));
     const reset = vi.fn();
     unregisters.push(registerSessionReset(reset));
 
@@ -187,7 +189,7 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
     push = stubPush({ permission: "granted", subscription: sub });
     localStorage.setItem("dodok.push", "u");
     const { history, logout } = await loggedInAt(
-      "/settings/agents",
+      "/settings/connection",
       () => json(200, { ok: true }),
       () => {
         throw new TypeError("Failed to fetch");
@@ -208,7 +210,7 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
     push = stubPush({ permission: "granted", subscription: sub });
     localStorage.setItem("dodok.push", "u");
     const { logout } = await loggedInAt(
-      "/settings/agents",
+      "/settings/connection",
       () => json(200, { ok: true }),
       () => new Promise<Response>(() => {}),
     );
@@ -232,7 +234,7 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
   });
 
   it("푸시를 켜지 않았으면 서버 해지를 부르지 않는다", async () => {
-    const { logout } = await loggedInAt("/settings/agents", () => json(200, { ok: true }));
+    const { logout } = await loggedInAt("/settings/connection", () => json(200, { ok: true }));
     act(() => logout.current.mutate());
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
     expect(requests.some((r) => r.includes("/push/"))).toBe(false);

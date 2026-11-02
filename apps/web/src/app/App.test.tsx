@@ -163,7 +163,7 @@ it("여러 쿼리가 함께 네트워크 실패해도 화면의 토스트는 「
     }),
   );
   const { app } = renderApp("/agents");
-  expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+  expect(await screen.findByTestId("page-connection")).toBeInTheDocument();
 
   down = true;
   const fail = (key: string) =>

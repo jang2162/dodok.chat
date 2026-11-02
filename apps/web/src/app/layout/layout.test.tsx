@@ -302,7 +302,7 @@ describe("AppShell", () => {
         return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
       }),
     );
-    const { queryClient } = renderRoute("/settings/agents");
+    const { queryClient } = renderRoute("/settings/connection");
     expect(await screen.findByText("두독 팀")).toBeInTheDocument();
 
     // workspace 없이 답하는 서버(ME 그대로)면 기본 이름으로 돌아간다
@@ -404,8 +404,8 @@ describe("AppShell", () => {
   // jsdom 은 레이아웃을 재지 않는다 — 실제 높이·스크롤은 브라우저 확인이 보고, 여기서는 그 구조를 고정한다
   it("긴 화면은 셸 안 스크롤 상자에서만 스크롤한다 — 사이드바·배너는 그 밖에 남는다", async () => {
     stubChannels();
-    renderRoute("/settings/agents");
-    const page = await screen.findByTestId("page-agents");
+    renderRoute("/settings/connection");
+    const page = await screen.findByTestId("page-connection");
     const scroller = screen.getByTestId("page-scroll");
 
     expect(screen.getByTestId("app-shell")).toHaveClass("h-dvh");
@@ -427,8 +427,8 @@ describe("AppShell", () => {
   it("화면을 옮기면 스크롤 상자를 맨 위로 돌린다", async () => {
     const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
     stubChannels();
-    const { router } = renderRoute("/settings/agents");
-    await screen.findByTestId("page-agents");
+    const { router } = renderRoute("/settings/connection");
+    await screen.findByTestId("page-connection");
     scrollTo.mockClear();
 
     await act(() =>
