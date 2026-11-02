@@ -177,7 +177,6 @@ export function stubSetupServer(
     issue?: (label: string) => Reply;
     /** POST /setup/runner-tokens/:id/reissue — 기본은 200 과 새 원문(`RAW_REISSUED_TOKEN`)·같은 줄 */
     reissue?: (id: string) => Reply;
-    plugin?: () => Reply;
     runner?: () => Reply;
   } = {},
 ) {
@@ -295,15 +294,6 @@ export function stubSetupServer(
             status: 200,
             headers: {
               "content-disposition": `attachment; filename="dodok-claude-runner-ffffffffffff.tgz"`,
-            },
-          });
-    if (method === "GET" && url === "/api/v1/setup/plugin.tgz")
-      return opts.plugin
-        ? opts.plugin()
-        : new Response(new Uint8Array([1, 2, 3]), {
-            status: 200,
-            headers: {
-              "content-disposition": `attachment; filename="dodok-openclaw-plugin-ffffffffffff.tgz"`,
             },
           });
     // 라우트로 띄울 때 셸(사이드바·배너)이 부르는 것

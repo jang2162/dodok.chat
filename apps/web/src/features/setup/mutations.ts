@@ -204,14 +204,10 @@ async function downloadPackedFile(path: string, fallbackName: string): Promise<v
   }
 }
 
-export const downloadPluginFile = (fallbackName: string) =>
-  downloadPackedFile("/setup/plugin.tgz", fallbackName);
-
-/** 오류 문구는 화면이 그린다(`silent`) — 401 은 전역이 로그인으로 보낸다 */
-export const useDownloadPlugin = () =>
-  useMutation({ mutationFn: downloadPluginFile, meta: { silent: true } });
-
-/** 서버가 품은 러너 tgz(러너 스펙 5장 「같은 빌드」) — 플러그인 받기와 같은 규칙 */
+/**
+ * 서버가 품은 러너 tgz(러너 스펙 5장 「같은 빌드」). 오류 문구는 화면이 그린다(`silent`) — 401 은 전역이 로그인으로 보낸다.
+ * 플러그인 tgz 는 웹이 받지 않는다 — Gateway 호스트의 설치 스크립트가 브리지 토큰으로 받는다(설치 한 줄 명령 스펙 2026-11-02)
+ */
 export const useDownloadRunner = () =>
   useMutation({
     mutationFn: (fallbackName: string) => downloadPackedFile("/setup/runner.tgz", fallbackName),

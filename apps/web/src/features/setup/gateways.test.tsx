@@ -196,8 +196,9 @@ describe("카드 목록", () => {
     expect(
       within(await region("플러그인", home)).getByText(/접속한 플러그인이 없습니다/),
     ).toBeInTheDocument();
-    // 플러그인 받기는 카드가 아니라 블록 머리에 하나
-    expect(screen.getAllByRole("button", { name: "플러그인 받기" })).toHaveLength(1);
+    // 플러그인 설치 안내는 카드가 아니라 블록 머리에 하나(설치 명령은 카드마다의 「새 토큰 발급」이 준다)
+    expect(screen.getAllByRole("region", { name: "플러그인 설치" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
   });
 
   it("페어링 대기 카드는 그 Gateway 의 요청 id 로 승인 명령을 복사한다", async () => {
