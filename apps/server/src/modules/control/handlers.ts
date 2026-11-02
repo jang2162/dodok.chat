@@ -554,7 +554,10 @@ export const HANDLERS: Handlers = {
       done: `에이전트 @${input.handle} ${eul(input.handle)} 등록했습니다`,
     }),
     summary: (_ctx, input) => `${input.provider} · ${input.providerAgentId} · 이름 ${input.name}`,
-    run: (ctx, input) => ({ agent: registerAgentAndNotify(ctx.agents, input, ctx.workspaceId) }),
+    // 소유자는 주체의 사람 — 바깥 MCP 면 토큰 주인, 채널 안 에이전트면 시킨 사람(쓰기는 사람 없는 주체에 닫혀 있다)
+    run: (ctx, input, principal) => ({
+      agent: registerAgentAndNotify(ctx.agents, input, ctx.workspaceId, principal.userId),
+    }),
   },
   update_agent: {
     authorize: (role) => authorizeAgentPatch(role),

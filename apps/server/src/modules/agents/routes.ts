@@ -113,11 +113,11 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
 
   /** 등록(admin) — provider 로 갈래를 고르고 그 갈래의 스키마로 파싱한다(오류가 그 갈래의 필드를 가리키게) */
   fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
-    const workspaceId = sessionUser(request).workspaceId;
+    const { workspaceId, id: userId } = sessionUser(request);
     const runner = (request.body as { provider?: unknown } | null)?.provider === "runner";
     const agent = runner
-      ? createRunnerAgentAndNotify(ctx, parseBody(CreateRunnerAgentBody, request.body), workspaceId)
-      : registerAgentAndNotify(ctx, parseBody(CreateOpenClawAgentBody, request.body), workspaceId);
+      ? createRunnerAgentAndNotify(ctx, parseBody(CreateRunnerAgentBody, request.body), workspaceId, userId)
+      : registerAgentAndNotify(ctx, parseBody(CreateOpenClawAgentBody, request.body), workspaceId, userId);
     return reply.code(201).send({ agent });
   });
 

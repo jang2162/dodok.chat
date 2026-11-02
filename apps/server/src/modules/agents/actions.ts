@@ -46,11 +46,13 @@ export function registerAgentAndNotify(
   ctx: AgentActionContext,
   body: CreateOpenClawAgentBody,
   workspaceId: string,
+  /** 만든 사람(소유자) — REST 는 요청한 사람, 제어 도구는 그 주체의 사람 */
+  createdBy: string | null,
 ): Agent {
   if (body.gatewayId === undefined)
     throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
   const { provider: _, ...rest } = body;
-  const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId });
+  const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId, createdBy });
   changed(ctx);
   return agent;
 }
@@ -64,6 +66,7 @@ export function createRunnerAgentAndNotify(
   ctx: AgentActionContext & { runners: RunnerLiveApi | null },
   body: CreateRunnerAgentBody,
   workspaceId: string,
+  createdBy: string | null,
 ): Agent {
   const project = getProject(ctx.db, workspaceId, body.runnerProjectId);
   if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
@@ -76,7 +79,7 @@ export function createRunnerAgentAndNotify(
     { requireAvailable: true },
   );
   const { provider: _, ...rest } = body;
-  const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId });
+  const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId, createdBy });
   changed(ctx);
   return agent;
 }

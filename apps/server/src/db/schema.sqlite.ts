@@ -16,6 +16,7 @@ import type {
   RunnerPermissionMode,
   RunnerProgram,
   SessionPolicy,
+  StatusMode,
   RunEvent,
   RunUsage,
   SystemMeta,
@@ -56,6 +57,14 @@ export const users = sqliteTable(
     authProvider: text("auth_provider").notNull(),
     avatarUrl: text("avatar_url"),
     createdAt: ts("created_at").notNull(),
+    // 상태(프로필 스펙 2장) — 수동 모드·만료는 본인에게만 간다(people.changed 에 싣지 않는다). until 이 지난 값은 없는 것으로 읽는다
+    statusMode: text("status_mode").$type<StatusMode>().notNull().default("auto"),
+    statusModeUntil: ts("status_mode_until"),
+    statusEmoji: text("status_emoji"),
+    statusText: text("status_text"),
+    statusTextUntil: ts("status_text_until"),
+    // 방해 금지여도 도구 승인 푸시는 받는다(결정 7 — 승인을 놓치면 런이 멈춰 기다린다)
+    dndAllowApprovals: integer("dnd_allow_approvals", { mode: "boolean" }).notNull().default(true),
   },
   (t) => [
     uniqueIndex("users_ws_handle").on(t.workspaceId, t.handle),
@@ -141,6 +150,8 @@ export const agents = sqliteTable(
     // null 이면 미리 허용한 도구 없음(러너 천장 안에서 프로그램 기본)
     allowedToolsJson: json<string[]>("allowed_tools_json"),
     disallowedToolsJson: json<string[]>("disallowed_tools_json").notNull().default([]),
+    // 만든 사람(소유자) — 기록 전에 만든 에이전트는 null(마이그레이션이 채우지 않는다 — 사실이 아닌 기록이 생긴다). 따로 권한은 없다
+    createdBy: text("created_by").references((): AnySQLiteColumn => users.id),
     // base_prompt(에이전트 지시)가 바뀔 때만 +1 — 러너 세션이 이 값과 다르게 시작했으면 새로 연다(계획 판정 PR2)
     instructionsRevision: integer("instructions_revision").notNull().default(0),
   },

@@ -1,10 +1,10 @@
 import { Agent } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it } from "vitest";
-import { createAgent, getAgent, listAgents, updateAgent } from "../src/modules/agents/service";
+import { agentForRole, createAgent, getAgent, listAgents, updateAgent } from "../src/modules/agents/service";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
-import { seedWorkspace } from "./helpers/seed";
+import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
 
 /** 워크스페이스 하나와 그 Gateway 하나 — OpenClaw 에이전트는 Gateway 에 묶여 등록된다 */
 function setup() {
@@ -15,6 +15,46 @@ function setup() {
 }
 
 describe("agents service", () => {
+  it("createAgent 는 만든 사람(createdBy)을 남기고, 주지 않으면 null(기록 없음)", () => {
+    const { db, workspaceId, gatewayId } = setup();
+    const ownerId = seedWorkspace(db, { userHandle: "boss" }).userId;
+    const made = createAgent(db, {
+      workspaceId,
+      providerAgentId: "dev",
+      handle: "dev",
+      name: "Dev",
+      gatewayId,
+      createdBy: ownerId,
+    });
+    expect(made.createdBy).toBe(ownerId);
+    expect(getAgent(db, made.id)?.createdBy).toBe(ownerId);
+    const legacy = createAgent(db, {
+      workspaceId,
+      providerAgentId: "fin",
+      handle: "fin",
+      name: "Fin",
+      gatewayId,
+    });
+    expect(legacy.createdBy).toBeNull();
+    // OpenClaw 에이전트의 모델은 dodok 이 모른다
+    expect(made.model).toBeNull();
+  });
+
+  it("러너 에이전트의 모델은 member 에게도 실리고 정의(runnerAgent)는 admin 이상에게만", () => {
+    const { db, workspaceId } = setup();
+    const { agent } = createRunnerAgentForTest(db, {
+      workspaceId,
+      handle: "coder",
+      model: "claude-sonnet-5-5",
+    });
+    const forMember = agentForRole(agent, "member");
+    expect(forMember.model).toBe("claude-sonnet-5-5");
+    expect(forMember.runnerAgent).toBeUndefined();
+    expect(agentForRole(agent, "admin").runnerAgent?.model).toBe("claude-sonnet-5-5");
+    const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain" }).agent;
+    expect(agentForRole(plain, "member").model).toBeNull();
+  });
+
   it("createAgent 는 provider openclaw·enabled true 로 만들고 워크스페이스별로 나열한다", () => {
     const { db, workspaceId, gatewayId } = setup();
     const agent = createAgent(db, {

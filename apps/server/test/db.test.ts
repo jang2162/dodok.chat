@@ -256,6 +256,13 @@ describe("db", () => {
           authProvider: "local",
           avatarUrl: null,
           createdAt,
+          // 0033 — 기존 사람은 자동 상태·상태 메시지 없음·방해 금지 중 승인 받기(결정 7)
+          statusMode: "auto",
+          statusModeUntil: null,
+          statusEmoji: null,
+          statusText: null,
+          statusTextUntil: null,
+          dndAllowApprovals: true,
         });
         expect(db.select().from(memberships).all()).toMatchObject([{ userId: owner, role: "owner" }]);
         expect(db.select().from(invites).all()).toEqual([]);

@@ -1274,6 +1274,7 @@ function ensureDevFakeRunner(app: App): void {
     program: "claude",
     handle: DEV_FAKE_RUNNER_AGENT.handle,
     name: DEV_FAKE_RUNNER_AGENT.name,
+    createdBy: app.ownerUserId,
   });
 }
 
@@ -1401,6 +1402,7 @@ function ensureDevFakeAgents(app: App): void {
           handle: agent.handle,
           name: agent.handle,
           gatewayId: spec.id,
+          createdBy: app.ownerUserId,
         });
         // createAgent 는 dmAccess 를 받지 않는다(REST 등록과 같다 — 바꾸는 길은 PATCH 하나)
         if (agent.dmAccess) updateAgent(db, created.id, { dmAccess: agent.dmAccess });

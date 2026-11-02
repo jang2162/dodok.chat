@@ -40,6 +40,8 @@ type CreateAgentCommon = {
   enabled?: boolean;
   /** 없으면 표의 기본(admins) */
   dmAccess?: DmAccess;
+  /** 만든 사람 — REST·제어 도구·dev:fake 씨앗이 준다. 없으면 null(기록 없음 — 시험·옛 길) */
+  createdBy?: string | null;
 };
 
 export type CreateOpenClawAgentInput = CreateAgentCommon & {
@@ -105,6 +107,9 @@ export function rowToAgent(row: AgentRow): Agent {
       archivedAt: row.archivedAt?.toISOString() ?? null,
       dmAccess: row.dmAccess,
       program: row.program,
+      createdBy: row.createdBy,
+      // 모델은 모두에게 — 권한 모드·도구는 runnerAgent(admin 이상)에만 남는다(프로필 스펙 결정 3)
+      model: row.provider === "runner" ? row.model : null,
     },
     "agent",
   );
@@ -308,6 +313,7 @@ function commonValues(input: CreateAgentCommon) {
     basePrompt: input.basePrompt ?? null,
     enabled: input.enabled ?? true,
     ...(input.dmAccess === undefined ? {} : { dmAccess: input.dmAccess }),
+    createdBy: input.createdBy ?? null,
     createdAt: new Date(),
   };
 }

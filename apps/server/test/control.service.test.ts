@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { agents, approvals, messages, opsEvents } from "../src/db/schema.sqlite";
+import { getAgent } from "../src/modules/agents/service";
 import { addMember, getChannel } from "../src/modules/channels/service";
 import { userHandle } from "../src/modules/control/confirm";
 import { HANDLERS, type HandlerContext } from "../src/modules/control/handlers";
@@ -390,6 +391,27 @@ describe("제어 서비스", () => {
         { tool: "archive_agent", args: { agentId: data.agent.id } },
         { method: "DELETE", url: `/api/v1/agents/${other.id}` },
       );
+    });
+
+    it("register_agent·REST 등록은 만든 사람을 createdBy 로 남긴다 — 바깥 MCP 는 토큰 주인", async () => {
+      const viaTool = expectOk(
+        await call(pat(ada.id), "register_agent", {
+          providerAgentId: "ownedtool",
+          handle: "ownedtool",
+          name: "O",
+          gatewayId: FAKE_GATEWAY_ID,
+        }),
+      ) as { agent: { id: string; createdBy: string | null } };
+      expect(viaTool.agent.createdBy).toBe(ada.id);
+      expect(getAgent(app.db, viaTool.agent.id)?.createdBy).toBe(ada.id);
+      const rest = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/agents",
+        headers,
+        payload: { providerAgentId: "ownedrest", handle: "ownedrest", name: "O", gatewayId: FAKE_GATEWAY_ID },
+      });
+      expect(rest.statusCode).toBe(201);
+      expect(rest.json().agent.createdBy).toBe(owner);
     });
 
     it("register_agent 의 OpenClaw gatewayId 빠짐은 REST 와 같은 VALIDATION", async () => {
