@@ -56,11 +56,11 @@ const CODER: Agent = agentOf(uid(60), "coder", {
 });
 const LEGACY: Agent = agentOf(uid(62), "legacy", { name: "옛봇", createdBy: null, dmAccess: "everyone" });
 
-/** 역할마다 서버가 주는 모양 — member 에게는 runnerAgent·basePrompt 가 없다(서버 agentForRole) */
+/** 역할마다 서버가 주는 모양 — admin 미만에게는 runnerAgent·basePrompt 가 없다(서버 agentForRole) */
 function serve(role: "owner" | "admin" | "member") {
   const asMember = (a: Agent): Agent => {
     if (role !== "member") return a;
-    const { runnerAgent: _r, ...rest } = a;
+    const { runnerAgent: _r, basePrompt: _p, ...rest } = a;
     return rest;
   };
   const members: MemberRow[] = [

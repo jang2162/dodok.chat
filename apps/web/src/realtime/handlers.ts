@@ -283,11 +283,6 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 「러너」 탭 프로젝트 줄의 에이전트 수(보관·되살리기·다른 탭에서 만들기)
       void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
     },
-    /**
-     * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의
-     * 정본은 `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 비활성화됐으면(role 은 남는다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
-     * 멤버 표·대기 초대(가입은 초대를 쓰고, 강등·비활성화는 링크를 폐기한다)는 낡은 것으로 둔다 — 보고 있는 화면만 다시 부른다
-     */
     // 접속 점(프로필 스펙 3.3) — 스냅숏은 연결마다(재접속 포함) 통째로, 변화는 바뀐 줄만
     "presence.snapshot": ({ entries }) => usePresenceStore.getState().applySnapshot(entries),
     "presence.changed": ({ entries }) => usePresenceStore.getState().applyChanged(entries),
@@ -295,6 +290,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "me.status": ({ status }) => {
       qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, status });
     },
+    /**
+     * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의
+     * 정본은 `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 비활성화됐으면(role 은 남는다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
+     * 멤버 표·대기 초대(가입은 초대를 쓰고, 강등·비활성화는 링크를 폐기한다)는 낡은 것으로 둔다 — 보고 있는 화면만 다시 부른다
+     */
     "people.changed": ({ people }) => {
       qc.setQueryData(qk.people, people);
       void qc.invalidateQueries({ queryKey: qk.team });
