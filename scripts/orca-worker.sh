@@ -1339,13 +1339,13 @@ wait_rendered() {
 ensure_run() {
   local objective="$1" rid
   rid="$("$(orca_cli)" orchestration run-current --json 2>/dev/null \
-    | jq -r '.result.run.id // empty')"
+    | jq -r '.result.run.id // .result.runId // empty')"
   if [ -n "$rid" ]; then
     printf 'Run 바인딩 확인: %s\n' "$rid" >&2
     return 0
   fi
   rid="$("$(orca_cli)" orchestration run-create --objective "$objective" --json 2>/dev/null \
-    | jq -r '.result.run.id // empty')"
+    | jq -r '.result.run.id // .result.runId // empty')"
   [ -n "$rid" ] || {
     printf 'spawn: Run 을 만들지 못했다(run-create 실패). 워크트리를 만들지 않고 중단한다\n' >&2
     return 1
