@@ -6,6 +6,7 @@ import { useAgents, useRole } from "@/api/queries";
 import { MENTIONS_MAX, useChannelUnread } from "@/features/reads/useUnread";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
+import { WithPresence } from "@/features/presence/PresenceDot";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
 import {
@@ -63,10 +64,12 @@ export function DmSection({ onNavigate }: { onNavigate?: () => void }) {
 /** 에이전트 아바타 — 테두리는 에이전트 색(스펙 7.2), 사진이 없으면 이름 첫 글자 */
 export function DmAgentAvatar({ agent, size = "sm" }: { agent: Agent; size?: "sm" | "default" }) {
   return (
-    <Avatar size={size} className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
-      {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-      <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
-    </Avatar>
+    <WithPresence kind="agent" id={agent.id}>
+      <Avatar size={size} className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
+        {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
+        <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
+      </Avatar>
+    </WithPresence>
   );
 }
 

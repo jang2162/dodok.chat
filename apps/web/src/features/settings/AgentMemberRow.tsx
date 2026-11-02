@@ -3,9 +3,9 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
 import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
+import { DmAgentAvatar } from "@/features/dms/DmSection";
 import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
-import { agentColorVar } from "@/theme/agentColor";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Label } from "@/ui/label";
@@ -61,11 +61,7 @@ export function AgentMemberRow({
   return (
     <li className="flex flex-col gap-3 rounded-lg border bg-card p-3">
       <div className="flex items-start gap-2">
-        <span
-          aria-hidden
-          className="mt-1.5 size-2.5 shrink-0 rounded-full"
-          style={{ background: agentColorVar(agent.handle) }}
-        />
+        <DmAgentAvatar agent={agent} />
         <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="truncate font-medium">{agent.name}</span>

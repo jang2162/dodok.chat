@@ -8,6 +8,7 @@ import { Components } from "@/features/components/Components";
 import { useChannelArchived } from "@/features/channels/archived";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { useDmView } from "@/features/dms/context";
+import { WithPresence } from "@/features/presence/PresenceDot";
 import { ReactionChips } from "@/features/reactions/ReactionChips";
 import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
@@ -33,7 +34,7 @@ export function MessageTime({ iso, className }: { iso: string; className?: strin
 
 /** 아바타 36px(스펙 7.1). 에이전트는 테두리 2px 에이전트 색, 사람은 테두리 없음(스펙 7.2) */
 export function AuthorAvatar({ author }: { author: Author }) {
-  return (
+  const avatar = (
     <Avatar
       className={author.isAgent ? "size-9 border-2" : "size-9"}
       style={author.colorVar ? { borderColor: author.colorVar } : undefined}
@@ -41,6 +42,13 @@ export function AuthorAvatar({ author }: { author: Author }) {
       {author.avatarUrl && <AvatarImage src={author.avatarUrl} alt="" />}
       <AvatarFallback>{author.name.slice(0, 1)}</AvatarFallback>
     </Avatar>
+  );
+  // 접속 점(프로필 스펙 3.3) — 누구인지 모르는 작성자(시스템·자동화)는 점이 없다
+  if (!author.ref) return avatar;
+  return (
+    <WithPresence kind={author.ref.kind} id={author.ref.id}>
+      {avatar}
+    </WithPresence>
   );
 }
 

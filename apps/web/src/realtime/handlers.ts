@@ -19,6 +19,7 @@ import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { applyConversation } from "@/features/conversations/cache";
 import { bumpDm, cachedDmChannel, invalidateDms, isDmChannel } from "@/features/dms/queries";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
+import { usePresenceStore } from "@/features/presence/store";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -287,6 +288,13 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      * 정본은 `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 비활성화됐으면(role 은 남는다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
      * 멤버 표·대기 초대(가입은 초대를 쓰고, 강등·비활성화는 링크를 폐기한다)는 낡은 것으로 둔다 — 보고 있는 화면만 다시 부른다
      */
+    // 접속 점(프로필 스펙 3.3) — 스냅숏은 연결마다(재접속 포함) 통째로, 변화는 바뀐 줄만
+    "presence.snapshot": ({ entries }) => usePresenceStore.getState().applySnapshot(entries),
+    "presence.changed": ({ entries }) => usePresenceStore.getState().applyChanged(entries),
+    // 본인 상태 — 다른 탭·기기에서 바꾼 것을 「내 계정」·내 패널이 맞춘다
+    "me.status": ({ status }) => {
+      qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, status });
+    },
     "people.changed": ({ people }) => {
       qc.setQueryData(qk.people, people);
       void qc.invalidateQueries({ queryKey: qk.team });
