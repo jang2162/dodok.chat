@@ -4,6 +4,7 @@ import { computeBundleSha256 } from "./bundle-hash";
 import { DEFAULT_CONFIG_PATH, loadRunnerConfig, resolveConfigPath, RunnerConfigError } from "./config";
 import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connection";
 import { createClaudeDriver } from "./drivers/claude";
+import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
 
 // 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다
@@ -67,8 +68,9 @@ function main(): void {
   for (const w of warnings) logger.warn(`dodok-runner: ${w}`);
 
   // SDK 세션 도우미(getSessionInfo)는 CLI env 가 아니라 러너 프로세스의 CLAUDE_CONFIG_DIR 을 읽는다(ADR 0007 5.2).
-  // CLI 에 넘기는 env 는 drivers/claude/run.ts buildQueryOptions 가 따로 만든다 — 러너 env 전부가 가지 않는다
-  if (config.programs.claude) process.env.CLAUDE_CONFIG_DIR = config.programs.claude.configDir;
+  // 전용(configDir)이면 그 값으로 덮고, 평소면 셸 값을 두되 빈 값은 지운다 — CLI env 는 drivers/claude/run.ts buildQueryOptions 가
+  // 같은 규칙(drivers/claude/config-dir.ts)으로 따로 만든다 — 러너 env 전부가 가지 않는다
+  applyClaudeConfigDirEnv(process.env, config.programs.claude);
 
   // 루트는 라벨만 찍는다 — 로그를 남에게 보여 줄 수 있다
   logger.info(

@@ -424,7 +424,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const spec: RunSpec = {
       start,
       workdir: ceiling.workdir,
-      configDir: programCeiling.configDir,
+      ...(programCeiling.configDir === undefined ? {} : { configDir: programCeiling.configDir }),
       model: agent.model,
       permissionMode: agent.permissionMode,
       allowedTools: agent.allowedTools,

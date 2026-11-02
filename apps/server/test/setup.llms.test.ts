@@ -183,6 +183,9 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
       expect.arrayContaining(["serverUrl", "tokenFile", "roots", "programs"]),
     );
     expect((config as { serverUrl: string }).serverUrl).toBe("https://chat.example.com");
+    // 기본은 평소 claude 로그인 — 예시에 configDir 이 없다(전용 로그인을 원할 때만 적는다)
+    expect(parsed.data?.programs.claude).toBeDefined();
+    expect(parsed.data?.programs.claude?.configDir).toBeUndefined();
     expect(runner).toContain("npm i -g @dodok/runner");
     expect(runner).not.toContain("runner.tgz");
   });
@@ -293,11 +296,20 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
   const gateway = section(body, "OpenClaw Gateway 호스트");
   const runner = section(body, "러너 머신");
 
+  it("러너 3번 — 평소 로그인을 claude auth status 로 보고, 전용 로그인은 사람이 원한다고 할 때만", () => {
+    const step = runner.slice(runner.indexOf("\n3. "), runner.indexOf("\n4. "));
+    expect(step).toContain("러너는 이 머신의 평소 Claude Code 로그인을 쓴다");
+    expect(blockWith(bashBlocks(step), "auth status")).toMatch(/^claude auth status\n/);
+    const dedicated = step.indexOf("전용 로그인을 원한다고 하면");
+    expect(dedicated).toBeGreaterThan(-1);
+    expect(step.indexOf("claude auth status")).toBeLessThan(dedicated);
+    // 전용 로그인 디렉터리·configDir 은 그 구절 뒤에만 나온다 — 기본 길에는 없다
+    expect(step.indexOf("CLAUDE_CONFIG_DIR=~/.dodok-runner/claude")).toBeGreaterThan(dedicated);
+    expect(step.indexOf("configDir")).toBeGreaterThan(dedicated);
+    for (const block of bashBlocks(step)) expect(block).not.toContain("CLAUDE_CONFIG_DIR");
+  });
+
   it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 docker-deploy.md 「러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
-    const runnerSteps = bashBlocks(runner);
-    expect(blockWith(runnerSteps, "CLAUDE_CONFIG_DIR=")).toContain(
-      "CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude\n",
-    );
     const deploy = readFileSync(join(ROOT, "docs/guides/docker-deploy.md"), "utf8");
     const line = deploy
       .split("\n")

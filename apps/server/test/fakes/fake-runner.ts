@@ -198,7 +198,7 @@ export type FakeRunner = {
 /** 가짜 러너가 알리는 루트 — 프로젝트는 이 루트 안에 만든다 */
 export const FAKE_RUNNER_ROOT = { id: "src", label: "내 저장소들" } as const;
 
-/** 서버가 세션 id 를 정하는 프로그램(Claude 드라이버와 같은 능력) */
+/** 서버가 세션 id 를 정하는 프로그램(Claude 드라이버와 같은 능력). login 은 싣지 않는다 — 옛 러너 꼴 회귀 */
 export const FAKE_CLAUDE_PROGRAM: RunnerProgramStatus = {
   program: "claude",
   available: true,

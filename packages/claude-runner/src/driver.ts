@@ -16,8 +16,8 @@ export type RunSpec = {
   start: RunnerRunStart;
   /** 프로젝트 디렉터리의 realpath — 루트 안임을 천장 검사가 확인했다 */
   workdir: string;
-  /** 그 프로그램의 로그인 디렉터리(설정 programs.<program>.configDir) */
-  configDir: string;
+  /** 그 프로그램의 전용 로그인 디렉터리(설정 programs.<program>.configDir). 없으면 평소 로그인(러너 프로세스의 CLAUDE_CONFIG_DIR 또는 ~/.claude) */
+  configDir?: string;
   model: string | null;
   permissionMode: RunnerPermissionMode;
   /** null 이면 미리 허용한 도구가 없다 */
@@ -26,7 +26,10 @@ export type RunSpec = {
   disallowedTools: string[];
 };
 
-export type ProgramDetection = Pick<RunnerProgramStatus, "available" | "version" | "auth" | "reason">;
+export type ProgramDetection = Pick<
+  RunnerProgramStatus,
+  "available" | "version" | "auth" | "reason" | "login"
+>;
 
 export interface ProgramDriver {
   program: RunnerProgram;

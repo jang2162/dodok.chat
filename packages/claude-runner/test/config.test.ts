@@ -115,6 +115,18 @@ describe("loadRunnerConfig", () => {
     expect(LEGACY_AGENTS_MESSAGE).toBe(e.message);
   });
 
+  it("programs.claude.configDir 이 없어도 받는다 — 해석된 값에도 없다", () => {
+    const { config } = load({ ...baseConfig, programs: { claude: {} } });
+    expect(config.programs.claude).toBeDefined();
+    expect(config.programs.claude?.configDir).toBeUndefined();
+    expect(config.programs.claude && "configDir" in config.programs.claude).toBe(false);
+  });
+
+  it("configDir 빈 문자열은 거절", () => {
+    const e = errorOf(() => load({ ...baseConfig, programs: { claude: { configDir: "" } } }));
+    expect(e.message).toContain("programs.claude.configDir");
+  });
+
   it("권한 상한에 bypassPermissions 는 받지 않는다", () => {
     const e = errorOf(() =>
       load({

@@ -72,6 +72,24 @@ describe("러너 카드", () => {
     );
   });
 
+  it("프로그램 줄 — login default 면 로그인 상태 뒤에 (평소 로그인)", async () => {
+    stub({ runners: [runnerOf(1, { label: "맥북", programs: [programOf({ login: "default" })] })] });
+    renderRunnersPage();
+    const mac = await card("맥북");
+    expect(within(mac).getByRole("listitem", { name: "Claude Code" })).toHaveTextContent(
+      "Claude Code 2.1.283 · 로그인됨 (평소 로그인) · 권한 상한 acceptEdits",
+    );
+  });
+
+  it("프로그램 줄 — login dedicated 면 (전용 로그인)", async () => {
+    stub({ runners: [runnerOf(1, { label: "맥북", programs: [programOf({ login: "dedicated" })] })] });
+    renderRunnersPage();
+    const mac = await card("맥북");
+    const line = within(mac).getByRole("listitem", { name: "Claude Code" });
+    expect(line).toHaveTextContent("Claude Code 2.1.283 · 로그인됨 (전용 로그인) · 권한 상한 acceptEdits");
+    expect(line).not.toHaveTextContent("평소 로그인");
+  });
+
   it("끊긴 러너는 「끊김」 하나 — 판본·프로그램이 없고 프로젝트 추가가 잠긴다. 폐기한 러너는 옮기라는 안내", async () => {
     stub({
       runners: [

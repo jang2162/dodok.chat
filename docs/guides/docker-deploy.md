@@ -414,13 +414,14 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 4번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다. 토큰 하나 = 러너 하나다.
 2. **[R] 설치** — npm 레지스트리에서 `npm i -g @dodok/runner`(연결 페이지 「설치」 1단계의 「설치 명령 복사」가 같은 줄이다). `dodok-runner --version` 으로 판본을 본다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
    - **서버와 같은 빌드가 필요할 때** — npm 판은 `runner-v<판본>` 태그를 민 커밋의 빌드라(`docs/guides/runner-release.md`) 서버와 커밋이 다를 수 있다. 서버 이미지는 같은 커밋의 러너 tgz 를 품고 내려준다: 연결 페이지 「설치」 1단계의 접힌 「서버와 같은 빌드로 설치」를 펼쳐 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`(그 안의 「파일 설치 명령 복사」가 같은 줄이다). 서버에 러너 파일이 없으면 그 자리에 만드는 명령(`pnpm -F @dodok/runner run pack:runner`)이 보인다.
-3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**(4번 `programs.claude.configDir`)의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
+3. **[R] Claude 로그인** — 러너는 이 머신의 **평소 Claude Code 로그인**(`~/.claude`)을 쓴다. `claude` 로 로그인돼 있으면 건너뛴다. 아니면 `claude` 를 열어 `/login` 을 마치고 나온다.
    ```bash
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
+   claude
    # claude 명령이 없으면 러너가 품은 번들 CLI 로(플랫폼별 패키지 디렉터리 이름은 `ls "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai"` 로 본다 — 아래 경로의 이름과 다르면 그 이름으로 바꾼다):
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    ```
-   러너 **전용 Claude 계정**을 권한다 — 아래 「드러나는 것」 1.
+   러너 런은 평소 계정으로 돈다 — 계정 이메일이 에이전트에게 보이고(아래 「드러나는 것」 1), 러너 세션의 대화 기록이 이 머신의 `claude --resume` 목록에도 남는다. ⚠ 채널에서 쓰는 러너 세션을 터미널에서 이어 쓰지 않는다 — 대화가 섞인다.
+   - **러너 전용 로그인을 따로 쓰려면** — 위 명령 앞에 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude ` 를 붙여(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude`) 그 디렉터리에 로그인하고, 4번 설정의 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다. 전용 로그인이면 대화 기록도 그 디렉터리에 따로 남고, macOS 키체인 항목도 디렉터리마다 따로다(ADR 0007 「함정」). 이메일이 걱정되면 러너 전용 Claude 계정으로 로그인한다.
 4. **[R] 설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 1번의 조각에서 `roots` 를 고친다. 정본은 `packages/claude-runner/src/config.ts` 의 `RunnerConfig` — 모르는 키는 거절한다.
    ```json
    {
@@ -433,7 +434,6 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
      "browse": true,
      "programs": {
        "claude": {
-         "configDir": "~/.dodok-runner/claude",
          "maxPermissionMode": "default",
          "disallowedTools": [],
          "allowedToolsCeiling": null
@@ -445,7 +445,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
    - `maxConcurrentRuns` — 동시 CLI 수(1~16, 기본 3). 런 중 CLI 하나가 약 300 MiB 다. 넘치면 서버 쪽에 대기(`RUN_QUEUED`)로 보이고 자리가 날 때까지 기다린다 — 기다림도 런 상한(10분) 안이다.
    - `roots` — 에이전트가 돌 수 있는 디렉터리(1~16개). **루트가 경계다** — 앱의 프로젝트는 루트 안의 디렉터리이고(숨김 디렉터리도 경로를 적으면 프로젝트로 만들 수 있다), 루트 밖(`..`·밖을 가리키는 링크)은 러너가 거절한다. `path` 는 있는 디렉터리여야 하고 러너는 링크를 푼 자리로 쥔다. `id` 는 영문 소문자·숫자·`-`(1~32자), 러너 안에서 유일하다 — ⚠ **바꾸거나 지우면 그 루트의 프로젝트가 모두 「루트 없음」이 되고** 그 에이전트를 부르면 「러너 설정이 이 에이전트를 허용하지 않습니다(root)」 카드다(되돌리면 「다시 실행」이 돈다). ⚠ **`label` 을 꼭 적는다** — 서버로 가는 루트 정보는 `id`·`label` 뿐인데, 안 적으면 디렉터리 이름(홈이면 계정 이름)이 라벨로 간다. 경로는 서버에 가지 않는다.
    - `browse` — `false` 면 앱의 디렉터리 둘러보기를 거절한다(경로를 직접 적어 프로젝트를 더하는 것은 된다).
-   - `programs` — 적지 않은 프로그램은 꺼진 것이다. 지금은 `claude` 하나다. `configDir` 은 3번의 로그인 디렉터리.
+   - `programs` — 적지 않은 프로그램은 꺼진 것이다. 지금은 `claude` 하나다. `configDir` 은 선택이다 — 적지 않으면 평소 Claude Code 로그인(`~/.claude`, 러너를 띄운 셸에 `CLAUDE_CONFIG_DIR` 이 있으면 그 자리), 적으면 그 디렉터리의 전용 로그인(3번 「러너 전용 로그인을 따로 쓰려면」). 빈 문자열은 거절한다 — 평소 로그인을 쓰려면 줄을 지운다. 「러너」 탭의 프로그램 줄에 로그인 상태 뒤 「(평소 로그인)」·「(전용 로그인)」으로 보인다.
    - `maxPermissionMode` — 앱이 에이전트에 줄 수 있는 권한 모드의 상한. 순서는 `plan` < `dontAsk` < `default` < `acceptEdits`(기본 `default`), `bypassPermissions` 는 받지 않는다(승인 카드가 뜨지 않게 된다). `allowedToolsCeiling` 이 배열이면 앱의 「허용 도구」는 그 부분집합이어야 하고(`null` 이면 상한 없음 — 그래도 권한 모드와 승인이 남는다), `disallowedTools` 는 늘 막는다. **에이전트가 이 머신에서 할 수 있는 일의 천장은 이 파일**이다 — 서버나 러너 토큰이 털려도 이 범위를 넘지 못한다. 천장을 넘는 에이전트는 런마다 러너가 거절하고 채널에 「러너 설정이 이 에이전트를 허용하지 않습니다(<항목>) — 러너 머신의 설정을 확인하세요」 + 「다시 실행」 카드가 남는다(항목은 `root`·`path`·`program`·`permissionMode`·`allowedTools`).
    - 권한 모드에서 미리 허용하지 않은 쓰기 도구(파일 쓰기·명령 실행 등)를 CLI 가 물으면 채널에 **도구 승인 카드**가 뜨고 admin 이상이 결정한다(10분 안에 아무도 안 누르면 거절). 「항상 허용」은 그 세션에만 걸리고 이 파일·작업 디렉터리의 설정에는 쓰지 않는다. CLI 가 읽기 전용으로 보는 명령 일부(`git log` 등)는 규칙이 없어도 묻지 않고 돌린다(ADR 0007 「질문별」 권한 콜백). 러너는 `mcp__dodok__post`(채널에 카드·파일 보내기)를 늘 허용하고, 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)는 늘 막는다 — 이 파일의 `disallowedTools` 와 합친다(정본 `packages/claude-runner/src/drivers/claude/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`).
    - 러너는 작업 디렉터리의 `CLAUDE.md`·`.claude/settings.json` 을 읽지 않는다(`settingSources: []`). 계정의 claude.ai 커넥터도 붙이지 않는다.
@@ -456,12 +456,12 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 
 **AI 에게 맡기는 길** — [R] 에서 셸을 쓰는 AI 에이전트가 돌면 2~5번을 그 AI 에게 맡길 수 있다. 1번 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [R] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: <원문>`(원문이 들어 있다 — 체크리스트 4 「AI 에게 맡기는 길」과 같은 규칙). `llms.txt` 의 「러너 머신」 절은 토큰을 `~/.dodok-runner/token`(0600)에 두고, 2번처럼 npm 레지스트리에서 `@dodok/runner` 를 설치해(옛 이름 uninstall 을 앞에 붙여) `dodok-runner --version` 을 본 뒤, 설정 파일을 만들고 `dodok-runner` 를 띄운다. 서버가 품은 러너 tgz 는 받지 않으므로 서버에 그 파일이 없어도 이 절은 그대로 나온다. 서버와 같은 빌드가 필요하면 사람이 2번의 「서버와 같은 빌드가 필요할 때」로 설치한다 — 토큰으로 받는 `GET /api/v1/setup/runner.tgz`(`Authorization: Bearer <러너 토큰>` — owner 세션 대신. 폐기된 토큰·브리지 토큰·틀린 값은 401 이고 브리지 실패 카운터에 센다)는 그대로 있다. 6·7번(프로젝트·에이전트)은 사람이 앱에서 한다.
 
-- **AI 가 멈추고 사람에게 묻는 자리** — 3번 러너 전용 로그인(사람이 한다 — AI 는 명령을 보여 주고 기다린다. `claude` 명령이 없으면 위 번들 CLI 줄을 보여 준다), 4번 `roots` 의 경로·라벨·id, 2번 설치가 실패할 때(권한 오류 `EACCES` 포함 — `sudo` 를 쓰지 않는다). 5번 `dodok-runner` 는 끝나지 않고 전경에 머무니, 출력에 `연결됨` 이 보이면 AI 가 사람에게 넘긴다(끄기는 Ctrl+C) — 사람이 「러너」 탭에서 그 러너가 「연결됨」인지 본다.
+- **AI 가 멈추고 사람에게 묻는 자리** — 3번 Claude 로그인(AI 가 `claude auth status` 로 로그인돼 있는지 보고 — `claude` 명령이 없으면 위 번들 CLI 줄로 — 안 돼 있으면 사람이 `/login` 한다. AI 는 기다린다. 전용 로그인은 사람이 원한다고 할 때만), 4번 `roots` 의 경로·라벨·id, 2번 설치가 실패할 때(권한 오류 `EACCES` 포함 — `sudo` 를 쓰지 않는다). 5번 `dodok-runner` 는 끝나지 않고 전경에 머무니, 출력에 `연결됨` 이 보이면 AI 가 사람에게 넘긴다(끄기는 Ctrl+C) — 사람이 「러너」 탭에서 그 러너가 「연결됨」인지 본다.
 - 안내서의 설정 예시는 4번과 같은 꼴이다(`maxPermissionMode` `default`·도구 상한 없음). 상한을 더 낮추거나 도구 상한을 두려면 사람이 4번대로 고친다.
 
 **드러나는 것 넷** — 연결 페이지 같은 블록에도 적혀 있다.
 
-1. 러너 계정의 **이메일이 에이전트 문맥에 들어간다**(끌 방법이 없다) — 에이전트가 채널에 그 이메일을 쓸 수 있다. 러너 전용 계정을 권한다.
+1. 러너가 쓰는 Claude 계정의 **이메일이 에이전트 문맥에 들어간다**(끌 방법이 없다) — 에이전트가 채널에 그 이메일을 쓸 수 있다. 기본은 이 머신의 평소 계정이다 — 걱정되면 러너 전용 계정으로 전용 로그인(3번)을 쓴다.
 2. 채널 멤버는 **에이전트를 통해 그 프로젝트 디렉터리 안의 파일을 읽을 수 있다** — 그 에이전트를 어느 채널에 둘지는 admin 이 판단한다.
 3. **토큰 하나가 그 러너의 모든 에이전트를 맡는다** — 토큰은 믿는 머신에만 준다. 새는 것이 걱정되면 「다시 발급」으로 원문을 바꾼다(아래 — 프로젝트·에이전트는 그대로).
 4. **서버 쪽 admin(과 서버를 손에 넣은 사람)은 루트 안 아무 디렉터리에서, 권한 상한까지의 도구로 에이전트를 돌릴 수 있다.** 루트는 좁게, 상한은 낮게 둔다.
@@ -824,7 +824,7 @@ docker compose ps     # app (healthy)
 | 러너가 `서버가 이 러너 연결을 끊었습니다 — 같은 토큰으로 다른 러너가 붙었거나 토큰이 폐기됐습니다` 로 끝남 | 같은 토큰을 두 머신에서 썼거나 연결 페이지에서 폐기했다 | 머신마다 토큰을 따로 발급한다 |
 | 러너가 `서버가 러너를 거절했습니다(PROTOCOL_MISMATCH: …) — 서버와 러너 판본을 맞추세요` 로 끝남 | 서버를 올렸는데 러너가 옛 판이다(또는 그 반대) | 「러너 설치」 2 로 러너를 다시 설치한다 — npm 판이 서버보다 앞서거나 뒤처졌으면 2번의 「서버와 같은 빌드가 필요할 때」로 서버가 품은 tgz 를 깐다 |
 | 러너 에이전트를 멘션하면 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 | 그 에이전트의 러너가 붙어 있지 않다(꺼짐·끊김), 또는 런이 도는 중에 러너가 꺼지거나 끊겼다(토큰 다시 발급 포함) | 러너를 띄운 뒤 「다시 실행」 |
-| 「@<에이전트> 실행이 실패했습니다: 러너의 Claude Code 로그인을 확인하세요」(런 오류 코드 `PROVIDER_AUTH` — 이름은 그 에이전트의 프로그램) | 러너 전용 로그인이 없거나 만료됐다 | [R] 에서 「러너 설치」 3 의 로그인을 다시 한 뒤 카드의 「다시 실행」 |
+| 「@<에이전트> 실행이 실패했습니다: 러너의 Claude Code 로그인을 확인하세요」(런 오류 코드 `PROVIDER_AUTH` — 이름은 그 에이전트의 프로그램) | 러너가 쓰는 Claude 로그인(평소 로그인 또는 `configDir` 의 전용 로그인)이 없거나 만료됐다 | [R] 에서 「러너 설치」 3 의 로그인을 다시 한 뒤 카드의 「다시 실행」 — 평소 로그인이면 `claude` 로, 설정에 `configDir` 을 적었으면 `CLAUDE_CONFIG_DIR=<그 디렉터리> claude` 로 `/login` 한다 |
 
 ## 보안
 

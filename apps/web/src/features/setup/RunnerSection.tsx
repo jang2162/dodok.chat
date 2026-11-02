@@ -15,13 +15,16 @@ import { CopyBlock, Section } from "./sections";
 
 /** 러너 tgz 를 만드는 명령 — 서버에 파일이 없을 때 */
 export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/runner run pack:runner";
-/** 러너 전용 로그인(러너 스펙 5장 설치 안내) — 사람의 `~/.claude` 와 섞지 않는다 */
-export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
-/**
- * `claude` 가 PATH 에 없을 때 — 러너가 품은 번들 CLI 로 같은 로그인(docker-deploy.md 「러너 설치」와 같은 명령).
- * 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다 — 그 문서가 확인하는 법을 적는다
- */
-export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
+/** 평소 Claude Code 로그인 — 러너는 기본으로 이 머신의 `~/.claude` 로그인을 쓴다(설정에 configDir 이 없을 때) */
+export const RUNNER_LOGIN_COMMAND = "claude";
+/** 러너가 품은 번들 CLI — `claude` 가 PATH 에 없을 때. 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다(docker-deploy.md 「러너 설치」) */
+const RUNNER_BUNDLED_CLI = `"$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
+/** `claude` 가 PATH 에 없을 때 — 번들 CLI 로 같은 평소 자리에 로그인(docker-deploy.md 「러너 설치」와 같은 명령) */
+export const RUNNER_LOGIN_BUNDLED_COMMAND = RUNNER_BUNDLED_CLI;
+/** 러너 전용 로그인을 원할 때 — 그 디렉터리에 로그인하고 설정에 configDir 을 적는다 */
+export const RUNNER_DEDICATED_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
+/** 전용 로그인의 번들 CLI 판 */
+const RUNNER_DEDICATED_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} ${RUNNER_BUNDLED_CLI}`;
 /** npm 레지스트리 설치 명령 — 설치의 기본 길 */
 export const RUNNER_NPM_INSTALL_COMMAND = "npm i -g @dodok/runner";
 /** 받은 tgz 설치 명령(「서버와 같은 빌드로 설치」) */
@@ -106,7 +109,27 @@ function SameBuildInstall({ file }: { file: SetupStatus["runners"]["runnerFile"]
   );
 }
 
-/** 설치 안내(러너 스펙 5장) — npm 설치(서버와 같은 빌드는 접힌 대안) → 전용 로그인 → 설정 파일 → 실행 */
+/**
+ * 전용 로그인 — 원하는 사람만(러너 평소 로그인 스펙 4.4). 접어 둔다: 그 디렉터리에 로그인하고 설정에 configDir 을 적는다
+ */
+function DedicatedLogin() {
+  return (
+    <details aria-label="러너 전용 로그인을 따로 쓰려면" className="rounded-md border px-3 py-2">
+      <summary className="cursor-pointer select-none">러너 전용 로그인을 따로 쓰려면</summary>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <CopyBlock text={RUNNER_DEDICATED_LOGIN_COMMAND} label="전용 로그인 명령 복사" />
+        <CopyBlock text={RUNNER_DEDICATED_LOGIN_BUNDLED_COMMAND} label="전용 로그인 번들 CLI 명령 복사" />
+        <p className="text-muted-foreground">
+          설정의 <code className="font-mono">programs.claude</code> 에{" "}
+          <code className="font-mono">"configDir": "{RUNNER_CLAUDE_DIR}"</code> 를 적습니다. 전용 로그인이면
+          대화 기록도 그 디렉터리에 따로 남습니다.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+/** 설치 안내(러너 스펙 5장) — npm 설치(서버와 같은 빌드는 접힌 대안) → 로그인(평소, 전용은 접힌 선택) → 설정 파일 → 실행 */
 function InstallSteps({ status }: { status: SetupStatus }) {
   const config = runnerConfigExample({
     serverUrl: publicOriginOf(status.bridge.publicUrl),
@@ -122,12 +145,21 @@ function InstallSteps({ status }: { status: SetupStatus }) {
           <SameBuildInstall file={status.runners.runnerFile} />
         </li>
         <li className="flex flex-col gap-1.5">
-          <p>러너 전용 Claude 계정으로 로그인합니다. 로그인을 마치면 나옵니다.</p>
+          <p>
+            러너는 이 머신의 평소 Claude Code 로그인을 씁니다. <code className="font-mono">claude</code> 로
+            로그인돼 있으면 건너뜁니다. 아니면 <code className="font-mono">claude</code> 를 열어{" "}
+            <code className="font-mono">/login</code> 을 마치고 나옵니다.
+          </p>
           <CopyBlock text={RUNNER_LOGIN_COMMAND} label="로그인 명령 복사" />
           <p className="text-muted-foreground">
             <code className="font-mono">claude</code> 명령이 없으면 러너가 품은 번들 CLI 로 로그인합니다.
           </p>
           <CopyBlock text={RUNNER_LOGIN_BUNDLED_COMMAND} label="번들 CLI 로그인 명령 복사" />
+          <p className="text-muted-foreground">
+            러너 런은 평소 계정으로 돌기 때문에 계정 이메일이 에이전트에게 보이고, 대화 기록이 이 머신의{" "}
+            <code className="font-mono">claude --resume</code> 목록에도 남습니다.
+          </p>
+          <DedicatedLogin />
         </li>
         <li className="flex flex-col gap-1.5">
           <p>
@@ -174,7 +206,9 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
         <p className="font-medium">러너를 붙이면 드러나는 것</p>
         <ul className="flex list-disc flex-col gap-1 pl-5">
           <li>
-            러너 계정의 이메일이 에이전트 문맥에 들어갑니다(끌 방법이 없습니다). 러너 전용 계정을 권합니다.
+            러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다(끌 방법이 없습니다). 기본은 이
+            머신의 평소 계정입니다 — 걱정되면 러너 전용 계정으로 전용 로그인(설치 2단계의 「러너 전용 로그인을
+            따로 쓰려면」)을 씁니다.
           </li>
           <li>
             채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다. 그 에이전트를 어느

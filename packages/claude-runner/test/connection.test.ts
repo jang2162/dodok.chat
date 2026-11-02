@@ -174,6 +174,8 @@ async function setup(
     programs?: ResolvedRunnerConfig["programs"];
     /** 만든 claude 드라이버를 바꿔 끼운다(detect 가 던지는 드라이버 등) */
     driver?: (claude: ProgramDriver) => ProgramDriver;
+    /** claude 드라이버의 baseEnv — detect 가 평소 자리(HOME/.claude·CLAUDE_CONFIG_DIR)를 여기서 읽는다 */
+    baseEnv?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const server = await startFakeServer();
@@ -198,7 +200,7 @@ async function setup(
         createClaudeDriver({
           sdk: fake,
           claudeCodeVersion: "2.1.283",
-          baseEnv: { PATH: "/usr/bin" },
+          baseEnv: opts.baseEnv ?? { PATH: "/usr/bin" },
           closeGraceMs: 30,
         }),
       ),
@@ -246,6 +248,7 @@ describe("startRunnerConnection", () => {
           version: "2.1.283",
           // 로그인 디렉터리(/home/u/…)가 이 머신에 없다
           auth: "missing",
+          login: "dedicated",
           reason: expect.any(String),
           capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
           ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
@@ -281,6 +284,7 @@ describe("startRunnerConnection", () => {
         available: true,
         version: "2.1.283",
         auth: "unknown",
+        login: "dedicated",
         capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
         ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
       },
@@ -294,6 +298,58 @@ describe("startRunnerConnection", () => {
       },
     ]);
     expect(JSON.stringify(server.hellos[0])).not.toContain(base);
+  });
+
+  /** configDir 을 뺀 claude 천장 — 평소 로그인 */
+  const { configDir: _dedicated, ...DEFAULT_LOGIN_CEILING } = CLAUDE_CEILING;
+
+  /** 임시 HOME — withClaude 면 그 안에 .claude/ 를 만든다 */
+  function tempHome(withClaude: boolean) {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "dodok-home-")));
+    if (withClaude) mkdirSync(join(home, ".claude"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    return home;
+  }
+
+  it("hello — configDir 이 없으면 login default, 평소 자리(HOME/.claude)가 있으면 auth unknown", async () => {
+    const home = tempHome(true);
+    const { server } = await setup({
+      programs: { claude: DEFAULT_LOGIN_CEILING },
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const claude = server.hellos[0]!.programs[0]!;
+    expect(claude).toMatchObject({ program: "claude", auth: "unknown", login: "default" });
+    expect(claude.reason).toBeUndefined();
+    expect(JSON.stringify(server.hellos[0])).not.toContain(home);
+  });
+
+  it("hello — configDir 이 없고 평소 자리가 없으면 missing 과 평소 사유", async () => {
+    const home = tempHome(false);
+    const { server } = await setup({
+      programs: { claude: DEFAULT_LOGIN_CEILING },
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).toMatchObject({
+      program: "claude",
+      auth: "missing",
+      login: "default",
+      reason: "Claude Code 로그인 디렉터리가 없습니다 — 러너 머신에서 claude 로 /login 하세요",
+    });
+    expect(JSON.stringify(server.hellos[0])).not.toContain(home);
+  });
+
+  it("hello — configDir 이 없고 CLAUDE_CONFIG_DIR 이 있으면 그 디렉터리를 본다", async () => {
+    const home = tempHome(false);
+    const shellDir = tempHome(false);
+    const { server } = await setup({
+      programs: { claude: DEFAULT_LOGIN_CEILING },
+      baseEnv: { PATH: "/usr/bin", HOME: home, CLAUDE_CONFIG_DIR: shellDir },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).toMatchObject({ auth: "unknown", login: "default" });
+    expect(JSON.stringify(server.hellos[0])).not.toContain(shellDir);
   });
 
   it("run.start → 가짜 query 대본 → 서버가 run.event·run.final 을 받는다", async () => {

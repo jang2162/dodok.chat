@@ -149,6 +149,19 @@ describe("RunnerHello", () => {
     expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(true);
   });
 
+  it("hello 프로그램 상태 — login 은 default·dedicated 를 받고 없어도 받는다", () => {
+    for (const login of ["default", "dedicated"] as const) {
+      const programs = [{ ...HELLO.programs[0], login }];
+      expect(RunnerHello.parse({ ...HELLO, programs }).programs[0]?.login).toBe(login);
+    }
+    expect(RunnerHello.parse(HELLO).programs[0]?.login).toBeUndefined();
+  });
+
+  it("hello 프로그램 상태 — 모르는 login 값은 거절", () => {
+    const programs = [{ ...HELLO.programs[0], login: "shared" }];
+    expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(false);
+  });
+
   it("상한 권한 모드에 bypassPermissions 는 없다", () => {
     const programs = [
       {

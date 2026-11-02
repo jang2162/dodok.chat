@@ -27,7 +27,7 @@ export type LlmsInput = {
 
 /** 노드에서 브리지 토큰을 잠깐 두는 자리 — 계정 설정에 넣은 뒤 지운다 */
 const BRIDGE_TOKEN_FILE = "~/.dodok-bridge-token";
-/** 러너 전용 Claude 로그인 디렉터리(러너 설정 `programs.claude.configDir`) — 사람의 `~/.claude` 와 섞지 않는다 */
+/** 러너 전용 Claude 로그인을 원할 때의 디렉터리(러너 설정 `programs.claude.configDir`) — 기본은 평소 로그인(`~/.claude`) */
 const RUNNER_CLAUDE_DIR = "~/.dodok-runner/claude";
 const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
 /**
@@ -119,8 +119,8 @@ function runnerSection(input: LlmsInput): string {
     roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
     browse: true,
     programs: {
+      // configDir 없음 — 평소 claude 로그인. 전용 로그인은 사람이 원할 때만 3번에서 더한다
       claude: {
-        configDir: RUNNER_CLAUDE_DIR,
         maxPermissionMode: "default",
         disallowedTools: [],
         allowedToolsCeiling: null,
@@ -146,11 +146,11 @@ function runnerSection(input: LlmsInput): string {
    dodok-runner --version
    \`\`\`
 
-3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
+3. 러너는 이 머신의 평소 Claude Code 로그인을 쓴다. 아래 첫 줄(claude auth status)로 로그인돼 있는지 본다(출력 JSON 의 loggedIn). 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 로 본다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다. 로그인돼 있으면 4번으로 간다. 안 돼 있으면 로그인은 사람이 한다 — 사람에게 claude(없으면 둘째 줄에서 auth status 를 뺀 번들 CLI)를 열어 /login 을 마치게 하고, 마쳤다고 할 때까지 멈춘다. 전용 로그인을 쓸지 먼저 묻지 않는다. 사람이 전용 로그인을 원한다고 하면 그때만 그 명령 앞에 CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} 를 붙여 로그인하게 하고, 4번 설정의 programs.claude 에 "configDir": "${RUNNER_CLAUDE_DIR}" 를 더한다(전용 로그인이면 대화 기록도 그 디렉터리에 따로 남는다).
 
    \`\`\`bash
-   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude
-   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   claude auth status
+   "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude" auth status
    \`\`\`
 
 4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. roots 의 경로(에이전트가 돌 수 있는 디렉터리 — 좁게)·라벨과 id(영문 소문자·숫자·-)는 사람에게 묻는다. 에이전트는 이 파일이 아니라 dodok 앱에서 만든다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).

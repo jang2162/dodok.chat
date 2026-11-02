@@ -1,6 +1,9 @@
 import { Id } from "@dodok/shared";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ProgramDriver } from "../../driver";
+import { resolveClaudeConfigDir } from "./config-dir";
 import { CLAUDE_CODE_LABEL, type ClaudeRunSpec, runOnce } from "./run";
 import type { SdkPort } from "./sdk";
 
@@ -31,17 +34,22 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
       mcpTools: true,
       costs: true,
     },
-    // CLI 는 SDK 에 함께 깔려 늘 있다. 로그인 자격 증명은 읽지 않는다 — 로그인 디렉터리가 없을 때만 missing, 그 밖은 unknown
-    // (로그인 여부는 첫 런의 PROVIDER_AUTH 로 안다)
+    // CLI 는 SDK 에 함께 깔려 늘 있다. 로그인 자격 증명은 읽지 않는다 — 유효 설정 자리(전용이면 configDir, 평소면 셸의
+    // CLAUDE_CONFIG_DIR 또는 HOME/.claude)의 디렉터리가 없을 때만 missing, 그 밖은 unknown(로그인 여부는 첫 런의 PROVIDER_AUTH 로 안다).
+    // 사유에는 경로 원문을 싣지 않는다
     async detect(ceiling) {
-      return existsSync(ceiling.configDir)
-        ? { available: true, version: opts.claudeCodeVersion, auth: "unknown" }
-        : {
-            available: true,
-            version: opts.claudeCodeVersion,
-            auth: "missing",
-            reason: "로그인 디렉터리가 없습니다 — 러너 머신에서 그 디렉터리로 claude /login 하세요",
-          };
+      const env = opts.baseEnv ?? process.env;
+      const { login, dir } = resolveClaudeConfigDir(ceiling, env);
+      const base = { available: true, version: opts.claudeCodeVersion, login } as const;
+      if (existsSync(dir ?? join(env.HOME || homedir(), ".claude"))) return { ...base, auth: "unknown" };
+      return {
+        ...base,
+        auth: "missing",
+        reason:
+          login === "dedicated"
+            ? "로그인 디렉터리가 없습니다 — 러너 머신에서 그 디렉터리로 claude /login 하세요"
+            : "Claude Code 로그인 디렉터리가 없습니다 — 러너 머신에서 claude 로 /login 하세요",
+      };
     },
     async startRun(spec, sink, signal) {
       // 계약은 프로그램이 지은 세션 id(run.session)도 받으려고 글자 하나 이상만 본다 — Claude 는 서버가 정한 UUID 만 연다

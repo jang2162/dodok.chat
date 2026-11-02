@@ -182,12 +182,17 @@ export const RunnerProgramCapability = z.enum([
 ]);
 export type RunnerProgramCapability = z.infer<typeof RunnerProgramCapability>;
 
+/** 러너가 쓰는 Claude 로그인 — 평소(`~/.claude`)·전용(설정 configDir). 옛 러너는 싣지 않는다 */
+export const RunnerProgramLogin = z.enum(["default", "dedicated"]);
+export type RunnerProgramLogin = z.infer<typeof RunnerProgramLogin>;
+
 export const RunnerProgramStatus = z.object({
   program: RunnerProgram,
   /** 이 러너가 그 프로그램을 돌릴 수 있나 — 드라이버가 있고 설치돼 있다 */
   available: z.boolean(),
   version: z.string().max(64).optional(),
   auth: z.enum(["ok", "missing", "unknown"]),
+  login: RunnerProgramLogin.optional(),
   /** 못 쓰는 까닭·로그인 안내 — 경로 원문은 싣지 않는다 */
   reason: z.string().max(200).optional(),
   // 문자열이면 받는다 — 모르는 값은 서버가 버린다(hello capabilities 와 같은 까닭)

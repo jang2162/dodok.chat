@@ -21,7 +21,8 @@ const Root = z.strictObject({
 const ToolNames = z.array(z.string().min(1).max(200)).max(100);
 
 const ProgramCeiling = z.strictObject({
-  configDir: z.string().min(1),
+  // 없으면 평소 claude 로그인(~/.claude 또는 셸의 CLAUDE_CONFIG_DIR), 적으면 그 디렉터리의 전용 로그인. 빈 문자열은 거절 — 평소를 쓰려면 줄을 지운다
+  configDir: z.string().min(1).optional(),
   // bypassPermissions 는 받지 않는다 — 승인 카드가 아예 뜨지 않는다(스펙 2장)
   maxPermissionMode: RunnerPermissionMode.default("default"),
   disallowedTools: ToolNames.default([]),
@@ -140,7 +141,19 @@ export function loadRunnerConfig(
   });
   const programs = Object.fromEntries(
     Object.entries(raw.programs).flatMap(([program, ceiling]) =>
-      ceiling ? [[program, { ...ceiling, configDir: expandHome(ceiling.configDir, home) }]] : [],
+      ceiling
+        ? [
+            [
+              program,
+              {
+                ...ceiling,
+                ...(ceiling.configDir === undefined
+                  ? {}
+                  : { configDir: expandHome(ceiling.configDir, home) }),
+              },
+            ],
+          ]
+        : [],
     ),
   ) as RunnerConfig["programs"];
 
