@@ -130,9 +130,10 @@ process.stdin.on("data", (d) => (s += d)).on("end", () => {
   process.exit(j.service && j.service.loaded === true ? 0 : 1);
 });' || dodok_fail "이 호스트의 Gateway 가 서비스로 깔려 있지 않아 설치하지 않았습니다(아무것도 바꾸지 않았습니다). $dodok_not_service"
     dodok_say "Gateway 를 내립니다(openclaw gateway stop)."
+    # stop 이 실패해도 반쯤 내려갔을 수 있다 — 먼저 내린 것으로 쳐서, 실패하면 dodok_fail 이 start 를 한 번 시도한다
+    dodok_stopped=1
     openclaw gateway stop --force </dev/null ||
       dodok_fail "Gateway 서비스를 내리지 못해 설치하지 않았습니다. $dodok_not_service"
-    dodok_stopped=1
   fi
 
   # 6. 설치

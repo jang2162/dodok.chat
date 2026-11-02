@@ -182,14 +182,17 @@ describe("plugin-install.sh", () => {
     }
   });
 
-  it("gateway stop 이 실패하면 설치하지 않고 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
+  it("gateway stop 이 실패하면 설치하지 않고 start 를 한 번 시도한 뒤 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
+    // 반쯤 내려간 채로 남지 않게 — 스펙 「5번 뒤 어디서든 실패하면 Gateway 를 다시 올리고」
     const res = run(script(), { STUB_STOP_FAIL: "1" });
     expect(res.status).not.toBe(0);
     expect(openclawCalls()).toEqual([
       "openclaw gateway status --json --no-probe",
       "openclaw gateway stop --force",
+      "openclaw gateway start",
     ]);
     expect(res.stderr).toContain("DODOK_GATEWAY_SERVICE=0");
+    expect(res.stderr).toContain("다시 올립니다");
   });
 
   it("Gateway 가 서비스가 아니면(status 의 service.loaded 가 false) 내리지도 설치하지도 않고 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
