@@ -1139,7 +1139,7 @@ src/
 │  │                       DeleteGatewayConfirm.tsx(카드 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
 │  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 · ServerSection ·
 │  │                       PluginInstall — 「새 토큰 발급」의 설치 명령을 가리키는 안내 한 줄, 파일이 없으면 PACK_COMMAND ·
-│  │                       pluginInstallCommand — 발급 대화상자의 한 줄(맨 앞 공백 · `curl -fsS <오리진>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='…' bash`),
+│  │                       pluginInstallCommand — 발급 대화상자의 한 줄(맨 앞 공백 · `(set -o pipefail; curl -fsS <오리진>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='…' bash)` — 받기 실패면 0 이 아닌 끝 코드),
 │  │                       `connection.test.tsx` 가 `docs/guides/docker-deploy.md` 의 예시 줄과 대조한다) ·
 │  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설치 명령 한 줄 한 번(서버에 파일이 없으면 PACK_COMMAND). 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
 │  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다. 원문 바로 아래 「AI 에게 맡기기」 한 줄과 「복사」 — 원문과 같은 규칙) ·

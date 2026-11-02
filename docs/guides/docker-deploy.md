@@ -139,10 +139,11 @@ docker compose logs app | grep -E 'gateway connected|pairing required'
 **[B] 설치** — 복사한 한 줄을 [B] 의 셸에 그대로 붙여 넣는다. 꼴은 아래와 같다(오리진과 토큰 자리만 다르다).
 
 ```bash
- curl -fsS https://<도메인>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='<브리지 토큰>' bash
+ (set -o pipefail; curl -fsS https://<도메인>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='<브리지 토큰>' bash)
 ```
 
 - **맨 앞 공백 한 칸**은 우분투 기본 bash(`HISTCONTROL=ignoreboth`)가 이 줄을 셸 기록에 남기지 않게 한다. 다른 셸·설정에서는 기록에 남을 수 있다 — 토큰이 든 줄이니 원문처럼 다룬다. 토큰은 bash 의 환경 변수로만 가고 어떤 명령의 인자에도 실리지 않는다(`ps` 에 안 보인다).
+- **`set -o pipefail`(괄호 안 서브셸)** 은 스크립트를 받지 못했을 때(404·429·연결 실패) 끝 코드를 curl 의 실패 코드로 만든다 — 없으면 빈 입력을 받은 bash 가 0 으로 끝나 성공처럼 보인다. bash·zsh 에서 통한다.
 - **스크립트가 하는 일**(`GET /api/v1/setup/plugin-install.sh` — 로그인 없이 받는다. 본문에는 `llms.txt` 에 이미 공개된 공개 오리진·`bridgeUrl`·두 sha256 만 있고 토큰은 없다. 돌리기 전에 읽어 보려면 `curl -fsS https://<도메인>/api/v1/setup/plugin-install.sh | less`):
   1. 토큰 꼴(`dbt_…`)과 `openclaw`·`curl`·`node`·`mktemp`·sha256 도구(`sha256sum`, 없으면 `shasum -a 256`)를 확인한다.
   2. 그 토큰으로 서버가 품은 플러그인 tgz 를 `mktemp -d` 자리에 받는다(끝나면 지운다). 401 이면 「토큰이 틀렸거나 폐기됐습니다」, 404 면 서버에 파일이 없음, 409 면 서버를 재시작하라고 말하고 멈춘다.
