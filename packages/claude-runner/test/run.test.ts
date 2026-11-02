@@ -159,6 +159,24 @@ describe("buildQueryOptions", () => {
     ]);
   });
 
+  it("configDir 이 없으면 baseEnv 의 CLAUDE_CONFIG_DIR 을 CLI 에 — 러너 프로세스와 같은 자리", () => {
+    const { configDir: _dedicated, ...spec } = runSpec();
+    const o = buildQueryOptions(spec, deps(false));
+    expect(BASE_ENV.CLAUDE_CONFIG_DIR).toBe("/home/u/.claude");
+    expect(o.env?.CLAUDE_CONFIG_DIR).toBe("/home/u/.claude");
+  });
+
+  it("configDir 도 baseEnv 값도 없으면 CLAUDE_CONFIG_DIR 을 넣지 않는다", () => {
+    const { configDir: _dedicated, ...spec } = runSpec();
+    for (const value of [undefined, ""]) {
+      const { CLAUDE_CONFIG_DIR: _shell, ...rest } = BASE_ENV;
+      const baseEnv = value === undefined ? rest : { ...rest, CLAUDE_CONFIG_DIR: value };
+      const o = buildQueryOptions(spec, { baseEnv, mcpServer: MCP, resume: false });
+      expect("CLAUDE_CONFIG_DIR" in (o.env ?? {})).toBe(false);
+      expect(o.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    }
+  });
+
   it("UserPromptSubmit 훅이 turnFacts 를 additionalContext 로 돌려준다", async () => {
     const start = runStart();
     const o = buildQueryOptions(specOf(start), deps(false));

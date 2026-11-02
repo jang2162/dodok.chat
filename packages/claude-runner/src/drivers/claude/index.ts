@@ -1,5 +1,7 @@
 import { Id } from "@dodok/shared";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ProgramDriver } from "../../driver";
 import { CLAUDE_CODE_LABEL, type ClaudeRunSpec, runOnce } from "./run";
 import type { SdkPort } from "./sdk";
@@ -34,7 +36,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
     // CLI 는 SDK 에 함께 깔려 늘 있다. 로그인 자격 증명은 읽지 않는다 — 로그인 디렉터리가 없을 때만 missing, 그 밖은 unknown
     // (로그인 여부는 첫 런의 PROVIDER_AUTH 로 안다)
     async detect(ceiling) {
-      return existsSync(ceiling.configDir)
+      return existsSync(ceiling.configDir ?? join(homedir(), ".claude"))
         ? { available: true, version: opts.claudeCodeVersion, auth: "unknown" }
         : {
             available: true,

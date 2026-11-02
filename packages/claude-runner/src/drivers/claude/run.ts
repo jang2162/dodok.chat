@@ -82,7 +82,10 @@ export function buildQueryOptions(
     const value = deps.baseEnv[key];
     if (value !== undefined) env[key] = value;
   }
-  env.CLAUDE_CONFIG_DIR = spec.configDir;
+  // 러너 프로세스(main.ts applyClaudeConfigDirEnv)와 같은 자리 — 전용이면 configDir, 평소면 baseEnv(기본 process.env)의 값.
+  // 둘 다 없으면 넣지 않는다(평소 ~/.claude). ENV_ALLOWLIST 에 더하지 않고 여기서만 명시로 넣는다
+  const configDir = spec.configDir ?? (deps.baseEnv.CLAUDE_CONFIG_DIR || undefined);
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;
   // 켜 두면 메모리 자리가 cwd 로 정해져 작업 디렉터리가 같은 채널·스레드가 한 메모리를 나눠 쓴다(ADR 0007 5.10)
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
 
