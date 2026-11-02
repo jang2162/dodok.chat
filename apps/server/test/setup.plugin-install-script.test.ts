@@ -193,7 +193,7 @@ describe("plugin-install.sh", () => {
   });
 
   it("Gateway 가 서비스가 아니면(status 의 service.loaded 가 false) 내리지도 설치하지도 않고 DODOK_GATEWAY_SERVICE=0 을 알린다", () => {
-    for (const env of [{ STUB_LOADED: "false" }, { STUB_STATUS_FAIL: "1" }]) {
+    for (const env of [{ STUB_LOADED: "false" }, { STUB_STATUS_FAIL: "1" }] as Record<string, string>[]) {
       rmSync(log, { force: true });
       const res = run(script(), env);
       expect(res.status, JSON.stringify(env)).not.toBe(0);
