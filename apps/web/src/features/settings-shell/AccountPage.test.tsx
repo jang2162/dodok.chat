@@ -248,6 +248,25 @@ describe("AccountPage", () => {
       expect(Math.abs(Date.parse(body.modeUntil) - Date.now() - 3_600_000)).toBeLessThan(10_000);
     });
 
+    it("걸어 둔 만료는 다른 칸만 고쳐 저장해도 그대로 간다 — 방해 금지가 조용히 무기한이 되지 않는다", async () => {
+      const until = new Date(Date.now() + 3_600_000).toISOString();
+      const fetch = stubServer(
+        { ...MEMBER, status: { mode: "dnd", modeUntil: until, message: null, dndAllowApprovals: true } },
+        { status: (body) => json(200, { status: { ...(body as object), message: null } }) },
+      );
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      expect(p.getByLabelText("상태")).toHaveValue("dnd");
+      await userEvent.type(p.getByLabelText("상태 메시지"), "집중");
+      await userEvent.click(p.getByRole("button", { name: "상태 저장" }));
+      await waitFor(() =>
+        expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/me/status")).toBe(true),
+      );
+      const call = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/me/status");
+      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ mode: "dnd", modeUntil: until });
+    });
+
     it("상태 메시지 101자는 저장할 수 없다", async () => {
       stubServer(MEMBER);
       renderRoute("/settings/account");

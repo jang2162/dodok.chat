@@ -6,6 +6,7 @@ import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import { untilLabel } from "@/features/profile/format";
 import { type ExpiryChoice, expiryOf } from "./avatarImage";
 import { useUpdateMyStatus } from "./mutations";
 
@@ -17,8 +18,8 @@ const MODE_LABEL: Record<StatusMode, string> = {
   invisible: "오프라인으로 보이기",
 };
 const MODES: StatusMode[] = ["auto", "away", "busy", "dnd", "invisible"];
-type Preset = Exclude<ExpiryChoice, { at: Date }> | "custom";
-const EXPIRY_LABEL: Record<Preset, string> = {
+type Preset = Exclude<ExpiryChoice, { at: Date }> | "custom" | "keep";
+const EXPIRY_LABEL: Record<Exclude<Preset, "keep">, string> = {
   never: "안 지움",
   "30m": "30분",
   "1h": "1시간",
@@ -26,7 +27,7 @@ const EXPIRY_LABEL: Record<Preset, string> = {
   today: "오늘",
   custom: "직접 고른 시각",
 };
-const PRESETS = Object.keys(EXPIRY_LABEL) as Preset[];
+const PRESETS = Object.keys(EXPIRY_LABEL) as Array<Exclude<Preset, "keep">>;
 /** 자주 쓰는 이모지 — 직접 넣어도 된다(저장은 문자열 하나) */
 const EMOJIS = ["💬", "📅", "🍱", "🚗", "🏠", "🤒", "🌴", "🎧"];
 const TEXT_MAX = 100;
@@ -42,6 +43,7 @@ function ExpiryField({
   onPreset,
   custom,
   onCustom,
+  keep,
   disabled,
 }: {
   label: string;
@@ -49,6 +51,8 @@ function ExpiryField({
   onPreset: (p: Preset) => void;
   custom: string;
   onCustom: (v: string) => void;
+  /** 지금 걸린 만료 — 있으면 「그대로」가 첫 선택지다(다른 칸만 고쳐 저장해도 만료가 풀리지 않게) */
+  keep?: string;
   disabled?: boolean;
 }) {
   const id = useId();
@@ -63,6 +67,7 @@ function ExpiryField({
           disabled={disabled}
           onChange={(e) => onPreset(e.target.value as Preset)}
         >
+          {keep && <option value="keep">그대로 · {untilLabel(keep)}</option>}
           {PRESETS.map((p) => (
             <option key={p} value={p}>
               {EXPIRY_LABEL[p]}
@@ -84,8 +89,11 @@ function ExpiryField({
   );
 }
 
-const choiceOf = (preset: Preset, custom: string): ExpiryChoice | undefined =>
-  preset === "custom" ? (custom ? { at: new Date(custom) } : undefined) : preset;
+const choiceOf = (preset: Preset, custom: string, keep?: string | null): ExpiryChoice | undefined => {
+  if (preset === "keep") return keep ? { at: new Date(keep) } : "never";
+  if (preset === "custom") return custom ? { at: new Date(custom) } : undefined;
+  return preset;
+};
 
 /**
  * 상태 고르기(프로필 스펙 3.2·3.8) — 상태 다섯 + 만료, 상태 메시지(이모지 + 글 + 만료), 방해 금지 옵션. 「내 계정」 프로필 섹션과
@@ -94,12 +102,15 @@ const choiceOf = (preset: Preset, custom: string): ExpiryChoice | undefined =>
 export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; onSaved?: () => void }) {
   const update = useUpdateMyStatus();
   const ids = { mode: useId(), emoji: useId(), text: useId(), approvals: useId() };
-  const [mode, setMode] = useState<StatusMode>(status?.mode ?? "auto");
-  const [modePreset, setModePreset] = useState<Preset>("never");
+  const initialMode = status?.mode ?? "auto";
+  const keepMode = status?.modeUntil ?? undefined;
+  const keepText = status?.message?.until ?? undefined;
+  const [mode, setMode] = useState<StatusMode>(initialMode);
+  const [modePreset, setModePreset] = useState<Preset>(keepMode ? "keep" : "never");
   const [modeCustom, setModeCustom] = useState("");
   const [emoji, setEmoji] = useState(status?.message?.emoji ?? "");
   const [text, setText] = useState(status?.message?.text ?? "");
-  const [textPreset, setTextPreset] = useState<Preset>("never");
+  const [textPreset, setTextPreset] = useState<Preset>(keepText ? "keep" : "never");
   const [textCustom, setTextCustom] = useState("");
   const [allowApprovals, setAllowApprovals] = useState(status?.dndAllowApprovals ?? true);
   const [saved, setSaved] = useState(false);
@@ -107,8 +118,10 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
 
   const trimmed = text.trim();
   const tooLong = trimmed.length > TEXT_MAX;
-  const modeChoice = mode === "auto" ? "never" : choiceOf(modePreset, modeCustom);
-  const textChoice = choiceOf(textPreset, textCustom);
+  // 「그대로」는 같은 상태일 때만 — 다른 상태로 바꾸면 옛 만료를 들고 가지 않는다
+  const modeKeep = mode === initialMode ? keepMode : undefined;
+  const modeChoice = mode === "auto" ? "never" : choiceOf(modePreset, modeCustom, modeKeep);
+  const textChoice = choiceOf(textPreset, textCustom, keepText);
   const ready = !tooLong && modeChoice !== undefined && (trimmed === "" || textChoice !== undefined);
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -151,7 +164,11 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
           id={ids.mode}
           className={SELECT}
           value={mode}
-          onChange={(e) => setMode(e.target.value as StatusMode)}
+          onChange={(e) => {
+            const next = e.target.value as StatusMode;
+            setMode(next);
+            if (modePreset === "keep" && next !== initialMode) setModePreset("never");
+          }}
         >
           {MODES.map((m) => (
             <option key={m} value={m}>
@@ -167,6 +184,7 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
           onPreset={setModePreset}
           custom={modeCustom}
           onCustom={setModeCustom}
+          {...(modeKeep ? { keep: modeKeep } : {})}
         />
       )}
       <div className="flex flex-col gap-1.5">
@@ -217,6 +235,7 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
           onPreset={setTextPreset}
           custom={textCustom}
           onCustom={setTextCustom}
+          {...(keepText ? { keep: keepText } : {})}
         />
       )}
       <div className="flex items-start gap-2">
