@@ -1,7 +1,7 @@
 import { type Agent, RUNNER_PROGRAM_NAME, roleAtLeast } from "@dodok/shared";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useRef } from "react";
-import { useAgents, useCanManage, useRole } from "@/api/queries";
+import { useAgents, useRole } from "@/api/queries";
 import { AgentRow } from "@/features/agents/AgentRow";
 import { useRestoreAgent } from "@/features/agents/mutations";
 import { providerIdLabel } from "@/features/agents/providerLabels";
@@ -13,17 +13,21 @@ import { Button } from "@/ui/button";
 import { useConnections } from "./context";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
+import { canManageConnection, canMoveBetween, useViewer } from "./permissions";
+import { useConnectionList } from "./queries";
+import { agentOwnerOf, connectionOwnerMaps } from "./useConnectionTree";
 
 /**
  * 에이전트 상세(연결 탭 통합 스펙 3.3) — 머리에 이름과 경로(「<러너> › <프로젝트> · <프로그램>」 또는 「<Gateway> · OpenClaw」 — 연결
  * 이름은 그 연결 상세 링크), 본문은 목록 시절의 에이전트 줄 그대로(사용·DM·지시·메모·DM 허용·Gateway 옮기기·삭제·사진). 고칠 수
- * 없는 사람(admin 미만)에게는 값만 보인다. 보관(삭제)한 에이전트면 「삭제된 에이전트」 배지와 「되살리기」.
+ * 없는 사람(그 에이전트 연결의 주인도 admin 이상도 아니다 — 연결 탭 통합 스펙 5.2)에게는 값만 보인다. 보관(삭제)한 에이전트면 「삭제된 에이전트」 배지와 「되살리기」.
  * 보관하면 트리로 돌아가 「삭제된 에이전트 N」 단추로, 되살리면 이 상세의 제목으로 초점이 간다
  */
 export function AgentDetail() {
   const { agentId } = useParams({ strict: false });
   const agents = useAgents();
-  const canManage = useCanManage();
+  const { role, meId } = useViewer();
+  const list = useConnectionList();
   const navigate = useNavigate();
   const { focusTree } = useConnections();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -32,6 +36,15 @@ export function AgentDetail() {
   const agent = agents.data.find((a) => a.id === agentId);
   if (!agent) return <NotFoundDetail message="이 에이전트를 찾을 수 없습니다" />;
   const archived = agent.archivedAt !== null;
+  const canManage = canManageConnection(role, meId, agentOwnerOf(agent, list.data));
+  // Gateway 옮기기 — 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것이거나 admin 이상
+  const owners = connectionOwnerMaps(list.data);
+  const from = agent.gateway ? (owners.gateways.get(agent.gateway.id) ?? null) : null;
+  const moveTargets = roleAtLeast(role, "admin")
+    ? () => true
+    : canMoveBetween(role, meId, from, from)
+      ? (gatewayId: string) => canMoveBetween(role, meId, from, owners.gateways.get(gatewayId) ?? null)
+      : undefined;
 
   return (
     <>
@@ -56,6 +69,7 @@ export function AgentDetail() {
             as="div"
             agent={agent}
             readOnly={!canManage}
+            {...(moveTargets ? { moveTargets } : {})}
             onArchived={() => {
               focusTree("archived");
               void navigate({ to: "/settings/connection" });

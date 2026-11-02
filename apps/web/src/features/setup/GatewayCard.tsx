@@ -11,6 +11,8 @@ import { TokenList } from "./TokenList";
 
 /** 카드 머리의 상태(멀티 Gateway 스펙 「웹」 절 — 연결됨·재연결 중·페어링 대기·꺼짐). 페어링 대기는 상태 값이 아니라 `pairing` 으로 안다 */
 export function gatewayStateLabel(g: GatewaySetup): string {
+  // 승인 전이면 켜져 있어도 서버가 접속하지 않는다(연결 탭 통합 스펙 5.4) — 꺼짐보다 앞선다
+  if (!g.approved) return "승인 대기";
   if (!g.enabled || g.gateway.state === "disabled") return "꺼짐";
   if (g.gateway.pairing) return "페어링 대기";
   if (g.gateway.state === "connected") return "연결됨";
@@ -18,11 +20,15 @@ export function gatewayStateLabel(g: GatewaySetup): string {
   return "연결 안 됨";
 }
 
-/** 한 줄 메타 — 「OpenClaw Gateway · <주소> · <버전>」. 핀과 다르면 드리프트를 늘 보인다(운영 보강 스펙 7장) */
-export function GatewayMeta({ gateway: g }: { gateway: GatewaySetup }) {
+/**
+ * 한 줄 메타 — 「OpenClaw Gateway · 주인 <이름> · <주소> · <버전>」(주인을 모르면 그 칸은 빠진다). 핀과 다르면 드리프트를 늘 보인다
+ * (운영 보강 스펙 7장)
+ */
+export function GatewayMeta({ gateway: g, owner }: { gateway: GatewaySetup; owner?: string | null }) {
   return (
     <>
-      OpenClaw Gateway · <span className="break-all">{g.url}</span> · {g.gateway.version ?? "버전 모름"}
+      OpenClaw Gateway{owner ? <> · 주인 {owner}</> : null} · <span className="break-all">{g.url}</span> ·{" "}
+      {g.gateway.version ?? "버전 모름"}
       {g.gateway.drift && (
         <span className="font-medium text-destructive">
           {" "}

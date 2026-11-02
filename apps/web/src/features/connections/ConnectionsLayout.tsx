@@ -1,7 +1,8 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useIsOwner } from "@/api/queries";
+import { roleAtLeast } from "@dodok/shared";
+import { useRole } from "@/api/queries";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Button } from "@/ui/button";
 import { ConnectionTreeList } from "./ConnectionTreeList";
@@ -85,13 +86,13 @@ export function ConnectionsLayout() {
 }
 
 function ListHeader({ addRef }: { addRef: React.Ref<HTMLAnchorElement> }) {
-  // 1단계는 연결 추가가 owner 의 일이다(서버가 막는다) — 2단계에서 member 에게도 열린다
-  const owner = useIsOwner();
+  // 연결 추가는 멤버 누구나 — member 가 만든 Gateway 는 admin 이 승인할 때까지 접속하지 않는다(연결 탭 통합 스펙 5.2·5.4)
+  const canAdd = roleAtLeast(useRole(), "member");
   return (
     <header className="flex flex-col gap-2 px-2">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">연결</h1>
-        {owner && (
+        {canAdd && (
           <Button asChild size="sm">
             <Link ref={addRef} to="/settings/connection/new">
               <PlusIcon />

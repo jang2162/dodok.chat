@@ -1,4 +1,4 @@
-import type { Agent, OpenClawGatewayStatus, RunnerProject } from "@dodok/shared";
+import type { Agent, OpenClawGatewayStatus } from "@dodok/shared";
 import type { gatewayStateLabel } from "@/features/setup/GatewayCard";
 
 /**
@@ -6,7 +6,7 @@ import type { gatewayStateLabel } from "@/features/setup/GatewayCard";
  * (member 는 러너 목록·프로젝트를 모른다) 모르는 칸은 null 로 받고 있는 것만으로 짓는다. 순수 함수 — 쿼리는 `useConnectionTree`
  */
 
-/** Gateway 배지 — 연결 페이지의 판정(`gatewayStateLabel`) 그대로, 2단계에서 「승인 대기」가 더해진다 */
+/** Gateway 배지 — Gateway 상세의 판정(`gatewayStateLabel`) 그대로, 승인 전이면 「승인 대기」(연결 탭 통합 스펙 5.4) */
 export type GatewayStateLabel = ReturnType<typeof gatewayStateLabel> | "승인 대기";
 export type RunnerStateLabel = "연결됨" | "끊김" | "폐기됨";
 
@@ -48,6 +48,12 @@ export type ConnectionTree = {
   /** 보관(삭제)한 에이전트 — 어느 연결에도 달지 않는다 */
   archived: Agent[];
 };
+export type TreeProjectInput = {
+  id: string;
+  runnerId: string;
+  label: string;
+  archived: boolean;
+};
 export type TreeInput = {
   agents: Agent[];
   gateways: {
@@ -61,9 +67,9 @@ export type TreeInput = {
   runners:
     | { id: string; label: string; state: RunnerStateLabel | null; ownerUserId?: string | null }[]
     | null;
-  /** null — 이 역할은 프로젝트를 모른다 */
-  projects: RunnerProject[] | null;
-  /** null — 주인 가름이 없다(1단계). 모든 연결을 `others` 에 넣는다 */
+  /** null — 이 역할은 프로젝트를 모른다. 러너 REST 의 프로젝트(`archivedAt`)·연결 목록의 프로젝트(`archived`) 둘 다 받는다 */
+  projects: TreeProjectInput[] | null;
+  /** null — 나를 모른다(주인 가름 없음). 모든 연결을 `others` 에 넣는다 */
   meId: string | null;
 };
 
@@ -104,7 +110,7 @@ export function buildConnectionTree(input: TreeInput): ConnectionTree {
   for (const r of input.runners ?? []) runnerNode(r.id, r.label, r.state, r.ownerUserId ?? null);
   const projects = new Map<string, TreeProject>();
   for (const p of input.projects ?? []) {
-    if (p.archivedAt !== null) continue;
+    if (p.archived) continue;
     const runner = runners.get(p.runnerId);
     if (!runner) continue;
     const node: TreeProject = { kind: "project", id: p.id, label: p.label, runnerId: p.runnerId, agents: [] };

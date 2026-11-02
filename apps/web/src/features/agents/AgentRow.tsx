@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
 import { formError } from "@/api/formErrors";
-import { useIsOwner, useRole } from "@/api/queries";
+import { useRole } from "@/api/queries";
 import { canOpenDm } from "@/features/dms/queries";
 import { FieldError } from "@/ui/field-error";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
@@ -26,7 +26,8 @@ const PROMPT_MAX = 20_000;
 /**
  * 목록 한 줄: 이름·핸들(OpenClaw 면 「@핸들 · Gateway 이름」)·제공자별 id·사용 토글·메모(OpenClaw)·지시(러너). 토글은 낙관적 갱신 없이 요청 중에만
  * 잠근다(실패는 전역 토스트). `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만.
- * OpenClaw 에이전트의 「Gateway 옮기기」는 owner 에게만(멀티 Gateway 스펙 「권한」 절) — 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
+ * OpenClaw 에이전트의 「Gateway 옮기기」는 `moveTargets` 를 준 사람에게만(admin 이상, 또는 그 Gateway 의 주인 — 연결 탭 통합 스펙 5.2) —
+ * 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
  * 연결이 빈 줄의 안내도 역할에 맞춘다 — 옮길 수 없는 admin·member 에게 옮기라고 권하지 않는다.
  * 「삭제」(보관, admin 이상 — 스펙 「에이전트 보관」 절)는 확인 뒤 보낸다. 보관하면 줄이 목록에서 빠지므로 `onArchived` 가 초점을 옮긴다.
  * `focusRef` 는 사용 토글에 붙는다 — 페이지가 되살린 줄로 초점을 옮기는 자리다.
@@ -39,16 +40,21 @@ export function AgentRow({
   onArchived,
   focusRef,
   as: Root = "li",
+  moveTargets,
 }: {
   agent: Agent;
   readOnly?: boolean;
+  /**
+   * 「Gateway 옮기기」를 보일 때 옮길 수 있는 Gateway 판정 — 없으면 단추를 그리지 않는다. admin 이상은 모두, 그 Gateway 의 주인 member 는
+   * 자기 Gateway 만(연결 탭 통합 스펙 5.2)
+   */
+  moveTargets?: (gatewayId: string) => boolean;
   onArchived?: () => void;
   focusRef?: Ref<HTMLButtonElement>;
   /** 「연결」 탭의 에이전트 상세는 목록 밖에서 그린다 — `div` */
   as?: "li" | "div";
 }) {
   const toggle = usePatchAgent();
-  const owner = useIsOwner();
   const role = useRole();
   const handle = `@${agent.handle}`;
   const openclaw = agent.provider === "openclaw";
@@ -76,9 +82,9 @@ export function AgentRow({
             {agent.provider === "runner" && <RunnerLine agent={agent} />}
             {openclaw && agent.gateway === null && (
               <p className="text-xs font-medium text-destructive">
-                {owner
+                {moveTargets
                   ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
-                  : "Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
+                  : "Gateway 가 삭제됨 — admin 이 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
               </p>
             )}
           </div>
@@ -92,7 +98,7 @@ export function AgentRow({
               </Link>
             </Button>
           )}
-          {openclaw && owner && <MoveGatewayDialog agent={agent} />}
+          {openclaw && moveTargets && <MoveGatewayDialog agent={agent} allowed={moveTargets} />}
           {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
           <Switch
             ref={focusRef}

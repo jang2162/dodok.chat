@@ -1,4 +1,5 @@
-import { screen, within } from "@testing-library/react";
+import type { ConnectionsResponse } from "@dodok/shared";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentOf } from "../../../test/settingsServer";
@@ -20,6 +21,17 @@ afterEach(() => {
 });
 
 const detail = () => screen.findByTestId("gateway-detail");
+const ADMIN = { ...ME, role: "admin" };
+/** 주인 가름에 쓰는 나 — 연결 목록의 주인 id 는 uuid 다 */
+const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+const MEMBER = { ...ME, user: { ...ME.user, id: ME_ID }, role: "member" };
+const MIA = "0190a000-0000-7000-8000-0000000000c1";
+/** 첫 Gateway(`GATEWAY_ID`) 하나의 연결 목록 */
+const listOf = (over: Partial<ConnectionsResponse["gateways"][number]> = {}): ConnectionsResponse => ({
+  gateways: [{ id: GATEWAY_ID, name: "사무실", enabled: true, approved: true, owner: null, ...over }],
+  runners: [],
+  projects: [],
+});
 
 describe("owner", () => {
   it("owner sees plugin, bridge tokens and agents — 섹션 차례대로, 에이전트 줄은 그 상세로 가는 링크", async () => {
@@ -63,23 +75,83 @@ describe("owner", () => {
   });
 });
 
-describe("owner 가 아니면", () => {
-  it("admin sees only header and agents with discover", async () => {
-    const server = stubSetupServer();
-    renderConnection({ ...ME, role: "admin" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));
+describe("연결의 주인·승인(2단계)", () => {
+  it("admin sees approve button with the url — 누르면 승인을 보낸다, 메타에 주인", async () => {
+    const server = stubSetupServer({
+      me: ADMIN,
+      status: statusOf({ first: { approved: false }, gateway: { state: "disabled" }, plugin: null }),
+      connections: listOf({ approved: false, owner: { id: MIA, name: "mia" } }),
+    });
+    renderConnection(ADMIN, undefined, gatewayDetailPath(GATEWAY_ID));
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
-    expect(within(gw).getByText("OpenClaw Gateway")).toBeInTheDocument();
+    expect(gw).toHaveTextContent("주인 mia");
+    const approval = within(gw).getByRole("group", { name: "승인 대기" });
+    // 무엇을 승인하는지 — 주소를 한 줄로
+    expect(within(approval).getByText("wss://gateway.example.com")).toBeInTheDocument();
+    await userEvent.click(within(approval).getByRole("button", { name: "사무실 승인" }));
+    await waitFor(() =>
+      expect(
+        server.calls.some((c) => c.method === "POST" && c.url === `/api/v1/gateways/${GATEWAY_ID}/approve`),
+      ).toBe(true),
+    );
+    // admin 은 남의 Gateway 도 관리한다 — 플러그인·브리지 토큰
+    expect(
+      within(gw)
+        .getAllByRole("heading", { level: 2 })
+        .map((h) => h.textContent),
+    ).toEqual(["플러그인", "브리지 토큰", "에이전트 0"]);
+  });
+
+  it("member's new gateway shows pending approval — 플러그인·브리지 토큰은 미리 준비할 수 있고, 승인 단추는 없다", async () => {
+    stubSetupServer({
+      me: MEMBER,
+      status: statusOf({ first: { approved: false }, gateway: { state: "disabled" }, plugin: null }),
+      connections: listOf({ approved: false, owner: { id: ME_ID, name: "주인" } }),
+    });
+    renderConnection(MEMBER, undefined, gatewayDetailPath(GATEWAY_ID));
+    const gw = await detail();
+    expect(within(gw).getByText("승인 대기 — admin 이 승인하면 서버가 접속합니다")).toBeInTheDocument();
+    expect(within(gw).queryByRole("button", { name: /승인$/ })).toBeNull();
+    expect(
+      within(gw)
+        .getAllByRole("heading", { level: 2 })
+        .map((h) => h.textContent),
+    ).toEqual(["플러그인", "브리지 토큰", "에이전트 0"]);
+    expect(within(gw).getByRole("button", { name: "사무실 수정" })).toBeInTheDocument();
+  });
+
+  it("member opening another's gateway sees no plugin or bridge tokens — 주소·토큰 요청도 없다", async () => {
+    const server = stubSetupServer({
+      me: MEMBER,
+      connections: {
+        gateways: [
+          {
+            id: TEST_GATEWAY.id,
+            name: "사무실",
+            enabled: true,
+            approved: true,
+            owner: { id: MIA, name: "mia" },
+          },
+        ],
+        runners: [],
+        projects: [],
+      },
+    });
+    renderConnection(MEMBER, undefined, gatewayDetailPath(TEST_GATEWAY.id));
+    const gw = await detail();
+    expect(gw).toHaveTextContent("주인 mia");
     expect(
       within(gw)
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
     ).toEqual(["에이전트 0"]);
-    expect(within(gw).getByRole("button", { name: "에이전트 가져오기" })).toBeInTheDocument();
     expect(within(gw).queryByRole("button", { name: /수정|끄기|삭제/ })).toBeNull();
-    expect(server.setupCalls()).toEqual([]);
+    expect(server.calls.filter((c) => /bridge-tokens|setup\/status/.test(c.url))).toEqual([]);
   });
+});
 
+describe("owner 가 아니면", () => {
   it("member 는 머리와 에이전트만 — 가져오기도 없다", async () => {
     stubSetupServer();
     renderConnection({ ...ME, role: "member" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));

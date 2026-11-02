@@ -26,17 +26,24 @@ function moveErrorText(e: unknown): string | undefined {
 }
 
 /**
- * 「Gateway 옮기기」 버튼과 대화상자(owner, 멀티 Gateway 스펙 「에이전트 API」·「웹」 절) — 지금 Gateway 를 뺀 Gateway 가운데 하나를 고른다.
+ * 「Gateway 옮기기」 버튼과 대화상자(멀티 Gateway 스펙 「에이전트 API」·「웹」 절 — admin 이상, 또는 두 Gateway 가 다 자기 것인 member: 연결 탭
+ * 통합 스펙 5.2) — 지금 Gateway 를 뺀 Gateway 가운데 하나를 고른다. `allowed` 를 주면 그것이 참인 Gateway 만(member 의 자기 Gateway).
  * Gateway 목록은 어댑터 상태(연결 점과 같은 캐시)에서. 옮기면 응답의 에이전트로 목록 캐시를 고친다(mutations). 옮기는 중엔 닫지 않는다
  */
-export function MoveGatewayDialog({ agent }: { agent: Agent }) {
+export function MoveGatewayDialog({
+  agent,
+  allowed = () => true,
+}: {
+  agent: Agent;
+  allowed?: (gatewayId: string) => boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string>();
   const move = useMoveAgentGateway();
   const fieldId = useId();
   const adapter = useAdapterStatus().data;
   const targets = (adapter?.provider === "openclaw" ? adapter.gateways : []).filter(
-    (g) => g.id !== agent.gateway?.id,
+    (g) => g.id !== agent.gateway?.id && allowed(g.id),
   );
   const target = targets.some((g) => g.id === picked) ? picked : targets[0]?.id;
   const handle = `@${agent.handle}`;

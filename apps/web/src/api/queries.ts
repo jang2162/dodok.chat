@@ -145,6 +145,8 @@ export const qk = {
   recentThreads: ["recentThreads"] as const,
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
+  /** 누구나 읽는 연결 목록(연결 탭 통합 스펙 5.3) — wire `connections.changed` 가 낡게 한다. 오프라인 사본에 담지 않는다(허용 목록 밖) */
+  connections: ["connections"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,
   runnerTokens: ["setup", "runner-tokens"] as const,
   /** 운영(admin 이상) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */

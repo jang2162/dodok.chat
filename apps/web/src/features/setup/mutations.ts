@@ -46,7 +46,11 @@ export function useRevokeBridgeToken(gatewayId: string) {
  * 따로 받지 않는다: 연결 페이지는 설정 상태, 나머지 화면은 어댑터 상태(wire `adapter.status`)에서 읽는다
  */
 const gatewaysChanged = (qc: ReturnType<typeof useQueryClient>) =>
-  qc.invalidateQueries({ queryKey: qk.setupStatus });
+  Promise.all([
+    qc.invalidateQueries({ queryKey: qk.setupStatus }),
+    // 트리의 승인 대기·주인 — 실시간 connections.changed 보다 먼저 이 탭이 바뀌게
+    qc.invalidateQueries({ queryKey: qk.connections }),
+  ]);
 
 const GATEWAY_GONE = "이미 삭제된 Gateway 입니다";
 const isGone = (e: unknown) => e instanceof ApiRequestError && e.code === "NOT_FOUND";
@@ -81,6 +85,19 @@ export function useUpdateGateway(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateGatewayBody) => api<GatewaySummary>("PATCH", `/gateways/${id}`, body),
+    meta: gatewayErrorMeta,
+    onSuccess: () => gatewaysChanged(qc),
+    onError: (e) => {
+      if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
+    },
+  });
+}
+
+/** Gateway 승인(admin 이상, 연결 탭 통합 스펙 5.4) — 승인하면 서버가 그 주소로 접속을 시작한다 */
+export function useApproveGateway(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<GatewaySummary>("POST", `/gateways/${id}/approve`),
     meta: gatewayErrorMeta,
     onSuccess: () => gatewaysChanged(qc),
     onError: (e) => {

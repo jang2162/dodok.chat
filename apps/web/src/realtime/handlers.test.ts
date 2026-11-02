@@ -1039,6 +1039,21 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(false);
   });
+
+  it("connections.changed refreshes the tree — 연결 목록·러너 목록·프로젝트를 낡게 한다, 둘러보기·에이전트는 그대로", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.connections, { gateways: [], runners: [], projects: [] });
+    queryClient.setQueryData(qk.runners(), []);
+    queryClient.setQueryData(qk.runnerProjects("r1"), []);
+    queryClient.setQueryData(qk.runnerFs("r1", "src", ""), { entries: [], truncated: false });
+    queryClient.setQueryData(qk.agents, []);
+    fake.serverEmit("connections.changed", {});
+    expect(queryClient.getQueryState(qk.connections)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runnerProjects("r1"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(qk.agents)?.isInvalidated).toBe(false);
+  });
 });
 
 describe("작성 중·알림", () => {

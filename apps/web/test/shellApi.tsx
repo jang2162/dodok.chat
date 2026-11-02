@@ -111,6 +111,8 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/channels") return json(200, { channels: [] });
   if (url === "/api/v1/adapter/status") return json(200, adapterStatusBody(ADAPTER_OK));
   if (url === "/api/v1/agents") return json(200, { agents: [] });
+  // 연결 목록(연결 탭 2단계) — 기본은 없는 경로(옛 서버). 트리·상세는 역할만으로 가른다. 시험 서버가 주인·승인을 줄 때만 답한다
+  if (url === "/api/v1/connections") return json(404, { code: "NOT_FOUND", message: "no connections route" });
   // 사이드바 「다이렉트 메시지」 절 — 기본은 DM 없음
   if (url === "/api/v1/dms") return json(200, { dms: [] });
   // 「내 계정」의 MCP 토큰 목록 — 기본은 하나도 없음

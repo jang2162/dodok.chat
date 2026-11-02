@@ -327,7 +327,16 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       }
     },
     /**
-     * 연결 설정 상태(owner 에게만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어
+     * 연결 목록이 바뀌었다(연결 추가·승인·삭제·러너 붙음·프로젝트 — 본문 없음, 연결 탭 통합 스펙 5.3). 트리가 다시 받는다 — 러너 목록·
+     * 프로젝트도(주인 member 의 러너 상세)
+     */
+    "connections.changed": () => {
+      void qc.invalidateQueries({ queryKey: qk.connections });
+      void qc.invalidateQueries({ queryKey: qk.runners() });
+      void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
+    },
+    /**
+     * 연결 설정 상태(admin 이상에게는 전체, member 에게는 그 사람의 연결만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어
      * 다시 받게 낡은 것으로 둔다(보고 있는 화면만 곧바로 다시 부른다)
      */
     "setup.status": ({ status }) => {

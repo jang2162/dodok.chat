@@ -37,9 +37,9 @@ const installBox = async () =>
   ) as HTMLElement;
 
 describe("권한", () => {
-  it("owner 가 아니면 머리(이름·상태)와 에이전트만 — 플러그인·브리지 토큰이 없고 setup API 를 부르지 않는다", async () => {
+  it("관리할 수 없는 사람(남의 Gateway 의 member)은 머리(이름·상태)와 에이전트만 — 플러그인·브리지 토큰이 없고 setup API 를 부르지 않는다", async () => {
     const server = stubSetupServer();
-    renderConnection({ ...ME, role: "admin" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));
+    renderConnection({ ...ME, role: "member" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
