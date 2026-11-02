@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { SetupStatus } from "@dodok/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -16,6 +18,7 @@ import {
   tokenId,
   tokenOf,
 } from "../../../test/setupServer";
+import { pluginInstallCommand } from "./sections";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -193,6 +196,19 @@ describe("플러그인", () => {
     expect(within(head).queryByTestId("plugin-install-commands")).not.toBeInTheDocument();
     expect(head).toHaveTextContent(/각 Gateway 카드의 「새 토큰 발급」이 주는 명령 한 줄/);
     expect(screen.queryByRole("region", { name: "플러그인 받기" })).not.toBeInTheDocument();
+  });
+
+  it("docker-deploy.md 의 설치 한 줄은 대화상자의 한 줄과 같은 꼴이다 — 오리진·토큰 자리만 다르다", () => {
+    const doc = readFileSync(
+      resolve(import.meta.dirname, "../../../../../docs/guides/docker-deploy.md"),
+      "utf8",
+    );
+    const want = pluginInstallCommand("https://<도메인>", "<브리지 토큰>");
+    // 코드 블록 안의 줄 그대로(맨 앞 공백 포함) — 문서를 따라 치는 사람이 대화상자와 같은 줄을 본다
+    const blocks = [...doc.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1] ?? "");
+    const lines = blocks.flatMap((b) => b.split("\n")).filter((l) => l.includes("/plugin-install.sh |"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).toBe(want);
   });
 
   it("다른 빌드면 「새 토큰을 발급해 설치 명령을 다시 돌리세요」 경고", async () => {

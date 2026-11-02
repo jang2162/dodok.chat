@@ -492,9 +492,13 @@ src/
 │  │                      readPluginFile — 가장 최근 tgz 의 sha256·크기·`package/dist/index.js` sha256, tar 는 의존성 없이 읽는다) ·
 │  │                      routes.ts(`GET /api/v1/setup/status` · `GET /api/v1/setup/plugin.tgz`
 │  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`) ·
-│  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Vite 프록시·SW denylist·web-static 의 BACKEND_PREFIXES 에도 이 경로)) ·
+│  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Vite 프록시·SW denylist·web-static 의 BACKEND_PREFIXES 에도 이 경로) ·
+│  │                      `GET /api/v1/setup/plugin-install.sh`(shared PLUGIN_INSTALL_SCRIPT_PATH — 로그인 없음, llms.txt 와 같은 머리·같은 IP 버킷, 품은 tgz 가 없으면 404 `PLUGIN_FILE_MISSING`)) ·
+│  │                      plugin-install-script.ts(renderPluginInstallScript — Gateway 호스트가 `curl … | DODOK_BRIDGE_TOKEN='…' bash` 로 돌리는 설치 스크립트, 부팅 때 한 번 렌더.
+│  │                      받기(`curl -K -`)·파일 sha·`gateway stop`·설치·로드·번들 sha·`config patch --stdin`·`gateway start`, 내린 뒤 실패하면 다시 올린다. 본문 전체가 함수 하나 —
+│  │                      `test/setup.plugin-install-script.test.ts` 가 가짜 openclaw·curl 위에서 bash 로 돌린다) ·
 │  │                      llms.ts(노드 설치 안내서 `llms.txt` 의 본문 틀 한곳 — renderLlmsTxt 의 인자는 공개 오리진·웹 오리진·bridgeUrl·플러그인 파일의 해시뿐(러너 절은 npm 설치라 해시가 없다)이라 토큰·Gateway·사람이 실릴 길이 없다.
-│  │                      부팅 때 한 번 렌더. 명령·계정 키·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다(curl `-K -`), 머리 주석) ·
+│  │                      부팅 때 한 번 렌더. Gateway 절은 설치 스크립트를 받아 토큰 환경 변수로 돌린다. 명령·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다, 머리 주석) ·
 │  │                      installer-auth.ts(requireOwnerOrToken — 살아 있는 세션이면 owner 규칙 그대로(아니면 403), 세션이 없을 때만 Bearer 를 http/agent-token.ts 에 넘긴다.
 │  │                      Bearer 가 없으면 세지 않는 401. plugin.tgz 는 브리지 토큰(꺼진 Gateway 면 세지 않는 401), runner.tgz 는 러너 토큰 — 다른 종류는 센 401)
 │  ├─ runners/            러너(runner_tokens 행 하나 = 러너 하나) — 연결 페이지 러너 블록(owner)과 「러너」 탭(admin 이상).
@@ -1125,7 +1129,7 @@ src/
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
 │  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
-│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · 러너 블록(RunnerSection — 토큰 목록·발급·다시 발급(ReissueRunnerTokenDialog)·폐기, 드러나는 것 넷, 설치 안내 — 상태·프로젝트는 「러너」 탭). OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginDownload 한 번,
+│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · 러너 블록(RunnerSection — 토큰 목록·발급·다시 발급(ReissueRunnerTokenDialog)·폐기, 드러나는 것 넷, 설치 안내 — 상태·프로젝트는 「러너」 탭). OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginInstall 한 번,
 │  │                       그 아래 Gateway 카드 목록 — Gateway 가 없으면 빈 상태 한 줄 NO_GATEWAY) ·
 │  │                       GatewayCard.tsx(Gateway 하나 — 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
 │  │                       (접근 이름 「<이름> 수정」 등 — 드롭다운 메뉴가 아니다)·주소·호스트·버전(drift 문구)·페어링 대기면 `openclaw devices approve <requestId>`,
@@ -1134,16 +1138,17 @@ src/
 │  │                       GatewayForm.tsx(추가·수정 대화상자 — 이름·주소·토큰(수정이면 「바꾸려면 입력」), 서버 400·409 를 칸 오류로, 문구는 고정(스키마 문구를 보이지 않는다)) ·
 │  │                       DeleteGatewayConfirm.tsx(카드 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
 │  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 · ServerSection ·
-│  │                       PluginDownload — 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
-│  │                       패치 줄만 빼고 파일 이름·번들 sha 를 채운다, `connection.test.tsx` 가 그 블록과 대조한다)) ·
-│  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설정 조각 한 번. 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
+│  │                       PluginInstall — 「새 토큰 발급」의 설치 명령을 가리키는 안내 한 줄, 파일이 없으면 PACK_COMMAND ·
+│  │                       pluginInstallCommand — 발급 대화상자의 한 줄(맨 앞 공백 · `curl -fsS <오리진>/api/v1/setup/plugin-install.sh | DODOK_BRIDGE_TOKEN='…' bash`),
+│  │                       `connection.test.tsx` 가 `docs/guides/docker-deploy.md` 의 예시 줄과 대조한다) ·
+│  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설치 명령 한 줄 한 번(서버에 파일이 없으면 PACK_COMMAND). 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
 │  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다. 원문 바로 아래 「AI 에게 맡기기」 한 줄과 「복사」 — 원문과 같은 규칙) ·
 │  │                       llms.ts(llmsHandoffLine — 「<오리진>/llms.txt 를 읽고 「<절 제목>」 절대로 …」 한 줄, 절 제목은 서버 llms.ts 와 `setup.llms.test.ts` 가 대조 ·
 │  │                       publicOriginOf — 브리지 공개 주소 → 공개 오리진) ·
 │  │                       TokenList.tsx(라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨·「이제 폐기해도 됩니다」, 폐기는
 │  │                       ConfirmDialog — 접속 중이면 경고, 마지막 활성 토큰이면 `escalated` 두 번째 확인(600ms 무장), 폐기 뒤 초점은 아래 줄 「폐기」 또는 「새 토큰 발급」) ·
 │  │                       queries.ts(setupStatus·bridgeTokens(Gateway 마다) — `setup.status` wire 가 상태를 덮는다) · mutations.ts(Gateway 추가·수정·삭제, 발급은 결과를 뮤테이션 캐시에 두지 않고 콜백으로만(gcTime 0),
-│  │                       폐기, 플러그인 받기는 fetch → blob — 404·409 를 문구로). setup 쿼리는 오프라인 사본(`pwa/persist.ts`)에서 먼저 뺀다
+│  │                       폐기, 러너 tgz 받기는 fetch → blob — 404·409 를 문구로. 플러그인 tgz 는 웹이 받지 않는다). setup 쿼리는 오프라인 사본(`pwa/persist.ts`)에서 먼저 뺀다
 │  ├─ threads/             Phase 4 ①. ThreadPanel.tsx(`/c/$channelId/s/$conversationId/t/$rootId` — 오른쪽 패널의 스레드 탭·좁은 화면 시트, MessageList 를 `threadRootId` 로 재사용(버블·카드·첨부·승인 행 그대로),
 │  │                       스레드 작성기(보관한 채널·닫힌 세션이면 없다 — 닫힌 세션은 안내), 404·VALIDATION 이면 「스레드를 찾을 수 없습니다」, 답글 결과면 첫 페이지 뒤 around 로 갈아 끼운다) ·
 │  │                       ThreadChip.tsx(루트 아래 「답글 N · 마지막 시각 · 에이전트 아바타」와 「스레드에서 답하기」 — 둘 다 라우터 Link) ·
