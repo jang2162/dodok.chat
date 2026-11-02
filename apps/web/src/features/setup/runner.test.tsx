@@ -19,7 +19,11 @@ import {
 } from "../../../test/setupServer";
 import { ME } from "../../../test/shellApi";
 import { llmsHandoffLine } from "./llms";
-import { RUNNER_NPM_INSTALL_COMMAND } from "./RunnerSection";
+import {
+  RUNNER_LOGIN_BUNDLED_COMMAND,
+  RUNNER_LOGIN_COMMAND,
+  RUNNER_NPM_INSTALL_COMMAND,
+} from "./RunnerSection";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -149,13 +153,14 @@ describe("러너 토큰", () => {
       browse: true,
       programs: {
         claude: {
-          configDir: "~/.dodok-runner/claude",
           maxPermissionMode: "default",
           disallowedTools: [],
           allowedToolsCeiling: null,
         },
       },
     });
+    // 기본은 평소 claude 로그인 — 예시에 configDir 이 없다(적으면 전용 로그인)
+    expect("configDir" in config.programs.claude).toBe(false);
     // 설정 파일에는 원문을 두지 않는다 — tokenFile 에 둔다
     expect(JSON.stringify(config)).not.toContain("drn_");
     expect(dialog).toHaveTextContent("~/.dodok-runner/token");
@@ -337,7 +342,50 @@ describe("러너 설치 안내", () => {
     expect(await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND)).toBeInTheDocument();
   });
 
-  it("tgz 받기(서버가 준 이름) → 전용 로그인 → 설정 파일 → dodok-runner", async () => {
+  /** 설치 2단계(로그인) 줄 — 평소 로그인 본문으로 찾는다 */
+  async function loginStep() {
+    stubSetupServer();
+    renderConnection();
+    const block = await runnerRegion();
+    const body = await within(block).findByText(/러너는 이 머신의 평소 Claude Code 로그인을 씁니다\./);
+    return body.closest("li") as HTMLElement;
+  }
+
+  it("설치 2단계 — 평소 로그인을 쓰고 로그인돼 있으면 건너뛴다", async () => {
+    const step = await loginStep();
+    expect(step.parentElement?.children[1]).toBe(step);
+    expect(step).toHaveTextContent("claude 로 로그인돼 있으면 건너뜁니다.");
+    expect(RUNNER_LOGIN_COMMAND).toBe("claude");
+    const blocks = [...step.querySelectorAll("pre")].filter((pre) => !pre.closest("details"));
+    expect(blocks.map((pre) => pre.textContent)).toEqual([
+      RUNNER_LOGIN_COMMAND,
+      RUNNER_LOGIN_BUNDLED_COMMAND,
+    ]);
+    // 접힌 안내 밖에는 전용 로그인 디렉터리가 없다 — 번들 CLI 도 평소 자리에 로그인
+    for (const pre of blocks) expect(pre.textContent).not.toContain("CLAUDE_CONFIG_DIR");
+    expect(within(step).getByRole("button", { name: "로그인 명령 복사" })).toBeInTheDocument();
+  });
+
+  it("설치 2단계 — 전용 로그인은 접힌 안내 안에", async () => {
+    const step = await loginStep();
+    const details = step.querySelector("details") as HTMLDetailsElement;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    await userEvent.click(within(details).getByText("러너 전용 로그인을 따로 쓰려면"));
+    expect(details.open).toBe(true);
+    expect(details).toHaveTextContent("CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude");
+    expect(details).toHaveTextContent('"configDir": "~/.dodok-runner/claude"');
+    expect(details).toHaveTextContent("대화 기록도 그 디렉터리에 따로 남습니다");
+  });
+
+  it("설치 2단계 — 이메일·--resume 경고", async () => {
+    const step = await loginStep();
+    const warning = within(step).getByText(/계정 이메일이 에이전트에게 보이고/);
+    expect(warning.closest("details")).toBeNull();
+    expect(warning).toHaveTextContent("claude --resume 목록에도 남습니다");
+  });
+
+  it("tgz 받기(서버가 준 이름) → 로그인 → 설정 파일 → dodok-runner", async () => {
     const server = stubSetupServer({
       status: statusOf({
         runners: {

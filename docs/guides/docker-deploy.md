@@ -414,13 +414,14 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 4번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다. 토큰 하나 = 러너 하나다.
 2. **[R] 설치** — npm 레지스트리에서 `npm i -g @dodok/runner`(연결 페이지 「설치」 1단계의 「설치 명령 복사」가 같은 줄이다). `dodok-runner --version` 으로 판본을 본다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
    - **서버와 같은 빌드가 필요할 때** — npm 판은 `runner-v<판본>` 태그를 민 커밋의 빌드라(`docs/guides/runner-release.md`) 서버와 커밋이 다를 수 있다. 서버 이미지는 같은 커밋의 러너 tgz 를 품고 내려준다: 연결 페이지 「설치」 1단계의 접힌 「서버와 같은 빌드로 설치」를 펼쳐 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`(그 안의 「파일 설치 명령 복사」가 같은 줄이다). 서버에 러너 파일이 없으면 그 자리에 만드는 명령(`pnpm -F @dodok/runner run pack:runner`)이 보인다.
-3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**(4번 `programs.claude.configDir`)의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
+3. **[R] Claude 로그인** — 러너는 이 머신의 **평소 Claude Code 로그인**(`~/.claude`)을 쓴다. `claude` 로 로그인돼 있으면 건너뛴다. 아니면 `claude` 를 열어 `/login` 을 마치고 나온다.
    ```bash
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
+   claude
    # claude 명령이 없으면 러너가 품은 번들 CLI 로(플랫폼별 패키지 디렉터리 이름은 `ls "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai"` 로 본다 — 아래 경로의 이름과 다르면 그 이름으로 바꾼다):
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   "$(node -p 'path.resolve(fs.realpathSync(process.argv[1]), "../..")' "$(command -v dodok-runner)")/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    ```
-   러너 **전용 Claude 계정**을 권한다 — 아래 「드러나는 것」 1.
+   러너 런은 평소 계정으로 돈다 — 계정 이메일이 에이전트에게 보이고(아래 「드러나는 것」 1), 러너 세션의 대화 기록이 이 머신의 `claude --resume` 목록에도 남는다. ⚠ 채널에서 쓰는 러너 세션을 터미널에서 이어 쓰지 않는다 — 대화가 섞인다.
+   - **러너 전용 로그인을 따로 쓰려면** — 위 명령 앞에 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude ` 를 붙여(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude`) 그 디렉터리에 로그인하고, 4번 설정의 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다. 전용 로그인이면 대화 기록도 그 디렉터리에 따로 남고, macOS 키체인 항목도 디렉터리마다 따로다(ADR 0007 「함정」). 이메일이 걱정되면 러너 전용 Claude 계정으로 로그인한다.
 4. **[R] 설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 1번의 조각에서 `roots` 를 고친다. 정본은 `packages/claude-runner/src/config.ts` 의 `RunnerConfig` — 모르는 키는 거절한다.
    ```json
    {
