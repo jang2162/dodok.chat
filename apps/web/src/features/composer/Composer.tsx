@@ -21,6 +21,7 @@ import { Button } from "@/ui/button";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
 import { PendingAttachments } from "./PendingAttachments";
+import { onMentionRequest } from "@/features/profile/openProfile";
 import { toBodyMd } from "./serialize";
 import { parseSlash } from "./slash";
 import { SubmitKeys } from "./submitKeys";
@@ -191,6 +192,21 @@ export function Composer({
       else drafts.set(draftKey, editor.getJSON());
     };
   }, [editor, draftKey, drafts, carriedFrom]);
+  // 프로필 패널의 「멘션」(프로필 스펙 3.1) — 세션 작성기(스레드 답글 작성기 말고)에 `@핸들` 칩과 빈칸을 넣는다
+  useEffect(() => {
+    if (threadRootId !== undefined) return;
+    return onMentionRequest(({ kind, id, handle }) => {
+      if (editor.isDestroyed || !editor.isEditable) return;
+      editor
+        .chain()
+        .focus()
+        .insertContent([
+          { type: "mention", attrs: { id: `${kind}:${id}`, label: handle } },
+          { type: "text", text: " " },
+        ])
+        .run();
+    });
+  }, [editor, threadRootId]);
   // 자리표시는 문서가 바뀔 때만 다시 그려진다 — 빈 작성기 그대로 채널 ↔ DM 을 옮기면 옛 문구가 남으므로 빈 트랜잭션으로 다시 그리게 한다
   useEffect(() => {
     if (!editor.isDestroyed) editor.view.dispatch(editor.state.tr);

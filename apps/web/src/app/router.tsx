@@ -186,6 +186,15 @@ export const channelThreadRoute = createRoute({
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
 });
 /**
+ * 프로필 패널(프로필 스펙 3.1) — 설정·활동·스레드와 같은 오른쪽 패널 자리의 탭 하나. `kind` 는 u(사람)·a(에이전트), 모르는 값이나
+ * 없는 id 는 패널이 「찾을 수 없습니다」
+ */
+export const channelProfileRoute = createRoute({
+  getParentRoute: () => conversationRoute,
+  path: "p/$kind/$id",
+  component: lazyPage(() => import("@/features/profile/ProfilePanel"), "ProfilePanel"),
+});
+/**
  * DM 열기(에이전트 DM 계획 판정 PD2) — 그 에이전트와의 DM 채널을 찾거나 만들어(`POST /dms`) `/c/<DM 채널>` 로 넘긴다. 화면은 DM 채널
  * 경로가 그린다(채널 화면이 `kind === "dm"` 이면 DM 꼴). 만들기는 POST 라 `beforeLoad` 가 아니라 화면이 한다 — 미리 불러오기·다시 검증이
  * 요청을 내지 않게
@@ -314,7 +323,12 @@ const routeTree = rootRoute.addChildren([
     indexRoute,
     channelRoute.addChildren([
       channelIndexRoute,
-      conversationRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),
+      conversationRoute.addChildren([
+        channelSettingsRoute,
+        channelActivityRoute,
+        channelThreadRoute,
+        channelProfileRoute,
+      ]),
       legacyChannelSettingsRoute,
       legacyChannelActivityRoute,
       legacyChannelThreadRoute,

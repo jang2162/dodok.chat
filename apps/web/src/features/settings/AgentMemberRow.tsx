@@ -4,6 +4,7 @@ import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
 import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
 import { DmAgentAvatar } from "@/features/dms/DmSection";
+import { useOpenProfile } from "@/features/profile/openProfile";
 import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
@@ -44,6 +45,7 @@ export function AgentMemberRow({
 }) {
   const remove = useRemoveMember(channelId);
   const canManage = useCanManage();
+  const openProfile = useOpenProfile();
   // 확인이 필요한지 판단할 때의 계획 — 확인 때 지금 멤버로 다시 세운다(열린 사이 wire 로 다른 에이전트가 켜질 수 있다)
   const [switching, setSwitching] = useState<AutoRespondStep[]>();
   const [removing, setRemoving] = useState(false);
@@ -61,7 +63,18 @@ export function AgentMemberRow({
   return (
     <li className="flex flex-col gap-3 rounded-lg border bg-card p-3">
       <div className="flex items-start gap-2">
-        <DmAgentAvatar agent={agent} />
+        {openProfile ? (
+          <button
+            type="button"
+            aria-label={`${agent.name} 프로필`}
+            onClick={() => openProfile({ kind: "agent", id: agent.id })}
+            className="rounded-full"
+          >
+            <DmAgentAvatar agent={agent} />
+          </button>
+        ) : (
+          <DmAgentAvatar agent={agent} />
+        )}
         <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="truncate font-medium">{agent.name}</span>

@@ -9,6 +9,7 @@ import { useChannelArchived } from "@/features/channels/archived";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { useDmView } from "@/features/dms/context";
 import { WithPresence } from "@/features/presence/PresenceDot";
+import { useOpenProfile } from "@/features/profile/openProfile";
 import { ReactionChips } from "@/features/reactions/ReactionChips";
 import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
@@ -33,7 +34,7 @@ export function MessageTime({ iso, className }: { iso: string; className?: strin
 }
 
 /** 아바타 36px(스펙 7.1). 에이전트는 테두리 2px 에이전트 색, 사람은 테두리 없음(스펙 7.2) */
-export function AuthorAvatar({ author }: { author: Author }) {
+export function AuthorAvatar({ author, onOpen }: { author: Author; onOpen?: () => void }) {
   const avatar = (
     <Avatar
       className={author.isAgent ? "size-9 border-2" : "size-9"}
@@ -45,18 +46,39 @@ export function AuthorAvatar({ author }: { author: Author }) {
   );
   // 접속 점(프로필 스펙 3.3) — 누구인지 모르는 작성자(시스템·자동화)는 점이 없다
   if (!author.ref) return avatar;
-  return (
+  const dotted = (
     <WithPresence kind={author.ref.kind} id={author.ref.id}>
       {avatar}
     </WithPresence>
   );
+  if (!onOpen) return dotted;
+  return (
+    <button type="button" aria-label={`${author.name} 프로필`} onClick={onOpen} className="rounded-full">
+      {dotted}
+    </button>
+  );
 }
 
 /** 머리 줄: 이름 · 에이전트면 「AI」 배지(보관했으면 「삭제됨」도) · 비활성 멤버면 「비활성」 · 시각(또는 상태) */
-export function AuthorLine({ author, children }: { author: Author; children: ReactNode }) {
+export function AuthorLine({
+  author,
+  children,
+  onOpen,
+}: {
+  author: Author;
+  children: ReactNode;
+  /** 이름을 누르면 프로필(프로필 스펙 3.1) — 세션 화면에서만 */
+  onOpen?: () => void;
+}) {
   return (
     <div className="flex items-baseline gap-2 text-[15px] leading-snug">
-      <span className="truncate font-semibold">{author.name}</span>
+      {onOpen ? (
+        <button type="button" onClick={onOpen} className="truncate font-semibold hover:underline">
+          {author.name}
+        </button>
+      ) : (
+        <span className="truncate font-semibold">{author.name}</span>
+      )}
       {author.isAgent && (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           AI
@@ -109,6 +131,9 @@ export function MessageItem({
   inThread?: boolean;
 }) {
   const author = useAuthors().author(message);
+  const openProfile = useOpenProfile();
+  const ref = author.ref;
+  const openAuthor = ref && openProfile ? () => openProfile(ref) : undefined;
   useLoadAutomationAuthors([message]);
   const me = useMe().data?.user.id;
   // 보관한 채널·닫힌 세션은 반응을 달 수 없다(서버 409) — 칩은 읽기만
@@ -130,7 +155,7 @@ export function MessageItem({
       <div className="flex w-9 shrink-0 justify-end">
         {head ? (
           <div className="pt-1">
-            <AuthorAvatar author={author} />
+            <AuthorAvatar author={author} onOpen={openAuthor} />
           </div>
         ) : (
           <MessageTime
@@ -147,7 +172,7 @@ export function MessageItem({
         )}
       >
         {head && (
-          <AuthorLine author={author}>
+          <AuthorLine author={author} onOpen={openAuthor}>
             <MessageTime iso={message.createdAt} />
           </AuthorLine>
         )}

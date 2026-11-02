@@ -53,10 +53,12 @@ import { useTimelineState } from "./useTimeline";
  */
 export function ChannelPage() {
   // 라우트 id 문자열에 기대지 않는다(레이아웃 id 가 바뀌어도 안전)
-  const { channelId, conversationId, rootId } = useParams({ strict: false }) as {
+  const { channelId, conversationId, rootId, kind, id } = useParams({ strict: false }) as {
     channelId: string;
     conversationId: string;
     rootId?: string;
+    kind?: string;
+    id?: string;
   };
   // 오른쪽 패널의 탭 머리는 여기서 그린다 — 탭을 옮겨도 머리의 링크가 죽지 않아야 초점이 살아남는다(D3)
   const routeTab = usePanelTab();
@@ -309,10 +311,11 @@ export function ChannelPage() {
                   channelId={channelId}
                   conversationId={conversationId}
                   rootId={tab === "thread" ? rootId : undefined}
+                  profile={tab === "profile" && kind && id ? { kind, id } : undefined}
                   active={tab}
                   openerRef={settingsRef}
                   threadOpenerRef={threadOpenerRef}
-                  only={dmChannel ? ["activity"] : undefined}
+                  only={dmChannel ? ["activity", "profile"] : undefined}
                 >
                   <Outlet />
                 </PanelTabs>

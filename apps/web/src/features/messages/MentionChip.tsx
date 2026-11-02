@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { ArchivedTag } from "@/features/agents/ArchivedTag";
 import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { agentColorVar } from "@/theme/agentColor";
+import { useOpenProfile } from "@/features/profile/openProfile";
 import { useAuthors } from "./useAuthors";
 
 /**
@@ -12,11 +13,20 @@ import { useAuthors } from "./useAuthors";
  */
 export function MentionChip({ kind, id }: { kind: "a" | "u"; id: string }) {
   const authors = useAuthors();
+  const openProfile = useOpenProfile();
   const handle = authors.mention(kind, id);
   const archived = kind === "a" && authors.archivedAgent(id);
   const deactivated = kind === "u" && authors.deactivatedPerson(id);
+  // 아는 사람·에이전트면 누르면 프로필(프로필 스펙 3.1) — 세션 화면에서만
+  const Tag = handle && openProfile ? "button" : "span";
   return (
-    <span
+    <Tag
+      {...(Tag === "button"
+        ? {
+            type: "button" as const,
+            onClick: () => openProfile?.({ kind: kind === "a" ? "agent" : "user", id }),
+          }
+        : {})}
       data-mention={kind}
       data-archived={archived || undefined}
       data-deactivated={deactivated || undefined}
@@ -36,6 +46,6 @@ export function MentionChip({ kind, id }: { kind: "a" | "u"; id: string }) {
       {`@${handle ?? "알 수 없음"}`}
       {archived && <ArchivedTag className="ml-1 text-xs font-normal text-muted-foreground" />}
       {deactivated && <DeactivatedTag className="ml-1 text-xs font-normal text-muted-foreground" />}
-    </span>
+    </Tag>
   );
 }
