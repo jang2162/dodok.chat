@@ -121,6 +121,20 @@ describe("아바타 REST", () => {
     expect(forbidden.statusCode).toBe(403);
   });
 
+  it("없는 에이전트에 PUT → 404, 디스크에 파일을 남기지 않는다", async () => {
+    const dir = avatarsDirOf(app);
+    if (!dir) throw new Error("아바타 디렉터리가 없다");
+    const before = existsSync(dir) ? readdirSync(dir) : [];
+    const res = await put(
+      "/api/v1/agents/00000000-0000-4000-8000-0000000000aa/avatar",
+      owner,
+      makePng(96, 96, [1, 2, 3]),
+    );
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ code: "NOT_FOUND" });
+    expect(existsSync(dir) ? readdirSync(dir) : []).toEqual(before);
+  });
+
   it("없는 파일·이름 모양이 아닌 경로는 404", async () => {
     expect((await get(`/api/v1/avatars/${"0".repeat(64)}.png`)).statusCode).toBe(404);
     expect((await get("/api/v1/avatars/..%2Fdodok.sqlite")).statusCode).toBe(404);

@@ -14,7 +14,7 @@ import { apiError } from "../../http/errors";
 import { parseParams } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
 import { setAgentAvatarAndNotify } from "../agents/actions";
-import { agentForRole } from "../agents/service";
+import { agentForRole, getAgent } from "../agents/service";
 import { broadcastPeople } from "../members/people";
 import { recordRateLimit } from "../ops/http-limits";
 import { KeyedLimiter } from "../ops/ratelimit";
@@ -105,6 +105,8 @@ export function registerAvatarRoutes(fastify: FastifyInstance, ctx: AvatarRouteC
       if (bytes === null) {
         result = setAgentAvatarAndNotify(ctx, id, null, ctx.workspaceId);
       } else {
+        // 파일을 쓰기 전에 — 없는 에이전트면 404 만 내고 디스크에 아무것도 남기지 않는다
+        if (!getAgent(ctx.db, id, ctx.workspaceId)) throw apiError("NOT_FOUND", "agent not found");
         const { file, url } = prepareAvatar(bytes);
         result = await avatarLocks.run(file, async () => {
           await writeAvatarFile(ctx.dir, file, bytes);
