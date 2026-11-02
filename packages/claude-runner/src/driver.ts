@@ -26,7 +26,10 @@ export type RunSpec = {
   disallowedTools: string[];
 };
 
-export type ProgramDetection = Pick<RunnerProgramStatus, "available" | "version" | "auth" | "reason">;
+export type ProgramDetection = Pick<
+  RunnerProgramStatus,
+  "available" | "version" | "auth" | "reason" | "login"
+>;
 
 export interface ProgramDriver {
   program: RunnerProgram;
