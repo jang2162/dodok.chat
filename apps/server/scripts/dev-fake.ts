@@ -300,7 +300,8 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
     hello: {
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
-      programs: [FAKE_CLAUDE_PROGRAM, DEV_FAKE_CODEX_MISSING],
+      // 평소 로그인 — 러너 카드의 「(평소 로그인)」을 손으로 본다. 제한 러너는 전용
+      programs: [{ ...FAKE_CLAUDE_PROGRAM, login: "default" }, DEV_FAKE_CODEX_MISSING],
     },
     tree: devFakeRunnerTree,
   },
@@ -318,6 +319,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       programs: [
         {
           ...FAKE_CLAUDE_PROGRAM,
+          login: "dedicated",
           ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: ["Read", "Grep", "Glob"] },
         },
       ],

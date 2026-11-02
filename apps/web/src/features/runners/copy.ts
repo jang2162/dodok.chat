@@ -61,5 +61,8 @@ export const PERMISSION_MODE_LABEL: Record<RunnerPermissionMode, string> = {
 /** 프로그램 로그인 상태(hello `programs[].auth`) */
 export const AUTH_LABEL = { ok: "로그인됨", missing: "로그인 안 됨", unknown: "로그인 모름" } as const;
 
+/** 러너가 쓰는 Claude 로그인(hello `programs[].login`) — 로그인 상태 뒤 괄호. 옛 러너는 싣지 않아 붙지 않는다 */
+export const LOGIN_LABEL = { default: "평소 로그인", dedicated: "전용 로그인" } as const;
+
 /** 프로젝트가 없는(0031 이 보관한) 러너 에이전트 — 계획 Task 5 Step 3 의 문구 그대로 */
 export const NO_PROJECT_RESTORE = "프로젝트가 없어 되살릴 수 없습니다 — 새로 만드세요";

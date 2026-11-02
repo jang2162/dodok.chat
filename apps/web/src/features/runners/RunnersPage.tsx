@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { AddProjectDialog } from "./AddProjectDialog";
-import { AUTH_LABEL } from "./copy";
+import { AUTH_LABEL, LOGIN_LABEL } from "./copy";
 import { ProjectList } from "./ProjectList";
 import { useRunners } from "./queries";
 
@@ -172,7 +172,8 @@ function ProgramLine({ program }: { program: RunnerProgramStatus }) {
   return (
     <li aria-label={name} className="break-words">
       <span className="font-medium">{name}</span>
-      {program.version && <> {program.version}</>} · {AUTH_LABEL[program.auth]} · 권한 상한{" "}
+      {program.version && <> {program.version}</>} · {AUTH_LABEL[program.auth]}
+      {program.login && <> ({LOGIN_LABEL[program.login]})</>} · 권한 상한{" "}
       <code className="font-mono text-xs">{program.ceiling.maxPermissionMode}</code>
       {tools !== null && <> · 허용 도구 상한 {tools.length === 0 ? "없음" : tools.join(", ")}</>}
       {program.reason && <span className="text-muted-foreground"> · {program.reason}</span>}
