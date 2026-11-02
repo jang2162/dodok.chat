@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PLUGIN_INSTALL_SCRIPT_PATH } from "@dodok/shared";
+import { DodokAccountConfig } from "../../../packages/openclaw-plugin/src/config";
 import { renderPluginInstallScript } from "../src/modules/setup/plugin-install-script";
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
@@ -135,9 +136,12 @@ describe("plugin-install.sh", () => {
       "openclaw gateway start",
     ]);
     expect(logText()).toContain(`${ORIGIN}/api/v1/setup/plugin.tgz`);
-    expect(JSON.parse(readFileSync(join(root, "patch.json"), "utf8"))).toEqual({
+    const patch = JSON.parse(readFileSync(join(root, "patch.json"), "utf8"));
+    expect(patch).toEqual({
       channels: { dodok: { accounts: { default: { bridgeUrl: BRIDGE_URL, token: TOKEN } } } },
     });
+    // 계정 키는 플러그인 설정 스키마를 그대로 지난다(어긋나면 Gateway 가 망가진 설정을 받는다)
+    expect(DodokAccountConfig.safeParse(patch.channels.dodok.accounts.default).success).toBe(true);
     expect(readFileSync(join(root, "curl.stdin"), "utf8")).toContain(`Authorization: Bearer ${TOKEN}`);
     // 받은 tgz 를 둔 임시 디렉터리는 끝나면 지운다
     expect(readdirSync(tmp)).toEqual([]);

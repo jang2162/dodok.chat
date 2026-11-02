@@ -90,6 +90,7 @@ import { registerReadRoutes } from "./modules/reads/routes";
 import { registerTokenRoutes } from "./modules/tokens/routes";
 import { registerSearchRoutes } from "./modules/search/routes";
 import { renderLlmsTxt } from "./modules/setup/llms";
+import { renderPluginInstallScript } from "./modules/setup/plugin-install-script";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
 import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
@@ -684,6 +685,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         plugin: pluginFile,
       }),
       llmsLimit: createIpLimit(fastify, { perMin: limits.llmsTxtPerMin, ops }),
+      pluginInstallScript: pluginFile
+        ? renderPluginInstallScript({ origin: serverUrl, bridgeUrl: publicUrl, plugin: pluginFile })
+        : null,
     });
     registerGatewayRoutes(fastify, {
       auth,

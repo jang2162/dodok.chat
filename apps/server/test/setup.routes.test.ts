@@ -1,5 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { SetupStatus } from "@dodok/shared";
+import { PLUGIN_INSTALL_SCRIPT_PATH, SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -201,6 +201,36 @@ describe("설정 API /api/v1/setup", () => {
     }
     expect((await call(owner, "GET", "/plugin.tgz")).statusCode).toBe(200);
   });
+
+  it("GET plugin-install.sh — 로그인 없이 200, text/plain·nosniff, 본문에 bridgeUrl·두 sha·plugin.tgz 주소", async () => {
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: PLUGIN_INSTALL_SCRIPT_PATH,
+      remoteAddress: "10.9.0.1",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/plain; charset=utf-8");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.body.startsWith("#!/usr/bin/env bash\n")).toBe(true);
+    expect(res.body).toContain("'wss://chat.example.com/bridge'");
+    expect(res.body).toContain(`'${sha(tgz)}'`);
+    expect(res.body).toContain(`'${sha(BUNDLE)}'`);
+    expect(res.body).toContain("'https://chat.example.com'");
+    expect(res.body).toContain("/api/v1/setup/plugin.tgz");
+    // 토큰 자리는 환경 변수뿐 — 본문에 토큰·서버 안 경로가 없다
+    expect(res.body).not.toMatch(/dbt_[A-Za-z0-9_-]{43}/);
+    expect(res.body).not.toContain(pluginDir);
+  });
+
+  it("GET plugin-install.sh — llms.txt 와 같은 IP 버킷(둘을 합쳐 31번째가 429)", async () => {
+    const get = (url: string) => app.fastify.inject({ method: "GET", url, remoteAddress: "10.9.0.31" });
+    for (let i = 0; i < 15; i++) {
+      expect((await get("/llms.txt")).statusCode, `llms ${i + 1}`).toBe(200);
+      expect((await get(PLUGIN_INSTALL_SCRIPT_PATH)).statusCode, `install ${i + 1}`).toBe(200);
+    }
+    expect((await get(PLUGIN_INSTALL_SCRIPT_PATH)).statusCode).toBe(429);
+    expect((await get("/llms.txt")).statusCode).toBe(429);
+  });
 });
 
 describe("설정 API — 플러그인 파일이 없을 때", () => {
@@ -218,5 +248,12 @@ describe("설정 API — 플러그인 파일이 없을 때", () => {
     expect(res.json()).toMatchObject({ code: "NOT_FOUND", message: "PLUGIN_FILE_MISSING" });
     const status = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers });
     expect(status.json().pluginFile).toEqual({ available: false });
+  });
+
+  it("plugin-install.sh 도 404 PLUGIN_FILE_MISSING", async () => {
+    app = await bootTestApp({}, { pluginDirs: [] });
+    const res = await app.fastify.inject({ method: "GET", url: PLUGIN_INSTALL_SCRIPT_PATH });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ code: "NOT_FOUND", message: "PLUGIN_FILE_MISSING" });
   });
 });
