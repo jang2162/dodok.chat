@@ -128,8 +128,12 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
     e.preventDefault();
     if (!ready || update.isPending || modeChoice === undefined) return;
     const now = new Date();
+    // 「그대로」 만료가 폼을 연 사이 지났으면 서버에서는 이미 풀렸다(자동·메시지 없음) — 지난 시각을 보내면 400 이라 풀린 모양으로 저장한다
+    const lapsed = (preset: Preset, choice: ExpiryChoice | undefined) =>
+      preset === "keep" && typeof choice === "object" && choice.at.getTime() <= now.getTime();
+    const modeLapsed = mode !== "auto" && lapsed(modePreset, modeChoice);
     const message =
-      trimmed === ""
+      trimmed === "" || lapsed(textPreset, textChoice)
         ? null
         : StatusMessage.parse({
             emoji: emoji.trim() || null,
@@ -140,8 +144,8 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
     setSaved(false);
     update.mutate(
       {
-        mode,
-        modeUntil: mode === "auto" ? null : expiryOf(modeChoice, now),
+        mode: modeLapsed ? "auto" : mode,
+        modeUntil: mode === "auto" || modeLapsed ? null : expiryOf(modeChoice, now),
         message,
         dndAllowApprovals: allowApprovals,
       },

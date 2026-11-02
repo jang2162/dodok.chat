@@ -267,6 +267,39 @@ describe("AccountPage", () => {
       expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ mode: "dnd", modeUntil: until });
     });
 
+    it("「그대로」 만료가 폼을 연 사이 지났으면 지난 시각을 보내지 않는다 — 풀린 모양(자동·메시지 없음)으로 저장", async () => {
+      // 폼을 그린 뒤 시간이 흐른 모양 — 그린 때의 만료가 이미 지났다
+      const past = new Date(Date.now() - 60_000).toISOString();
+      const fetch = stubServer(
+        {
+          ...MEMBER,
+          status: {
+            mode: "dnd",
+            modeUntil: past,
+            message: { emoji: "🍱", text: "점심", until: past },
+            dndAllowApprovals: true,
+          },
+        },
+        { status: (body) => json(200, { status: { ...(body as object) } }) },
+      );
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      expect(p.getByLabelText("상태 만료")).toHaveValue("keep");
+      await userEvent.click(p.getByRole("checkbox", { name: "도구 승인 요청은 계속 받기" }));
+      await userEvent.click(p.getByRole("button", { name: "상태 저장" }));
+      await waitFor(() =>
+        expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/me/status")).toBe(true),
+      );
+      const call = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/me/status");
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+        mode: "auto",
+        modeUntil: null,
+        message: null,
+        dndAllowApprovals: false,
+      });
+    });
+
     it("상태 메시지 101자는 저장할 수 없다", async () => {
       stubServer(MEMBER);
       renderRoute("/settings/account");
