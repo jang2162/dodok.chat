@@ -38,7 +38,10 @@ export const IssueBridgeTokenResult = z.object({
 export type IssueBridgeTokenResult = z.infer<typeof IssueBridgeTokenResult>;
 
 /** 러너 토큰 목록·발급 결과의 한 줄(러너 스펙 5장) — 브리지 토큰과 같은 모양. prefix 는 원문의 drn_ 뒤 6자, connected 는 지금 이 토큰으로 붙은 러너가 있다 */
-export const RunnerTokenRecord = BridgeTokenRecord;
+export const RunnerTokenRecord = BridgeTokenRecord.extend({
+  // 그 러너(연결)의 주인 — 발급한 사람(연결 탭 통합 스펙 5.1)
+  ownerUserId: Id.nullable(),
+});
 export type RunnerTokenRecord = z.infer<typeof RunnerTokenRecord>;
 
 /** POST /api/v1/setup/runner-tokens 본문 — 라벨은 러너 머신 이름 */

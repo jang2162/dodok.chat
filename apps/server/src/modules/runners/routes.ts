@@ -13,7 +13,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
-import { requireOwner } from "../../auth/routes";
+import { requireOwner, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
@@ -70,7 +70,7 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
 
   fastify.post("/api/v1/setup/runner-tokens", owner, async (request, reply) => {
     const { label } = parseBody(IssueRunnerTokenInput, request.body);
-    const { token, record } = issueRunnerToken(ctx.db, ctx.workspaceId, label);
+    const { token, record } = issueRunnerToken(ctx.db, ctx.workspaceId, label, sessionUser(request).id);
     ctx.logger.info({ tokenId: record.id, label: record.label }, "runner token issued");
     ctx.changed();
     const result: IssueRunnerTokenResult = {

@@ -18,7 +18,7 @@ beforeEach(() => {
 
 describe("에이전트↔러너 토큰 묶임 저장소", () => {
   it("러너 에이전트는 만들 때 그 프로젝트의 러너 토큰에 묶이고, 응답 Agent.runner 에 라벨을 붙인다 — OpenClaw 는 묶임이 없다", () => {
-    const a = issueRunnerToken(db, ws, "laptop").record.id;
+    const a = issueRunnerToken(db, ws, "laptop", null).record.id;
     const coder = createRunnerAgentForTest(db, { workspaceId: ws, handle: "coder", runnerTokenId: a }).agent;
     expect(coder.runner).toEqual({ tokenId: a, label: "laptop", revoked: false });
     const dev = createAgent(db, { workspaceId: ws, providerAgentId: "dev", handle: "dev", name: "Dev" });
@@ -34,8 +34,8 @@ describe("에이전트↔러너 토큰 묶임 저장소", () => {
   });
 
   it("에이전트의 러너 토큰만 다른 러너를 가리키면 정의가 없다 — 프로젝트도 그 러너의 것이어야 한다 [태스크 3 리뷰 D1]", () => {
-    const a = issueRunnerToken(db, ws, "a").record.id;
-    const b = issueRunnerToken(db, ws, "b").record.id;
+    const a = issueRunnerToken(db, ws, "a", null).record.id;
+    const b = issueRunnerToken(db, ws, "b", null).record.id;
     const { agent } = createRunnerAgentForTest(db, {
       workspaceId: ws,
       handle: "coder",

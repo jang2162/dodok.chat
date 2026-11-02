@@ -189,8 +189,8 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
       .find((r) => r.id === orphan.id);
     expect(row).toMatchObject({ gatewayId: null, uploaderId: null });
 
-    const runner = issueRunnerToken(app.db, app.workspaceId, "laptop").record.id;
-    const other = issueRunnerToken(app.db, app.workspaceId, "desktop").record.id;
+    const runner = issueRunnerToken(app.db, app.workspaceId, "laptop", null).record.id;
+    const other = issueRunnerToken(app.db, app.workspaceId, "desktop", null).record.id;
     const { agent: coder } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
       handle: "coder",

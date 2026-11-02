@@ -189,9 +189,12 @@ function addFakeGateway(
   name: string,
 ): { gatewayId: string; bridgeToken: string } {
   const existing = listGatewayRows(app.db, app.workspaceId)[index];
+  // 가짜·실연 Gateway 는 워크스페이스 owner 가 만든 것 — 만들 때 승인된다
+  const owner = { userId: app.ownerUserId, role: "owner" } as const;
   const row = existing
-    ? updateGateway(app.db, app.workspaceId, existing.id, { url: gateway.url, token: gateway.token }).row
-    : createGateway(app.db, app.workspaceId, { name, url: gateway.url, token: gateway.token });
+    ? updateGateway(app.db, app.workspaceId, existing.id, { url: gateway.url, token: gateway.token }, owner)
+        .row
+    : createGateway(app.db, app.workspaceId, { name, url: gateway.url, token: gateway.token }, owner);
   const openclaw = app.registry.forProvider("openclaw");
   if (!openclaw || !hasGateways(openclaw))
     throw new Error("live app has no gateway-managing OpenClaw adapter");

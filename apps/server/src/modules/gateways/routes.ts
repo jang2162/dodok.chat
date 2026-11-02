@@ -15,7 +15,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { OpenClawGateways } from "../../adapters/types";
 import type { Auth } from "../../auth";
-import { requireOwner } from "../../auth/routes";
+import { requireOwner, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
@@ -71,7 +71,8 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
 
   fastify.post("/api/v1/gateways", owner, async (request, reply) => {
     const body = parseBody(CreateGatewayBody, request.body);
-    const row = createGateway(ctx.db, ctx.workspaceId, body);
+    const user = sessionUser(request);
+    const row = createGateway(ctx.db, ctx.workspaceId, body, { userId: user.id, role: user.role });
     ctx.gateways.upsertGateway(gatewayConfig(row));
     ctx.logger.info({ gatewayId: row.id, name: row.name }, "gateway added");
     ctx.changed();
@@ -81,7 +82,11 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
   fastify.patch("/api/v1/gateways/:id", owner, async (request) => {
     const { id } = parseParams(GatewayParams, request.params);
     const patch = parseBody(UpdateGatewayBody, request.body);
-    const { before, row, changed } = updateGateway(ctx.db, ctx.workspaceId, id, patch);
+    const user = sessionUser(request);
+    const { before, row, changed } = updateGateway(ctx.db, ctx.workspaceId, id, patch, {
+      userId: user.id,
+      role: user.role,
+    });
     if (changed) {
       // 어댑터가 무엇이 바뀌었는지 본다 — 이름만이면 다시 붙지 않고, 주소·토큰이면 그 연결만 다시 붙는다
       ctx.gateways.upsertGateway(gatewayConfig(row));

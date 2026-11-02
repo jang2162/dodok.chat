@@ -61,7 +61,7 @@ import {
   type RunnerProjectRef,
   RunnerRootId,
 } from "@dodok/shared";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
@@ -1217,6 +1217,7 @@ function ensureDevFakeRunnerRow(app: App, spec: DevFakeRunnerSpec): string | nul
         label: spec.label,
         hash,
         prefix,
+        ownerUserId: app.ownerUserId,
         createdAt: new Date(),
         lastUsedAt: null,
         revokedAt: null,
@@ -1327,7 +1328,10 @@ function seedDevFakeGateway(
         url: gateway.url,
         token: gateway.token,
         enabled: true,
+        // 주인은 부팅 뒤 owner 로 채운다(claimDevFakeGateways — owner 사용자는 createApp 이 만든다). owner 가 만든 것이라 승인된 채
         ownerUserId: null,
+        approvedAt: now,
+        approvedBy: null,
         lastVersion: null,
         createdAt: now,
         updatedAt: now,
@@ -1370,6 +1374,24 @@ function changedByHand(db: DbOrTx, workspaceId: string, spec: DevFakeGatewaySpec
   if (token?.revokedAt != null)
     return "the fixed bridge token is revoked — restart dev:fake without --keep (new DB); POST /__devfake/plugin-token cannot start a fake plugin";
   return undefined;
+}
+
+/** 주인 없는 가짜 Gateway 행(seedDevFakeGateway 가 owner 사용자보다 먼저 만든다)의 주인을 owner 로 — 사람이 바꾼 것은 건드리지 않는다 */
+function claimDevFakeGateways(app: App): void {
+  app.db
+    .update(gateways)
+    .set({ ownerUserId: app.ownerUserId })
+    .where(
+      and(
+        eq(gateways.workspaceId, app.workspaceId),
+        inArray(
+          gateways.id,
+          DEV_FAKE_GATEWAYS.map((g) => g.id),
+        ),
+        isNull(gateways.ownerUserId),
+      ),
+    )
+    .run();
 }
 
 /**
@@ -1684,6 +1706,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
     await ensureDevFakeMember(app);
+    claimDevFakeGateways(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
     const seeded = ensureDevFakeSessions(app);

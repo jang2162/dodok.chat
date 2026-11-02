@@ -34,7 +34,8 @@ export const TOKENS_PATH = `/api/v1/gateways/${GATEWAY_ID}/bridge-tokens`;
 
 export const tokenId = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 
-export function tokenOf(n: number, over: Partial<BridgeTokenRecord> = {}): BridgeTokenRecord {
+/** 브리지·러너 토큰 한 줄 — 러너 토큰은 주인(ownerUserId)이 더 있다. 브리지 토큰 자리에도 그대로 들어간다 */
+export function tokenOf(n: number, over: Partial<RunnerTokenRecord> = {}): RunnerTokenRecord {
   return {
     id: tokenId(n),
     label: `토큰-${n}`,
@@ -43,6 +44,7 @@ export function tokenOf(n: number, over: Partial<BridgeTokenRecord> = {}): Bridg
     lastUsedAt: null,
     revokedAt: null,
     connected: false,
+    ownerUserId: null,
     ...over,
   };
 }

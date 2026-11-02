@@ -104,7 +104,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     );
     // 토큰·다른 Gateway·사람이 있는 상태에서도 본문에 실리지 않아야 한다
     bridgeToken = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
-    runnerToken = issueRunnerToken(app.db, app.workspaceId, "mac").token;
+    runnerToken = issueRunnerToken(app.db, app.workspaceId, "mac", null).token;
     insertGateway(app.db, app.workspaceId, { id: uuid(), name: OTHER_GATEWAY, enabled: true });
     await userWithRole(app, "bee", "member");
   });
@@ -648,7 +648,7 @@ describe("설치 파일을 발급 토큰으로 받기 [Review Focus 5]", () => {
       ...(token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } }),
     });
   const bridge = () => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw");
-  const runner = () => issueRunnerToken(app.db, app.workspaceId, "mac");
+  const runner = () => issueRunnerToken(app.db, app.workspaceId, "mac", null);
 
   it("owner 세션은 둘 다 200, member 세션은 403", async () => {
     const { headers } = await login(app);

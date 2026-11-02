@@ -96,7 +96,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     // 「러너」 탭 경로가 붙은 러너에 묻는다 — 프로젝트는 runnerA 에 만들고 옮기기는 runnerB 로
     for (const label of ["matrix-a", "matrix-b"] as const) {
-      const issued = issueRunnerToken(app.db, app.workspaceId, label);
+      const issued = issueRunnerToken(app.db, app.workspaceId, label, null);
       fakeRunners.push(await startFakeRunner({ url: app.url, token: issued.token }));
       runnerIds.push(issued.record.id);
     }
@@ -141,9 +141,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
       relPath: `matrix-${++n}`,
     });
   /** 붙지 않은 새 러너 토큰 — 폐기·다시 발급이 붙은 러너를 끊지 않게 */
-  const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`).record.id;
+  const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`, null).record.id;
   const newGateway = (): string =>
-    createGateway(app.db, app.workspaceId, { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" }).id;
+    createGateway(
+      app.db,
+      app.workspaceId,
+      { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
+      { userId: app.ownerUserId, role: "owner" },
+    ).id;
   const newChannel = (): ChannelRecord =>
     createChannel(app.db, { workspaceId: app.workspaceId, createdBy: app.ownerUserId, name: `role-${++n}` });
   /** 에이전트가 들어간 채널 */

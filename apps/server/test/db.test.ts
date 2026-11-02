@@ -318,15 +318,15 @@ describe("db", () => {
             created_at: createdAt.getTime(),
           },
         ]);
-        expect(db.select().from(runnerTokens).all()).toEqual([]);
-        // 같은 해시는 두 번 못 넣는다 — 검증이 해시로 행 하나를 찾는다
-        const runnerRow = { ...bridgeRow, id: uuid(), label: "laptop" };
-        db.insert(runnerTokens).values(runnerRow).run();
+        expect(sqlite.prepare("SELECT * FROM runner_tokens").all()).toEqual([]);
+        // 같은 해시는 두 번 못 넣는다 — 검증이 해시로 행 하나를 찾는다. 지금 스키마의 insert 는 뒤 마이그레이션의 열(owner_user_id)까지
+        // 싣는다 — SQL 로 넣는다
+        const insertRunner = sqlite.prepare(
+          "INSERT INTO runner_tokens (id, workspace_id, label, hash, prefix, created_at) VALUES (?, ?, 'laptop', ?, ?, ?)",
+        );
+        insertRunner.run(uuid(), ws, bridgeRow.hash, bridgeRow.prefix, createdAt.getTime());
         expect(() =>
-          db
-            .insert(runnerTokens)
-            .values({ ...runnerRow, id: uuid() })
-            .run(),
+          insertRunner.run(uuid(), ws, bridgeRow.hash, bridgeRow.prefix, createdAt.getTime()),
         ).toThrow(/UNIQUE/);
       } finally {
         sqlite.close();
@@ -483,31 +483,15 @@ describe("db", () => {
 
         sqlite.pragma("foreign_keys = ON");
         const gw = uuid();
-        db.insert(gateways)
-          .values({
-            id: gw,
-            workspaceId: ws,
-            name: "사무실",
-            url: "wss://gw",
-            token: "t",
-            createdAt,
-            updatedAt: createdAt,
-          })
-          .run();
-        expect(() =>
-          db
-            .insert(gateways)
-            .values({
-              id: uuid(),
-              workspaceId: ws,
-              name: "사무실",
-              url: "wss://gw2",
-              token: "t",
-              createdAt,
-              updatedAt: createdAt,
-            })
-            .run(),
-        ).toThrow(/UNIQUE/);
+        // 지금 스키마의 insert 는 뒤 마이그레이션의 열(approved_at 등)까지 싣는다 — SQL 로 넣는다
+        const insertGateway = (id: string, url: string) =>
+          sqlite
+            .prepare(
+              "INSERT INTO gateways (id, workspace_id, name, url, token, created_at, updated_at) VALUES (?, ?, '사무실', ?, 't', ?, ?)",
+            )
+            .run(id, ws, url, createdAt.getTime(), createdAt.getTime());
+        insertGateway(gw, "wss://gw");
+        expect(() => insertGateway(uuid(), "wss://gw2")).toThrow(/UNIQUE/);
         db.update(agents).set({ gatewayId: gw }).where(eq(agents.id, devId)).run();
         db.update(bridgeTokens).set({ gatewayId: gw }).where(eq(bridgeTokens.id, tokenId)).run();
         // 같은 Gateway 에 같은 id 는 둘이 될 수 없고, 다른 Gateway(또는 러너)의 같은 id 는 된다. SQL 로 넣는다 — 스키마 객체는
@@ -548,17 +532,12 @@ describe("db", () => {
         const createdAt = new Date("2026-10-04T00:00:00.000Z");
         db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
         const gw = uuid();
-        db.insert(gateways)
-          .values({
-            id: gw,
-            workspaceId: ws,
-            name: "사무실",
-            url: "wss://gw",
-            token: "t",
-            createdAt,
-            updatedAt: createdAt,
-          })
-          .run();
+        // 지금 스키마의 insert 는 뒤 마이그레이션의 열(approved_at 등)까지 싣는다 — SQL 로 넣는다
+        sqlite
+          .prepare(
+            "INSERT INTO gateways (id, workspace_id, name, url, token, created_at, updated_at) VALUES (?, ?, '사무실', 'wss://gw', 't', ?, ?)",
+          )
+          .run(gw, ws, createdAt.getTime(), createdAt.getTime());
         const insertToken = (id: string, hash: string, gatewayId: string | null) =>
           sqlite
             .prepare(
@@ -1740,6 +1719,61 @@ describe("프로필·접속 상태 마이그레이션(0033)", () => {
               .get(`user-${key}`),
           ).toEqual({ name: `U ${key}`, url });
         }
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("연결 주인·Gateway 승인 마이그레이션(0034)", () => {
+  it("_profiles_presence 까지 적용된 DB 에 얹으면 옛 Gateway·러너 토큰의 주인은 워크스페이스 owner, 옛 Gateway 는 만든 시각에 승인된 것으로 채워진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_profiles_presence");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const at = Date.UTC(2026, 9, 1);
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, at);
+        const insertUser = sqlite.prepare(
+          "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, ?, ?, 'local', ?)",
+        );
+        const insertMembership = sqlite.prepare(
+          "INSERT INTO memberships (id, workspace_id, user_id, role) VALUES (?, ?, ?, ?)",
+        );
+        // member 가 먼저 들어와도 owner 를 고른다
+        insertUser.run("u-member", ws, "mia", "mia", at);
+        insertMembership.run(uuid(), ws, "u-member", "member");
+        insertUser.run("u-owner", ws, "owner", "owner", at);
+        insertMembership.run(uuid(), ws, "u-owner", "owner");
+        sqlite
+          .prepare(
+            "INSERT INTO gateways (id, workspace_id, name, url, token, enabled, created_at, updated_at) VALUES (?, ?, ?, 'ws://g:1', 't', 1, ?, ?)",
+          )
+          .run("g-1", ws, "사무실", at, at + 5);
+        sqlite
+          .prepare(
+            "INSERT INTO runner_tokens (id, workspace_id, label, hash, prefix, created_at) VALUES (?, ?, 'mac', 'h', 'abcdef', ?)",
+          )
+          .run("r-1", ws, at);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(
+          sqlite
+            .prepare(
+              "SELECT owner_user_id AS owner, approved_at AS approvedAt, approved_by AS approvedBy FROM gateways WHERE id = 'g-1'",
+            )
+            .get(),
+        ).toEqual({ owner: "u-owner", approvedAt: at, approvedBy: "u-owner" });
+        expect(
+          sqlite.prepare("SELECT owner_user_id AS owner FROM runner_tokens WHERE id = 'r-1'").get(),
+        ).toEqual({ owner: "u-owner" });
       } finally {
         sqlite.close();
       }

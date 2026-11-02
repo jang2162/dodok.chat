@@ -23,12 +23,20 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { agents, bridgeTokens, gateways } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
-import { createGateway } from "../src/modules/gateways/service";
+import {
+  approveGateway,
+  createGateway,
+  gatewayConfig,
+  toGatewaySummary,
+  updateGateway,
+} from "../src/modules/gateways/service";
 import { type FakeGateway, startFakeGateway } from "./fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "./fakes/fake-plugin";
 import { bootTestApp, login, noExternalPush, plentyOfDisk } from "./helpers/app";
+import { newTestDb } from "./helpers/db";
 import { testEnv } from "./helpers/env";
 import { openclawOf, openclawStatus } from "./helpers/openclaw";
+import { seedWorkspace } from "./helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -137,7 +145,9 @@ describe("Gateway 추가·브리지 토큰·삭제 — 실제 어댑터 + 가짜
       url: gw.url,
       enabled: true,
       tokenSet: true,
-      ownerUserId: null,
+      // 만든 owner 가 주인이고, owner 가 만든 것이라 만들 때 승인된다
+      ownerUserId: live.app.ownerUserId,
+      approved: true,
     });
     expect(res.json()).not.toHaveProperty("token");
 
@@ -426,18 +436,27 @@ describe("Gateway 수정·부팅 — 어댑터에 넘기는 값(FakeAdapter)", (
     const DB_PATH = join(dir, "db.sqlite");
     const first = await bootFake({ DB_PATH });
     const t = (n: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, n));
+    const bootOwner = { userId: first.app.ownerUserId, role: "owner" } as const;
     const rows = [
       createGateway(
         first.app.db,
         first.app.workspaceId,
         { name: "사무실", url: "ws://a:1", token: "ta" },
+        bootOwner,
         t(1),
       ),
-      createGateway(first.app.db, first.app.workspaceId, { name: "집", url: "ws://b:1", token: "tb" }, t(2)),
+      createGateway(
+        first.app.db,
+        first.app.workspaceId,
+        { name: "집", url: "ws://b:1", token: "tb" },
+        bootOwner,
+        t(2),
+      ),
       createGateway(
         first.app.db,
         first.app.workspaceId,
         { name: "꺼둠", url: "ws://c:1", token: "tc" },
+        bootOwner,
         t(3),
       ),
     ];
@@ -460,5 +479,88 @@ describe("Gateway 수정·부팅 — 어댑터에 넘기는 값(FakeAdapter)", (
       ["집", true, "connected"],
       ["꺼둠", false, "disabled"],
     ]);
+  });
+});
+
+describe("Gateway 주인·승인 — 서비스(연결의 주인 스펙 5.1·5.4)", () => {
+  const T = new Date(Date.UTC(2026, 10, 2, 0, 0, 0));
+  function fresh() {
+    const db = newTestDb();
+    const { workspaceId, userId } = seedWorkspace(db);
+    return { db, workspaceId, userId };
+  }
+  const body = { name: "사무실", url: "ws://gw:1", token: "t" };
+
+  it("member 가 만든 Gateway 는 그 사람이 주인이고 미승인 — 어댑터에는 꺼진 채로 간다", () => {
+    const { db, workspaceId, userId } = fresh();
+    const row = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
+    expect(row).toMatchObject({ ownerUserId: userId, approvedAt: null, approvedBy: null, enabled: true });
+    expect(gatewayConfig(row).enabled).toBe(false);
+    expect(toGatewaySummary(row)).toMatchObject({ ownerUserId: userId, approved: false, enabled: true });
+  });
+
+  it("admin 이상이 만든 Gateway 는 만들 때 승인된다", () => {
+    const { db, workspaceId, userId } = fresh();
+    const row = createGateway(db, workspaceId, body, { userId, role: "admin" }, T);
+    expect(row).toMatchObject({ ownerUserId: userId, approvedAt: T, approvedBy: userId });
+    expect(gatewayConfig(row).enabled).toBe(true);
+    expect(toGatewaySummary(row).approved).toBe(true);
+  });
+
+  it("member 가 승인된 Gateway 의 주소를 바꾸면 승인이 풀린다 — 같은 수정에 enabled:true 를 실어도 어댑터에는 꺼진 채로", () => {
+    const { db, workspaceId, userId } = fresh();
+    const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
+    const approved = approveGateway(db, workspaceId, created.id, { userId, role: "admin" }, T);
+    expect(gatewayConfig(approved).enabled).toBe(true);
+    const { row } = updateGateway(
+      db,
+      workspaceId,
+      created.id,
+      { url: "ws://elsewhere:1", enabled: true },
+      { userId, role: "member" },
+      T,
+    );
+    expect(row).toMatchObject({ approvedAt: null, approvedBy: null, enabled: true });
+    expect(gatewayConfig(row).enabled).toBe(false);
+  });
+
+  it("member 가 이름·토큰만 바꾸면 승인이 남는다", () => {
+    const { db, workspaceId, userId } = fresh();
+    const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
+    approveGateway(db, workspaceId, created.id, { userId, role: "owner" }, T);
+    const { row } = updateGateway(
+      db,
+      workspaceId,
+      created.id,
+      { name: "본사", token: "rotated" },
+      { userId, role: "member" },
+      T,
+    );
+    expect(row.approvedAt).toEqual(T);
+    expect(gatewayConfig(row).enabled).toBe(true);
+  });
+
+  it("admin 이상이 주소를 바꾸면 승인이 남는다", () => {
+    const { db, workspaceId, userId } = fresh();
+    const created = createGateway(db, workspaceId, body, { userId, role: "admin" }, T);
+    const { row } = updateGateway(
+      db,
+      workspaceId,
+      created.id,
+      { url: "ws://elsewhere:1" },
+      { userId, role: "admin" },
+      T,
+    );
+    expect(row.approvedAt).toEqual(T);
+  });
+
+  it("승인하면 어댑터 설정이 켜진다 — 꺼 둔 Gateway 는 승인해도 꺼진 채", () => {
+    const { db, workspaceId, userId } = fresh();
+    const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
+    const approved = approveGateway(db, workspaceId, created.id, { userId, role: "admin" }, T);
+    expect(approved).toMatchObject({ approvedAt: T, approvedBy: userId });
+    expect(gatewayConfig(approved).enabled).toBe(true);
+    const off = updateGateway(db, workspaceId, created.id, { enabled: false }, { userId, role: "admin" }, T);
+    expect(gatewayConfig(off.row).enabled).toBe(false);
   });
 });
