@@ -823,7 +823,7 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 
 **붙이기** — 「절차」 절 (d)~(e) 에 더한다.
 1. **Gateway 추가** — `POST /api/v1/gateways { name, url: "ws://127.0.0.1:<포트>", token }`(본문은 `jq --rawfile` 로 토큰 파일에서, 「절차」 절 (e)). 화면의 「Gateway 추가」와 같은 경로다.
-2. **플러그인** — `GET /api/v1/setup/plugin.tgz`(연결 페이지 「플러그인 받기」)로 받은 파일 → **Gateway 둘을 내린 뒤** `gw plugins install <받은 파일> --force --accept-capabilities` 를 Gateway 마다 → 설치본 `dist/index.js` sha 를 대조.
+2. **플러그인** — `GET /api/v1/setup/plugin.tgz`(owner 세션으로 — 연결 페이지 Gateway 카드 「새 토큰 발급」 대화상자의 한 줄 명령이 브리지 토큰으로 받는 것과 같은 파일)로 받은 파일 → **Gateway 둘을 내린 뒤** `gw plugins install <받은 파일> --force --accept-capabilities` 를 Gateway 마다 → 설치본 `dist/index.js` sha 를 대조.
 3. **브리지 토큰** — Gateway 마다 `POST /api/v1/gateways/<id>/bridge-tokens` → 응답의 `pluginConfig` 를 0600 파일로 → `gw config patch --file …` → 파일 삭제 → Gateway 를 다시 띄운다.
 4. **에이전트** — 화면 「에이전트 가져오기」에서 Gateway 「사무실」의 `main` 을 핸들 `main` 으로, 「집」의 `main` 을 핸들 `main-home` 으로. 채널 하나에 둘 다 넣는다(`POST /channels/:id/members`).
 5. **멘션·끄기·삭제** — `wire-cli send` 로 `@main`·`@main-home` 을 각각, 「집」 Gateway 프로세스를 내린 채(`kill <PID>`) 둘을 다시, 「집」을 다시 띄운 뒤 run_error 카드 「다시 실행」(`wire-cli interact … retry_run`), 연결 페이지 「사무실 끄기」 뒤 둘을 다시, 다시 켠 뒤 「집」 삭제·옮기기.
