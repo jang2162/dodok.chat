@@ -11,6 +11,7 @@ import { createAgent } from "../src/modules/agents/service";
 import { createGateway } from "../src/modules/gateways/service";
 import { createProject } from "../src/modules/runners/projects";
 import { issueRunnerToken } from "../src/modules/runners/tokens";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, pat } from "./helpers/control";
@@ -142,8 +143,10 @@ describe("연결의 주인 — REST·제어 도구", () => {
   it("member manages own gateway and its bridge tokens but not another's", async () => {
     const own = gatewayOf(mia.id);
     const others = gatewayOf(app.ownerUserId, "owner");
+    const othersToken = issueBridgeToken(app.db, app.workspaceId, others, "office").record.id;
     for (const [method, url, payload] of [
       ["PATCH", `/gateways/${others}`, { name: `x${++n}` }],
+      ["DELETE", `/gateways/${others}/bridge-tokens/${othersToken}`, undefined],
       ["DELETE", `/gateways/${others}`, undefined],
       ["GET", `/gateways/${others}/bridge-tokens`, undefined],
       ["POST", `/gateways/${others}/bridge-tokens`, { label: "x" }],

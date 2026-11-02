@@ -277,4 +277,43 @@ describe("러너", () => {
     expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
     expect(cacheDump(qc)).not.toContain(RAW_RUNNER_TOKEN);
   });
+
+  it("member 가 발급하면 그 러너 상세가 곧바로 관리 꼴이다 — 실시간 알림 없이도 연결 목록을 다시 받는다", async () => {
+    const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+    const MEMBER = { ...ME, user: { ...ME.user, id: ME_ID }, role: "member" };
+    let issued = false;
+    const server = stubSetupServer({
+      me: MEMBER,
+      connections: () => ({
+        gateways: [],
+        runners: issued
+          ? [
+              {
+                id: tokenId(8),
+                label: "맥북",
+                connected: false,
+                revoked: false,
+                owner: { id: ME_ID, name: "나" },
+              },
+            ]
+          : [],
+        projects: [],
+      }),
+    });
+    const qc = renderNew(MEMBER);
+    // 발급 전에 연결 목록을 한 번 받아 둔다(트리)
+    await waitFor(() => expect(server.count("GET", "/api/v1/connections")).toBeGreaterThan(0));
+    await userEvent.click(await screen.findByRole("radio", { name: "러너" }));
+    await userEvent.click(await screen.findByRole("button", { name: "새 러너 토큰 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText("라벨"), "맥북");
+    await userEvent.click(within(dialog).getByRole("button", { name: "발급" }));
+    await within(dialog).findByText(RAW_RUNNER_TOKEN);
+    issued = true;
+    await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
+    await waitFor(() => expect(qc.router.state.location.pathname).toBe(runnerDetailPath(tokenId(8))));
+    const detail = await screen.findByTestId("runner-detail");
+    expect(await within(detail).findByRole("group", { name: "설치 안내" })).toBeInTheDocument();
+    expect(screen.queryByText("이 연결을 찾을 수 없습니다")).toBeNull();
+  });
 });
