@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyClaudeConfigDirEnv, resolveClaudeConfigDir } from "../src/drivers/claude/config-dir";
 
@@ -44,6 +45,29 @@ describe("applyClaudeConfigDirEnv — 러너 프로세스 env 를 CLI 와 같은
     const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: "/x" };
     applyClaudeConfigDirEnv(env, {});
     expect(env.CLAUDE_CONFIG_DIR).toBe("/x");
+  });
+
+  it("평소 + 상대 경로면 러너 cwd 기준 절대 경로로 굳힌다 — CLI(cwd = workdir)와 같은 디렉터리", () => {
+    const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: "rel/claude" };
+    applyClaudeConfigDirEnv(env, {}, "/runner/cwd");
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/runner/cwd/rel/claude");
+  });
+
+  it("평소 + 상대 경로, cwd 를 주지 않으면 process.cwd() 기준", () => {
+    const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: "./rel" };
+    applyClaudeConfigDirEnv(env, {});
+    expect(env.CLAUDE_CONFIG_DIR).toBe(join(process.cwd(), "rel"));
+  });
+
+  it("절대 경로는 글자 그대로 — 정규화하면 키체인 이름의 해시가 갈린다", () => {
+    for (const [ceiling, shell, want] of [
+      [{}, "/x/../y/", "/x/../y/"],
+      [{ configDir: "/home/u/.dodok-runner/claude/" }, "/x", "/home/u/.dodok-runner/claude/"],
+    ] as const) {
+      const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: shell };
+      applyClaudeConfigDirEnv(env, ceiling, "/runner/cwd");
+      expect(env.CLAUDE_CONFIG_DIR).toBe(want);
+    }
   });
 
   it("claude 프로그램을 켜지 않았으면(ceiling 없음) env 를 건드리지 않는다", () => {
