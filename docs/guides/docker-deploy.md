@@ -682,6 +682,8 @@ ls /data/backups                       # .partial-* 는 고르지 않는다
 B=/data/backups/<고른 이름>
 cp "$B/dodok.sqlite" /data/dodok.sqlite
 rm -f /data/dodok.sqlite-wal /data/dodok.sqlite-shm
+# 사진 — 덮어 합친다(아바타 전 백업에는 avatars/ 가 없다)
+if [ -d "$B/avatars" ]; then mkdir -p /data/avatars && cp -pR "$B/avatars/." /data/avatars/; fi
 # 필요할 때만: cp -p "$B/vapid.json" /data/   ·   rm -rf /data/gateways && cp -pR "$B/gateways" /data/
 exit
 ```
@@ -696,6 +698,7 @@ docker compose ps     # app (healthy)
 정상 정지(`docker compose stop`)는 서버가 DB 를 닫으며 WAL 을 합치고 지우므로 **지울 WAL 이 없는 게 정상**이다. WAL 이 남는 것은 비정상 종료(kill·크래시·OOM·전원) 뒤다 — 그래서 늘 지운다(없으면 `rm -f` 는 아무 일도 하지 않는다).
 
 - `vapid.json` 을 되돌리면 그 백업 뒤에 켠 기기의 푸시 구독이 무효가 된다(키가 바뀐다). 키를 잃은 경우에만 되돌린다.
+- DB 를 되돌리면 같은 백업의 `avatars/` 도 함께 되돌린다(위 명령의 기본 줄). 빼면 백업 뒤에 사진을 바꾼 사람·에이전트는 되돌린 DB 가 가리키는 옛 파일이 이미 지워져 있고, 부팅 청소가 되돌린 DB 가 안 가리키는 지금 파일을 지워 사진이 이니셜로 돌아간다. 덮어 합치므로 남는 파일은 다음 부팅 청소가 치운다.
 - `gateways/<Gateway id>/` 를 되돌리지 않고 지우면 그 Gateway 와 다시 페어링한다(체크리스트 3). 디바이스 디렉터리는 DB 의 Gateway 행과 짝이라, DB 를 되돌리면 같은 백업의 `gateways/` 를 함께 되돌리는 것이 안전하다 — 그 백업 뒤에 추가한 Gateway 는 DB 에 없으니 디렉터리가 남아도 쓰이지 않는다.
 
 ## 업데이트
