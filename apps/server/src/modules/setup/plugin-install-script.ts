@@ -179,7 +179,7 @@ process.stdin.on("data", (d) => (s += d)).on("end", () => {
     dodok_say "설치가 끝났습니다. Gateway 를 직접 올리세요."
   fi
   dodok_say "끝 — 설정 → 연결의 그 Gateway 화면에서 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 보세요."
-  dodok_say "카드에 기기 페어링 대기가 보이면 openclaw devices approve <요청 id>. 옛 토큰이 있으면 「이제 폐기해도 됩니다」가 뜬 뒤 폐기하세요."
+  dodok_say "그 Gateway 화면에 기기 페어링 대기가 보이면 openclaw devices approve <요청 id>. 옛 토큰이 있으면 「이제 폐기해도 됩니다」가 뜬 뒤 폐기하세요."
 }
 
 dodok_plugin_install "$@"
