@@ -940,6 +940,28 @@ describe("역할 매트릭스(스펙 2장)", () => {
     setRole(bee.id, "member");
   });
 
+  it("GET /agents 의 기본 프롬프트(basePrompt)는 admin 이상에게만 — member 응답에는 키가 없다(프로필 스펙 결정 3)", async () => {
+    const handle = `prompted${++n}`;
+    const agent = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
+      workspaceId: app.workspaceId,
+      providerAgentId: handle,
+      handle,
+      name: handle,
+      basePrompt: "SECRET-PROMPT",
+    });
+    const shown = async (role: TeamRole) => {
+      const res = await call(tokens[role], { method: "GET", url: "/api/v1/agents" });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as { agents: Agent[] }).agents.find((a) => a.id === agent.id);
+    };
+    const forMember = await shown("member");
+    expect(forMember).toBeDefined();
+    expect(forMember).not.toHaveProperty("basePrompt");
+    expect((await shown("admin"))?.basePrompt).toBe("SECRET-PROMPT");
+    expect((await shown("owner"))?.basePrompt).toBe("SECRET-PROMPT");
+  });
+
   describe("membership 이 없는 세션", () => {
     let gone: { id: string; token: string };
     beforeAll(async () => {

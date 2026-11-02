@@ -1,5 +1,6 @@
 import {
   Agent,
+  AvatarUrl,
   type DmAccess,
   RUNNER_AGENT_FIELDS,
   type RunnerPermissionMode,
@@ -90,6 +91,23 @@ export type AgentPatch = {
   disallowedTools?: string[];
 };
 
+/** 계약에 안 맞는 아바타 주소를 이미 알린 에이전트 — 읽을 때마다 같은 경고를 되풀이하지 않게 */
+const warnedAvatar = new Set<string>();
+
+/**
+ * 저장된 아바타 주소 — 계약(AvatarUrl)에 안 맞으면 없는 것으로 읽는다. 옛 z.url() 이 받은 주소 하나가 에이전트 읽기 전부를 500 으로
+ * 깨뜨리지 않게(0033 이 정리하지만 그 뒤에 들어온 값까지)
+ */
+function storedAvatar(row: AgentRow): string | undefined {
+  if (row.avatarUrl === null) return undefined;
+  if (AvatarUrl.safeParse(row.avatarUrl).success) return row.avatarUrl;
+  if (!warnedAvatar.has(row.id)) {
+    warnedAvatar.add(row.id);
+    console.warn(`agent ${row.id}: stored avatarUrl violates contract — shown without avatar`);
+  }
+  return undefined;
+}
+
 export function rowToAgent(row: AgentRow): Agent {
   return parseStored(
     Agent,
@@ -100,7 +118,7 @@ export function rowToAgent(row: AgentRow): Agent {
       providerAgentId: row.providerAgentId,
       handle: row.handle,
       name: row.name,
-      avatarUrl: row.avatarUrl ?? undefined,
+      avatarUrl: storedAvatar(row),
       basePrompt: row.basePrompt ?? undefined,
       enabled: row.enabled,
       createdAt: row.createdAt.toISOString(),
@@ -162,14 +180,16 @@ function toApiAgent(
 }
 
 /**
- * 보는 사람의 역할에 맞춘 에이전트 — 러너 에이전트의 정의(Agent.runnerAgent — 권한 모드·도구·모델·프로젝트)는 admin 이상에게만
- * 싣는다(러너 상태·프로그램 보기가 admin 이상이다 — 러너 일반화 스펙 6장, 태스크 4 리뷰 L2). admin 미만에게 Agent 를 내는 자리
- * (GET /agents·GET /dms·제어 도구 list_agents)가 이 함수를 지난다
+ * 보는 사람의 역할에 맞춘 에이전트 — 러너 에이전트의 정의(Agent.runnerAgent — 권한 모드·도구·모델·프로젝트)와 기본 프롬프트
+ * (basePrompt — 러너 에이전트의 「지시」 포함)는 admin 이상에게만 싣는다(러너 상태·프로그램 보기가 admin 이상이다 — 러너 일반화
+ * 스펙 6장, 태스크 4 리뷰 L2 · 프로필 스펙 결정 3). admin 미만에게 Agent 를 내는 자리(GET /agents·GET /dms·제어 도구
+ * list_agents·아바타 응답)가 이 함수를 지난다
  */
 export function agentForRole(agent: Agent, role: TeamRole | undefined): Agent {
-  if (agent.runnerAgent === undefined || roleAtLeast(role, "admin")) return agent;
+  if (roleAtLeast(role, "admin")) return agent;
   const shown = { ...agent };
   delete shown.runnerAgent;
+  delete shown.basePrompt;
   return shown;
 }
 
