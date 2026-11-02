@@ -8,6 +8,7 @@ import {
   Id,
   type Message,
   MessageSend,
+  type PresenceEntry,
   PresenceUpdate,
   ReactionSet,
   type Result,
@@ -65,6 +66,8 @@ export type WireContext = {
   appOrigin: string;
   /** 푸시 거르기(스펙 5.3) — 소켓별 「보이는가·보는 채널」. 없으면 presence.update 를 버린다 */
   presence?: Pick<Presence, "set" | "drop">;
+  /** 접속 점 전체(프로필 스펙 3.3) — 연결 직후 그 소켓에 presence.snapshot 으로 보낸다. 없으면 보내지 않는다 */
+  presenceSnapshot?: () => PresenceEntry[];
   /** wire 레이트리밋(운영 보강 스펙 4.2). 없으면 LIMITS */
   limits?: Pick<Limits, "wire" | "socketsPerUser">;
   /** 버킷의 시계(ms) — 테스트 주입. 기본 단조 시계(monotonicNow) */
@@ -203,6 +206,8 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     void socket.join(sessionRoom(sessionId));
     // 서버는 워크스페이스 하나만 섬긴다 — 접속한 소켓은 모두 그 워크스페이스 소속이다
     void socket.join(workspaceRoom(ctx.workspaceId));
+    // 재접속 포함 — 웹은 통째로 바꾼다. 끊긴 동안 놓친 presence.changed 를 이것으로 맞춘다
+    if (ctx.presenceSnapshot) socket.emit("presence.snapshot", { entries: ctx.presenceSnapshot() });
 
     const buckets: Record<keyof Limits["wire"], TokenBucket> = {
       heavy: new TokenBucket({ ...limits.wire.heavy, now }),

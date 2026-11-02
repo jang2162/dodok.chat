@@ -18,6 +18,8 @@ export type Author = {
   avatarUrl?: string;
   deactivated?: boolean;
   archived?: boolean;
+  /** 누구인가 — 접속 점과 프로필 패널이 본다. 시스템·자동화·모르는 작성자는 없다 */
+  ref?: { kind: "user" | "agent"; id: string };
 };
 
 export const UNKNOWN_NAME = "알 수 없음";
@@ -67,6 +69,7 @@ export function useAuthors(): {
         handle: me.handle,
         displayName: me.displayName ?? me.handle,
         deactivatedAt: null,
+        statusMessage: null,
         ...(me.avatarUrl ? { avatarUrl: me.avatarUrl } : {}),
       });
     return map;
@@ -98,6 +101,7 @@ export function useAuthors(): {
           colorVar: agentColorVar(agent.handle),
           ...(agent.avatarUrl ? { avatarUrl: agent.avatarUrl } : {}),
           ...(isArchived(agent) ? { archived: true } : {}),
+          ref: { kind: "agent", id: agent.id },
         };
       }
       const person = m.authorId ? personById.get(m.authorId) : undefined;
@@ -108,6 +112,7 @@ export function useAuthors(): {
         isAgent: false,
         ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}),
         ...(isDeactivated(person) ? { deactivated: true } : {}),
+        ref: { kind: "user", id: person.id },
       };
     },
     [agentById, personById, canManage, automationById, automationsAt],

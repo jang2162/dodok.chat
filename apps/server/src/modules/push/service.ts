@@ -127,6 +127,8 @@ export function createPushDispatcher(deps: {
   logger: Pick<Logger, "debug" | "info" | "warn" | "error">;
   transports: PushTransports;
   presence: Pick<Presence, "isWatching">;
+  /** 방해 금지(프로필 스펙 3.5) — 접속과 상관없다. 만료가 지났으면 active 가 아니다(profile/status.ts dndState) */
+  dnd: (userId: string) => { active: boolean; allowApprovals: boolean };
   ops: Pick<OpsService, "record">;
 }): PushDispatcher {
   const { db, logger, transports, presence, ops } = deps;
@@ -188,6 +190,15 @@ export function createPushDispatcher(deps: {
       logger.debug(
         { userId, channelId: payload.channelId, conversationId, kind: payload.kind },
         "push skipped — watching",
+      );
+      return;
+    }
+    // 멈추는 것은 푸시뿐 — 배지·타임라인·앱 안 승인 알림은 그대로다. 승인은 옵션이 켜져 있으면 보낸다(놓치면 런이 멈춰 기다린다)
+    const dnd = deps.dnd(userId);
+    if (dnd.active && !(payload.kind === "approval" && dnd.allowApprovals)) {
+      logger.debug(
+        { userId, channelId: payload.channelId, conversationId, kind: payload.kind },
+        "push skipped — dnd",
       );
       return;
     }

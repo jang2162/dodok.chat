@@ -829,8 +829,12 @@ describe("startDevFake", () => {
         handle: string;
         providerAgentId: string;
         gateway?: { id: string } | null;
+        createdBy: string | null;
       }>;
     }>("GET", "/agents");
+    // 씨앗 에이전트(OpenClaw 넷·러너 coder)의 소유자는 owner(프로필 스펙 3.7)
+    expect(new Set(registered.map((a) => a.createdBy))).toEqual(new Set([dev.app.ownerUserId]));
+    expect(registered.some((a) => a.provider === "runner")).toBe(true);
     expect(
       registered
         .filter((a) => a.provider === "openclaw")

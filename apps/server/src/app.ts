@@ -3,10 +3,10 @@ import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } fro
 import type { AdapterStatus, ApiError, ControlResult, GatewayLinkState } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
@@ -17,7 +17,7 @@ import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
 import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db, type DbOrTx } from "./db/client";
-import { workspaces } from "./db/schema.sqlite";
+import { agents as agentsTable, workspaces } from "./db/schema.sqlite";
 import { type AgentTokenGuard, requireAgentToken } from "./http/agent-token";
 import { clientAddressOf, fastifyTrustProxy, parseTrustProxy } from "./http/client-address";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
@@ -65,6 +65,7 @@ import { getOpsSettings } from "./modules/ops/settings";
 import { programsWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
 import { loadFcmCredentials } from "./modules/push/fcm-credentials";
+import { createPresenceHub, openRunAgentIds, type PresenceHub } from "./modules/presence/hub";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
 import {
@@ -96,6 +97,10 @@ import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
+import { registerAvatarRoutes } from "./modules/profile/avatar-routes";
+import { sweepAvatars } from "./modules/profile/avatars";
+import { registerProfileRoutes } from "./modules/profile/routes";
+import { dndState, startStatusExpiry } from "./modules/profile/status";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire, disconnectSessions, disconnectUser, sweepExpiredSessions } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
@@ -135,6 +140,10 @@ export type AppDeps = {
   attachmentSweepIntervalMs?: number;
   /** 만료 세션 청소 주기(기본 SESSION_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
   sessionSweepIntervalMs?: number;
+  /** 상태 만료 확인 주기(기본 STATUS_EXPIRY_INTERVAL_MS) — 테스트가 낮춘다 */
+  statusExpiryIntervalMs?: number;
+  /** 아바타 디렉터리(기본 DATA_DIR/avatars) — 테스트가 앱마다 임시 디렉터리를 준다(부팅 청소가 남의 파일을 지우지 않게) */
+  avatarsDir?: string;
   /** 예약 자동화 틱 주기(기본 AUTOMATION_TICK_INTERVAL_MS) — 테스트가 낮추거나 부팅 틱만 보려고 늘린다 */
   automationTickMs?: number;
   /** 웹 푸시 통로 안의 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트·dev:fake 는 가짜를 준다 — 밖으로 보내지 않게 */
@@ -210,6 +219,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   const startedAt = new Date();
   let previousClean: boolean | null = null;
   const undo: Array<{ step: string; run: () => unknown }> = [];
+  /** 접속 점 허브가 뒤에 생긴다 — 그 전에 만든 라우트·타이머가 이 자리를 부른다(허브가 채운다) */
+  const presenceHooks: { modeChanged(userId: string): void } = { modeChanged: () => {} };
   try {
     // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
     if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -486,6 +497,32 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       disconnectUser: (userId) => disconnectUser(io, userId),
       disconnectSessions: (sessionIds) => disconnectSessions(io, sessionIds),
     });
+    // 상태(프로필 스펙 3.2) — 수동 모드가 바뀌면(사람이 바꾸거나 만료가 지나면) 접속 점을 다시 계산한다
+    const onModeChanged = (userId: string) => presenceHooks.modeChanged(userId);
+    registerProfileRoutes(fastify, { auth, db, bus, workspaceId, onModeChanged });
+    // 아바타(프로필 스펙 3.6) — 첨부 디렉터리와 따로. 부팅 때 한 번 어느 행도 안 가리키는 파일을 치운다(첨부 청소와 따로)
+    const avatarsDir = deps.avatarsDir ?? join(config.DATA_DIR, "avatars");
+    const sweptAvatars = await sweepAvatars(db, avatarsDir);
+    if (sweptAvatars > 0) logger.info({ removed: sweptAvatars }, "avatars swept");
+    registerAvatarRoutes(fastify, {
+      auth,
+      db,
+      bus,
+      workspaceId,
+      dir: avatarsDir,
+      perMin: limits.avatarUploadPerMin,
+      limitNow: limitClock,
+      ops,
+    });
+    const statusExpiry = startStatusExpiry({
+      db,
+      bus,
+      workspaceId,
+      onModeChanged,
+      onError: (err) => logger.error({ err }, "status expiry failed"),
+      ...(deps.statusExpiryIntervalMs === undefined ? {} : { intervalMs: deps.statusExpiryIntervalMs }),
+    });
+    undo.push({ step: "status-expiry", run: () => statusExpiry.close() });
     const routeContext = {
       auth,
       db,
@@ -813,7 +850,63 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     // 종료 ①: close() 가 켜면 새 wire 연결을 인증보다 먼저 거부한다. 기존 연결·/bridge 는 어댑터가 닫힐 때까지 둔다
     io.use((_socket, next) => (shuttingDown ? next(shuttingDownError()) : next()));
-    const presence = createPresence();
+    // 접속 점(프로필 스펙 3.3) — 푸시 거르기의 소켓별 보임이 입력이다. 허브는 아래에서 바로 만든다(서로를 부른다)
+    let presenceHub: PresenceHub | undefined;
+    const presence = createPresence({ onChange: (userId) => presenceHub?.recomputeUser(userId) });
+    /** 연결이 살아 있는 에이전트 — OpenClaw 는 그 Gateway 의 플러그인이 붙음, 러너는 묶인 토큰의 러너가 붙음 */
+    const connectedAgentIds = (): ReadonlySet<string> => {
+      const gateways = new Set(
+        openclaw
+          .gatewaySetupDetails()
+          .filter((g) => g.enabled && g.bridge.state === "connected")
+          .map((g) => g.id),
+      );
+      const runnerTokens = new Set(runnerDetail().map((r) => r.tokenId));
+      return new Set(
+        db
+          .select({
+            id: agentsTable.id,
+            gatewayId: agentsTable.gatewayId,
+            runnerTokenId: agentsTable.runnerTokenId,
+            provider: agentsTable.provider,
+          })
+          .from(agentsTable)
+          .where(eq(agentsTable.workspaceId, workspaceId))
+          .all()
+          .filter((a) =>
+            a.provider === "runner"
+              ? a.runnerTokenId !== null && runnerTokens.has(a.runnerTokenId)
+              : a.gatewayId !== null && gateways.has(a.gatewayId),
+          )
+          .map((a) => a.id),
+      );
+    };
+    const hub = createPresenceHub({
+      db,
+      workspaceId,
+      presence,
+      connectedAgentIds,
+      workingAgentIds: () => openRunAgentIds(db),
+      emit: (entries) => bus.emit("presence.changed", { entries }),
+    });
+    presenceHub = hub;
+    presenceHooks.modeChanged = (userId) => hub.recomputeUser(userId);
+    // 에이전트 점의 계기 — 런 시작·끝, 에이전트 수정·보관·되살리기, 어댑터 연결(플러그인·러너 붙음·끊김). 사람 목록(비활성화)도
+    const presenceOffs = [
+      bus.on("run.state", () => hub.recomputeAgents()),
+      bus.on("agents.changed", () => hub.recomputeAgents()),
+      bus.on("people.changed", () => hub.recomputeAll()),
+      ...adapters.map((adapter) =>
+        adapter.onEvent((e) => {
+          if (e.kind === "status" || e.kind === "setup") hub.recomputeAgents();
+        }),
+      ),
+    ];
+    const closePresence = () => {
+      for (const off of presenceOffs) off();
+      hub.close();
+    };
+    undo.push({ step: "presence", run: closePresence });
     attachWire(io, {
       auth,
       db,
@@ -824,6 +917,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       runs: services.runs,
       appOrigin: config.APP_ORIGIN,
       presence,
+      presenceSnapshot: () => hub.snapshot(),
       limits,
       now: limitClock,
       ops,
@@ -849,7 +943,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const runFailures = watchRunFailures(bus, ops);
     undo.push({ step: "run-failures", run: () => runFailures.close() });
     // 푸시(스펙 5.2~5.4): 버스 → 트리거 → 보고 있으면 거르기 → 발송. 발송은 버스 처리기를 막지 않는다
-    const pushDispatcher = createPushDispatcher({ db, logger, presence, transports: pushTransports, ops });
+    const pushDispatcher = createPushDispatcher({
+      db,
+      logger,
+      presence,
+      dnd: (userId) => dndState(db, userId, new Date()),
+      transports: pushTransports,
+      ops,
+    });
     // undo 는 역순이다 — 트리거를 뗀 다음, db 를 닫기 전에 진행 중인 발송을 정상 종료와 같은 상한으로 기다린다(구독 정리가 db 를 쓴다)
     undo.push({ step: "push-drain", run: () => pushDispatcher.drain(PUSH_DRAIN_TIMEOUT_MS) });
     const pushTriggers = attachPushTriggers(
@@ -906,6 +1007,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("automations", () => automationTicks.close());
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("session-sweep", closeSessionSweep);
+      await step("status-expiry", () => statusExpiry.close());
+      // 아래 io.close() 의 소켓 끊김이 허브를 다시 부르지 않게 먼저 닫는다
+      await step("presence", closePresence);
       await step("ops", closeOps);
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저

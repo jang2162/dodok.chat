@@ -17,6 +17,8 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       llmsTxtPerMin: 30,
       restPerMin: 300,
       uploadPerMin: 30,
+      // 프로필 스펙 3.6 — 사람·에이전트 아바타 업로드
+      avatarUploadPerMin: 10,
       inviteIssuePerMin: 20,
       searchPerMin: 60,
       runnerBrowsePerMin: 60,

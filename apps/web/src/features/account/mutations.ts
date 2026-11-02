@@ -1,6 +1,6 @@
-import type { ChangePasswordBody, UpdateMeBody, User } from "@dodok/shared";
+import type { ChangePasswordBody, MyStatus, UpdateMeBody, UpdateMyStatusBody, User } from "@dodok/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/http";
+import { api, apiBytes } from "@/api/http";
 import { type MeResponse, qk } from "@/api/queries";
 
 /** `PATCH /me` — 응답의 사용자로 me 캐시를 고친다(역할·워크스페이스 칸은 그대로). 오류는 대화상자 안에서 알린다 */
@@ -25,4 +25,33 @@ export function useChangePassword() {
     gcTime: 0,
     meta: { silent: true },
   });
+}
+
+/** `PUT /me/status`(프로필 스펙 3.2) — 응답의 상태로 me 캐시를 고친다. 다른 탭은 wire me.status 로 맞춘다. 오류는 폼 안에서 */
+export function useUpdateMyStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateMyStatusBody) => api<{ status: MyStatus }>("PUT", "/me/status", body),
+    onSuccess: ({ status }) => qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, status }),
+    meta: { silent: true },
+  });
+}
+
+/** `PUT·DELETE /me/avatar`(프로필 스펙 3.6) — 응답의 사용자로 me 캐시를 고친다. 사람 목록은 wire people.changed 가 바꾼다 */
+export function useMyAvatar() {
+  const qc = useQueryClient();
+  const onSuccess = ({ user }: { user: User }) =>
+    qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, user });
+  return {
+    upload: useMutation({
+      mutationFn: (image: Blob) => apiBytes<{ user: User }>("PUT", "/me/avatar", image),
+      onSuccess,
+      meta: { silent: true },
+    }),
+    remove: useMutation({
+      mutationFn: () => api<{ user: User }>("DELETE", "/me/avatar"),
+      onSuccess,
+      meta: { silent: true },
+    }),
+  };
 }

@@ -46,11 +46,13 @@ export function registerAgentAndNotify(
   ctx: AgentActionContext,
   body: CreateOpenClawAgentBody,
   workspaceId: string,
+  /** 만든 사람(소유자) — REST 는 요청한 사람, 제어 도구는 그 주체의 사람 */
+  createdBy: string | null,
 ): Agent {
   if (body.gatewayId === undefined)
     throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
   const { provider: _, ...rest } = body;
-  const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId });
+  const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId, createdBy });
   changed(ctx);
   return agent;
 }
@@ -64,6 +66,7 @@ export function createRunnerAgentAndNotify(
   ctx: AgentActionContext & { runners: RunnerLiveApi | null },
   body: CreateRunnerAgentBody,
   workspaceId: string,
+  createdBy: string | null,
 ): Agent {
   const project = getProject(ctx.db, workspaceId, body.runnerProjectId);
   if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
@@ -76,7 +79,7 @@ export function createRunnerAgentAndNotify(
     { requireAvailable: true },
   );
   const { provider: _, ...rest } = body;
-  const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId });
+  const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId, createdBy });
   changed(ctx);
   return agent;
 }
@@ -92,6 +95,23 @@ export function patchAgentAndNotify(
   const agent = updateAgent(ctx.db, id, patch);
   changed(ctx);
   return agent;
+}
+
+/**
+ * 에이전트 사진(프로필 스펙 3.6) — 새 주소(올린 사진) 또는 null(지움)로 바꾸고 agents.changed. 옛 주소는 돌려준다 — 부르는 쪽이 그 파일을
+ * 놓는다(profile/avatars.ts releaseAvatar). 역할 검사는 부르는 쪽이 먼저 한다(PATCH 와 같은 정책)
+ */
+export function setAgentAvatarAndNotify(
+  ctx: Pick<AgentActionContext, "db" | "bus">,
+  id: string,
+  avatarUrl: string | null,
+  workspaceId: string,
+): { agent: Agent; previous: string | null } {
+  const current = getAgent(ctx.db, id, workspaceId);
+  if (!current) throw apiError("NOT_FOUND", "agent not found");
+  const agent = updateAgent(ctx.db, id, { avatarUrl });
+  ctx.bus.emit("agents.changed", {});
+  return { agent, previous: current.avatarUrl ?? null };
 }
 
 /** 보관(스펙 「에이전트 보관」 절) — 행·핸들·채널 참여·세션은 남고 열린 런은 멈춘다. 이미 보관했으면 그대로 */

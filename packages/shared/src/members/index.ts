@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 import { Handle } from "../domain";
+import { AvatarUrl, StatusMessage } from "../profile";
 
 // 팀 계약(설계 `2026-09-26-team-members-design.md` 「역할과 권한」·「초대·가입·로그인」·「멤버 관리」 절).
 // 서버가 역할을 막는다 — 여기 스키마는 모양만 검증한다.
@@ -81,7 +82,9 @@ export const Person = z.object({
   role: TeamRole.optional(), // role 없음 = membership 이 없거나 모르는 역할(guest 등)
   /** 비활성화한 시각 — null 이면 활성. 비활성 멤버도 목록에 남는다(기록의 작성자·멘션 칩을 그리려면 웹이 알아야 한다) */
   deactivatedAt: IsoDateTime.nullable(),
-  avatarUrl: z.string().optional(),
+  avatarUrl: AvatarUrl.optional(),
+  /** 상태 메시지 — 만료가 지난 것은 싣지 않는다. 수동 상태 모드는 싣지 않는다(오프라인으로 보이기가 드러나지 않게) */
+  statusMessage: StatusMessage.nullable().default(null),
 });
 export type Person = z.infer<typeof Person>;
 

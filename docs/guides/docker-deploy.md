@@ -640,11 +640,11 @@ docker compose exec app node dist/backup.js [--keep N]
 ```
 
 - 서버를 멈추지 않는다 — better-sqlite3 온라인 백업을 **한 번에 전부** 복사한다(한 읽기 트랜잭션의 스냅숏이라 쓰기와 겹쳐도 온전하다). 그동안 서버는 계속 쓰고, WAL 이 잠시 자랄 수 있다.
-- 결과는 `/data/backups/<UTC 시각>/` 에 `dodok.sqlite` 와 `vapid.json` 사본, 그리고 `gateways/` 디렉터리 통째(Gateway 마다 디바이스 아이덴티티·디바이스 토큰). 파일은 0600, 디렉터리는 0700.
+- 결과는 `/data/backups/<UTC 시각>/` 에 `dodok.sqlite` 와 `vapid.json` 사본, 그리고 `gateways/` 디렉터리 통째(Gateway 마다 디바이스 아이덴티티·디바이스 토큰)와 `avatars/` 디렉터리 통째(사람·에이전트 사진 — 빠지면 복원 뒤 사진이 이니셜로 돌아간다). 파일은 0600, 디렉터리는 0700.
 - **보관**: 최근 7개(기본), `--keep N` 으로 바꾼다. 넘친 것은 오래된 것부터 지운다. 보관 개수는 **백업 이름 형식(`YYYY-MM-DDTHH-MM-SS-mmmZ`)** 인 디렉터리만 센다 — 오래 둘 백업은 다른 이름으로 옮겨 둔다(그대로 두면 정리가 센다).
 - **`.partial-*`**: 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(Ctrl-C·`SIGTERM` 은 스스로 지운다, `SIGKILL`·전원 끊김은 남는다)으로 남은 `.partial-*` 는 **복원에 쓰지 않는다** — 1시간이 지나면 다음 백업이 지운다.
 - 출력은 한 줄(시크릿 없음), 실패는 exit 1 과 `백업 실패: <사유>` 한 줄(디스크 부족이면 부분 디렉터리를 지운다).
-- **네이티브 푸시 자격 증명(`/data/apns/`·`/data/fcm/`)도 들어가지 않는다** — 백업이 담는 부수 파일은 `vapid.json` 과 `gateways/` 뿐이다. 볼륨을 잃으면 APNs `.p8`(Apple 에서 다시 받을 수 없다)·서비스 계정 JSON 은 원본 보관본에서 다시 놓아야 한다(위 「네이티브 푸시 자격 증명」).
+- **네이티브 푸시 자격 증명(`/data/apns/`·`/data/fcm/`)도 들어가지 않는다** — 백업이 담는 부수 파일은 `vapid.json`·`gateways/`·`avatars/` 뿐이다. 볼륨을 잃으면 APNs `.p8`(Apple 에서 다시 받을 수 없다)·서비스 계정 JSON 은 원본 보관본에서 다시 놓아야 한다(위 「네이티브 푸시 자격 증명」).
 - **첨부는 백업에 들어가지 않는다** — 내용 주소(sha256) 블롭이라 백업마다 복사하지 않는다. 첨부까지 옮기려면 아래 「볼륨째 옮기기」.
 - 백업은 같은 볼륨 안에 있다 — 호스트가 죽으면 같이 잃는다. 다른 곳으로 보내는 것은 사람 몫이다: `docker compose cp app:/data/backups/<이름> ./<이름>` 로 호스트에 꺼낸 뒤 옮긴다.
 
@@ -656,7 +656,7 @@ docker compose exec app node dist/backup.js [--keep N]
 
 ### 볼륨째 옮기기(첨부 포함)
 
-데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`vapid.json`·`gateways/`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다.
+데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`avatars/`·`vapid.json`·`gateways/`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다.
 
 ```bash
 docker compose stop app
@@ -682,6 +682,8 @@ ls /data/backups                       # .partial-* 는 고르지 않는다
 B=/data/backups/<고른 이름>
 cp "$B/dodok.sqlite" /data/dodok.sqlite
 rm -f /data/dodok.sqlite-wal /data/dodok.sqlite-shm
+# 사진 — 덮어 합친다(아바타 전 백업에는 avatars/ 가 없다)
+if [ -d "$B/avatars" ]; then mkdir -p /data/avatars && cp -pR "$B/avatars/." /data/avatars/; fi
 # 필요할 때만: cp -p "$B/vapid.json" /data/   ·   rm -rf /data/gateways && cp -pR "$B/gateways" /data/
 exit
 ```
@@ -696,6 +698,7 @@ docker compose ps     # app (healthy)
 정상 정지(`docker compose stop`)는 서버가 DB 를 닫으며 WAL 을 합치고 지우므로 **지울 WAL 이 없는 게 정상**이다. WAL 이 남는 것은 비정상 종료(kill·크래시·OOM·전원) 뒤다 — 그래서 늘 지운다(없으면 `rm -f` 는 아무 일도 하지 않는다).
 
 - `vapid.json` 을 되돌리면 그 백업 뒤에 켠 기기의 푸시 구독이 무효가 된다(키가 바뀐다). 키를 잃은 경우에만 되돌린다.
+- DB 를 되돌리면 같은 백업의 `avatars/` 도 함께 되돌린다(위 명령의 기본 줄). 빼면 백업 뒤에 사진을 바꾼 사람·에이전트는 되돌린 DB 가 가리키는 옛 파일이 이미 지워져 있고, 부팅 청소가 되돌린 DB 가 안 가리키는 지금 파일을 지워 사진이 이니셜로 돌아간다. 덮어 합치므로 남는 파일은 다음 부팅 청소가 치운다.
 - `gateways/<Gateway id>/` 를 되돌리지 않고 지우면 그 Gateway 와 다시 페어링한다(체크리스트 3). 디바이스 디렉터리는 DB 의 Gateway 행과 짝이라, DB 를 되돌리면 같은 백업의 `gateways/` 를 함께 되돌리는 것이 안전하다 — 그 백업 뒤에 추가한 Gateway 는 DB 에 없으니 디렉터리가 남아도 쓰이지 않는다.
 
 ## 업데이트

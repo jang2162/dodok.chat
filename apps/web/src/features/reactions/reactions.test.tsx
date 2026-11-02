@@ -32,13 +32,21 @@ vi.mock("sonner", async (importOriginal) => ({
 
 const MIA_ID = "00000000-0000-4000-8000-0000000000a1";
 const GONE_ID = "00000000-0000-4000-8000-0000000000a2";
-const MIA: Person = { id: MIA_ID, handle: "mia", displayName: "미아", role: "member", deactivatedAt: null };
+const MIA: Person = {
+  id: MIA_ID,
+  handle: "mia",
+  displayName: "미아",
+  role: "member",
+  deactivatedAt: null,
+  statusMessage: null,
+};
 const GONE: Person = {
   id: GONE_ID,
   handle: "gone",
   displayName: "떠난 사람",
   role: "member",
   deactivatedAt: "2027-02-01T00:00:00.000Z",
+  statusMessage: null,
 };
 const PEOPLE = [OWNER_PERSON, MIA, GONE];
 

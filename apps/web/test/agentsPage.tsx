@@ -47,6 +47,8 @@ export function makeAgent(
     archivedAt: null,
     dmAccess: "admins",
     program: provider === "runner" ? "claude" : null,
+    createdBy: null,
+    model: null,
     ...(provider === "openclaw" ? { gateway: { id: TEST_GATEWAY.id, name: TEST_GATEWAY.name } } : {}),
     ...fields,
   };

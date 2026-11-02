@@ -16,7 +16,8 @@ import { FieldError } from "@/ui/field-error";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { josa } from "@/lib/josa";
 import { MoveGatewayDialog } from "./MoveGatewayDialog";
-import { useArchiveAgent, usePatchAgent } from "./mutations";
+import { AvatarPicker } from "@/features/account/AvatarPicker";
+import { useAgentAvatar, useArchiveAgent, usePatchAgent } from "./mutations";
 import { providerIdLabel } from "./providerLabels";
 import { RunnerDefinitionForm } from "./RunnerAgentForm";
 
@@ -102,7 +103,21 @@ export function AgentRow({
       {!readOnly && agent.runnerAgent && <RunnerDefinition agent={agent} definition={agent.runnerAgent} />}
       <BasePromptEditor agent={agent} readOnly={readOnly} />
       <DmAccessField agent={agent} readOnly={readOnly} />
+      {!readOnly && <AgentAvatarField agent={agent} />}
     </li>
+  );
+}
+
+/** 에이전트 사진(프로필 스펙 3.6) — admin 이상(읽기 전용이면 없다) */
+export function AgentAvatarField({ agent }: { agent: Agent }) {
+  const avatar = useAgentAvatar(agent.id);
+  return (
+    <AvatarPicker
+      name={agent.name}
+      currentUrl={agent.avatarUrl}
+      upload={(image) => avatar.upload.mutateAsync(image)}
+      remove={() => avatar.remove.mutateAsync()}
+    />
   );
 }
 

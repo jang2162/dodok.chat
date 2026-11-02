@@ -1,10 +1,12 @@
 import { Agent } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
-import { describe, expect, it } from "vitest";
-import { createAgent, getAgent, listAgents, updateAgent } from "../src/modules/agents/service";
+import { describe, expect, it, vi } from "vitest";
+import { agents } from "../src/db/schema.sqlite";
+import { agentForRole, createAgent, getAgent, listAgents, updateAgent } from "../src/modules/agents/service";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
-import { seedWorkspace } from "./helpers/seed";
+import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
 
 /** 워크스페이스 하나와 그 Gateway 하나 — OpenClaw 에이전트는 Gateway 에 묶여 등록된다 */
 function setup() {
@@ -15,6 +17,105 @@ function setup() {
 }
 
 describe("agents service", () => {
+  it("createAgent 는 만든 사람(createdBy)을 남기고, 주지 않으면 null(기록 없음)", () => {
+    const { db, workspaceId, gatewayId } = setup();
+    const ownerId = seedWorkspace(db, { userHandle: "boss" }).userId;
+    const made = createAgent(db, {
+      workspaceId,
+      providerAgentId: "dev",
+      handle: "dev",
+      name: "Dev",
+      gatewayId,
+      createdBy: ownerId,
+    });
+    expect(made.createdBy).toBe(ownerId);
+    expect(getAgent(db, made.id)?.createdBy).toBe(ownerId);
+    const legacy = createAgent(db, {
+      workspaceId,
+      providerAgentId: "fin",
+      handle: "fin",
+      name: "Fin",
+      gatewayId,
+    });
+    expect(legacy.createdBy).toBeNull();
+    // OpenClaw 에이전트의 모델은 dodok 이 모른다
+    expect(made.model).toBeNull();
+  });
+
+  it("러너 에이전트의 모델은 member 에게도 실리고 정의(runnerAgent)는 admin 이상에게만", () => {
+    const { db, workspaceId } = setup();
+    const { agent } = createRunnerAgentForTest(db, {
+      workspaceId,
+      handle: "coder",
+      model: "claude-sonnet-5-5",
+    });
+    const forMember = agentForRole(agent, "member");
+    expect(forMember.model).toBe("claude-sonnet-5-5");
+    expect(forMember.runnerAgent).toBeUndefined();
+    expect(agentForRole(agent, "admin").runnerAgent?.model).toBe("claude-sonnet-5-5");
+    const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain" }).agent;
+    expect(agentForRole(plain, "member").model).toBeNull();
+  });
+
+  it("기본 프롬프트(basePrompt)는 admin 이상에게만 — member 에게는 OpenClaw·러너 에이전트 모두 키가 없다", () => {
+    const { db, workspaceId, gatewayId } = setup();
+    const oc = createAgent(db, {
+      workspaceId,
+      providerAgentId: "dev",
+      handle: "dev",
+      name: "Dev",
+      gatewayId,
+      basePrompt: "SECRET-PROMPT",
+    });
+    expect(agentForRole(oc, "member")).not.toHaveProperty("basePrompt");
+    expect(agentForRole(oc, undefined)).not.toHaveProperty("basePrompt");
+    expect(agentForRole(oc, "admin").basePrompt).toBe("SECRET-PROMPT");
+    const runner = createRunnerAgentForTest(db, { workspaceId, handle: "coder" }).agent;
+    const withPrompt = updateAgent(db, runner.id, { basePrompt: "지시" });
+    expect(agentForRole(withPrompt, "member")).not.toHaveProperty("basePrompt");
+    expect(agentForRole(withPrompt, "owner").basePrompt).toBe("지시");
+  });
+
+  it("계약(AvatarUrl)에 안 맞는 옛 아바타 주소(http·data·공백)는 읽기를 깨지 않고 avatarUrl 없이 실린다", () => {
+    const { db, workspaceId, gatewayId } = setup();
+    const made = [
+      "http://example.com/a.png",
+      "data:image/png;base64,AAAA",
+      "https://example.com/a b.png",
+    ].map((url, i) => {
+      const agent = createAgent(db, {
+        workspaceId,
+        providerAgentId: `old${i}`,
+        handle: `old${i}`,
+        name: `Old${i}`,
+        gatewayId,
+      });
+      // 옛 z.url() 이 받던 값 — 지금 쓰기 길은 거절하므로 행에 바로 넣는다
+      db.update(agents).set({ avatarUrl: url }).where(eq(agents.id, agent.id)).run();
+      return agent.id;
+    });
+    const good = createAgent(db, {
+      workspaceId,
+      providerAgentId: "good",
+      handle: "good",
+      name: "Good",
+      gatewayId,
+      avatarUrl: "https://example.com/good.png",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const listed = listAgents(db, workspaceId);
+      for (const id of made) {
+        expect(listed.find((a) => a.id === id)).not.toHaveProperty("avatarUrl");
+        expect(getAgent(db, id)).not.toHaveProperty("avatarUrl");
+      }
+      expect(listed.find((a) => a.id === good.id)?.avatarUrl).toBe("https://example.com/good.png");
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("createAgent 는 provider openclaw·enabled true 로 만들고 워크스페이스별로 나열한다", () => {
     const { db, workspaceId, gatewayId } = setup();
     const agent = createAgent(db, {

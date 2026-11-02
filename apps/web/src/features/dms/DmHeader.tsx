@@ -22,6 +22,7 @@ import {
   DialogTrigger,
 } from "@/ui/dialog";
 import { Textarea } from "@/ui/textarea";
+import { useOpenProfile } from "@/features/profile/openProfile";
 import { DmAgentAvatar } from "./DmSection";
 import { DM_READ_ONLY_TEXT, invalidateDms, useDm } from "./queries";
 
@@ -70,6 +71,7 @@ export function DmHeader({
   // 에이전트 목록이 정본(이름·보관이 wire agents.changed 로 곧바로 바뀐다), 아직 없으면 DM 목록의 것
   const agent: Agent | undefined = agents.data?.find((a) => a.id === channel.dmAgentId) ?? dm?.agent;
   const readOnly = dm?.readOnlyReason ?? null;
+  const openProfile = useOpenProfile();
   const matchRoute = useMatchRoute();
   const params = { channelId: channel.id, conversationId };
   const activityOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/activity", params }));
@@ -87,7 +89,19 @@ export function DmHeader({
       >
         <ListIcon />
       </Button>
-      {agent && <DmAgentAvatar agent={agent} size="default" />}
+      {agent &&
+        (openProfile ? (
+          <button
+            type="button"
+            aria-label={`${agent.name} 프로필`}
+            onClick={() => openProfile({ kind: "agent", id: agent.id })}
+            className="rounded-full"
+          >
+            <DmAgentAvatar agent={agent} size="default" />
+          </button>
+        ) : (
+          <DmAgentAvatar agent={agent} size="default" />
+        ))}
       <div className="min-w-0 flex-1">
         <h1 className="flex items-baseline gap-2 text-base font-semibold">
           <span className="truncate">{agent?.name ?? "DM"}</span>

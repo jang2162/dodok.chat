@@ -60,3 +60,25 @@ describe("presence — 보고 있으면 거르기(스펙 5.3, 단위는 세션)"
     expect(p.isWatching(ALICE, B)).toBe(true);
   });
 });
+
+describe("presence — 접속 계산의 입력(프로필 스펙 3.2)", () => {
+  it("socketsOf — 두 탭(하나 숨김)이면 { count: 2, anyVisible: true }, 모르는 사람은 0", () => {
+    const p = createPresence();
+    p.set("s1", ALICE, { visible: true, channelId: CH, conversationId: A });
+    p.set("s2", ALICE, { visible: false });
+    expect(p.socketsOf(ALICE)).toEqual({ count: 2, anyVisible: true });
+    p.drop("s1");
+    expect(p.socketsOf(ALICE)).toEqual({ count: 1, anyVisible: false });
+    expect(p.socketsOf(BOB)).toEqual({ count: 0, anyVisible: false });
+  });
+
+  it("onChange — 바꾼 사람마다 한 번, 모르는 소켓을 지우면 부르지 않는다", () => {
+    const seen: string[] = [];
+    const p = createPresence({ onChange: (id) => seen.push(id) });
+    p.set("s1", ALICE, { visible: true });
+    p.set("s2", BOB, { visible: false });
+    p.drop("s1");
+    p.drop("nope");
+    expect(seen).toEqual([ALICE, BOB, ALICE]);
+  });
+});

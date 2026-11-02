@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import {
@@ -43,7 +45,7 @@ import { insertRun } from "../src/modules/runs/store";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
-import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
+import { avatarsDirOf, bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { expectOk, openRun as openControlRun, pat } from "./helpers/control";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
@@ -261,6 +263,23 @@ describe("역할 매트릭스(스펙 2장)", () => {
         url: `/api/v1/agents/${newAgent().id}`,
         payload: { name: "바뀐 이름" },
       }),
+    },
+    // 에이전트 아바타(프로필 스펙 3.6) — 에이전트 수정과 같은 판정
+    {
+      name: "PUT /agents/:id/avatar",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: `/api/v1/agents/${newAgent().id}/avatar`,
+        payload: makePng(64, 64),
+      }),
+    },
+    {
+      name: "DELETE /agents/:id/avatar",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: `/api/v1/agents/${newAgent().id}/avatar` }),
     },
     {
       name: "DELETE /agents/:id",
@@ -676,6 +695,46 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
     },
+    // 상태·아바타(프로필 스펙 3.2·3.6) — 누구나, 자기 것만. 내려받기는 로그인한 누구나
+    {
+      name: "PUT /me/avatar",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: "/api/v1/me/avatar",
+        payload: makePng(64, 64, [++n % 256, 0, 0]),
+      }),
+    },
+    {
+      name: "DELETE /me/avatar",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: "/api/v1/me/avatar" }),
+    },
+    {
+      name: "GET /avatars/:file",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const file = `${"c".repeat(64)}.png`;
+        const dir = avatarsDirOf(app);
+        if (!dir) throw new Error("아바타 디렉터리가 없다");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, file), makePng(64, 64));
+        return { method: "GET", url: `/api/v1/avatars/${file}` };
+      },
+    },
+    {
+      name: "PUT /me/status",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: "/api/v1/me/status",
+        payload: { mode: "busy", modeUntil: null },
+      }),
+    },
     // 개인 토큰(제어 MCP 스펙 「권한」 장) — 누구나, 자기 것만. DELETE 는 아래 「개인 토큰」 묶음이 주인별로 본다
     {
       name: "GET /me/tokens",
@@ -879,6 +938,28 @@ describe("역할 매트릭스(스펙 2장)", () => {
     expect((await patch()).statusCode).toBe(200);
     // 승인 푸시 수신자(아래)를 흐리지 않게 되돌린다
     setRole(bee.id, "member");
+  });
+
+  it("GET /agents 의 기본 프롬프트(basePrompt)는 admin 이상에게만 — member 응답에는 키가 없다(프로필 스펙 결정 3)", async () => {
+    const handle = `prompted${++n}`;
+    const agent = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
+      workspaceId: app.workspaceId,
+      providerAgentId: handle,
+      handle,
+      name: handle,
+      basePrompt: "SECRET-PROMPT",
+    });
+    const shown = async (role: TeamRole) => {
+      const res = await call(tokens[role], { method: "GET", url: "/api/v1/agents" });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as { agents: Agent[] }).agents.find((a) => a.id === agent.id);
+    };
+    const forMember = await shown("member");
+    expect(forMember).toBeDefined();
+    expect(forMember).not.toHaveProperty("basePrompt");
+    expect((await shown("admin"))?.basePrompt).toBe("SECRET-PROMPT");
+    expect((await shown("owner"))?.basePrompt).toBe("SECRET-PROMPT");
   });
 
   describe("membership 이 없는 세션", () => {

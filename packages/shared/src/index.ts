@@ -9,6 +9,7 @@ export * from "./dms";
 export * from "./events";
 export * from "./mention";
 export * from "./members";
+export * from "./profile";
 export * from "./wire";
 export * from "./push";
 export * from "./setup";

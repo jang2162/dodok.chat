@@ -28,6 +28,7 @@ export const OWNER_PERSON: Person = {
   displayName: "주인",
   role: "owner",
   deactivatedAt: null,
+  statusMessage: null,
 };
 export const DEV: Agent = {
   id: AGENT,
@@ -41,6 +42,8 @@ export const DEV: Agent = {
   archivedAt: null,
   dmAccess: "admins",
   program: null,
+  createdBy: null,
+  model: null,
 };
 
 /** me·에이전트·사람 목록 캐시를 미리 채운 QueryClient — 렌더가 REST 를 부르지 않는다 */

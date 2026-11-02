@@ -57,6 +57,7 @@ describe("auth", () => {
       workspaceId: app.workspaceId,
       workspace: { id: app.workspaceId, name: "dodok" },
       role: "owner",
+      status: { mode: "auto", modeUntil: null, message: null, dndAllowApprovals: true },
     });
     // sessionId 는 세션 행의 id 다 — 토큰 원문이 아니다(wire 소켓이 socket.data 에 둔다)
     const row = app.db.select().from(session).where(eq(session.token, sessionToken)).get();

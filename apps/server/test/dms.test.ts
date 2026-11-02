@@ -96,7 +96,12 @@ describe("에이전트 DM — 만들기·목록·런(서버)", () => {
     await app.close();
   });
 
-  function rest(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", url: string, payload?: unknown) {
+  function rest(
+    who: Who,
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    url: string,
+    payload?: unknown,
+  ) {
     return app.fastify.inject({
       method,
       url,
@@ -520,6 +525,40 @@ describe("에이전트 DM — 만들기·목록·런(서버)", () => {
     // 발송은 비동기다 — 같은 정본의 주인 푸시가 나간 뒤에 bob 몫을 센다
     await vi.waitFor(() => expect(sent.filter((s) => s.endpoint === endpointOf("mia"))).toHaveLength(1));
     expect(sent.filter((s) => s.endpoint === endpointOf("bob"))).toEqual([]);
+  });
+
+  it("방해 금지인 DM 주인에게는 에이전트 답 푸시를 보내지 않는다(프로필 스펙 3.5) — 거른 줄은 debug", async () => {
+    const agent = await agentWith("everyone");
+    const dm = await openDm("mia", agent.id);
+    const socket = await wire("mia");
+    const { message } = await sent1(socket, dm.id);
+    await vi.waitFor(() => expect(runsOf(dm.id)).toHaveLength(1));
+    const run = runsOf(dm.id)[0];
+    if (!run) throw new Error("런이 없다");
+    const dnd = await rest("mia", "PUT", "/api/v1/me/status", { mode: "dnd", modeUntil: null });
+    expect(dnd.statusCode, dnd.body).toBe(200);
+    const debug = vi.spyOn(app.logger, "debug");
+    try {
+      sent = [];
+      const answer = createAgentMessage(app.db, app.bus, {
+        conversationId: message.conversationId,
+        agentId: agent.id,
+        runId: run.id,
+        bodyMd: "방해 금지 중의 답",
+        externalId: `dm-answer-${++n}`,
+      });
+      await app.services.router.routeMessage(answer);
+      await vi.waitFor(() =>
+        expect(debug).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: ids.mia }),
+          "push skipped — dnd",
+        ),
+      );
+      expect(sent.filter((s) => s.endpoint === endpointOf("mia"))).toEqual([]);
+    } finally {
+      debug.mockRestore();
+      await rest("mia", "PUT", "/api/v1/me/status", { mode: "auto" });
+    }
   });
 
   it("DM 에 스레드 답글은 VALIDATION", async () => {

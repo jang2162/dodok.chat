@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 
-export type PanelTab = "settings" | "activity" | "thread";
+export type PanelTab = "settings" | "activity" | "thread" | "profile";
 
 /**
  * 오른쪽 패널의 탭(설계 5.1). 순서가 화면 순서다.
@@ -36,6 +36,14 @@ const TABS = [
     title: "스레드",
     to: "/c/$channelId/s/$conversationId/t/$rootId",
     scroll: false,
+  },
+  // 프로필은 연 동안에만 머리에 있다 — 누구의 것인지(`kind`·`id`)는 주소에서 온다(프로필 스펙 3.1)
+  {
+    id: "profile",
+    label: "프로필",
+    title: "프로필",
+    to: "/c/$channelId/s/$conversationId/p/$kind/$id",
+    scroll: true,
   },
 ] as const satisfies ReadonlyArray<{
   id: PanelTab;
@@ -76,6 +84,7 @@ export function PanelTabs({
   channelId,
   conversationId,
   rootId,
+  profile,
   active,
   children,
   openerRef,
@@ -87,6 +96,8 @@ export function PanelTabs({
   conversationId: string;
   /** 연 스레드의 루트(스레드 탭일 때) — 탭 머리의 「스레드」 링크가 쓴다 */
   rootId?: string;
+  /** 연 프로필(프로필 탭일 때) — 탭 머리의 「프로필」 링크가 쓴다 */
+  profile?: { kind: string; id: string };
   active: PanelTab;
   children: ReactNode;
   /** 패널을 여는 자리(헤더의 「채널 설정」) — 패널을 닫으면(좁은 화면 시트·넓은 화면 닫기 링크) 초점을 여기로 돌려준다(D14) */
@@ -181,6 +192,7 @@ export function PanelTabs({
               channelId={channelId}
               conversationId={conversationId}
               rootId={rootId}
+              profile={profile}
               active={active}
               only={only}
             />
@@ -228,6 +240,7 @@ export function PanelTabs({
           channelId={channelId}
           conversationId={conversationId}
           rootId={rootId}
+          profile={profile}
           active={active}
           only={only}
         />
@@ -242,6 +255,7 @@ function TabBar({
   channelId,
   conversationId,
   rootId,
+  profile,
   active,
   only,
   ref,
@@ -249,6 +263,7 @@ function TabBar({
   channelId: string;
   conversationId: string;
   rootId?: string;
+  profile?: { kind: string; id: string };
   active: PanelTab;
   only?: readonly PanelTab[];
   ref?: RefObject<HTMLElement | null>;
@@ -263,7 +278,19 @@ function TabBar({
   return (
     <nav ref={ref} aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
       {TABS.filter((tab) => only === undefined || only.includes(tab.id)).map((tab) =>
-        tab.id === "thread" ? (
+        tab.id === "profile" ? (
+          profile !== undefined && (
+            <Link
+              key={tab.id}
+              data-tab-id={tab.id}
+              to={tab.to}
+              params={{ channelId, conversationId, ...profile }}
+              className={className(tab.id)}
+            >
+              {tab.label}
+            </Link>
+          )
+        ) : tab.id === "thread" ? (
           rootId !== undefined && (
             <Link
               key={tab.id}

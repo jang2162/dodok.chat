@@ -1,7 +1,7 @@
 import type { Agent, DmAccess, RunnerPermissionMode, RunnerProgram } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
-import { api } from "@/api/http";
+import { api, apiBytes } from "@/api/http";
 import { qk } from "@/api/queries";
 
 /** 에이전트 화면의 서버 상태 — 등록·수정 뮤테이션과 제공자별 목록(discover) 쿼리 */
@@ -161,4 +161,22 @@ export function useDiscover(enabled: boolean, gatewayId: string | undefined) {
     refetchOnReconnect: false,
     meta: { silent: true },
   });
+}
+
+/** 에이전트 사진(프로필 스펙 3.6, admin 이상) — `PUT·DELETE /agents/:id/avatar`. 응답의 에이전트로 목록 캐시를 고친다. 오류는 고르는 자리 안에서 */
+export function useAgentAvatar(agentId: string) {
+  const qc = useQueryClient();
+  const onSuccess = ({ agent }: { agent: Agent }) => putAgent(qc, agent);
+  return {
+    upload: useMutation({
+      mutationFn: (image: Blob) => apiBytes<{ agent: Agent }>("PUT", `/agents/${agentId}/avatar`, image),
+      onSuccess,
+      meta: { silent: true },
+    }),
+    remove: useMutation({
+      mutationFn: () => api<{ agent: Agent }>("DELETE", `/agents/${agentId}/avatar`),
+      onSuccess,
+      meta: { silent: true },
+    }),
+  };
 }

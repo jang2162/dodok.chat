@@ -15,6 +15,8 @@ export const LIMITS = {
   restPerMin: 300,
   /** 첨부 업로드 — 사용자당 분당(REST 상한 위에 한 번 더) */
   uploadPerMin: 30,
+  /** 아바타 업로드(사람·에이전트) — 사용자당 분당(REST 상한 위에 한 번 더, 프로필 스펙 3.6) */
+  avatarUploadPerMin: 10,
   /** 초대·재설정 링크 발급 — 사용자당 분당(둘이 한 버킷, 팀 스펙 7장) */
   inviteIssuePerMin: 20,
   /** GET /api/v1/search — 사용자당 분당(REST 상한 위에 한 번 더, 스레드·검색 스펙 5.2) */
@@ -73,6 +75,7 @@ export type Limits = {
   llmsTxtPerMin: number;
   restPerMin: number;
   uploadPerMin: number;
+  avatarUploadPerMin: number;
   searchPerMin: number;
   runnerBrowsePerMin: number;
   webhookPerMin: number;

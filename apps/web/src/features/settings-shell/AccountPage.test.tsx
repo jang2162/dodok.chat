@@ -3,6 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QueryClient } from "@tanstack/react-query";
 import { type MeResponse, qk } from "@/api/queries";
+
+// 아바타 자르기는 캔버스가 있어야 한다(jsdom 에 없다) — 고른 그림을 그대로 넘긴다
+vi.mock("@/features/account/avatarImage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/account/avatarImage")>()),
+  cropToSquare: async (file: Blob) => file,
+}));
 import { ME, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 afterEach(() => {
@@ -26,13 +32,23 @@ const MEMBER: MeResponse = {
 
 type Handler = (body: unknown) => Response | Promise<Response>;
 
-function stubServer(me: MeResponse, { patchMe, password }: { patchMe?: Handler; password?: Handler } = {}) {
+function stubServer(
+  me: MeResponse,
+  {
+    patchMe,
+    password,
+    status,
+    avatar,
+  }: { patchMe?: Handler; password?: Handler; status?: Handler; avatar?: Handler } = {},
+) {
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
     if (url === "/api/v1/auth/me") return json(200, me);
     if (url === "/api/v1/me" && init?.method === "PATCH" && patchMe) return patchMe(body);
     if (url === "/api/v1/me/password" && password) return password(body);
+    if (url === "/api/v1/me/status" && init?.method === "PUT" && status) return status(body);
+    if (url === "/api/v1/me/avatar" && avatar) return avatar(body);
     const shell = shellGet(input, init);
     if (shell) return shell;
     throw new Error(`예상 밖 요청 ${init?.method ?? "GET"} ${url}`);
@@ -200,5 +216,127 @@ describe("AccountPage", () => {
     expect(password).toHaveBeenCalledWith({ current: "old-password-12", next: "correct-horse-battery" });
     expect(within(page).getByLabelText("현재 비밀번호")).toHaveValue("");
     expect(within(page).getByLabelText("새 비밀번호")).toHaveValue("");
+  });
+
+  describe("프로필 섹션(프로필 스펙 3.8)", () => {
+    const profile = async () => within(await screen.findByRole("region", { name: "프로필" }));
+
+    it("「다른 용무 중」 + 「1시간」 저장 → PUT /me/status 본문의 mode·modeUntil(+1시간)", async () => {
+      const fetch = stubServer(MEMBER, {
+        status: (body) =>
+          json(200, {
+            status: {
+              mode: "busy",
+              modeUntil: (body as { modeUntil: string }).modeUntil,
+              message: null,
+              dndAllowApprovals: true,
+            },
+          }),
+      });
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      await userEvent.selectOptions(p.getByLabelText("상태"), "busy");
+      await userEvent.selectOptions(p.getByLabelText("상태 만료"), "1h");
+      await userEvent.click(p.getByRole("button", { name: "상태 저장" }));
+      await waitFor(() =>
+        expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/me/status")).toBe(true),
+      );
+      const call = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/me/status");
+      const body = JSON.parse(String(call?.[1]?.body)) as { mode: string; modeUntil: string };
+      expect(body.mode).toBe("busy");
+      expect(Math.abs(Date.parse(body.modeUntil) - Date.now() - 3_600_000)).toBeLessThan(10_000);
+    });
+
+    it("걸어 둔 만료는 다른 칸만 고쳐 저장해도 그대로 간다 — 방해 금지가 조용히 무기한이 되지 않는다", async () => {
+      const until = new Date(Date.now() + 3_600_000).toISOString();
+      const fetch = stubServer(
+        { ...MEMBER, status: { mode: "dnd", modeUntil: until, message: null, dndAllowApprovals: true } },
+        { status: (body) => json(200, { status: { ...(body as object), message: null } }) },
+      );
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      expect(p.getByLabelText("상태")).toHaveValue("dnd");
+      await userEvent.type(p.getByLabelText("상태 메시지"), "집중");
+      await userEvent.click(p.getByRole("button", { name: "상태 저장" }));
+      await waitFor(() =>
+        expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/me/status")).toBe(true),
+      );
+      const call = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/me/status");
+      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ mode: "dnd", modeUntil: until });
+    });
+
+    it("「그대로」 만료가 폼을 연 사이 지났으면 지난 시각을 보내지 않는다 — 풀린 모양(자동·메시지 없음)으로 저장", async () => {
+      // 폼을 그린 뒤 시간이 흐른 모양 — 그린 때의 만료가 이미 지났다
+      const past = new Date(Date.now() - 60_000).toISOString();
+      const fetch = stubServer(
+        {
+          ...MEMBER,
+          status: {
+            mode: "dnd",
+            modeUntil: past,
+            message: { emoji: "🍱", text: "점심", until: past },
+            dndAllowApprovals: true,
+          },
+        },
+        { status: (body) => json(200, { status: { ...(body as object) } }) },
+      );
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      expect(p.getByLabelText("상태 만료")).toHaveValue("keep");
+      await userEvent.click(p.getByRole("checkbox", { name: "도구 승인 요청은 계속 받기" }));
+      await userEvent.click(p.getByRole("button", { name: "상태 저장" }));
+      await waitFor(() =>
+        expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/me/status")).toBe(true),
+      );
+      const call = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/me/status");
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+        mode: "auto",
+        modeUntil: null,
+        message: null,
+        dndAllowApprovals: false,
+      });
+    });
+
+    it("상태 메시지 101자는 저장할 수 없다", async () => {
+      stubServer(MEMBER);
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      const text = p.getByLabelText("상태 메시지");
+      await userEvent.click(text);
+      await userEvent.paste("가".repeat(101));
+      expect(p.getByRole("button", { name: "상태 저장" })).toBeDisabled();
+      expect(p.getByText("상태 메시지는 100자까지입니다")).toBeInTheDocument();
+    });
+
+    it("「도구 승인 요청은 계속 받기」는 member 에게도 보이고 기본으로 켜져 있다", async () => {
+      stubServer(MEMBER);
+      renderRoute("/settings/account");
+      await openAccount();
+      expect((await profile()).getByRole("checkbox", { name: "도구 승인 요청은 계속 받기" })).toBeChecked();
+    });
+
+    it("사진 올리기가 400(형식)이면 서버 문구가 섹션 안에 보인다", async () => {
+      stubServer(MEMBER, {
+        avatar: () => json(400, { code: "VALIDATION", message: "아바타 형식은 png·jpeg·webp 만 받는다" }),
+      });
+      // 미리보기 주소 — jsdom 에는 없다
+      vi.stubGlobal(
+        "URL",
+        Object.assign(URL, { createObjectURL: () => "blob:preview", revokeObjectURL: () => {} }),
+      );
+      renderRoute("/settings/account");
+      await openAccount();
+      const p = await profile();
+      await userEvent.upload(
+        p.getByLabelText("사진 고르기"),
+        new File(["gif"], "a.gif", { type: "image/gif" }),
+      );
+      await userEvent.click(await p.findByRole("button", { name: "사진 저장" }));
+      expect(await p.findByText("아바타 형식은 png·jpeg·webp 만 받는다")).toBeInTheDocument();
+    });
   });
 });

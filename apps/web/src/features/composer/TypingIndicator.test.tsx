@@ -30,6 +30,8 @@ const agentOf = (n: number, handle: string): Agent => ({
   archivedAt: null,
   dmAccess: "admins",
   program: null,
+  createdBy: null,
+  model: null,
 });
 const DEV = agentOf(21, "dev");
 const personOf = (n: number, handle: string): Person => ({
@@ -38,6 +40,7 @@ const personOf = (n: number, handle: string): Person => ({
   displayName: handle,
   role: "member",
   deactivatedAt: null,
+  statusMessage: null,
 });
 const MIA = personOf(31, "mia");
 const JO = personOf(32, "jo");

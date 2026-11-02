@@ -8,6 +8,7 @@ import { users, workspaces } from "../db/schema.sqlite";
 import { apiError, HttpError } from "../http/errors";
 import type { Logger } from "../logger";
 import { normalizeEmail } from "../modules/members/accept";
+import { readMyStatus } from "../modules/profile/status";
 import { recordRateLimit } from "../modules/ops/http-limits";
 import type { OpsService } from "../modules/ops/service";
 import { type Auth, CLIENT_IP_HEADER, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
@@ -112,6 +113,8 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
     workspace: loadWorkspace(ctx.db, ctx.workspaceId),
     // 그 워크스페이스 membership 의 역할 — 웹이 역할별 진입점을 가른다. 행이 없으면 requireSession 이 이미 401 로 막았다
     role: sessionUser(request).role,
+    // 본인의 상태 — 수동 모드·만료·방해 금지 옵션은 여기와 user 룸 me.status 로만 간다(프로필 스펙 2장)
+    status: readMyStatus(ctx.db, sessionUser(request).id, new Date()),
   }));
 
   // 같은 쿠키를 쓰는 다른 탭의 소켓도 이 세션이다 — 세션 행을 지운 뒤 그 세션의 소켓을 모두 끊는다

@@ -4,6 +4,7 @@ import {
   type Channel,
   type ChannelMember,
   type ConversationList,
+  type MyStatus,
   type Person,
   type Run,
   type RunEvent,
@@ -33,6 +34,8 @@ export type MeResponse = {
   workspaceId: string;
   workspace?: Pick<Workspace, "id" | "name">;
   role?: string;
+  /** 본인의 상태(프로필 스펙 2장) — 옛 서버·옛 오프라인 사본에는 없다 */
+  status?: MyStatus;
 };
 export type AdapterCapabilities = { agentsList: boolean; configSet: boolean };
 /** GET /adapter/status 응답 — 붙은 어댑터마다 상태 하나, capabilities 는 provider 로 찾는다(러너 계획 판정 P7) */

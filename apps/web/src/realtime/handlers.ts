@@ -19,6 +19,7 @@ import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { applyConversation } from "@/features/conversations/cache";
 import { bumpDm, cachedDmChannel, invalidateDms, isDmChannel } from "@/features/dms/queries";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
+import { usePresenceStore } from "@/features/presence/store";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -281,6 +282,13 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void invalidateDms(qc);
       // 「러너」 탭 프로젝트 줄의 에이전트 수(보관·되살리기·다른 탭에서 만들기)
       void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
+    },
+    // 접속 점(프로필 스펙 3.3) — 스냅숏은 연결마다(재접속 포함) 통째로, 변화는 바뀐 줄만
+    "presence.snapshot": ({ entries }) => usePresenceStore.getState().applySnapshot(entries),
+    "presence.changed": ({ entries }) => usePresenceStore.getState().applyChanged(entries),
+    // 본인 상태 — 다른 탭·기기에서 바꾼 것을 「내 계정」·내 패널이 맞춘다
+    "me.status": ({ status }) => {
+      qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, status });
     },
     /**
      * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의

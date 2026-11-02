@@ -256,6 +256,13 @@ describe("db", () => {
           authProvider: "local",
           avatarUrl: null,
           createdAt,
+          // 0033 — 기존 사람은 자동 상태·상태 메시지 없음·방해 금지 중 승인 받기(결정 7)
+          statusMode: "auto",
+          statusModeUntil: null,
+          statusEmoji: null,
+          statusText: null,
+          statusTextUntil: null,
+          dndAllowApprovals: true,
         });
         expect(db.select().from(memberships).all()).toMatchObject([{ userId: owner, role: "owner" }]);
         expect(db.select().from(invites).all()).toEqual([]);
@@ -1665,6 +1672,74 @@ describe("세션 리셋 열 걷기 마이그레이션(0032)", () => {
         });
         const idx = sqlite.prepare("PRAGMA index_list(agent_sessions)").all() as Array<{ name: string }>;
         expect(idx.map((i) => i.name)).toContain("agent_sessions_conversation_agent_thread");
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("프로필·접속 상태 마이그레이션(0033)", () => {
+  it("_drop_session_reset_cols 까지 적용된 DB 에 얹으면 계약(AvatarUrl)에 안 맞는 옛 아바타 주소만 NULL 이 된다 — agents·users 둘 다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_drop_session_reset_cols");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const at = Date.UTC(2026, 9, 1);
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, at);
+        // 옛 z.url() 이 받던 값과 지금도 맞는 값 — 이름이 바뀌지 않는지(행 보존)도 함께 본다
+        const urls = {
+          http: "http://example.com/a.png",
+          data: "data:image/png;base64,AAAA",
+          space: "https://example.com/a b.png",
+          tab: "https://example.com/a\tb.png",
+          bare: "https://",
+          ok: "https://example.com/ok.png",
+          none: null,
+        } as const;
+        const insertAgent = sqlite.prepare(
+          "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, avatar_url, enabled, created_at) VALUES (?, ?, 'openclaw', ?, ?, ?, ?, 1, ?)",
+        );
+        const insertUser = sqlite.prepare(
+          "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, avatar_url, created_at) VALUES (?, ?, ?, ?, 'local', ?, ?)",
+        );
+        sqlite.pragma("foreign_keys = OFF");
+        for (const [key, url] of Object.entries(urls)) {
+          insertAgent.run(`agent-${key}`, ws, key, `a${key}`, `A ${key}`, url, at);
+          insertUser.run(`user-${key}`, ws, `u${key}`, `U ${key}`, url, at);
+        }
+        sqlite.pragma("foreign_keys = ON");
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const expected: Record<string, string | null> = {
+          http: null,
+          data: null,
+          space: null,
+          tab: null,
+          bare: null,
+          ok: "https://example.com/ok.png",
+          none: null,
+        };
+        for (const [key, url] of Object.entries(expected)) {
+          expect(
+            sqlite.prepare("SELECT name, avatar_url AS url FROM agents WHERE id = ?").get(`agent-${key}`),
+          ).toEqual({
+            name: `A ${key}`,
+            url,
+          });
+          expect(
+            sqlite
+              .prepare("SELECT display_name AS name, avatar_url AS url FROM users WHERE id = ?")
+              .get(`user-${key}`),
+          ).toEqual({ name: `U ${key}`, url });
+        }
       } finally {
         sqlite.close();
       }

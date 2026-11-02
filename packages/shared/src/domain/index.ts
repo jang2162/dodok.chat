@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 import { StoredComponentState, StoredComponentsV1, StoredItemId } from "../components";
 import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
+import { AvatarUrl } from "../profile";
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
 export type Handle = z.infer<typeof Handle>;
@@ -16,7 +17,7 @@ export const User = z.object({
   displayName: z.string().min(1).max(80),
   email: z.email().optional(),
   authProvider: z.enum(["local", "email", "oidc"]),
-  avatarUrl: z.url().optional(),
+  avatarUrl: AvatarUrl.optional(),
   createdAt: IsoDateTime,
 });
 export type User = z.infer<typeof User>;
@@ -60,7 +61,7 @@ export const Agent = z.object({
   providerAgentId: z.string().min(1), // OpenClaw agentId
   handle: Handle,
   name: z.string().min(1).max(80),
-  avatarUrl: z.url().optional(),
+  avatarUrl: AvatarUrl.optional(),
   basePrompt: z.string().max(20_000).optional(),
   enabled: z.boolean(),
   createdAt: IsoDateTime,
@@ -82,6 +83,10 @@ export const Agent = z.object({
   dmAccess: DmAccess.default("admins"),
   /** 러너 에이전트의 프로그램 — 러너면 값, OpenClaw 면 null */
   program: RunnerProgram.nullable().default(null),
+  /** 만든 사람(소유자) — 기록 전에 만든 에이전트는 null. 소유자에게 따로 권한은 없다(프로필 스펙 결정 2) */
+  createdBy: Id.nullable().default(null),
+  /** 러너 에이전트의 모델(없으면 null = 기본) — 모두에게 싣는다. OpenClaw 는 null(dodok 이 Gateway 쪽 모델을 모른다) */
+  model: z.string().nullable().default(null),
   /**
    * 러너 에이전트의 정의(러너 일반화 스펙 5장) — REST 에이전트 응답에만, 러너 에이전트에만 키가 있다. 고치기 화면이 지금 값을 보인다.
    * projectId 가 null 이면 프로젝트가 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다)

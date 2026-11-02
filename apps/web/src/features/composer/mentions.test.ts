@@ -84,13 +84,21 @@ it("검색: 핸들·이름·별칭 앞부분(대소문자 무시), 빈 검색어
 
 it("비활성 멤버는 사람 후보에서 빠진다 — 역할이 남아 있어도(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절)", () => {
   const people: Person[] = [
-    { id: ME.user.id, handle: "owner", displayName: "장병현", role: "owner", deactivatedAt: null },
+    {
+      id: ME.user.id,
+      handle: "owner",
+      displayName: "장병현",
+      role: "owner",
+      deactivatedAt: null,
+      statusMessage: null,
+    },
     {
       id: uid(30),
       handle: "mina",
       displayName: "미나",
       role: "member",
       deactivatedAt: "2026-10-06T00:00:00.000Z",
+      statusMessage: null,
     },
   ];
   const list = mentionCandidates([], [], ME, people);
@@ -99,9 +107,23 @@ it("비활성 멤버는 사람 후보에서 빠진다 — 역할이 남아 있�
 
 it("사람 목록이 있으면 사람 후보는 그 목록의 멤버 전원(가입 순) — role 없는 사람은 빠진다(팀 스펙 5장)", () => {
   const people: Person[] = [
-    { id: ME.user.id, handle: "owner", displayName: "장병현", role: "owner", deactivatedAt: null },
-    { id: uid(30), handle: "mina", displayName: "미나", role: "member", deactivatedAt: null },
-    { id: uid(31), handle: "jihoon", displayName: "지훈", deactivatedAt: null },
+    {
+      id: ME.user.id,
+      handle: "owner",
+      displayName: "장병현",
+      role: "owner",
+      deactivatedAt: null,
+      statusMessage: null,
+    },
+    {
+      id: uid(30),
+      handle: "mina",
+      displayName: "미나",
+      role: "member",
+      deactivatedAt: null,
+      statusMessage: null,
+    },
+    { id: uid(31), handle: "jihoon", displayName: "지훈", deactivatedAt: null, statusMessage: null },
     {
       id: uid(32),
       handle: "sora",
@@ -109,6 +131,7 @@ it("사람 목록이 있으면 사람 후보는 그 목록의 멤버 전원(가�
       role: "admin",
       avatarUrl: "/a.png",
       deactivatedAt: null,
+      statusMessage: null,
     },
   ];
   const list = mentionCandidates([member("agent", DEV.id)], [DEV], ME, people);
