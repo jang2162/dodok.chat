@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import { eq, sql } from "drizzle-orm";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
@@ -97,6 +97,8 @@ import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
+import { registerAvatarRoutes } from "./modules/profile/avatar-routes";
+import { sweepAvatars } from "./modules/profile/avatars";
 import { registerProfileRoutes } from "./modules/profile/routes";
 import { dndState, startStatusExpiry } from "./modules/profile/status";
 import { attachWireFanout } from "./realtime/events";
@@ -140,6 +142,8 @@ export type AppDeps = {
   sessionSweepIntervalMs?: number;
   /** 상태 만료 확인 주기(기본 STATUS_EXPIRY_INTERVAL_MS) — 테스트가 낮춘다 */
   statusExpiryIntervalMs?: number;
+  /** 아바타 디렉터리(기본 DATA_DIR/avatars) — 테스트가 앱마다 임시 디렉터리를 준다(부팅 청소가 남의 파일을 지우지 않게) */
+  avatarsDir?: string;
   /** 예약 자동화 틱 주기(기본 AUTOMATION_TICK_INTERVAL_MS) — 테스트가 낮추거나 부팅 틱만 보려고 늘린다 */
   automationTickMs?: number;
   /** 웹 푸시 통로 안의 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트·dev:fake 는 가짜를 준다 — 밖으로 보내지 않게 */
@@ -496,6 +500,20 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 상태(프로필 스펙 3.2) — 수동 모드가 바뀌면(사람이 바꾸거나 만료가 지나면) 접속 점을 다시 계산한다
     const onModeChanged = (userId: string) => presenceHooks.modeChanged(userId);
     registerProfileRoutes(fastify, { auth, db, bus, workspaceId, onModeChanged });
+    // 아바타(프로필 스펙 3.6) — 첨부 디렉터리와 따로. 부팅 때 한 번 어느 행도 안 가리키는 파일을 치운다(첨부 청소와 따로)
+    const avatarsDir = deps.avatarsDir ?? join(config.DATA_DIR, "avatars");
+    const sweptAvatars = await sweepAvatars(db, avatarsDir);
+    if (sweptAvatars > 0) logger.info({ removed: sweptAvatars }, "avatars swept");
+    registerAvatarRoutes(fastify, {
+      auth,
+      db,
+      bus,
+      workspaceId,
+      dir: avatarsDir,
+      perMin: limits.avatarUploadPerMin,
+      limitNow: limitClock,
+      ops,
+    });
     const statusExpiry = startStatusExpiry({
       db,
       bus,

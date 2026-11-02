@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import {
@@ -43,7 +45,7 @@ import { insertRun } from "../src/modules/runs/store";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
-import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
+import { avatarsDirOf, bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { expectOk, openRun as openControlRun, pat } from "./helpers/control";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
@@ -261,6 +263,23 @@ describe("역할 매트릭스(스펙 2장)", () => {
         url: `/api/v1/agents/${newAgent().id}`,
         payload: { name: "바뀐 이름" },
       }),
+    },
+    // 에이전트 아바타(프로필 스펙 3.6) — 에이전트 수정과 같은 판정
+    {
+      name: "PUT /agents/:id/avatar",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: `/api/v1/agents/${newAgent().id}/avatar`,
+        payload: makePng(64, 64),
+      }),
+    },
+    {
+      name: "DELETE /agents/:id/avatar",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: `/api/v1/agents/${newAgent().id}/avatar` }),
     },
     {
       name: "DELETE /agents/:id",
@@ -676,7 +695,36 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
     },
-    // 상태(프로필 스펙 3.2) — 누구나, 자기 것만
+    // 상태·아바타(프로필 스펙 3.2·3.6) — 누구나, 자기 것만. 내려받기는 로그인한 누구나
+    {
+      name: "PUT /me/avatar",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: "/api/v1/me/avatar",
+        payload: makePng(64, 64, [++n % 256, 0, 0]),
+      }),
+    },
+    {
+      name: "DELETE /me/avatar",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: "/api/v1/me/avatar" }),
+    },
+    {
+      name: "GET /avatars/:file",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const file = `${"c".repeat(64)}.png`;
+        const dir = avatarsDirOf(app);
+        if (!dir) throw new Error("아바타 디렉터리가 없다");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, file), makePng(64, 64));
+        return { method: "GET", url: `/api/v1/avatars/${file}` };
+      },
+    },
     {
       name: "PUT /me/status",
       min: "member",

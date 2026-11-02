@@ -163,6 +163,17 @@ describe("runBackup", () => {
     expect(mode(copied)).toBe(0o700);
   });
 
+  it("아바타 디렉터리 DATA_DIR/avatars/ 를 통째로 담는다(프로필 스펙 1장)", async () => {
+    makeDb();
+    const avatars = join(dataDir, "avatars");
+    mkdirSync(avatars, { recursive: true });
+    const file = `${"a".repeat(64)}.webp`;
+    writeFileSync(join(avatars, file), "webp-bytes");
+    const r = await runBackup({ dataDir });
+    expect(readdirSync(join(r.dir, "avatars"))).toEqual([file]);
+    expect(readFileSync(join(r.dir, "avatars", file), "utf8")).toBe("webp-bytes");
+  });
+
   it("Gateway 디렉터리가 없어도 백업한다", async () => {
     makeDb();
     const r = await runBackup({ dataDir });

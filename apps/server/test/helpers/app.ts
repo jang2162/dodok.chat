@@ -37,6 +37,12 @@ export const plentyOfDisk: NonNullable<AppDeps["statfs"]> = async () => ({
 export const TEST_LOCAL_TOKEN = testEnv.LOCAL_AUTH_TOKEN as string;
 
 const attachmentsDirs = new WeakMap<App, string>();
+const avatarsDirs = new WeakMap<App, string>();
+
+/** bootTestApp 으로 띄운 앱의 아바타 디렉터리 — 앱마다 임시 디렉터리다(부팅 청소가 다른 앱의 파일을 지우지 않게) */
+export function avatarsDirOf(app: App): string | undefined {
+  return avatarsDirs.get(app);
+}
 
 /** bootTestApp 으로 띄운 앱의 첨부 디렉터리 — 블롭 파일을 디스크에서 직접 볼 때(blobPath(dir, sha)) 쓴다 */
 export function attachmentsDirOf(app: App): string | undefined {
@@ -61,11 +67,16 @@ export async function bootTestApp(
 ): Promise<App> {
   const own = overrides.ATTACHMENTS_DIR === undefined;
   const dir = overrides.ATTACHMENTS_DIR ?? mkdtempSync(join(tmpdir(), "dodok-test-attachments-"));
-  const remove = () => (own ? rmSync(dir, { recursive: true, force: true }) : undefined);
+  const avatarsDir = deps.avatarsDir ?? mkdtempSync(join(tmpdir(), "dodok-test-avatars-"));
+  const remove = () => {
+    if (own) rmSync(dir, { recursive: true, force: true });
+    if (deps.avatarsDir === undefined) rmSync(avatarsDir, { recursive: true, force: true });
+  };
   let app: App;
   try {
     app = await createApp(loadConfig({ ...testEnv, ...overrides, ATTACHMENTS_DIR: dir }), {
       ...deps,
+      avatarsDir,
       adapters: deps.adapters ?? [new FakeAdapter()],
       pushSend: deps.pushSend ?? noExternalPush,
       statfs: deps.statfs ?? plentyOfDisk,
@@ -76,6 +87,7 @@ export async function bootTestApp(
   }
   if (opts.gateway !== false) seedAppGateway(app);
   attachmentsDirs.set(app, dir);
+  avatarsDirs.set(app, avatarsDir);
   const close = app.close.bind(app);
   let closing: Promise<void> | undefined;
   app.close = () => (closing ??= close().finally(remove));
