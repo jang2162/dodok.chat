@@ -1,15 +1,9 @@
 import type { GatewaySetup, SetupStatus } from "@dodok/shared";
-import { PencilIcon, PowerIcon, Trash2Icon } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useRef } from "react";
 import { useNowTick } from "@/hooks/useNowTick";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { DeleteGatewayConfirm } from "./DeleteGatewayConfirm";
-import { GatewayForm } from "./GatewayForm";
 import { IssueTokenDialog } from "./IssueTokenDialog";
 import { publicOriginOf } from "./llms";
-import { useUpdateGateway } from "./mutations";
 import { useBridgeTokens } from "./queries";
 import { HelpDetails } from "@/features/connections/HelpDetails";
 import { CopyBlock, PAIRING_STALE_MS, Pending, PluginInstall, Section } from "./sections";
@@ -22,84 +16,6 @@ export function gatewayStateLabel(g: GatewaySetup): string {
   if (g.gateway.state === "connected") return "연결됨";
   if (g.gateway.state === "reconnecting") return "재연결 중";
   return "연결 안 됨";
-}
-
-/**
- * Gateway 하나(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」) — 상태·플러그인·이 Gateway 의 브리지 토큰과 메뉴(수정·끄기/켜기·삭제).
- * 삭제는 카드 안에서 한 번 더 묻고(`DeleteGatewayConfirm`), 지운 뒤에는 카드가 사라지므로 `onDeleted` 가 초점을 옮긴다
- */
-export function GatewayCard({
-  gateway,
-  status,
-  onDeleted,
-}: {
-  gateway: GatewaySetup;
-  status: SetupStatus;
-  onDeleted: (name: string) => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const deleteButton = useRef<HTMLButtonElement>(null);
-  const confirmId = useId();
-  const toggle = useUpdateGateway(gateway.id);
-  const label = gatewayStateLabel(gateway);
-
-  return (
-    <Section level={3} title={gateway.name}>
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={label === "연결됨" ? "default" : "outline"}>{label}</Badge>
-        <span className="flex-1" />
-        <GatewayForm
-          gateway={gateway}
-          trigger={
-            <Button type="button" size="xs" variant="outline" aria-label={`${gateway.name} 수정`}>
-              <PencilIcon />
-              수정
-            </Button>
-          }
-        />
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          aria-label={`${gateway.name} ${gateway.enabled ? "끄기" : "켜기"}`}
-          disabled={toggle.isPending}
-          onClick={() => toggle.mutate({ enabled: !gateway.enabled })}
-        >
-          <PowerIcon />
-          {gateway.enabled ? "끄기" : "켜기"}
-        </Button>
-        <Button
-          ref={deleteButton}
-          type="button"
-          size="xs"
-          variant="outline"
-          aria-label={`${gateway.name} 삭제`}
-          aria-expanded={confirming}
-          aria-controls={confirming ? confirmId : undefined}
-          onClick={() => setConfirming(true)}
-        >
-          <Trash2Icon />
-          삭제
-        </Button>
-      </div>
-      {confirming && (
-        <DeleteGatewayConfirm
-          id={confirmId}
-          gateway={gateway}
-          onCancel={() => {
-            setConfirming(false);
-            deleteButton.current?.focus();
-          }}
-          onDeleted={() => onDeleted(gateway.name)}
-        />
-      )}
-      <p className="text-sm text-muted-foreground">
-        <GatewayMeta gateway={gateway} />
-      </p>
-      <PluginStatus gateway={gateway} status={status} level={4} />
-      <BridgeTokens gateway={gateway} status={status} level={4} />
-    </Section>
-  );
 }
 
 /** 한 줄 메타 — 「OpenClaw Gateway · <주소> · <버전>」. 핀과 다르면 드리프트를 늘 보인다(운영 보강 스펙 7장) */
@@ -195,18 +111,10 @@ function BuildMatch({ gateway }: { gateway: GatewaySetup }) {
  * 「플러그인」 섹션(연결 탭 통합 스펙 3.3) — 페어링 대기면 승인 블록이 맨 위, 접속 상태 한 줄과 같은 빌드인가, 그 아래 설치 상자.
  * 플러그인이 아직 안 붙었으면 상자를 펼쳐 두고, 붙어 있으면 「다시 설치」로 접는다
  */
-export function PluginStatus({
-  gateway,
-  status,
-  level = 2,
-}: {
-  gateway: GatewaySetup;
-  status: SetupStatus;
-  level?: 2 | 4;
-}) {
+export function PluginStatus({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const plugin = gateway.bridge.plugin;
   return (
-    <Section title="플러그인" level={level} bare className={level === 4 ? "border-t pt-3" : undefined}>
+    <Section title="플러그인" bare>
       <PairingNotice gateway={gateway} />
       <p className="text-sm">
         {plugin ? (
@@ -228,20 +136,12 @@ export function PluginStatus({
  * 「브리지 토큰」 섹션 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 한 줄 설명과 「?」(교체 절차·브리지 주소),
  * 쓸 수 있는 토큰이 없으면 늘 보이는 경고. 발급 대화상자는 그대로
  */
-export function BridgeTokens({
-  gateway,
-  status,
-  level = 2,
-}: {
-  gateway: GatewaySetup;
-  status: SetupStatus;
-  level?: 2 | 4;
-}) {
+export function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const tokens = useBridgeTokens(gateway.id);
   const issueButton = useRef<HTMLButtonElement>(null);
   const none = tokens.data !== undefined && tokens.data.every((t) => t.revokedAt !== null);
   return (
-    <Section title="브리지 토큰" level={level} bare className={level === 4 ? "border-t pt-3" : undefined}>
+    <Section title="브리지 토큰" bare>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="text-sm text-muted-foreground">플러그인이 이 서버에 붙을 때 쓰는 토큰.</p>
