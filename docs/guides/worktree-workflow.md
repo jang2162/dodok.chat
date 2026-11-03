@@ -615,9 +615,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 스크립트는 이것을 종료코드로 가른다 — `0` 은 `worker_done` 수신, `3` 은 타임아웃, `1` 은 오류.
 **exit 3 을 보고 워커가 죽었다고 판단하지 마라. 같은 명령을 다시 부르면 된다.**
 
-**`wait` 은 받은 Delivery 를 `--ack` 로 확인 처리한다.** 이것을 빼면 Run 이 같은 배치를
-계속 재생하므로(`orca orchestration check --help`: *"replays the same Delivery until `--ack`"*),
-**먼저 끝난 워커의 보고가 다음 `wait` 에서 그대로 다시 나와 아직 도는 워커를 끝난 것으로 오인한다.**
+Orca 1.4.246 부터 consuming `check` 는 돌려준 배치를 바로 처리됨으로 표시해 재생이 없고, `--ack` 는 옛 판 호환용으로 처리된 배치에는 아무 일도 하지 않는다(`orca orchestration check --help`). 대신 응답을 잃으면 그 배치도 잃는다 — `check` 가 찍은 `--retry-request` 로 같은 배치를 다시 받거나 `orca orchestration inbox --terminal run:<runId> --limit <n> --full` 로 찾는다.
+그래서 `wait` 은 `check` 가 0 이 아닌 코드로 끝났거나 결과를 끝까지 읽지 못하면 체크포인트(3)가 아니라 **오류(1)** 로 끝내고, 끝까지 읽힌 메시지의 본문과 응답 원문·stderr·두 복구 명령을 먼저 보인다. **exit 1 이면 다시 `wait` 하기 전에 그 출력부터 읽는다** — 다시 기다려도 잃은 배치는 오지 않는다.
 
 워커가 `ask` 로 물어봐도 코디네이터가 수신하고 있지 않으면 **타임아웃(기본 15분)까지 방치되고**, 워커는 스스로 가정을
 세워 진행하거나 멈춘다. 브리프 오류를 발견한 워커의 질문이 무응답으로 흘러 워커가 독자 판단으로 진행하는 것이 그 결과다.
@@ -782,6 +781,8 @@ scripts/orca-worker.sh stop <슬러그>           # 끝난 워커 회수 뒤 그
 scripts/orca-worker.sh stop --all --dry-run   # 무엇이 정지될지 먼저 본다
 ```
 
+슬러그는 워크트리 경로의 마지막 이름(`.worktrees/dodok.chat/<슬러그>`)이다 — Orca 의 `displayName` 이 아니다. Orca 는 워커의 브랜치 이름을 바꾸며 `displayName` 도 바꾸므로(예: `orca-1246` 이 「Fix orca worker orca」가 됐다), 그 이름을 쓰면 spawn 이 준 슬러그로 `reap`·`stop`·`keep` 이 「없다」가 된다.
+
 `status` 는 **미정리가 하나라도 있으면 exit 1**, 없으면 exit 0 이다.
 `.claude/hooks/orca-worker-check.sh` 가 세션 시작과 매 프롬프트마다 이 종료코드만 보고 세션에 현황을 알린다
 (`.claude/settings.json` 의 `SessionStart`·`UserPromptSubmit` 훅). "미정리"는 둘뿐이다 — **워커가 `done` 인데 터미널이
@@ -873,7 +874,7 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 타임아웃을 넉넉히 준다(왕복 수는 `orca orchestration run-list --json` 을 끝 장까지 센 Run 수다).
 그래서 한 명령은 목록을 한 번만 읽는다. `reap --all-merged`·`stop --all` 은 처음 회수할 때 읽은
 목록(과 못 읽었다는 사실)을 다음 워크트리에 돌려 쓰고 — 한 워크트리의 회수는 다른 워크트리의 행을
-바꾸지 않는다 — `attach` 는 Task 를 만들기 전에 한 번 읽어 진행 중 검사와 `--retry-of` 가 함께 쓴다. 목록을 못 읽어도 닫기는 그대로 간다(`reap` 은 폐기까지) — 그 워크트리 워커의 터미널 꼬리는 보관되지 않는다(「터미널을 끄는 것은 `stop` 이 한다」 절). 일괄 모드는 못 읽었다는 사실도 돌려 쓰므로, 한 번만 실패해도 남은 워크트리 전부가 회수 없이 닫힌다.
+바꾸지 않는다 — `attach` 는 Task 를 만들기 전에 한 번 읽어 진행 중 검사와 `--retry-of` 가 함께 쓴다. **목록을 못 읽으면 진행 중인 dispatch 가 있는지 모르므로 지우지도 끄지도 않는다(fail closed)** — 슬러그를 찍은 `reap`·`stop` 은 거부하고, `reap --all-merged`·`stop --all` 은 그 워크트리를 건너뛴다(일괄 모드는 못 읽었다는 사실도 돌려 쓰므로 한 번 실패하면 전부 건너뛴다). 터미널을 읽어 확인했으면 슬러그를 찍은 `--force` 로만 넘는다 — 그때는 닫기가 그대로 가고(`reap` 은 폐기까지) 그 워크트리 워커의 터미널 꼬리는 보관되지 않는다(「터미널을 끄는 것은 `stop` 이 한다」 절).
 
 **소유 증명과 회수 대상 판정은 다른 일이다.** 증명은 「이 워크트리 것인가」를 묻고, 판정은
 「부르면 무엇이 닫히는가」를 묻는다. 증명 단계에서 상태로 걸러 버리면 건너뛴 것과 그 이유를
