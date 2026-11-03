@@ -17,7 +17,7 @@ import {
 } from "../../../test/setupServer";
 import { ME, json } from "../../../test/shellApi";
 
-// 연결 추가(연결 탭 통합 스펙 3.3) — Gateway 는 폼 → 그 상세, 러너는 드러나는 것 넷 → 토큰 발급 → 그 상세. 1단계는 owner 만
+// 연결 추가(연결 탭 통합 스펙 3.3·5.2) — Gateway 는 폼 → 그 상세, 러너는 드러나는 것 넷 → 토큰 발급 → 그 상세. 멤버 누구나(member 의 Gateway 는 승인 대기)
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -29,12 +29,48 @@ const renderNew = (me: unknown = OWNER) => renderConnection(me, undefined, "/set
 const openAdd = () => screen.findByRole("form", { name: "Gateway 추가" });
 
 describe("권한", () => {
-  it.each(["admin", "member"])("non-owner sees no access in stage 1 — %s", async (role) => {
-    const server = stubSetupServer();
+  it.each(["admin", "member"])("member and admin can add a connection — %s 도 고르기와 폼", async (role) => {
+    stubSetupServer({ me: { ...ME, role } });
     renderNew({ ...ME, role });
-    expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
-    expect(screen.queryByRole("form", { name: "Gateway 추가" })).toBeNull();
-    expect(server.setupCalls()).toEqual([]);
+    expect(await screen.findByRole("heading", { level: 1, name: "연결 추가" })).toBeInTheDocument();
+    expect(await openAdd()).toBeInTheDocument();
+    expect(screen.queryByText(/권한이 없습니다/)).toBeNull();
+  });
+
+  it("member's new gateway shows pending approval — 저장하면 그 상세에 「승인 대기」 한 줄", async () => {
+    const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+    const MEMBER = { ...ME, user: { ...ME.user, id: ME_ID }, role: "member" };
+    let created = false;
+    const mine = gatewayOf(7, { name: "집", approved: false, gateway: { state: "disabled" } });
+    stubSetupServer({
+      me: MEMBER,
+      status: () => ({ ...statusOf({ noGateway: true, plugin: null }), gateways: created ? [mine] : [] }),
+      connections: () => ({
+        gateways: created
+          ? [{ id: mine.id, name: "집", enabled: true, approved: false, owner: { id: ME_ID, name: "나" } }]
+          : [],
+        runners: [],
+        projects: [],
+      }),
+      createGateway: (body) => {
+        created = true;
+        return json(201, {
+          ...mine,
+          ...(body as object),
+          tokenSet: true,
+          ownerUserId: ME_ID,
+          approved: false,
+        });
+      },
+    });
+    const { router } = renderNew(MEMBER);
+    const dialog = await openAdd();
+    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
+    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://home.example.com");
+    await userEvent.type(within(dialog).getByLabelText("토큰"), "gw-secret");
+    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(gatewayDetailPath(gatewayId(7))));
+    expect(await screen.findByText("승인 대기 — admin 이 승인하면 서버가 접속합니다")).toBeInTheDocument();
   });
 
   it("「연결 추가」 머리와 고르기 — 처음은 OpenClaw Gateway", async () => {
@@ -240,5 +276,44 @@ describe("러너", () => {
     expect(row).toHaveTextContent(`drn_${RAW_RUNNER_TOKEN.slice(4, 10)}…`);
     expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
     expect(cacheDump(qc)).not.toContain(RAW_RUNNER_TOKEN);
+  });
+
+  it("member 가 발급하면 그 러너 상세가 곧바로 관리 꼴이다 — 실시간 알림 없이도 연결 목록을 다시 받는다", async () => {
+    const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+    const MEMBER = { ...ME, user: { ...ME.user, id: ME_ID }, role: "member" };
+    let issued = false;
+    const server = stubSetupServer({
+      me: MEMBER,
+      connections: () => ({
+        gateways: [],
+        runners: issued
+          ? [
+              {
+                id: tokenId(8),
+                label: "맥북",
+                connected: false,
+                revoked: false,
+                owner: { id: ME_ID, name: "나" },
+              },
+            ]
+          : [],
+        projects: [],
+      }),
+    });
+    const qc = renderNew(MEMBER);
+    // 발급 전에 연결 목록을 한 번 받아 둔다(트리)
+    await waitFor(() => expect(server.count("GET", "/api/v1/connections")).toBeGreaterThan(0));
+    await userEvent.click(await screen.findByRole("radio", { name: "러너" }));
+    await userEvent.click(await screen.findByRole("button", { name: "새 러너 토큰 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText("라벨"), "맥북");
+    await userEvent.click(within(dialog).getByRole("button", { name: "발급" }));
+    await within(dialog).findByText(RAW_RUNNER_TOKEN);
+    issued = true;
+    await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
+    await waitFor(() => expect(qc.router.state.location.pathname).toBe(runnerDetailPath(tokenId(8))));
+    const detail = await screen.findByTestId("runner-detail");
+    expect(await within(detail).findByRole("group", { name: "설치 안내" })).toBeInTheDocument();
+    expect(screen.queryByText("이 연결을 찾을 수 없습니다")).toBeNull();
   });
 });

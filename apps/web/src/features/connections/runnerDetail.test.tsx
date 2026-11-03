@@ -1,3 +1,4 @@
+import type { ConnectionsResponse } from "@dodok/shared";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -126,6 +127,80 @@ describe("member", () => {
   });
 });
 
+describe("연결의 주인(2단계)", () => {
+  const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+  const OTHER = "0190a000-0000-7000-8000-0000000000d2";
+  const MEMBER = { ...OWNER, user: { ...OWNER.user, id: ME_ID }, role: "member" };
+  const runnerList = (owner: { id: string; name: string }): ConnectionsResponse => ({
+    gateways: [],
+    runners: [{ id: tokenId(1), label: "맥북", connected: false, revoked: false, owner }],
+    projects: [],
+  });
+
+  it("member owning the runner manages it — 프로젝트·설치 안내·러너 토큰, 메타에 주인", async () => {
+    stubSetupServer({
+      me: MEMBER,
+      runnerTokens: [tokenOf(1, { label: "맥북", ownerUserId: ME_ID })],
+      connections: runnerList({ id: ME_ID, name: "나" }),
+    });
+    renderConnection(MEMBER, undefined, runnerDetailPath(tokenId(1)));
+    const runner = await detail();
+    await within(runner).findByRole("region", { name: "러너 토큰" });
+    const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
+      (el) => el.getAttribute("aria-label") ?? el.textContent,
+    );
+    expect(order).toEqual(["프로젝트 0", "설치 안내", "러너 토큰"]);
+    expect(runner).toHaveTextContent("주인 나");
+  });
+
+  it("member opening another's runner sees no install steps or token — 그 요청도 없다", async () => {
+    const server = stubSetupServer({
+      me: MEMBER,
+      runnerTokens: [tokenOf(1, { label: "맥북", ownerUserId: OTHER })],
+      connections: runnerList({ id: OTHER, name: "mia" }),
+    });
+    renderConnection(MEMBER, undefined, runnerDetailPath(tokenId(1)));
+    const runner = await detail();
+    expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
+    expect(runner).toHaveTextContent("주인 mia");
+    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
+    expect(within(runner).queryByRole("group", { name: "설치 안내" })).toBeNull();
+    expect(within(runner).queryByRole("region", { name: "러너 토큰" })).toBeNull();
+    expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();
+    expect(server.calls.filter((c) => /runner-tokens|\/runners|setup\/status/.test(c.url))).toEqual([]);
+  });
+
+  it("project detail opens for the runner's owner — member 라도", async () => {
+    const server = stubRunners(
+      {
+        runners: [runnerOf(1, { label: "맥북" })],
+        projects: [projectOf(1, { label: "dodok", relPath: "dodok" })],
+      },
+      async (input) =>
+        String(input) === "/api/v1/connections"
+          ? json(200, {
+              gateways: [],
+              runners: [
+                {
+                  id: runnerId(1),
+                  label: "맥북",
+                  connected: true,
+                  revoked: false,
+                  owner: { id: ME_ID, name: "나" },
+                },
+              ],
+              projects: [{ id: projectOf(1).id, runnerId: runnerId(1), label: "dodok", archived: false }],
+            })
+          : json(200, { agents: [] }),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("member", undefined, projectPath(projectOf(1).id), ME_ID);
+    const project = await screen.findByTestId("project-detail");
+    expect(within(project).getByRole("heading", { level: 1, name: "dodok" })).toBeInTheDocument();
+    expect(within(project).getByRole("button", { name: "에이전트 만들기" })).toBeEnabled();
+  });
+});
+
 describe("프로젝트 상세", () => {
   it("project detail is admin only", async () => {
     const server = stubRunners({ projects: [projectOf(1, { label: "dodok" })] }, async () =>
@@ -158,7 +233,11 @@ describe("프로젝트 상세", () => {
   it("archiving a project returns to the runner detail", async () => {
     const server = stubRunners(
       { runners: [runnerOf(1, { label: "맥북" })], projects: [projectOf(1, { label: "dodok" })] },
-      async () => json(200, { agents: [] }),
+      // admin 은 러너 상세에서 설치 안내·토큰도 부른다 — 이 시험이 주지 않는 경로는 404
+      async (input) =>
+        String(input) === "/api/v1/agents"
+          ? json(200, { agents: [] })
+          : json(404, { code: "NOT_FOUND", message: "x" }),
     );
     vi.stubGlobal("fetch", vi.fn(server.fetch));
     const { router } = renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));

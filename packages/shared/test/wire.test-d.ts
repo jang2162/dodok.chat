@@ -42,6 +42,7 @@ describe("wire event maps", () => {
       | "typing"
       | "adapter.status"
       | "setup.status"
+      | "connections.changed"
       | "ops.event"
       | "system.notice"
       | "presence.snapshot"
@@ -53,6 +54,11 @@ describe("wire event maps", () => {
     expectTypeOf<Parameters<ServerToClientEvents["setup.status"]>[0]>().toEqualTypeOf<{
       status: SetupStatus;
     }>();
+  });
+  it("connections.changed 는 본문이 없다 — 받은 쪽이 GET /connections 를 다시 받는다", () => {
+    expectTypeOf<Parameters<ServerToClientEvents["connections.changed"]>[0]>().toEqualTypeOf<
+      Record<string, never>
+    >();
   });
   it("agents.changed 는 본문이 없다 — 받은 쪽이 다시 받는다", () => {
     expectTypeOf<Parameters<ServerToClientEvents["agents.changed"]>[0]>().toEqualTypeOf<

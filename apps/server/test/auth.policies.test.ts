@@ -12,8 +12,17 @@ import {
   authorizeChannelMemberRemove,
   authorizeChannelPatch,
   authorizeChannelUnarchive,
+  authorizeConnectionCreate,
+  authorizeConnectionManage,
+  authorizeConnectionRead,
+  authorizeGatewayApprove,
+  authorizeAgentMoveGateway,
   authorizeOpsRead,
+  authorizeProjectMove,
   authorizeRead,
+  authorizeRunnerManage,
+  canApproveGateway,
+  type ConnectionActor,
 } from "../src/auth/policies";
 import { HttpError } from "../src/http/errors";
 
@@ -91,10 +100,60 @@ const CASES: Case[] = [
   { name: "authorizeChannelMemberRemove", min: "member", check: (r) => authorizeChannelMemberRemove(r) },
   { name: "authorizeChannelArchive", min: "admin", check: (r) => authorizeChannelArchive(r) },
   { name: "authorizeChannelUnarchive", min: "admin", check: (r) => authorizeChannelUnarchive(r) },
-  { name: "authorizeAgentDiscover", min: "admin", check: (r) => authorizeAgentDiscover(r) },
-  { name: "authorizeAgentRegister", min: "admin", check: (r) => authorizeAgentRegister(r) },
-  { name: "authorizeAgentPatch", min: "admin", check: (r) => authorizeAgentPatch(r) },
-  { name: "authorizeAgentArchive", min: "admin", check: (r) => authorizeAgentArchive(r) },
+  // 연결 정책 — 남의 연결(주인 아님)이면 admin 이상(연결 탭 통합 스펙 5.2 「남의 연결 관리」)
+  ...(
+    [
+      ["authorizeAgentDiscover", authorizeAgentDiscover],
+      ["authorizeAgentRegister", authorizeAgentRegister],
+      ["authorizeAgentPatch", authorizeAgentPatch],
+      ["authorizeAgentArchive", authorizeAgentArchive],
+      ["authorizeRunnerManage", authorizeRunnerManage],
+      ["authorizeConnectionManage", authorizeConnectionManage],
+      ["authorizeConnectionRead", authorizeConnectionRead],
+    ] as const
+  ).map(([name, policy]): Case => ({
+    name: `${name} (남의 연결)`,
+    min: "admin",
+    check: (r) => policy({ role: r, ownsConnection: false }),
+  })),
+  // 자기 연결이면 member 도(스펙 5.2 「자기 연결 관리」·「연결의 주소·토큰 목록·설치 명령 보기」)
+  ...(
+    [
+      ["authorizeAgentDiscover", authorizeAgentDiscover],
+      ["authorizeAgentRegister", authorizeAgentRegister],
+      ["authorizeAgentPatch", authorizeAgentPatch],
+      ["authorizeAgentArchive", authorizeAgentArchive],
+      ["authorizeRunnerManage", authorizeRunnerManage],
+      ["authorizeConnectionManage", authorizeConnectionManage],
+      ["authorizeConnectionRead", authorizeConnectionRead],
+    ] as const
+  ).map(([name, policy]): Case => ({
+    name: `${name} (자기 연결)`,
+    min: "member",
+    check: (r) => policy({ role: r, ownsConnection: true }),
+  })),
+  { name: "authorizeConnectionCreate", min: "member", check: (r) => authorizeConnectionCreate(r) },
+  { name: "authorizeGatewayApprove", min: "admin", check: (r) => authorizeGatewayApprove(r) },
+  {
+    name: "authorizeAgentMoveGateway (한쪽이 남의 것)",
+    min: "admin",
+    check: (r) => authorizeAgentMoveGateway(r, false),
+  },
+  {
+    name: "authorizeAgentMoveGateway (둘 다 자기 것)",
+    min: "member",
+    check: (r) => authorizeAgentMoveGateway(r, true),
+  },
+  {
+    name: "authorizeProjectMove (한쪽이 남의 것)",
+    min: "admin",
+    check: (r) => authorizeProjectMove(r, false),
+  },
+  {
+    name: "authorizeProjectMove (둘 다 자기 것)",
+    min: "member",
+    check: (r) => authorizeProjectMove(r, true),
+  },
 ];
 
 describe("역할 정책(auth/policies.ts)", () => {
@@ -115,6 +174,33 @@ describe("역할 정책(auth/policies.ts)", () => {
       expect(thrown).toMatchObject({ status: 403, body: { code: "FORBIDDEN" } });
     },
   );
+
+  it("주인이어도 멤버가 아니면(비활성·membership 없음) 통과하지 않는다", () => {
+    const actor: ConnectionActor = { role: undefined, ownsConnection: true };
+    expect(() => authorizeConnectionManage(actor)).toThrow(HttpError);
+    expect(() => authorizeAgentPatch(actor)).toThrow(HttpError);
+    expect(() => authorizeAgentMoveGateway(undefined, true)).toThrow(HttpError);
+  });
+
+  it("canApproveGateway 는 admin 이상만 참 — 승인 단추(authorizeGatewayApprove)와 같은 판정(서비스의 자동 승인·승인 유지도 이것)", () => {
+    for (const role of ROLES) {
+      const expected = role === "admin" || role === "owner";
+      expect(canApproveGateway(role), role ?? "(멤버 아님)").toBe(expected);
+      let passed = true;
+      try {
+        authorizeGatewayApprove(role);
+      } catch {
+        passed = false;
+      }
+      expect(passed, role ?? "(멤버 아님)").toBe(expected);
+    }
+  });
+
+  it("남의 연결 거절 문구는 주인을 함께 말한다", () => {
+    expect(() => authorizeConnectionManage({ role: "member", ownsConnection: false })).toThrow(
+      "그 연결의 주인·admin 이상만 쓸 수 있다",
+    );
+  });
 
   it("거절 문구는 REST requireRole 과 같다", () => {
     expect(() => authorizeChannelArchive("member")).toThrow("admin 이상만 쓸 수 있다");

@@ -30,6 +30,13 @@ import {
 } from "../agents/actions";
 import { agentForRole, getAgent, listAgents } from "../agents/service";
 import {
+  agentConnectionOwner,
+  connectionOwners,
+  gatewayOwner,
+  isOwner,
+  ownerOfAgent,
+} from "../connections/owner";
+import {
   addChannelMemberAndNotify,
   archiveChannelAndNotify,
   type ChannelActionContext,
@@ -71,6 +78,24 @@ export type HandlerContext = {
 
 type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { name: N }>["input"]>;
 
+/**
+ * 시킨 사람이 그 연결의 주인인가(연결 탭 통합 스펙 5.3 — 제어 도구도 REST 와 같은 주인 규칙). 원래 인자(raw)의 id 로 묻는다 —
+ * 모르는 id·문자열 아님·사람 없는 주체는 거짓(정책이 admin 이상을 요구한다). 최소 역할을 찾는 판정(service.ts passes)은 NO_OWNERSHIP
+ */
+export type Ownership = { gateway(gatewayId: unknown): boolean; agent(agentId: unknown): boolean };
+
+export const NO_OWNERSHIP: Ownership = { gateway: () => false, agent: () => false };
+
+export function ownershipOf(db: Db, workspaceId: string, userId: string | null): Ownership {
+  if (userId === null) return NO_OWNERSHIP;
+  return {
+    gateway: (gatewayId) =>
+      typeof gatewayId === "string" && isOwner(gatewayOwner(db, workspaceId, gatewayId), userId),
+    agent: (agentId) =>
+      typeof agentId === "string" && isOwner(agentConnectionOwner(db, workspaceId, agentId), userId),
+  };
+}
+
 /** 확인 카드 제목·시스템 메시지의 술어 — want 는 「…하려 합니다」(카드 제목, 채널 이름 포함), done 은 「…했습니다」(그 채널의 시스템 메시지) */
 export type Wording = { want: string; done: string };
 
@@ -84,7 +109,7 @@ export type ControlHandler<N extends ControlToolName> = {
    * 역할 검사 — 같은 REST 경로의 정책 함수. 본문을 보는 정책에는 REST 본문 꼴로 바꾼 **원래 인자**(raw)를 넘긴다 — 파싱이 채운 기본값
    * (autoRespond:false 등)을 세면 member 가 별칭만 바꿔도 admin 이 필요해진다(REST 도 원래 본문을 넘긴다)
    */
-  authorize(role: TeamRole | undefined, raw: Record<string, unknown>): void;
+  authorize(role: TeamRole | undefined, raw: Record<string, unknown>, owns: Ownership): void;
   /** 실행 전 상태 검사 — 없으면 NOT_FOUND, 보관한 채널의 쓰기는 CHANNEL_ARCHIVED. 확인 카드를 띄우기 전에, 허용 뒤에 한 번 더 */
   check?(ctx: HandlerContext, input: InputOf<N>): void;
   /** 바꾼 채널 — 쓰기 뒤 그 채널에 시스템 메시지를 남기고 사건 detail 에 싣는다 */
@@ -149,7 +174,7 @@ function basePromptLabel(ctx: HandlerContext, agentId: string): string {
 /**
  * 러너 에이전트는 이름·아바타만 — 핸들·지시는 받지 않는다(러너 일반화 스펙 6장 「제어 도구는 러너 구성을 바꾸지 못한다」: 채널 안
  * 에이전트가 확인 카드 하나로 자기 지시를 바꾸는 길을 닫는다). 정의 필드(model 등)는 도구 입력 스키마에 없어 strict 파싱이 막는다.
- * 러너 구성은 웹의 「러너」 탭·REST PATCH 에서만 바꾼다
+ * 러너 구성은 웹의 「연결」 탭(에이전트 상세)·REST PATCH 에서만 바꾼다
  */
 const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set(["agentId", "name", "avatarUrl"]);
 function assertControlPatchable(ctx: HandlerContext, input: Record<string, unknown>, agentId: string): void {
@@ -242,10 +267,16 @@ export const HANDLERS: Handlers = {
   },
   list_agents: {
     authorize: (role) => authorizeRead(role),
-    // 러너 에이전트의 정의는 주체(채널 안 에이전트면 시킨 사람)의 지금 역할이 admin 이상일 때만 — 시킨 사람이 없는 런은 member 와 같다
+    // 러너 에이전트의 정의는 주체(채널 안 에이전트면 시킨 사람)의 지금 역할이 admin 이상이거나 그 에이전트 연결의 주인일 때만 — 시킨
+    // 사람이 없는 런은 member 와 같다
     run: (ctx, _input, principal) => {
       const role = principal.userId === null ? undefined : roleOf(ctx.db, ctx.workspaceId, principal.userId);
-      return { agents: listAgents(ctx.db, ctx.workspaceId).map((agent) => agentForRole(agent, role)) };
+      const owners = connectionOwners(ctx.db, ctx.workspaceId);
+      return {
+        agents: listAgents(ctx.db, ctx.workspaceId).map((agent) =>
+          agentForRole(agent, role, isOwner(ownerOfAgent(agent, owners), principal.userId)),
+        ),
+      };
     },
   },
   list_people: {
@@ -317,7 +348,8 @@ export const HANDLERS: Handlers = {
     run: (ctx) => ctx.opsStatus(),
   },
   discover_agents: {
-    authorize: (role) => authorizeAgentDiscover(role),
+    authorize: (role, raw, owns) =>
+      authorizeAgentDiscover({ role, ownsConnection: owns.gateway(raw.gatewayId) }),
     run: (ctx, input) => discoverAgents(ctx.agents, input, ctx.workspaceId),
   },
 
@@ -548,7 +580,8 @@ export const HANDLERS: Handlers = {
 
   // ── 에이전트 ─────────────────────────────────────────────────
   register_agent: {
-    authorize: (role) => authorizeAgentRegister(role),
+    authorize: (role, raw, owns) =>
+      authorizeAgentRegister({ role, ownsConnection: owns.gateway(raw.gatewayId) }),
     wording: (_ctx, input) => ({
       want: `에이전트 @${input.handle} ${eul(input.handle)} 등록하려 합니다`,
       done: `에이전트 @${input.handle} ${eul(input.handle)} 등록했습니다`,
@@ -560,7 +593,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   update_agent: {
-    authorize: (role) => authorizeAgentPatch(role),
+    authorize: (role, raw, owns) => authorizeAgentPatch({ role, ownsConnection: owns.agent(raw.agentId) }),
     check: (ctx, input) => assertControlPatchable(ctx, input, input.agentId),
     targetAgentId: (input) => input.agentId,
     wording: (ctx, input) => {
@@ -587,7 +620,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_agent_enabled: {
-    authorize: (role) => authorizeAgentPatch(role),
+    authorize: (role, raw, owns) => authorizeAgentPatch({ role, ownsConnection: owns.agent(raw.agentId) }),
     check: (ctx, input) => void agentHandle(ctx, input.agentId),
     targetAgentId: (input) => input.agentId,
     wording: (ctx, input) => {
@@ -607,7 +640,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   archive_agent: {
-    authorize: (role) => authorizeAgentArchive(role),
+    authorize: (role, raw, owns) => authorizeAgentArchive({ role, ownsConnection: owns.agent(raw.agentId) }),
     check: (ctx, input) => void agentHandle(ctx, input.agentId),
     targetAgentId: (input) => input.agentId,
     wording: (ctx, input) => {
@@ -626,7 +659,7 @@ export const HANDLERS: Handlers = {
 /** 입력 타입을 지운 처리기 — 서비스는 그 도구의 Zod 스키마로 파싱한 값만 넘긴다 */
 export type AnyHandler = {
   access?(ctx: HandlerContext, input: unknown, principal: Principal): void;
-  authorize(role: TeamRole | undefined, raw: Record<string, unknown>): void;
+  authorize(role: TeamRole | undefined, raw: Record<string, unknown>, owns: Ownership): void;
   check?(ctx: HandlerContext, input: unknown): void;
   channelId?(input: unknown): string;
   targetAgentId?(input: unknown): string;

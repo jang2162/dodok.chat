@@ -1,4 +1,11 @@
-import type { Agent, OpenClawGatewayStatus, RunnerProject, RunnerSummary, SetupStatus } from "@dodok/shared";
+import type {
+  Agent,
+  ConnectionsResponse,
+  OpenClawGatewayStatus,
+  RunnerProject,
+  RunnerSummary,
+  SetupStatus,
+} from "@dodok/shared";
 import { vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { runnersRoutes } from "./runnersServer";
@@ -11,11 +18,15 @@ import { ADAPTER_OK, ME, TEST_GATEWAY, adapterStatusBody, json, renderRoute, she
 export function stubConnection(
   opts: {
     role?: string;
+    /** 나의 사용자 id — 연결 목록의 주인과 맞춰 볼 때(uuid). 기본은 셸의 ME */
+    meId?: string;
     agents?: Agent[];
     gateways?: OpenClawGatewayStatus[];
     setup?: SetupStatus;
     runners?: RunnerSummary[];
     projects?: RunnerProject[];
+    /** GET /connections — 없으면 404(옛 서버) */
+    connections?: ConnectionsResponse;
     extra?: (method: string, url: string, body: unknown) => Response | Promise<Response> | undefined;
   } = {},
 ) {
@@ -29,7 +40,12 @@ export function stubConnection(
     calls.push({ method, url, body });
     const hit = opts.extra?.(method, url, body);
     if (hit) return hit;
-    if (url === "/api/v1/auth/me") return json(200, { ...ME, role: opts.role ?? "owner" });
+    if (url === "/api/v1/auth/me")
+      return json(200, {
+        ...ME,
+        user: { ...ME.user, id: opts.meId ?? ME.user.id },
+        role: opts.role ?? "owner",
+      });
     if (method === "GET" && url === "/api/v1/agents") return json(200, { agents });
     if (method === "GET" && url === "/api/v1/adapter/status")
       return json(200, {
@@ -37,6 +53,8 @@ export function stubConnection(
         statuses: [{ provider: "openclaw", gateways: opts.gateways ?? [TEST_GATEWAY] }],
       });
     if (method === "GET" && url === "/api/v1/setup/status" && opts.setup) return json(200, opts.setup);
+    if (method === "GET" && url === "/api/v1/connections" && opts.connections)
+      return json(200, opts.connections);
     const runner = runners.handle(method, url, body);
     if (runner) return runner;
     const shell = shellGet(input, init);

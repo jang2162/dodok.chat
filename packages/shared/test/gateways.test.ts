@@ -83,6 +83,7 @@ describe("GatewaySummary", () => {
     enabled: true,
     tokenSet: true,
     ownerUserId: null,
+    approved: true,
     createdAt: NOW,
     updatedAt: NOW,
   };

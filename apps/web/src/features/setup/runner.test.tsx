@@ -41,9 +41,24 @@ const renderConnection = (me: unknown = { ...ME, role: "owner" }, n = 1) =>
 const runnerRegion = () => screen.findByTestId("runner-detail");
 
 describe("러너 상세 — 권한·경고", () => {
-  it("owner 가 아니면 러너 토큰·설치 안내가 없고 setup API 를 부르지 않는다", async () => {
-    const server = stubSetupServer();
-    renderConnection({ ...ME, role: "admin" });
+  it("남의 러너를 연 member 에게는 러너 토큰·설치 안내가 없고 setup API 를 부르지 않는다(연결 탭 통합 스펙 5.2)", async () => {
+    const server = stubSetupServer({
+      me: { ...ME, role: "member" },
+      connections: {
+        gateways: [],
+        runners: [
+          {
+            id: tokenId(1),
+            label: "맥북",
+            connected: false,
+            revoked: false,
+            owner: { id: "0190a000-0000-7000-8000-0000000000d2", name: "mia" },
+          },
+        ],
+        projects: [],
+      },
+    });
+    renderConnection({ ...ME, role: "member" });
     const block = await runnerRegion();
     expect(within(block).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
     expect(within(block).queryByRole("region", { name: "러너 토큰" })).not.toBeInTheDocument();
@@ -71,13 +86,15 @@ describe("러너 상세 — 권한·경고", () => {
     );
     expect(note).not.toHaveTextContent("러너 전용 계정을 권합니다");
     expect(note).toHaveTextContent("끌 방법이 없습니다");
+    // member 가 자기 컴퓨터의 러너를 팀에 내놓는 사람 기준으로(연결 탭 통합 스펙 5.5)
     expect(note).toHaveTextContent(
-      "채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다",
+      "채널 멤버 누구나 이 러너의 에이전트를 부를 수 있습니다 — 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽습니다.",
     );
     expect(note).toHaveTextContent("토큰 하나가 그 러너의 모든 에이전트를 맡습니다");
     expect(note).toHaveTextContent(
-      "서버 쪽 admin(과 서버를 손에 넣은 사람)은 루트 안 아무 디렉터리에서, 권한 상한까지의 도구로 에이전트를 돌릴 수 있습니다. 루트는 좁게, 상한은 낮게 둡니다.",
+      "admin 은 루트 안 아무 디렉터리에서 상한까지의 도구로 에이전트를 만들 수 있습니다(서버를 손에 넣은 사람도) — 루트는 좁게, 상한은 낮게.",
     );
+    expect(note).toHaveTextContent("이 머신의 러너 설정(루트·상한)이 머신 주인의 유일한 안전장치입니다.");
     expect(note).not.toHaveTextContent("이 러너로 묶기");
   });
 });

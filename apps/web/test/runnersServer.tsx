@@ -188,8 +188,10 @@ export function renderRunnersPage(
   role = "admin",
   qc: QueryClient = createQueryClient(() => {}),
   path: string = runnerPath(),
+  /** 나의 사용자 id — 연결 목록의 주인과 맞춰 볼 때(uuid) */
+  userId = "u",
 ) {
-  qc.setQueryData(qk.me, { user: { id: "u", handle: "me" }, workspaceId: "w", role });
+  qc.setQueryData(qk.me, { user: { id: userId, handle: "me" }, workspaceId: "w", role });
   const router = createAppRouter(qc, createMemoryHistory({ initialEntries: [path] }));
   render(
     <QueryClientProvider client={qc}>

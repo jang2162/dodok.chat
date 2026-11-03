@@ -44,22 +44,27 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
     expect(within(await agentDetail()).getByText("main", { selector: "code" })).toBeInTheDocument();
   });
 
-  it("연결이 빈 OpenClaw 에이전트 — owner 에게는 「다른 Gateway 로 옮기세요」와 「Gateway 옮기기」", async () => {
-    const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
-    stubServer({ agents: [orphan] });
-    renderPage(undefined, "owner", agentPath(orphan));
-    expect(await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "@main Gateway 옮기기" })).toBeInTheDocument();
-  });
+  // 「Gateway 옮기기」는 admin 이상(연결 탭 통합 스펙 5.2 — owner 만이던 것을 넓혔다). member 는 두 Gateway 가 다 자기 것일 때만인데,
+  // 연결이 빈 에이전트는 원래 Gateway 가 없어 admin 이상만
+  it.each(["owner", "admin"])(
+    "연결이 빈 OpenClaw 에이전트 — %s 에게는 「다른 Gateway 로 옮기세요」와 「Gateway 옮기기」",
+    async (role) => {
+      const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
+      stubServer({ agents: [orphan] });
+      renderPage(undefined, role, agentPath(orphan));
+      expect(await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "@main Gateway 옮기기" })).toBeInTheDocument();
+    },
+  );
 
-  it.each(["admin", "member"])(
+  it.each(["member"])(
     "연결이 빈 OpenClaw 에이전트 — %s 에게는 할 수 없는 조치를 권하지 않고 「Gateway 옮기기」도 없다",
     async (role) => {
       const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
       stubServer({ agents: [orphan] });
       renderPage(undefined, role, agentPath(orphan));
       expect(
-        await screen.findByText("Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"),
+        await screen.findByText("Gateway 가 삭제됨 — admin 이 다른 Gateway 로 옮길 때까지 답하지 못합니다"),
       ).toBeInTheDocument();
       expect(within(await agentDetail()).getByText("@main")).toBeInTheDocument();
       expect(screen.queryByText(/다른 Gateway 로 옮기세요/)).toBeNull();
@@ -226,8 +231,8 @@ describe("에이전트 가져오기 — 그 Gateway 상세에 고정", () => {
       const nav = await screen.findByRole("navigation", { name: "연결 목록" });
       expect(await within(nav).findByText("아직 연결이 없습니다.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "에이전트 가져오기" })).toBeNull();
-      // 연결 추가는 1단계에서 owner 만
-      expect(Boolean(screen.queryByRole("link", { name: "연결 추가" }))).toBe(role === "owner");
+      // 연결 추가는 멤버 누구나(연결 탭 통합 스펙 5.2)
+      expect(screen.getByRole("link", { name: "연결 추가" })).toBeInTheDocument();
       expect(server.count("GET", discoverUrl())).toBe(0);
     },
   );

@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type ApproveGatewayBody,
   type CreateGatewayBody,
   type DeleteGatewayResult,
   type GatewaySummary,
@@ -46,7 +47,11 @@ export function useRevokeBridgeToken(gatewayId: string) {
  * 따로 받지 않는다: 연결 페이지는 설정 상태, 나머지 화면은 어댑터 상태(wire `adapter.status`)에서 읽는다
  */
 const gatewaysChanged = (qc: ReturnType<typeof useQueryClient>) =>
-  qc.invalidateQueries({ queryKey: qk.setupStatus });
+  Promise.all([
+    qc.invalidateQueries({ queryKey: qk.setupStatus }),
+    // 트리의 승인 대기·주인 — 실시간 connections.changed 보다 먼저 이 탭이 바뀌게
+    qc.invalidateQueries({ queryKey: qk.connections }),
+  ]);
 
 const GATEWAY_GONE = "이미 삭제된 Gateway 입니다";
 const isGone = (e: unknown) => e instanceof ApiRequestError && e.code === "NOT_FOUND";
@@ -85,6 +90,30 @@ export function useUpdateGateway(id: string) {
     onSuccess: () => gatewaysChanged(qc),
     onError: (e) => {
       if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
+    },
+  });
+}
+
+/**
+ * 승인이 409 — 그 사이 주인이 주소를 바꿨다. CONFLICT 는 폼 오류 코드라 전역 토스트가 나지 않으므로 승인 줄이 이 문구를 그린다
+ */
+export const GATEWAY_URL_CHANGED = "주소가 바뀌었습니다 — 다시 확인하세요";
+export const isUrlChanged = (e: unknown) => e instanceof ApiRequestError && e.code === "CONFLICT";
+
+/**
+ * Gateway 승인(admin 이상, 연결 탭 통합 스펙 5.4) — 승인하면 서버가 그 주소로 접속을 시작한다. 화면에서 본 주소(`url`)를 함께 보내고,
+ * 그 사이 주인이 주소를 바꿨으면 서버가 409 로 거절한다 — 그때는 설정 상태·트리를 다시 받아 새 주소를 보이게 한다
+ */
+export function useApproveGateway(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) =>
+      api<GatewaySummary>("POST", `/gateways/${id}/approve`, { url } satisfies ApproveGatewayBody),
+    meta: gatewayErrorMeta,
+    onSuccess: () => gatewaysChanged(qc),
+    onError: (e) => {
+      if (isUrlChanged(e)) void gatewaysChanged(qc);
+      else if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
     },
   });
 }

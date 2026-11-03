@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.35)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.37)
 
-작성일: 2026-09-14 · 상태: v0.35 (2026-10-31) — 실사용 순서(8장 「다음 순서 — 실사용」)에서 쓰면서 나온 기능으로 채널 세션·에이전트 DM·러너 일반화를 끝냈다(8장 Phase 4 의 세 항목). 다음은 같은 순서 ① 의 실제 서버 배포·웹 확인(사람 몫 — 로컬 검증까지는 끝)과 ③ 앱이고, 남은 것은 8장 「이월」.
+작성일: 2026-09-14 · 상태: v0.37 (2026-11-02) — 실사용 순서(8장 「다음 순서 — 실사용」)에서 쓰면서 나온 기능으로 채널 세션·에이전트 DM·러너 일반화를 끝냈다(8장 Phase 4 의 세 항목). 다음은 같은 순서 ① 의 실제 서버 배포·웹 확인(사람 몫 — 로컬 검증까지는 끝)과 ③ 앱이고, 남은 것은 8장 「이월」.
 
 ### 변경 이력
 
@@ -40,6 +40,7 @@
 | v0.34 | **머리 상태 맞춤**(2026-10-30) — 제목·상태 줄의 버전을 변경 이력에 맞추고 상태 문장을 지금(채널 세션·DM·러너 일반화 끝, 다음은 실사용 ①·③)으로 |
 | v0.35 | **이월 정리**(2026-10-31) — 8장 「이월」을 분류해 바로 고칠 수 있던 줄을 배치 다섯(web-settings·web-timeline·server-core·server-runs-devtools·adapter-plugin-runner)이 닫아 지웠고(이미 해결된 셋 포함), 반만 닫힌 줄은 남은 몫만 남겼다. 못 닫은 줄(스레드 런의 `PLUGIN_OUTDATED`·페이지 경계 구분선·스레드 패널 초점)에 까닭과 고칠 길, 배치 리뷰의 「낮음」을 각 묶음 끝에, 줄이 모두 닫힌 「테스트」·「설정·에이전트 보관·llms.txt」 묶음 머리를 걷음, 「이월」 머리를 이 시점으로 |
 | v0.36 | **「연결」 탭 통합 1단계**(2026-11-02) — 설정의 「에이전트」·「러너」·「연결」 탭을 「연결」 탭 하나(목록 + 상세, 누구나)로 합쳤다. 8장 「다음 순서」 ② 에 완료 줄, 10장 #24, 이월의 옛 이름(연결 페이지·「러너」 탭)을 새 이름으로 |
+| v0.37 | **「연결」 탭 통합 2단계 — 연결의 주인**(2026-11-02) — 연결(Gateway·러너)마다 주인을 두어 member 가 자기 연결을 붙이고 관리하고, member 의 Gateway 는 admin 승인 뒤에 접속한다. 8장 「다음 순서」 ② 의 연결 탭 줄에 2단계 완료, 10장 #25, 이월에 새 묶음 「연결 탭 통합(2단계)」 |
 
 ---
 
@@ -592,7 +593,8 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
 1. **서버에 배포하고 웹으로 쓸 수 있는지 확인한다.** 사용자의 서버는 Komodo Git Repo Stack 으로 올리고, 80·443 은 이미 다른 리버스 프록시(Caddy 컨테이너)가 잡고 있다. 그래서 배포 구성은 앱 컨테이너 하나(루트 `compose.yaml`)만 올리고, 프록시와 잇는 구성은 서버마다 덮어쓰기 파일(`compose.override.yaml`)로 맞춘다. 절차는 `docs/guides/docker-deploy.md` 체크리스트, 결과는 그 문서 「사람이 한 번 따라 한 결과」 표에 적는다.
    - 앱 컨테이너 하나 배포 → **완료**(2026-10-20, 로컬 검증까지 — 실제 서버·프록시·Komodo 는 사람 몫) — 스펙 `docs/superpowers/specs/2026-10-20-app-only-docker-design.md`, 계획 `docs/superpowers/plans/2026-10-20-app-only-docker.md`, 운영 `docs/guides/docker-deploy.md`. 서버가 빌드된 웹·SPA 폴백·보안 헤더를 내고 Caddy 이미지는 걷었다. 클라이언트 IP 는 `TRUST_PROXY` 신뢰 주소 목록 하나로 가른다. 확인은 `scripts/check-deploy.sh` app·proxy.
 2. **쓰면서 나온 수정·기능을 구현한다.** 원인이 분명한 결함은 바로 고치고, 설계가 필요한 기능은 브레인스토밍·스펙을 거친다. 미루는 것은 아래 「이월」에 적는다.
-   - 「연결」 탭 통합 1단계(화면 — 서버 권한 그대로) → **완료**(2026-11-02, 시험까지 — 실연·모델 런 없음) — 스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md`, 계획 `docs/superpowers/plans/2026-11-02-settings-connect-merge.md`(1단계 Task 1~8). 설정의 「에이전트」·「러너」·「연결」 탭이 「연결」 탭 하나(`/settings/connection`, 누구나)가 됐다 — 목록(연결 → 프로젝트 → 에이전트 트리, 역할마다 부를 수 있는 API 만)과 상세 주소 다섯(Gateway·러너·프로젝트·에이전트·연결 추가), 옛 주소 `/agents`·`/settings/agents`·`/settings/runners` 는 넘긴다. 화면 문구는 한 줄 + 「?」 펼침, 위험 경고(러너 경고 한 줄 등)는 늘 보인다. 「에이전트 가져오기」는 Gateway 상세에 그 Gateway 로 고정, 러너 에이전트는 프로젝트 상세의 「에이전트 만들기」(러너·프로젝트 고정). 서버는 사람용 문구만 「설정 → 연결」로(llms.txt·스레드 PLUGIN_OUTDATED 카드·플러그인 설치 스크립트 안내). 사용 설명서 「연결」 절. **2단계(연결의 주인 — member 의 연결·Gateway 승인)는 남았다.**
+   - 「연결」 탭 통합 1단계(화면 — 서버 권한 그대로) → **완료**(2026-11-02, 시험까지 — 실연·모델 런 없음) — 스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md`, 계획 `docs/superpowers/plans/2026-11-02-settings-connect-merge.md`(1단계 Task 1~8). 설정의 「에이전트」·「러너」·「연결」 탭이 「연결」 탭 하나(`/settings/connection`, 누구나)가 됐다 — 목록(연결 → 프로젝트 → 에이전트 트리, 역할마다 부를 수 있는 API 만)과 상세 주소 다섯(Gateway·러너·프로젝트·에이전트·연결 추가), 옛 주소 `/agents`·`/settings/agents`·`/settings/runners` 는 넘긴다. 화면 문구는 한 줄 + 「?」 펼침, 위험 경고(러너 경고 한 줄 등)는 늘 보인다. 「에이전트 가져오기」는 Gateway 상세에 그 Gateway 로 고정, 러너 에이전트는 프로젝트 상세의 「에이전트 만들기」(러너·프로젝트 고정). 서버는 사람용 문구만 「설정 → 연결」로(llms.txt·스레드 PLUGIN_OUTDATED 카드·플러그인 설치 스크립트 안내). 사용 설명서 「연결」 절.
+   - 「연결」 탭 통합 2단계(연결의 주인) → **완료**(2026-11-02, 시험까지 — 실연·모델 런 없음) — 같은 스펙 5장, 계획 2단계 Task 9~13. 마이그레이션 `0034_connection_owner` 가 `runner_tokens.owner_user_id` 와 `gateways.approved_at`·`approved_by` 를 더하고 옛 행을 워크스페이스 owner 의 것(옛 Gateway 는 만든 시각에 owner 가 승인한 것)으로 채운다. 정책 함수(`apps/server/src/auth/policies.ts`)가 「역할 + 이 연결의 주인인가」를 받는다 — member 는 Gateway·러너를 만들고 자기 연결(그 안의 프로젝트·에이전트까지)을 관리하고, admin 이상은 모두 관리하고 Gateway 를 승인한다(`POST /gateways/:id/approve`). 승인 전 Gateway 는 어댑터에 꺼진 채로 넘긴다(`gatewayConfig` 한 곳) — member 가 승인된 Gateway 의 주소를 바꾸면 다시 승인 대기. 「Gateway 옮기기」·프로젝트 「옮기기」는 admin 이상, 또는 두 쪽이 다 자기 것인 member. 제어 도구도 같은 정책을 지난다. 누구나 읽는 `GET /connections`(주소·토큰 없음)와 `connections.changed` 가 트리의 「내 연결」·「다른 사람의 연결」·승인 대기·주인을 채우고, `GET /setup/status`·`/setup/runner-tokens`·`/runners`·`/gateways` 와 실시간 `setup.status` 는 사람마다 거른다(admin 이상은 전부, member 는 자기 연결만). 상세 화면은 역할 대신 「그 연결의 주인 또는 admin 이상」으로 가른다. 사용 설명서 「연결」 절 「연결의 주인과 승인」.
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
 ### 이월 — 남은 문제(이월 정리 뒤 시점, 2026-11-01)
@@ -859,6 +861,14 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **러너 npm 배포(2026-11-01) — 패키지 이름이 `@dodok/runner` 다.** 0.1.0 은 로컬에서 올렸고 다음 판부터 `runner-v*` 태그의 trusted publisher 로 올린다(`docs/guides/runner-release.md`). `engines.node >=22` 는 번들 target 에 맞춘 값이고 Node 22 에서 돌려 본 적은 없다. 연결 페이지·`/llms.txt` 의 러너 설치는 npm 이 기본이다(2026-11-01 사용자 결정) — 연결 페이지 「설치」 1단계가 `npm i -g @dodok/runner` 이고 서버가 품은 tgz 는 접힌 「서버와 같은 빌드로 설치」 안의 대안, 토큰 줄의 다른 빌드는 경고가 아닌 안내다. `llms.txt` 「러너 머신」 절은 tgz 받기·sha256 대조를 빼고 npm 으로 깔며 서버에 러너 tgz 가 없어도 나온다. `/api/v1/setup/runner.tgz`·`runnerFile`·번들 sha 비교는 그 대안을 위해 남는다. 출처: `.superpowers/sdd/2026-11-01-runner-npm/review-report.md`·`.superpowers/sdd/2026-11-01-runner-npm/install-guide-report.md`.
 - **`files.test.ts` 의 대소문자 사례는 macOS 에서만 돈다** — `it.skipIf(!caseInsensitiveTmp)` 라 대소문자를 가리는 볼륨(Linux CI 등)에서는 건너뛰어, 그곳에서는 `files.ts` 의 `realpathSync.native` 회귀를 못 잡는다. 출처: `.superpowers/sdd/2026-10-31-carryover/adapter-plugin-runner-review.md` 낮음 2.
 
+**연결 탭 통합(2단계 — 연결의 주인, 2026-11-02)** — 스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md` 5장. 아래 출처의 원장은 `.superpowers/sdd/2026-11-02-settings-connect-merge/`(git 제외).
+
+- **실연·브라우저 확인을 안 했다** — 시험(서버·웹·shared)과 구분력 실증까지다. `dev:fake` 에서 member(mia)로 Gateway 를 더해 「승인 대기」 → owner 로 「승인」 → 접속, mia 가 주소를 바꿔 다시 승인 대기, mia 의 러너 토큰 발급 → 그 러너 상세가 관리 꼴인지는 사람이나 다음 브라우저 배치가 본다.
+- **화면 몇 곳이 아직 역할로만 가른다** — 사이드바 OpenClaw 배너의 「연결 설정 보기」(owner 만, `app/layout/Banners.tsx`), 프로필 패널의 에이전트 편집(admin 이상, `features/profile/AgentProfile.tsx`), DM 목록 응답의 러너 에이전트 정의(`modules/dms/service.ts` 의 `agentForRole` — 주인이어도 싣지 않는다). 서버 권한은 주인 규칙대로라 숨김 편의만 어긋난다.
+- **방금 만든 연결의 상세가 잠깐 「찾을 수 없습니다」일 수 있다** — 연결 추가 뒤 상세가 낡은 연결 목록으로 한 번 그린 뒤 다시 받는다(member 만 — admin 이상은 목록을 기다리지 않는다). 상세가 `isFetching` 동안 「불러오는 중」을 보이면 닫힌다.
+- **승인 대기 알림이 없다** — 스펙 5.4 의 「설정 배지·운영 사건」(있으면 좋음)을 넣지 않았다. admin 은 트리의 「승인 대기」 배지로만 안다.
+- **`GET /setup/status` 의 머리 값은 member 에게도 간다** — 서버 판본·브리지 공개 주소·품은 파일 해시(`llms.txt` 에 이미 공개된 값). 스펙은 「연결 단위 읽기로 나눈다 — 꼴은 빌더 판단」이었고, 연결마다의 주소·토큰은 걸렀다. 스펙 5.3 은 owner 전용이었으나 member 이상 + 연결마다 거름으로 구현, 머리 값(서버 판본·브리지 공개 주소·파일 해시)은 member 에게도 간다 — 사람 확인(2026-11-03).
+
 **실물 확인**
 
 - **러너 일반화를 실제 러너 설치본·번들 CLI 로 본 것은 실연(`docs/superpowers/reports/2026-10-30-runner-generalization-live-smoke-report.md` — 가짜 Messages API, 모델 런 0회)이다.** 앱에서 만든 프로젝트 디렉터리에서 CLI 가 도는 것(`cwd` 세 방법)·지시 틀·천장 카드 넷·옛 설정 거절·DB 와 서버 로그에 러너 머신 절대 경로 없음을 그 절이 본다.
@@ -926,8 +936,9 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 | 22 | 팀 역할과 권한 | **owner·admin·member 셋, 대화는 누구나·관리는 admin 이상.** owner 는 한 명(로컬 토큰 계정 — 연결 페이지·admin 초대·역할 바꾸기·admin 비활성화는 owner 만), admin 은 에이전트 동작·비용 설정·도구 승인·에이전트 등록·멤버 관리(member)·운영 화면, member 는 채널 읽기·쓰기·만들기·이름·설명·에이전트 넣기·빼기·멘션·카드·첨부·검색·런 중지. **서버가 요청마다 membership 을 읽어 막는다**(REST 403 `FORBIDDEN`·wire ack, membership 이 없는 세션은 401) — 웹이 숨기는 것은 편의다. 본문 필드로 가르는 경로(`POST`·`PATCH /channels` 는 `name`·`topic` 만 member, 채널 멤버는 `aliases` 만 member)는 목록 밖 필드가 하나라도 있으면 admin — 새 필드의 기본은 admin. guest 는 쓰지 않는다. 표는 팀 스펙 「역할과 권한」 절 | 2026-09-26 (팀 스펙 결정 4) |
 | 23 | 팀 가입·로그인 | **1회용 초대 링크 + 이메일·비밀번호, 메일 발송 없음.** owner·admin 이 링크(초대 7일·재설정 24시간, 원문은 발급 응답 한 번 — DB 는 sha256)를 만들어 메신저로 건넨다. 비밀번호 재설정도 관리자가 발급하는 링크다. 가입은 우리 경로(`modules/members`)가 Better Auth 내부 어댑터로 사용자를 만든다 — Better Auth 공개 가입·organization 플러그인은 쓰지 않는다(역할은 우리 `memberships` 한 테이블). owner 는 로컬 토큰 로그인 그대로. OIDC·패스키·메일은 다음 사이클 | 2026-09-26 (팀 스펙 결정 2·3·5) |
 | 24 | 연결 탭 통합 | **설정의 에이전트·러너·연결을 「연결」 탭 하나(목록 + 상세, 누구나)로.** 연결 중심 — Gateway 아래 그 에이전트, 러너 아래 프로젝트와 그 에이전트. 문구는 한 줄 + 「?」, 위험 경고는 늘 보인다. 두 단계, 화면 먼저 — 1단계는 서버 권한 그대로(Gateway·토큰은 owner, 프로젝트·에이전트는 admin 이상), 2단계에서 연결마다 주인을 두어 member 가 자기 Gateway(admin 승인 뒤 켜짐)·러너를 붙이고 관리한다 | 2026-11-02 (스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md`) |
+| 25 | 연결의 주인·Gateway 승인 | **연결(Gateway·러너)마다 주인 = 만든 사람, 프로젝트·에이전트는 연결의 주인을 따른다.** member 는 자기 연결을, admin 이상은 모든 연결을 관리한다. member 가 만든 Gateway 는 admin 승인 뒤에야 서버가 접속하고(SSRF), 승인된 Gateway 의 주소를 member 가 바꾸면 다시 승인 대기. 옮기기는 두 쪽이 다 자기 것일 때만(admin 이상은 늘). 주인은 바꾸지 않고, 주인이 비활성화돼도 연결은 돈다. 옛 연결의 주인은 워크스페이스 owner | 2026-11-02 (스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md` 5장) |
 
-Phase 0 의 미확정 사항은 위 #1·#11~#21 로 전부 확정됐다. #24 는 연결 탭 통합 스펙의 결정이다. #22·#23 은 Phase 4 ② 팀 스펙(`docs/superpowers/specs/2026-09-26-team-members-design.md` 「결정」 절)의 결정이다. 구현 중에 재는 열린 질문은 ADR 0002 11절·ADR 0003 9절에 있다.
+Phase 0 의 미확정 사항은 위 #1·#11~#21 로 전부 확정됐다. #24·#25 는 연결 탭 통합 스펙의 결정이다. #22·#23 은 Phase 4 ② 팀 스펙(`docs/superpowers/specs/2026-09-26-team-members-design.md` 「결정」 절)의 결정이다. 구현 중에 재는 열린 질문은 ADR 0002 11절·ADR 0003 9절에 있다.
 
 ---
 

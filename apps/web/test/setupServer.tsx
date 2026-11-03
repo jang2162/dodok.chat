@@ -1,6 +1,7 @@
 import type {
   Agent,
   BridgeTokenRecord,
+  ConnectionsResponse,
   DeleteGatewayResult,
   GatewaySetup,
   IssueBridgeTokenResult,
@@ -34,7 +35,8 @@ export const TOKENS_PATH = `/api/v1/gateways/${GATEWAY_ID}/bridge-tokens`;
 
 export const tokenId = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 
-export function tokenOf(n: number, over: Partial<BridgeTokenRecord> = {}): BridgeTokenRecord {
+/** 브리지·러너 토큰 한 줄 — 러너 토큰은 주인(ownerUserId)이 더 있다. 브리지 토큰 자리에도 그대로 들어간다 */
+export function tokenOf(n: number, over: Partial<RunnerTokenRecord> = {}): RunnerTokenRecord {
   return {
     id: tokenId(n),
     label: `토큰-${n}`,
@@ -43,6 +45,7 @@ export function tokenOf(n: number, over: Partial<BridgeTokenRecord> = {}): Bridg
     lastUsedAt: null,
     revokedAt: null,
     connected: false,
+    ownerUserId: null,
     ...over,
   };
 }
@@ -58,6 +61,8 @@ type StatusOver = {
   pluginMatches?: boolean | null;
   /** 참이면 Gateway 가 하나도 없다 */
   noGateway?: boolean;
+  /** 첫 Gateway 의 머리 칸(승인 대기 등) */
+  first?: Partial<Pick<GatewaySetup, "name" | "url" | "enabled" | "approved">>;
   /** 첫 Gateway 뒤에 이어 붙일 Gateway(`gatewayOf`) */
   moreGateways?: GatewaySetup[];
   runners?: Partial<SetupStatus["runners"]>;
@@ -97,6 +102,8 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
     name: "사무실",
     url: "wss://gateway.example.com",
     enabled: true,
+    approved: true,
+    ...over.first,
     gateway: {
       state: "connected",
       host: "gateway.example.com",
@@ -132,6 +139,7 @@ export function gatewayOf(
     name: `Gateway-${n}`,
     url: `wss://gw${n}.example.com`,
     enabled: true,
+    approved: true,
     bridge: { state: "down", plugin: null },
     pluginMatches: null,
     ...over,
@@ -179,6 +187,8 @@ export function stubSetupServer(
     /** POST /setup/runner-tokens/:id/reissue — 기본은 200 과 새 원문(`RAW_REISSUED_TOKEN`)·같은 줄 */
     reissue?: (id: string) => Reply;
     runner?: () => Reply;
+    /** GET /connections — 없으면 404(옛 서버 — 트리·상세는 역할만으로 가른다) */
+    connections?: ConnectionsResponse | (() => ConnectionsResponse);
   } = {},
 ) {
   const tokens = [...(opts.tokens ?? [])];
@@ -193,6 +203,21 @@ export function stubSetupServer(
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
     calls.push({ method, url, body });
     if (url === "/api/v1/auth/me") return json(200, opts.me ?? OWNER);
+    if (method === "GET" && url === "/api/v1/connections" && opts.connections)
+      return json(200, typeof opts.connections === "function" ? opts.connections() : opts.connections);
+    const approve = /^\/api\/v1\/gateways\/([^/]+)\/approve$/.exec(url);
+    if (method === "POST" && approve)
+      return json(200, {
+        id: approve[1],
+        name: "사무실",
+        url: "wss://gateway.example.com",
+        enabled: true,
+        tokenSet: true,
+        ownerUserId: null,
+        approved: true,
+        createdAt: "2026-10-04T00:00:00.000Z",
+        updatedAt: "2026-10-04T00:00:00.000Z",
+      });
     if (method === "GET" && url === "/api/v1/setup/status") {
       const status = typeof opts.status === "function" ? opts.status() : opts.status;
       return status instanceof Promise ? status : json(200, status ?? statusOf());
@@ -236,6 +261,7 @@ export function stubSetupServer(
         enabled: true,
         tokenSet: true,
         ownerUserId: null,
+        approved: true,
         createdAt: "2026-10-04T00:00:00.000Z",
         updatedAt: "2026-10-04T00:00:00.000Z",
       });

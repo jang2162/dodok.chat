@@ -59,7 +59,7 @@ describe("buildConnectionTree", () => {
   });
 
   it("nests runner agents under project when projects are known", () => {
-    const p1 = projectOf(1, { runnerId: R1, label: "dodok" });
+    const p1 = { id: projectOf(1).id, runnerId: R1, label: "dodok", archived: false };
     const agent = coder({
       runnerAgent: {
         projectId: p1.id,

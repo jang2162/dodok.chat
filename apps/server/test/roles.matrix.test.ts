@@ -96,7 +96,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     // 「러너」 탭 경로가 붙은 러너에 묻는다 — 프로젝트는 runnerA 에 만들고 옮기기는 runnerB 로
     for (const label of ["matrix-a", "matrix-b"] as const) {
-      const issued = issueRunnerToken(app.db, app.workspaceId, label);
+      const issued = issueRunnerToken(app.db, app.workspaceId, label, null);
       fakeRunners.push(await startFakeRunner({ url: app.url, token: issued.token }));
       runnerIds.push(issued.record.id);
     }
@@ -141,9 +141,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
       relPath: `matrix-${++n}`,
     });
   /** 붙지 않은 새 러너 토큰 — 폐기·다시 발급이 붙은 러너를 끊지 않게 */
-  const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`).record.id;
+  const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`, null).record.id;
   const newGateway = (): string =>
-    createGateway(app.db, app.workspaceId, { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" }).id;
+    createGateway(
+      app.db,
+      app.workspaceId,
+      { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
+      { userId: app.ownerUserId, role: "owner" },
+    ).id;
   const newChannel = (): ChannelRecord =>
     createChannel(app.db, { workspaceId: app.workspaceId, createdBy: app.ownerUserId, name: `role-${++n}` });
   /** 에이전트가 들어간 채널 */
@@ -335,7 +340,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "GET /runners",
-      min: "admin",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/runners" }),
     },
@@ -395,31 +400,31 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "GET /setup/runner-tokens",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/runner-tokens" }),
     },
     {
       name: "POST /setup/runner-tokens",
-      min: "owner",
+      min: "member",
       ok: 201,
       request: () => ({ method: "POST", url: "/api/v1/setup/runner-tokens", payload: { label: `m${++n}` } }),
     },
     {
       name: "POST /setup/runner-tokens/:id/reissue",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "POST", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}/reissue` }),
     },
     {
       name: "DELETE /setup/runner-tokens/:id",
-      min: "owner",
+      min: "admin",
       ok: 204,
       request: () => ({ method: "DELETE", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}` }),
     },
     {
       name: "PUT /agents/:id/gateway",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({
         method: "PUT",
@@ -624,21 +629,28 @@ describe("역할 매트릭스(스펙 2장)", () => {
       request: () => ({ method: "PATCH", url: "/api/v1/ops/settings", payload: { dailyRunLimit: 300 } }),
     },
     {
+      name: "GET /connections",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/connections" }),
+    },
+    {
       name: "GET /setup/status",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/status" }),
     },
-    // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 「권한」 절)
+    // Gateway·브리지 토큰 — 만들기는 member, 관리는 주인·admin, 승인은 admin(연결 탭 통합 스펙 5.2·5.4). 아래 관리 줄의 대상은
+    // owner 의 Gateway 라 member 에게는 남의 것이다
     {
       name: "GET /gateways",
-      min: "owner",
+      min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/gateways" }),
     },
     {
       name: "POST /gateways",
-      min: "owner",
+      min: "member",
       ok: 201,
       request: () => ({
         method: "POST",
@@ -647,8 +659,27 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }),
     },
     {
+      name: "POST /gateways/:id/approve",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        // member 가 만든 승인 대기 Gateway — 본문에 지금 주소
+        const pending = createGateway(
+          app.db,
+          app.workspaceId,
+          { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
+          { userId: newMember(null), role: "member" },
+        );
+        return {
+          method: "POST",
+          url: `/api/v1/gateways/${pending.id}/approve`,
+          payload: { url: pending.url },
+        };
+      },
+    },
+    {
       name: "PATCH /gateways/:id",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({
         method: "PATCH",
@@ -658,19 +689,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "DELETE /gateways/:id",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "DELETE", url: `/api/v1/gateways/${newGateway()}` }),
     },
     {
       name: "GET /gateways/:id/bridge-tokens",
-      min: "owner",
+      min: "admin",
       ok: 200,
       request: () => ({ method: "GET", url: `/api/v1/gateways/${newGateway()}/bridge-tokens` }),
     },
     {
       name: "POST /gateways/:id/bridge-tokens",
-      min: "owner",
+      min: "admin",
       ok: 201,
       request: () => ({
         method: "POST",
@@ -680,7 +711,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     },
     {
       name: "DELETE /gateways/:id/bridge-tokens/:tokenId",
-      min: "owner",
+      min: "admin",
       ok: 204,
       request: () => {
         const gatewayId = newGateway();

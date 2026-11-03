@@ -131,7 +131,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
     return runner;
   };
 
-  it("admin·member 는 다섯 경로 모두 403, 세션이 없으면 401 — 러너 토큰은 owner 몫", async () => {
+  it("세션이 없으면 다섯 경로 모두 401 — 설치 파일은 owner 세션(또는 러너 토큰) 몫이라 admin·member 는 403", async () => {
     const routes: Array<["GET" | "POST" | "PUT" | "DELETE", string, object?]> = [
       ["GET", "/runner-tokens"],
       ["POST", "/runner-tokens", { label: "x" }],
@@ -139,14 +139,36 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       ["POST", `/runner-tokens/${uuid()}/reissue`],
       ["GET", "/runner.tgz"],
     ];
-    for (const [method, url, body] of routes) {
-      for (const who of [admin, member]) {
-        const res = await call(who, method, url, body);
-        expect(res.statusCode, `${method} ${url}`).toBe(403);
-        expect(res.json().code).toBe("FORBIDDEN");
-      }
+    for (const [method, url, body] of routes)
       expect((await call(undefined, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
+    for (const who of [admin, member]) {
+      const res = await call(who, "GET", "/runner.tgz");
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe("FORBIDDEN");
     }
+  });
+
+  it("러너 토큰은 멤버 누구나 발급하고(발급한 사람이 주인), 다시 발급·폐기는 그 주인·admin 이상 — 남의 것은 member 403(연결 탭 통합 스펙 5.2)", async () => {
+    const mine = IssueRunnerTokenResult.parse(
+      (await call(member, "POST", "/runner-tokens", { label: "m" })).json(),
+    );
+    const owners = IssueRunnerTokenResult.parse(
+      (await call(owner, "POST", "/runner-tokens", { label: "o" })).json(),
+    );
+    expect(mine.record.ownerUserId).not.toBe(owners.record.ownerUserId);
+    for (const [method, url] of [
+      ["POST", `/runner-tokens/${owners.record.id}/reissue`],
+      ["DELETE", `/runner-tokens/${owners.record.id}`],
+    ] as const) {
+      const res = await call(member, method, url);
+      expect(res.statusCode, `${method} ${url}`).toBe(403);
+      expect(res.json().code).toBe("FORBIDDEN");
+    }
+    // 없는 러너는 정책보다 먼저 404
+    expect((await call(member, "DELETE", `/runner-tokens/${uuid()}`)).statusCode).toBe(404);
+    expect((await call(member, "POST", `/runner-tokens/${mine.record.id}/reissue`)).statusCode).toBe(200);
+    expect((await call(admin, "DELETE", `/runner-tokens/${mine.record.id}`)).statusCode).toBe(204);
+    expect((await call(admin, "POST", `/runner-tokens/${owners.record.id}/reissue`)).statusCode).toBe(200);
   });
 
   it("owner 발급 201 — 원문 drn_ 는 이 응답에만 한 번(no-store), 목록에는 prefix 만, 설정 조각은 serverUrl·tokenFile", async () => {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 
-// Gateway API 계약(멀티 Gateway 스펙 「gateways (새 표)」·「Gateway API」 절) — owner 전용. Gateway 공유 토큰 원문은 요청 본문에만 있고 응답에는 tokenSet 만 싣는다
+// Gateway API 계약(멀티 Gateway 스펙 「gateways (새 표)」·「Gateway API」 절) — 그 Gateway 의 주인과 admin 이상(연결 탭 통합 스펙 5.2). Gateway 공유 토큰 원문은 요청 본문에만 있고 응답에는 tokenSet 만 싣는다
 
 /** 화면 이름(예: 사무실·집) — 앞뒤 공백을 걷고 1~32자, 워크스페이스 안에서 유일(서버가 CONFLICT) */
 export const GatewayName = z.string().trim().min(1).max(32);
@@ -52,6 +52,13 @@ export const UpdateGatewayBody = z.object({
 });
 export type UpdateGatewayBody = z.infer<typeof UpdateGatewayBody>;
 
+/**
+ * POST /api/v1/gateways/:id/approve 본문 — 승인하는 사람이 화면에서 본 주소. 서버는 지금 행의 주소와 글자 그대로 같을 때만 승인하고
+ * 다르면 CONFLICT(그 사이 주인이 주소를 바꿨다 — 본 적 없는 주소를 승인하지 않게, 연결 탭 통합 스펙 5.4)
+ */
+export const ApproveGatewayBody = z.object({ url: z.string().min(1) });
+export type ApproveGatewayBody = z.infer<typeof ApproveGatewayBody>;
+
 /** 목록·추가·수정 응답의 Gateway 한 줄 — 공유 토큰은 싣지 않는다(늘 설정돼 있다) */
 export const GatewaySummary = z.object({
   id: Id,
@@ -59,8 +66,10 @@ export const GatewaySummary = z.object({
   url: z.string(),
   enabled: z.boolean(),
   tokenSet: z.literal(true),
-  // 사람마다 자기 Gateway 를 붙이는 자리(스펙 결정 2) — v1 은 늘 null
+  // 그 연결의 주인(만든 사람, 연결 탭 통합 스펙 5.1) — 0034 전의 행은 워크스페이스 owner 로 채워졌다
   ownerUserId: Id.nullable(),
+  // admin 이상이 승인했는가 — 아니면 서버가 접속하지 않는다(스펙 5.4)
+  approved: z.boolean(),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

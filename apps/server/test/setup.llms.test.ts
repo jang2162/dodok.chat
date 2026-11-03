@@ -25,6 +25,7 @@ import { RunnerConfig } from "../../../packages/claude-runner/src/config";
 import { llmsHandoffLine } from "../../web/src/features/setup/llms";
 import { runnerConfigExample } from "../../web/src/features/setup/runnerConfig";
 import type { App } from "../src/app";
+import { createGateway } from "../src/modules/gateways/service";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
 import { renderLlmsTxt, RUNNER_PKG_DIR } from "../src/modules/setup/llms";
@@ -104,7 +105,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     );
     // 토큰·다른 Gateway·사람이 있는 상태에서도 본문에 실리지 않아야 한다
     bridgeToken = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
-    runnerToken = issueRunnerToken(app.db, app.workspaceId, "mac").token;
+    runnerToken = issueRunnerToken(app.db, app.workspaceId, "mac", null).token;
     insertGateway(app.db, app.workspaceId, { id: uuid(), name: OTHER_GATEWAY, enabled: true });
     await userWithRole(app, "bee", "member");
   });
@@ -648,7 +649,7 @@ describe("설치 파일을 발급 토큰으로 받기 [Review Focus 5]", () => {
       ...(token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } }),
     });
   const bridge = () => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw");
-  const runner = () => issueRunnerToken(app.db, app.workspaceId, "mac");
+  const runner = () => issueRunnerToken(app.db, app.workspaceId, "mac", null);
 
   it("owner 세션은 둘 다 200, member 세션은 403", async () => {
     const { headers } = await login(app);
@@ -689,6 +690,20 @@ describe("설치 파일을 발급 토큰으로 받기 [Review Focus 5]", () => {
     const offToken = issueBridgeToken(app.db, app.workspaceId, off.id, "off").token;
     for (let i = 0; i < 3; i++) expect((await download("plugin.tgz", offToken, ip)).statusCode).toBe(401);
     expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(200);
+  });
+
+  it("plugin.tgz — 승인 전 Gateway 의 토큰으로도 200(미리 설치해 둔다, 연결 탭 통합 스펙 5.4 — 첨부 HTTP 는 401)", async () => {
+    const pending = createGateway(
+      app.db,
+      app.workspaceId,
+      { name: "승인 전", url: "ws://10.0.0.9:18789", token: "t" },
+      { userId: app.ownerUserId, role: "member" },
+    );
+    expect(pending.approvedAt).toBeNull();
+    const token = issueBridgeToken(app.db, app.workspaceId, pending.id, "pending").token;
+    const res = await download("plugin.tgz", token, freshIp());
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.equals(pluginTgz)).toBe(true);
   });
 
   it("plugin.tgz — 러너 토큰 401, runner.tgz — 브리지 토큰 401(경로마다 자기 토큰만)", async () => {

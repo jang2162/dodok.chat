@@ -1,7 +1,7 @@
-import { type Agent, type RunnerSummary, roleAtLeast } from "@dodok/shared";
+import { type Agent, type ConnectionsResponse, type RunnerSummary, roleAtLeast } from "@dodok/shared";
 import { useParams } from "@tanstack/react-router";
 import { type RefObject, useRef } from "react";
-import { useAgents, useRole } from "@/api/queries";
+import { useAgents } from "@/api/queries";
 import { AddProjectDialog } from "@/features/runners/AddProjectDialog";
 import { ProjectList } from "@/features/runners/ProjectList";
 import { useRunners } from "@/features/runners/queries";
@@ -15,21 +15,35 @@ import { AgentLinks } from "./ConnectionTreeList";
 import { DetailHeader } from "./DetailHeader";
 import { HelpDetails } from "./HelpDetails";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
+import { canManageConnection, useViewer } from "./permissions";
+import { useConnectionList } from "./queries";
 import { runnerStateLabel } from "./useConnectionTree";
+
+type ListedRunner = ConnectionsResponse["runners"][number];
 
 /** 러너 경고 한 줄(연결 탭 통합 스펙 3.3) — 늘 보인다. 「?」 안에 「드러나는 것」 네 줄 */
 export const RUNNER_WARNING =
   "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.";
 
 /**
- * 러너 상세(연결 탭 통합 스펙 3.3) — 러너 하나 = 러너 토큰 하나(id 가 같다). admin 이상: 머리(라벨·상태)·판본·루트·프로그램·경고 한 줄·
- * 「프로젝트 N」. owner 는 더해 「설치 안내」(붙은 적이 있으면 접힘)와 그 러너의 토큰 한 줄(다시 발급·폐기). member: 러너 목록 API 가
- * 없어 에이전트의 러너 요약으로 머리(라벨)·경고·그 러너의 에이전트만
+ * 러너 상세(연결 탭 통합 스펙 3.3·5장) — 러너 하나 = 러너 토큰 하나(id 가 같다). 관리할 수 있는 사람(그 러너의 주인·admin 이상): 머리(라벨·
+ * 상태)·메타(주인·판본)·루트·프로그램·경고 한 줄·「프로젝트 N」·「설치 안내」(붙은 적이 있으면 접힘)·그 러너의 토큰 한 줄(다시 발급·폐기).
+ * 그 밖의 사람: 머리(라벨·상태·주인)·경고·그 러너의 에이전트만 — 설치·토큰·루트는 주인과 admin 이상의 몫이다
  */
 export function RunnerDetail() {
   const { runnerId } = useParams({ strict: false });
-  const admin = roleAtLeast(useRole(), "admin");
-  return admin ? <ManagedRunner id={runnerId ?? ""} /> : <MemberRunner id={runnerId ?? ""} />;
+  const id = runnerId ?? "";
+  const { role, meId } = useViewer();
+  const list = useConnectionList();
+  // admin 이상은 주인과 상관없이 관리한다 — 목록을 기다리지 않는다
+  if (list.isPending && !roleAtLeast(role, "admin"))
+    return <DetailPending failed={false} retry={() => void list.refetch()} />;
+  const entry = list.data?.runners.find((r) => r.id === id);
+  return canManageConnection(role, meId, entry?.owner?.id ?? null) ? (
+    <ManagedRunner id={id} entry={entry} />
+  ) : (
+    <MemberRunner id={id} entry={entry} />
+  );
 }
 
 function Warning() {
@@ -45,9 +59,8 @@ function Warning() {
   );
 }
 
-function ManagedRunner({ id }: { id: string }) {
+function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefined }) {
   const runners = useRunners();
-  const owner = useRole() === "owner";
   const addButton = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   if (!runners.data) return <DetailPending failed={runners.isError} retry={() => void runners.refetch()} />;
@@ -66,7 +79,12 @@ function ManagedRunner({ id }: { id: string }) {
         title={runner.label}
         headingRef={heading}
         badge={<Badge variant={label === "연결됨" ? "default" : "outline"}>{label}</Badge>}
-        meta={<>러너{runner.runnerVersion && <> · dodok-runner {runner.runnerVersion}</>}</>}
+        meta={
+          <>
+            러너{entry?.owner && <> · 주인 {entry.owner.name}</>}
+            {runner.runnerVersion && <> · dodok-runner {runner.runnerVersion}</>}
+          </>
+        }
       />
       {runner.revoked && (
         <p className="text-sm text-muted-foreground">
@@ -82,7 +100,7 @@ function ManagedRunner({ id }: { id: string }) {
         <ProjectList runner={runner} runners={runners.data} afterRemove={afterRemove} />
       </Section>
       <UnboundAgents runnerId={runner.id} />
-      {owner && <OwnerSections runner={runner} heading={heading} />}
+      <OwnerSections runner={runner} heading={heading} />
     </article>
   );
 }
@@ -105,7 +123,7 @@ function UnboundAgents({ runnerId }: { runnerId: string }) {
   );
 }
 
-/** owner — 설치 안내와 이 러너의 토큰 한 줄 */
+/** 주인·admin 이상 — 설치 안내와 이 러너의 토큰 한 줄 */
 function OwnerSections({
   runner,
   heading,
@@ -145,20 +163,27 @@ function OwnerSections({
   );
 }
 
-/** member — 러너 목록 API 가 없다(admin 이상). 에이전트에 실린 러너 요약(라벨·폐기)으로 머리를 짓는다 */
-function MemberRunner({ id }: { id: string }) {
+/**
+ * 관리할 수 없는 사람 — 연결 목록의 러너 줄(라벨·상태·주인), 없으면(옛 서버) 에이전트에 실린 러너 요약(라벨·폐기)으로 머리를 짓는다
+ */
+function MemberRunner({ id, entry }: { id: string; entry: ListedRunner | undefined }) {
   const agents = useAgents();
   if (!agents.data) return <DetailPending failed={agents.isError} retry={() => void agents.refetch()} />;
   const here = agents.data.filter((a) => a.provider === "runner" && a.runner?.tokenId === id);
-  const summary = here[0]?.runner;
+  const summary = entry ?? here[0]?.runner;
   if (!summary) return <NotFoundDetail />;
   const live = here.filter((a) => a.archivedAt === null);
+  const label = entry ? runnerStateLabel(entry) : summary.revoked ? "폐기됨" : null;
   return (
     <div data-testid="runner-detail" className="flex flex-col gap-6">
       <DetailHeader
         title={summary.label}
-        badge={summary.revoked ? <Badge variant="outline">폐기됨</Badge> : undefined}
-        meta="러너"
+        badge={
+          label === null ? undefined : (
+            <Badge variant={label === "연결됨" ? "default" : "outline"}>{label}</Badge>
+          )
+        }
+        meta={entry?.owner ? `러너 · 주인 ${entry.owner.name}` : "러너"}
       />
       <Warning />
       <Section title={`에이전트 ${live.length}`} bare>

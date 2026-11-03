@@ -1,7 +1,7 @@
 /**
  * 러너 토큰 저장소(러너 스펙 5장) — 브리지 토큰(modules/setup/tokens.ts)과 같은 규칙. 원문 drn_… 은 발급 결과에만 있고
  * DB 에는 sha256 hex 만 둔다. `/runner` 핸드셰이크와 러너 첨부 HTTP 가 같은 검증 함수를 쓴다.
- * `.env` 이어받기는 없다 — 러너 토큰은 처음부터 연결 페이지에서만 만든다
+ * `.env` 이어받기는 없다 — 러너 토큰은 처음부터 「연결」 탭에서만 만든다
  */
 import { IssueRunnerTokenInput, type RunnerTokenRecord } from "@dodok/shared";
 import { and, count, desc, eq, isNull } from "drizzle-orm";
@@ -29,6 +29,7 @@ function toRecord(row: Row, connected: boolean): RunnerTokenRecord {
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     revokedAt: row.revokedAt?.toISOString() ?? null,
     connected,
+    ownerUserId: row.ownerUserId,
   };
 }
 
@@ -45,11 +46,15 @@ function findActive(db: Db, presented: unknown): Row | undefined {
   return timingSafeEqual(Buffer.from(row.hash, "hex"), Buffer.from(hash, "hex")) ? row : undefined;
 }
 
-/** 새 토큰을 만든다. 라벨(러너 머신 이름)은 trim 뒤 1~60자(아니면 VALIDATION). 원문은 이 반환값에만 있다 */
+/**
+ * 새 토큰을 만든다. 라벨(러너 머신 이름)은 trim 뒤 1~60자(아니면 VALIDATION). 원문은 이 반환값에만 있다. ownerUserId 는 그 러너의
+ * 주인 — 발급한 사람(연결 탭 통합 스펙 5.1)
+ */
 export function issueRunnerToken(
   db: Db,
   workspaceId: string,
   label: string,
+  ownerUserId: string | null,
   now = new Date(),
 ): { token: string; record: RunnerTokenRecord } {
   const input = IssueRunnerTokenInput.safeParse({ label });
@@ -61,6 +66,7 @@ export function issueRunnerToken(
     label: input.data.label,
     hash: hashOf(token),
     prefix: token.slice(TOKEN_PREFIX.length, TOKEN_PREFIX.length + 6),
+    ownerUserId,
     createdAt: now,
     lastUsedAt: null,
     revokedAt: null,

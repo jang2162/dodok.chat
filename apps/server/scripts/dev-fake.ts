@@ -61,7 +61,7 @@ import {
   type RunnerProjectRef,
   RunnerRootId,
 } from "@dodok/shared";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
@@ -1008,8 +1008,9 @@ function isJson(req: IncomingMessage): boolean {
 }
 
 /**
- * 훅 하나를 받는다. 세션은 앱의 owner 경로(`/api/v1/setup/status`)에 같은 헤더로 물어 판정한다 —
- * 그 경로의 `requireOwner` 가 401·403 을 내면 그 응답을 그대로 돌려준다. 본문은 판정 뒤에 읽는다
+ * 훅 하나를 받는다. 세션은 앱의 `/api/v1/auth/me` 에 같은 헤더로 물어 판정한다 — 401 이면 그 응답을 그대로, owner 가 아니면
+ * 앱의 requireOwner 와 같은 403 을 돌려준다(`/setup/status` 는 멤버 누구나 걸러 받게 되어 가드로 쓸 수 없다 — 연결 탭 통합 스펙
+ * 5.3). 본문은 판정 뒤에 읽는다
  */
 async function handleDevFakeRoute(
   app: App,
@@ -1020,13 +1021,18 @@ async function handleDevFakeRoute(
   const { cookie, authorization } = req.headers;
   const guard = await app.fastify.inject({
     method: "GET",
-    url: "/api/v1/setup/status",
+    url: "/api/v1/auth/me",
     headers: { ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) },
   });
   if (guard.statusCode !== 200) {
     res
       .writeHead(guard.statusCode, { "content-type": String(guard.headers["content-type"]) })
       .end(guard.body);
+    return;
+  }
+  if ((guard.json() as { role?: unknown }).role !== "owner") {
+    req.resume();
+    sendJson(res, 403, { code: "FORBIDDEN", message: "owner 만 쓸 수 있다" });
     return;
   }
   if (!isJson(req)) {
@@ -1217,6 +1223,7 @@ function ensureDevFakeRunnerRow(app: App, spec: DevFakeRunnerSpec): string | nul
         label: spec.label,
         hash,
         prefix,
+        ownerUserId: app.ownerUserId,
         createdAt: new Date(),
         lastUsedAt: null,
         revokedAt: null,
@@ -1327,7 +1334,10 @@ function seedDevFakeGateway(
         url: gateway.url,
         token: gateway.token,
         enabled: true,
+        // 주인은 부팅 뒤 owner 로 채운다(claimDevFakeGateways — owner 사용자는 createApp 이 만든다). owner 가 만든 것이라 승인된 채
         ownerUserId: null,
+        approvedAt: now,
+        approvedBy: null,
         lastVersion: null,
         createdAt: now,
         updatedAt: now,
@@ -1370,6 +1380,24 @@ function changedByHand(db: DbOrTx, workspaceId: string, spec: DevFakeGatewaySpec
   if (token?.revokedAt != null)
     return "the fixed bridge token is revoked — restart dev:fake without --keep (new DB); POST /__devfake/plugin-token cannot start a fake plugin";
   return undefined;
+}
+
+/** 주인 없는 가짜 Gateway 행(seedDevFakeGateway 가 owner 사용자보다 먼저 만든다)의 주인을 owner 로 — 사람이 바꾼 것은 건드리지 않는다 */
+function claimDevFakeGateways(app: App): void {
+  app.db
+    .update(gateways)
+    .set({ ownerUserId: app.ownerUserId })
+    .where(
+      and(
+        eq(gateways.workspaceId, app.workspaceId),
+        inArray(
+          gateways.id,
+          DEV_FAKE_GATEWAYS.map((g) => g.id),
+        ),
+        isNull(gateways.ownerUserId),
+      ),
+    )
+    .run();
 }
 
 /**
@@ -1684,6 +1712,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
     await ensureDevFakeMember(app);
+    claimDevFakeGateways(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
     const seeded = ensureDevFakeSessions(app);

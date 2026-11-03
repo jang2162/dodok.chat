@@ -165,7 +165,10 @@ export interface ServerToClientEvents {
   "agents.changed": (p: Record<string, never>) => void;
   typing: (p: { channelId: Id; conversationId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
-  "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만
+  // 사람마다 걸러서 — admin 이상은 전체, member 는 자기 연결(Gateway·러너)만(연결 탭 통합 스펙 5.3)
+  "setup.status": (p: { status: SetupStatus }) => void;
+  // workspace 룸 — 연결(Gateway·러너·프로젝트)의 추가·수정·승인·삭제·붙음 뒤. 본문이 없다: 받은 쪽이 GET /connections 를 다시 받는다
+  "connections.changed": (p: Record<string, never>) => void;
   "ops.event": (p: { event: OpsEvent; unacked: OpsUnacked }) => void; // owner·admin 사용자 룸에만
   "system.notice": (p: { level: "info" | "warn" | "error"; message: string }) => void;
   // 접속 점(프로필 스펙 3.3) — snapshot 은 연결 직후 그 소켓에만(재접속 포함, 통째로 바꾼다), changed 는 workspace 룸에 바뀐 줄만

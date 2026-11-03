@@ -24,7 +24,7 @@ import { KeyedLimiter, monotonicNow } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
 import { getRun } from "../runs/store";
 import { type Confirmations, createConfirmations, userHandle } from "./confirm";
-import { type AnyHandler, type HandlerContext, handlerFor } from "./handlers";
+import { type AnyHandler, type HandlerContext, handlerFor, NO_OWNERSHIP, ownershipOf } from "./handlers";
 import type { Principal } from "./principal";
 
 // 제어 서비스(제어 MCP 스펙 「실행 흐름」 장) — 바깥 MCP 클라이언트(/mcp)와 채널 안 에이전트(러너·플러그인)가 같은 입구로 부른다.
@@ -132,7 +132,7 @@ export function createControlService(deps: ControlDeps): ControlService {
     raw: Record<string, unknown>,
   ): void {
     try {
-      handler.authorize(role, raw);
+      handler.authorize(role, raw, ownershipOf(db, workspaceId, p.userId));
     } catch (err) {
       if (!(err instanceof HttpError) || err.body.code !== "FORBIDDEN") throw err;
       const min = ROLES.find((r) => passes(handler, r, raw));
@@ -289,7 +289,7 @@ export function createControlService(deps: ControlDeps): ControlService {
 
 function passes(handler: AnyHandler, role: TeamRole, raw: Record<string, unknown>): boolean {
   try {
-    handler.authorize(role, raw);
+    handler.authorize(role, raw, NO_OWNERSHIP);
     return true;
   } catch {
     return false;

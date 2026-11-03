@@ -95,7 +95,8 @@ export const memberships = sqliteTable(
 
 /**
  * OpenClaw Gateway 연결(멀티 Gateway 스펙 「gateways (새 표)」 절) — id 가 어댑터 계약의 연결 id 다. token 은 Gateway 공유 토큰 평문(결정 4 — 같은 DATA_DIR 의
- * 디바이스 아이덴티티도 평문이다). API 응답·로그·사건·wire 에 싣지 않는다. owner_user_id 는 사람마다 붙이기의 자리 — 지금은 늘 null
+ * 디바이스 아이덴티티도 평문이다). API 응답·로그·사건·wire 에 싣지 않는다. owner_user_id 는 그 연결의 주인(만든 사람), approved_at 이
+ * 비어 있으면 서버가 접속하지 않는다(연결 탭 통합 스펙 5.1·5.4 — member 가 만든 것은 admin 이상의 승인 뒤에)
  */
 export const gateways = sqliteTable(
   "gateways",
@@ -109,6 +110,8 @@ export const gateways = sqliteTable(
     token: text("token").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     ownerUserId: text("owner_user_id").references(() => users.id),
+    approvedAt: ts("approved_at"),
+    approvedBy: text("approved_by").references(() => users.id),
     lastVersion: text("last_version"),
     createdAt: ts("created_at").notNull(),
     updatedAt: ts("updated_at").notNull(),
@@ -614,6 +617,8 @@ export const runnerTokens = sqliteTable(
     label: text("label").notNull(),
     hash: text("hash").notNull(),
     prefix: text("prefix").notNull(),
+    /** 그 러너(연결)의 주인 — 발급한 사람(연결 탭 통합 스펙 5.1) */
+    ownerUserId: text("owner_user_id").references(() => users.id),
     createdAt: ts("created_at").notNull(),
     lastUsedAt: ts("last_used_at"),
     revokedAt: ts("revoked_at"),

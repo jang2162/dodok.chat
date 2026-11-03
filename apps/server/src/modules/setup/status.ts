@@ -20,7 +20,7 @@ export function bridgePublicUrl(config: {
  * (계획 판정 PG7). 어댑터가 아직 모르는 행(넣기 전·넣다 실패)은 켜졌으면 down, 꺼졌으면 disabled 로 보인다
  */
 export function buildSetupStatus(input: {
-  gateways: Array<{ id: string; name: string; url: string; enabled: boolean }>;
+  gateways: Array<{ id: string; name: string; url: string; enabled: boolean; approvedAt: Date | null }>;
   /** OpenClaw 어댑터의 gatewaySetupDetails() */
   details: GatewaySetupEntry[];
   pluginFile: PluginFile | null;
@@ -38,19 +38,22 @@ export function buildSetupStatus(input: {
     pluginFile: packedFile(pluginFile),
     gateways: input.gateways.map((row): GatewaySetup => {
       const detail = details.get(row.id);
-      const plugin = row.enabled ? (detail?.bridge.plugin ?? null) : null;
+      // 승인 전 Gateway 는 어댑터에 꺼진 채로 넣는다(gatewayConfig) — 꺼 둔 것과 같이 보인다
+      const live = row.enabled && row.approvedAt !== null;
+      const plugin = live ? (detail?.bridge.plugin ?? null) : null;
       const version = detail?.gateway.version ?? null;
       return {
         id: row.id,
         name: row.name,
         url: row.url,
         enabled: row.enabled,
+        approved: row.approvedAt !== null,
         gateway: {
-          state: !row.enabled ? "disabled" : (detail?.gateway.state ?? "down"),
+          state: !live ? "disabled" : (detail?.gateway.state ?? "down"),
           host: detail?.gateway.host ?? hostOf(row.url),
           version,
           ...gatewayPin(version),
-          pairing: row.enabled ? (detail?.gateway.pairing ?? null) : null,
+          pairing: live ? (detail?.gateway.pairing ?? null) : null,
         },
         bridge: { state: plugin ? "connected" : "down", plugin: plugin ? { ...plugin } : null },
         // 같은 빌드인가는 tgz 안의 번들 sha256 끼리 — 한쪽이라도 모르면 null(옛 플러그인은 bundleSha256 을 보내지 않는다)
@@ -76,4 +79,22 @@ function packedFile(file: PluginFile | null): SetupStatus["pluginFile"] {
   return file
     ? { available: true, sha256: file.sha256, bundleSha256: file.bundleSha256, bytes: file.bytes }
     : { available: false };
+}
+
+/**
+ * 보는 사람에게 맞춘 설정 상태(연결 탭 통합 스펙 5.3) — 주소·플러그인·러너 연결 정보는 그 연결의 주인·admin 이상만 본다. 머리 값(브리지
+ * 공개 주소·품은 파일)은 누구나 — 주인이 미리 설치를 준비하는 데 쓰고, 연결마다의 비밀이 아니다
+ */
+export function setupStatusFor(
+  status: SetupStatus,
+  readable: { gateway(id: string): boolean; runner(tokenId: string): boolean },
+): SetupStatus {
+  return {
+    ...status,
+    gateways: status.gateways.filter((gateway) => readable.gateway(gateway.id)),
+    runners: {
+      ...status.runners,
+      list: status.runners.list.filter((runner) => readable.runner(runner.tokenId)),
+    },
+  };
 }

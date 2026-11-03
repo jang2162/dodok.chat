@@ -261,12 +261,16 @@ describe("Gateway 옮기기 — PUT /api/v1/agents/:id/gateway", () => {
     expect(same.json().agent).toMatchObject({ id: main.id, gateway: { id: FAKE_GATEWAY_ID } });
   });
 
-  it("owner 만 — admin 은 403, 바뀌지 않는다", async () => {
+  it("남의 Gateway 사이는 admin 이상 — member 는 403·바뀌지 않고, admin 은 옮긴다(연결 탭 통합 스펙 5.2)", async () => {
     const { app, inject, main, move } = await withChannel();
-    const admin = await userWithRole(app, "ada", "admin");
-    const res = await move(HOME_ID, { authorization: `Bearer ${admin.token}` });
-    expect(res.statusCode).toBe(403);
+    const member = await userWithRole(app, "mia", "member");
+    const denied = await move(HOME_ID, { authorization: `Bearer ${member.token}` });
+    expect(denied.statusCode).toBe(403);
     const listed = (await inject("GET", "/api/v1/agents")).json().agents as Agent[];
     expect(listed.find((a) => a.id === main.id)?.gateway?.id).toBe(FAKE_GATEWAY_ID);
+    const admin = await userWithRole(app, "ada", "admin");
+    const moved = await move(HOME_ID, { authorization: `Bearer ${admin.token}` });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json().agent).toMatchObject({ id: main.id, gateway: { id: HOME_ID } });
   });
 });

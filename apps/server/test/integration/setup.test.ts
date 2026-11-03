@@ -265,7 +265,7 @@ describe("설정 마법사 통합 — 거절 로그 주소", () => {
 });
 
 describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
-  it("어댑터 {kind:setup} → 다시 읽은 상태(페어링 requestId 포함)가 owner 소켓에만 간다 — admin·member 는 못 받는다", async () => {
+  it("어댑터 {kind:setup} → 다시 읽은 상태(페어링 requestId 포함)가 owner·admin 소켓에 간다 — 연결이 없는 member 는 못 받는다", async () => {
     const adapter = new FakeAdapter();
     const app = await bootTestApp({}, { adapters: [adapter], pluginDirs: [] });
     const sockets: WireClient[] = [];
@@ -277,7 +277,7 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
       const member = await connectWire(app, (await userWithRole(app, "bee", "member")).token);
       sockets.push(member);
       const memberSeen = recordEvents(member, ["setup.status"]);
-      // 연결 페이지는 owner 전용이다 — ops.event 가 admin 까지 넓어져도 setup.status 는 넓어지지 않는다
+      // admin 은 모든 연결을 관리한다(연결 탭 통합 스펙 5.2) — 전체 상태를 받는다. member 는 자기 연결만 받고, 연결이 없으면 받지 않는다
       const admin = await connectWire(app, (await userWithRole(app, "ada", "admin")).token);
       sockets.push(admin);
       const adminSeen = recordEvents(admin, ["setup.status"]);
@@ -307,11 +307,16 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
         since,
       });
 
-      // member·admin 은 받지 않는다 — owner 가 받은 뒤 각 연결의 왕복을 한 번 더 기다린다
+      // member 는 받지 않는다 — owner 가 받은 뒤 그 연결의 왕복을 한 번 더 기다린다
       await roundTrip(member);
       await roundTrip(admin);
       expect(memberSeen).toHaveLength(0);
-      expect(adminSeen).toHaveLength(0);
+      const adminPayload = adminSeen[0]?.payload as { status: unknown } | undefined;
+      expect(adminPayload).toBeDefined();
+      expect(SetupStatus.parse(adminPayload?.status).gateways[0]?.gateway.pairing).toEqual({
+        requestId: "req-1",
+        since,
+      });
     } finally {
       for (const socket of sockets) socket.close();
       await app.close();

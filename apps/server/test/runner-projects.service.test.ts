@@ -30,7 +30,7 @@ let token: string;
 beforeEach(() => {
   db = newTestDb();
   ws = seedWorkspace(db).workspaceId;
-  token = issueRunnerToken(db, ws, "laptop").record.id;
+  token = issueRunnerToken(db, ws, "laptop", null).record.id;
 });
 
 const noop = { orchestrator: { abort: async () => {} } };
@@ -113,7 +113,7 @@ describe("createProject", () => {
         createProject(db, { workspaceId: ws, runnerTokenId: token, rootId: "src", relPath: "dodok" }),
       ).body,
     ).toMatchObject({ code: "CONFLICT", details: { projectId: first.id } });
-    const other = issueRunnerToken(db, ws, "desktop").record.id;
+    const other = issueRunnerToken(db, ws, "desktop", null).record.id;
     expect(
       createProject(db, { workspaceId: ws, runnerTokenId: other, rootId: "src", relPath: "dodok" }).id,
     ).not.toBe(first.id);
@@ -125,7 +125,7 @@ describe("createProject", () => {
 
   it("폐기된 러너·다른 워크스페이스의 러너는 VALIDATION(runnerTokenId)", () => {
     const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
-    const foreign = issueRunnerToken(db, other, "x").record.id;
+    const foreign = issueRunnerToken(db, other, "x", null).record.id;
     expect(
       errorOf(() =>
         createProject(db, { workspaceId: ws, runnerTokenId: foreign, rootId: "src", relPath: "a" }),
@@ -207,7 +207,7 @@ describe("createAgent — 러너 갈래(계획 판정 PR4)", () => {
     const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
     const foreign = createProject(db, {
       workspaceId: other,
-      runnerTokenId: issueRunnerToken(db, other, "x").record.id,
+      runnerTokenId: issueRunnerToken(db, other, "x", null).record.id,
       rootId: "src",
       relPath: "a",
     });
@@ -257,7 +257,7 @@ describe("runnerAgentDefinition — run.start.agent 는 에이전트 행·프로
       },
     });
     expect(runnerAgentDefinition(db, ws, agent.providerAgentId.toUpperCase(), token)).not.toBeNull();
-    const other = issueRunnerToken(db, ws, "desktop").record.id;
+    const other = issueRunnerToken(db, ws, "desktop", null).record.id;
     expect(runnerAgentDefinition(db, ws, agent.providerAgentId, other)).toBeNull();
     createAgent(db, { workspaceId: ws, providerAgentId: "dev", handle: "dev", name: "Dev" });
     expect(runnerAgentDefinition(db, ws, "dev", token)).toBeNull();

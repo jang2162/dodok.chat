@@ -14,6 +14,10 @@ afterEach(() => {
 });
 
 const R1 = runnerId(1);
+const R2 = runnerId(2);
+const OWN_GW = "0190a000-0000-7000-8000-00000000a0f1";
+const ME_ID = "0190a000-0000-7000-8000-0000000000d1";
+const OTHER_ID = "0190a000-0000-7000-8000-0000000000d2";
 const dev = () =>
   makeAgent({
     providerAgentId: "dev",
@@ -54,8 +58,55 @@ describe("역할마다 다른 트리", () => {
     expect(server.count("GET", "/api/v1/runners")).toBe(0);
     expect(server.count("GET", "/api/v1/setup/status")).toBe(0);
     expect(server.count("GET", /\/api\/v1\/runners\/.+\/projects/)).toBe(0);
-    // 연결 추가는 1단계에서 owner 만
-    expect(screen.queryByRole("link", { name: "연결 추가" })).toBeNull();
+    // 연결 추가는 멤버 누구나(member 의 Gateway 는 승인 대기 — 연결 탭 통합 스펙 5.2)
+    expect(screen.getByRole("link", { name: "연결 추가" })).toHaveAttribute(
+      "href",
+      "/settings/connection/new",
+    );
+  });
+
+  it("member sees own connections under 내 연결 and can add one — 남의 것은 「다른 사람의 연결」, 승인 대기 배지", async () => {
+    const server = stubConnection({
+      role: "member",
+      meId: ME_ID,
+      agents: [dev(), coder()],
+      connections: {
+        gateways: [
+          {
+            id: TEST_GATEWAY.id,
+            name: "사무실",
+            enabled: true,
+            approved: true,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+          { id: OWN_GW, name: "mia 집", enabled: true, approved: false, owner: { id: ME_ID, name: "나" } },
+        ],
+        runners: [
+          { id: R1, label: "mia 의 맥북", connected: true, revoked: false, owner: { id: ME_ID, name: "나" } },
+          {
+            id: R2,
+            label: "빈 러너",
+            connected: false,
+            revoked: false,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+        ],
+        projects: [],
+      },
+    });
+    renderConnectionRoute();
+    const nav = await treeNav();
+    const mine = await within(nav).findByRole("region", { name: "내 연결" });
+    expect(within(mine).getByRole("link", { name: /mia 집.*승인 대기/ })).toBeInTheDocument();
+    expect(within(mine).getByRole("link", { name: /mia 의 맥북.*연결됨/ })).toBeInTheDocument();
+    const others = within(nav).getByRole("region", { name: "다른 사람의 연결" });
+    expect(within(others).getByRole("link", { name: /사무실/ })).toBeInTheDocument();
+    // 에이전트 없는 러너도 연결 목록으로 보인다(1단계 member 의 빈 칸)
+    expect(within(others).getByRole("link", { name: /빈 러너.*끊김/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "연결 추가" })).toBeInTheDocument();
+    // 연결을 가진 member 는 자기 연결의 설정 상태를 받는다(서버가 거른다) — 러너 REST 는 부르지 않는다
+    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBeGreaterThan(0));
+    expect(server.count("GET", "/api/v1/runners")).toBe(0);
   });
 
   it("admin sees projects under runners", async () => {
@@ -74,8 +125,9 @@ describe("역할마다 다른 트리", () => {
     expect(nested).not.toBeNull();
     expect(within(nested as HTMLElement).getByRole("link", { name: /Coder/ })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: /mia 의 맥북.*연결됨/ })).toBeInTheDocument();
-    expect(server.count("GET", "/api/v1/setup/status")).toBe(0);
-    expect(screen.queryByRole("link", { name: "연결 추가" })).toBeNull();
+    // admin 은 모든 연결을 관리한다 — 설정 상태를 받는다(연결 탭 통합 스펙 5.2)
+    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBeGreaterThan(0));
+    expect(screen.getByRole("link", { name: "연결 추가" })).toBeInTheDocument();
   });
 
   it("owner sees gateway state from setup status", async () => {

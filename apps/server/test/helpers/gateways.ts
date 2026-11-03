@@ -25,7 +25,17 @@ export function insertGateway(
     enabled: gateway.enabled ?? true,
   };
   db.insert(gateways)
-    .values({ ...row, workspaceId, ownerUserId: null, lastVersion: null, createdAt: now, updatedAt: now })
+    // 시험의 기본 Gateway 는 승인된 것(옛 행과 같다) — 승인 전 Gateway 는 createGateway 로 만든다
+    .values({
+      ...row,
+      workspaceId,
+      ownerUserId: null,
+      approvedAt: now,
+      approvedBy: null,
+      lastVersion: null,
+      createdAt: now,
+      updatedAt: now,
+    })
     .onConflictDoNothing()
     .run();
   return row;

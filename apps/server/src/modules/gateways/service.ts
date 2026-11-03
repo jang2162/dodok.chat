@@ -3,20 +3,25 @@
  * 때마다(라우트) `upsertGateway` 로 따라온다. 공유 토큰은 평문으로 두고(스펙 결정 4) 이 모듈 밖으로는 어댑터 설정으로만 나간다 —
  * 응답(`GatewaySummary`)·로그에는 싣지 않는다.
  */
-import type {
-  CreateGatewayBody,
-  DeleteGatewayResult,
-  GatewaySummary,
-  UpdateGatewayBody,
+import {
+  type CreateGatewayBody,
+  type DeleteGatewayResult,
+  type GatewaySummary,
+  type TeamRole,
+  type UpdateGatewayBody,
 } from "@dodok/shared";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { GatewayConnectionConfig, OpenClawGateways } from "../../adapters/types";
+import { canApproveGateway } from "../../auth/policies";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, bridgeTokens, gateways } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 
 export type GatewayRow = typeof gateways.$inferSelect;
+
+/** 만들거나 고치거나 승인하는 사람 — 역할은 부르는 쪽이 그 요청에서 읽은 값 */
+export type GatewayActor = { userId: string; role: TeamRole };
 
 export function toGatewaySummary(row: GatewayRow): GatewaySummary {
   return {
@@ -26,14 +31,24 @@ export function toGatewaySummary(row: GatewayRow): GatewaySummary {
     enabled: row.enabled,
     tokenSet: true,
     ownerUserId: row.ownerUserId,
+    approved: row.approvedAt !== null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-/** 어댑터에 넘기는 연결 설정 — 공유 토큰이 들어가는 유일한 자리 */
+/**
+ * 어댑터에 넘기는 연결 설정 — 공유 토큰이 들어가는 유일한 자리이자 승인을 거는 유일한 자리. 승인 전 Gateway 는 켜져 있어도 꺼진 채로
+ * 넘겨 서버가 그 주소에 접속하지 않게 한다(연결 탭 통합 스펙 5.4 — member 가 넣은 주소로 서버가 사내망을 두드리지 않게)
+ */
 export function gatewayConfig(row: GatewayRow): GatewayConnectionConfig {
-  return { id: row.id, name: row.name, url: row.url, token: row.token, enabled: row.enabled };
+  return {
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    token: row.token,
+    enabled: row.enabled && row.approvedAt !== null,
+  };
 }
 
 /** 더한 차례(같은 시각이면 id — uuid v7 이라 만든 차례) */
@@ -76,12 +91,15 @@ function assertNameFree(tx: DbOrTx, workspaceId: string, name: string, exceptId?
   if (taken) throw apiError("CONFLICT", "gateway name is already used", { field: "name" });
 }
 
+/** 주인은 만든 사람. admin 이상이 만들면 그 자리에서 승인된다 — member 가 만든 것은 승인 대기(스펙 5.4) */
 export function createGateway(
   db: Db,
   workspaceId: string,
   body: CreateGatewayBody,
+  actor: GatewayActor,
   now = new Date(),
 ): GatewayRow {
+  const approved = canApproveGateway(actor.role);
   return db.transaction((tx) => {
     assertNameFree(tx, workspaceId, body.name);
     return tx
@@ -93,7 +111,9 @@ export function createGateway(
         url: body.url,
         token: body.token,
         enabled: true,
-        ownerUserId: null,
+        ownerUserId: actor.userId,
+        approvedAt: approved ? now : null,
+        approvedBy: approved ? actor.userId : null,
         lastVersion: null,
         createdAt: now,
         updatedAt: now,
@@ -103,12 +123,16 @@ export function createGateway(
   });
 }
 
-/** 빈 토큰은 「바꾸지 않음」(수정 대화상자의 「바꾸려면 입력」 칸). 바뀐 것이 없으면 행을 쓰지 않는다(changed 거짓) */
+/**
+ * 빈 토큰은 「바꾸지 않음」(수정 대화상자의 「바꾸려면 입력」 칸). 바뀐 것이 없으면 행을 쓰지 않는다(changed 거짓). admin 미만이 주소를
+ * 바꾸면 승인이 풀린다 — 승인받은 뒤 주소만 바꿔 승인을 우회하지 못하게(스펙 5.4). 이름·토큰·켜기만 바꾸면 그대로
+ */
 export function updateGateway(
   db: Db,
   workspaceId: string,
   id: string,
   patch: UpdateGatewayBody,
+  actor: GatewayActor,
   now = new Date(),
 ): { before: GatewayRow; row: GatewayRow; changed: boolean } {
   return db.transaction((tx) => {
@@ -118,7 +142,13 @@ export function updateGateway(
       assertNameFree(tx, workspaceId, patch.name, id);
       set.name = patch.name;
     }
-    if (patch.url !== undefined && patch.url !== current.url) set.url = patch.url;
+    if (patch.url !== undefined && patch.url !== current.url) {
+      set.url = patch.url;
+      if (!canApproveGateway(actor.role)) {
+        set.approvedAt = null;
+        set.approvedBy = null;
+      }
+    }
     if (patch.token !== undefined && patch.token !== "" && patch.token !== current.token)
       set.token = patch.token;
     if (patch.enabled !== undefined && patch.enabled !== current.enabled) set.enabled = patch.enabled;
@@ -130,6 +160,34 @@ export function updateGateway(
       .returning()
       .get();
     return { before: current, row, changed: true };
+  });
+}
+
+/**
+ * 승인(admin 이상 — 권한은 부르는 쪽이 본다). `seenUrl` 은 승인하는 사람이 화면에서 본 주소 — 지금 행의 주소와 다르면 CONFLICT 로 거절하고
+ * 행을 쓰지 않는다(그 사이 주인이 주소를 바꿨다. 본 적 없는 주소로 서버가 나가지 않게, 스펙 5.4). 같은 트랜잭션에서 읽고 쓰므로 비교와
+ * 승인 사이에 주소가 바뀌지 않는다. 이미 승인됐으면 행을 그대로 돌려준다(approved 거짓)
+ */
+export function approveGateway(
+  db: Db,
+  workspaceId: string,
+  id: string,
+  seenUrl: string,
+  actor: GatewayActor,
+  now = new Date(),
+): { row: GatewayRow; approved: boolean } {
+  return db.transaction((tx) => {
+    const current = requireGatewayRow(tx, workspaceId, id);
+    if (current.url !== seenUrl)
+      throw apiError("CONFLICT", "gateway url changed — review it again", { field: "url" });
+    if (current.approvedAt !== null) return { row: current, approved: false };
+    const row = tx
+      .update(gateways)
+      .set({ approvedAt: now, approvedBy: actor.userId })
+      .where(eq(gateways.id, id))
+      .returning()
+      .get();
+    return { row, approved: true };
   });
 }
 
@@ -157,7 +215,7 @@ export function deleteGateway(db: Db, workspaceId: string, id: string): DeleteGa
 }
 
 /**
- * 부팅 때 DB 의 Gateway 를 모두 어댑터에 넣는다(스펙 6.2) — 꺼진 것도 `enabled: false` 로 넣어 연결 페이지에 「꺼짐」으로 보이게 한다.
+ * 부팅 때 DB 의 Gateway 를 모두 어댑터에 넣는다(스펙 6.2) — 꺼진 것·승인 전인 것도 `enabled: false` 로 넣어 「연결」 탭에 「꺼짐」·「승인 대기」로 보이게 한다.
  * 한 Gateway 의 설정이 어댑터에 거절돼도(id 규칙) 나머지는 넣는다 — 부르는 쪽이 실패를 로그로 남긴다
  */
 export function bootGateways(

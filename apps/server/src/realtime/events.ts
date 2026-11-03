@@ -3,7 +3,9 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { channels, memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
+import { connectionOwners, readableConnections } from "../modules/connections/owner";
 import { hydrateForClient, withAutomationNames, withInteractions } from "../modules/messages/service";
+import { setupStatusFor } from "../modules/setup/status";
 import { withReactions } from "../modules/reactions/service";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
 import type { BusEvents, ServerBus } from "./bus";
@@ -25,8 +27,9 @@ export type WireFanoutOptions = {
 /**
  * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·channel.activity 는 channelAudience(일반 채널은
  * workspace:<id> 룸, DM 은 주인의 user 룸), people.changed·agents.changed 는 workspace 룸, conversation.read 는 그 사용자의 user 룸,
- * adapter.status 는 전체, system.notice 는 userId 가 있으면 그 사람의 user 룸·없으면 전체, setup.status 는 owner·ops.event 는 owner·admin
- * 사용자 룸에만(설정 마법사 결정 6·팀 스펙 「역할과 권한」 표).
+ * adapter.status 는 전체, system.notice 는 userId 가 있으면 그 사람의 user 룸·없으면 전체, setup.status 는 owner·admin 에게 전체·member
+ * 에게는 그 사람의 연결만(연결 탭 통합 스펙 5.3), connections.changed 는 workspace 룸, ops.event 는 owner·admin 사용자 룸에만(설정 마법사
+ * 결정 6·팀 스펙 「역할과 권한」 표).
  * message.created·updated 는 여기서 상호작용 기록·리액션 집계를 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
  * wire 경계에서 한 번 하이드레이션한다(components 설계 「붙이는 자리」 절 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
  * run.event 만 백프레셔를 본다: 소켓의 미전송 큐가 maxPending 이상이면 그 소켓엔 델타를 버리고
@@ -88,7 +91,8 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     });
 
   // 받을 사람은 보낼 때마다 membership 에서 읽는다 — 역할이 바뀌면 재접속 없이 다음 이벤트부터 따른다. 없으면 아무에게도 안 간다
-  const roleRooms = (roles: TeamRole[]): string[] =>
+  const roleRooms = (roles: TeamRole[]): string[] => roleUsers(roles).map(userRoom);
+  const roleUsers = (roles: TeamRole[]): string[] =>
     opts.db
       .select({ userId: memberships.userId })
       .from(memberships)
@@ -100,7 +104,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
         ),
       )
       .all()
-      .map((row) => userRoom(row.userId));
+      .map((row) => row.userId);
 
   // 채널 사실(존재·이름·활동·승인)을 실을 룸 — 페이로드에 채널 행이 없는 이벤트는 매번 읽는다. 없는 채널이면 아무에게도 안 보낸다
   const audienceRow = (channelId: string) =>
@@ -213,11 +217,20 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("system.notice", ({ userId, ...notice }) =>
       (userId === undefined ? io : io.to(userRoom(userId))).emit("system.notice", notice),
     ),
-    // 연결 페이지는 owner 만, 운영 화면은 admin 이상(팀 스펙 「역할과 권한」 표)
+    // 연결 상태는 admin 이상에게 전체, member 에게는 그 사람의 연결만(연결 탭 통합 스펙 5.3) — 운영 화면은 admin 이상(팀 스펙 「역할과
+    // 권한」 표)
     on("setup.status", (p) => {
-      const rooms = roleRooms(["owner"]);
+      const rooms = roleRooms(["owner", "admin"]);
       if (rooms.length > 0) io.to(rooms).emit("setup.status", p);
+      // 연결을 하나라도 가진 member 에게만 — 가진 것이 없으면 걸러진 상태가 비어 보낼 것이 없다
+      const owners = connectionOwners(opts.db, opts.workspaceId);
+      const holders = new Set([...owners.gateways.values(), ...owners.runners.values()]);
+      for (const userId of roleUsers(["member"]).filter((id) => holders.has(id)))
+        io.to(userRoom(userId)).emit("setup.status", {
+          status: setupStatusFor(p.status, readableConnections(owners, { id: userId, role: "member" })),
+        });
     }),
+    on("connections.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("connections.changed", p)),
     on("ops.event", (p) => {
       const rooms = roleRooms(["owner", "admin"]);
       if (rooms.length > 0) io.to(rooms).emit("ops.event", p);

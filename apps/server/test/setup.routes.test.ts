@@ -111,11 +111,18 @@ describe("설정 API /api/v1/setup", () => {
   });
 
   // 브리지 토큰 경로는 Gateway 아래로 옮겼다 — gateways.test.ts·roles.matrix.test.ts
-  it("member 는 두 경로 모두 403, membership 이 없거나 세션이 없으면 401 [Review Focus 4]", async () => {
-    const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [
-      ["GET", "/status"],
-      ["GET", "/plugin.tgz"],
-    ];
+  it("GET /status 는 멤버 누구나 — 연결이 없는 member 는 Gateway·러너가 빈 상태(연결 탭 통합 스펙 5.3)", async () => {
+    const res = await call(member, "GET", "/status");
+    expect(res.statusCode).toBe(200);
+    const status = SetupStatus.parse(res.json());
+    expect(status.gateways).toEqual([]);
+    expect(status.runners.list).toEqual([]);
+    expect((await call(noMembership, "GET", "/status")).statusCode).toBe(401);
+    expect((await call(undefined, "GET", "/status")).statusCode).toBe(401);
+  });
+
+  it("member 는 플러그인 파일 받기 403, membership 이 없거나 세션이 없으면 401 [Review Focus 4]", async () => {
+    const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [["GET", "/plugin.tgz"]];
     for (const [method, url, body] of routes) {
       const forbidden = await call(member, method, url, body);
       expect(forbidden.statusCode, `${method} ${url}`).toBe(403);

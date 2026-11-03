@@ -33,8 +33,10 @@ export type BusEvents = {
   "adapter.status": Payload<"adapter.status">;
   // userId 가 있으면 그 사람의 user 룸으로만(DM 의 알림 — 계획 판정 PD4), 없으면 전체. userId 는 팬아웃이 룸을 고르는 데만 쓴다
   "system.notice": Payload<"system.notice"> & { userId?: Id };
-  // 연결 상태(설정 마법사) — owner 사용자 룸에만 간다(events.ts)
+  // 연결 상태(설정 마법사) — 전체 상태를 싣고, 팬아웃이 사람마다 거른다(admin 이상은 전체, member 는 자기 연결만 — events.ts)
   "setup.status": Payload<"setup.status">;
+  // 연결 목록이 바뀌었다 — 워크스페이스 방으로, 본문 없음(연결 탭 통합 스펙 5.3)
+  "connections.changed": Payload<"connections.changed">;
   // 운영 사건 — owner·admin 사용자 룸으로(events.ts)
   "ops.event": Payload<"ops.event">;
   // 본인 상태가 바뀌었다 — 그 사람의 user 룸으로(다른 탭·기기가 맞춘다, events.ts). userId 는 팬아웃이 룸을 고르는 데만 쓴다
