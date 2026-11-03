@@ -7,7 +7,12 @@ import { DiscoverDialog } from "@/features/agents/DiscoverDialog";
 import { DeleteGatewayConfirm } from "@/features/setup/DeleteGatewayConfirm";
 import { BridgeTokens, GatewayMeta, PluginStatus, gatewayStateLabel } from "@/features/setup/GatewayCard";
 import { GatewayForm } from "@/features/setup/GatewayForm";
-import { useApproveGateway, useUpdateGateway } from "@/features/setup/mutations";
+import {
+  GATEWAY_URL_CHANGED,
+  isUrlChanged,
+  useApproveGateway,
+  useUpdateGateway,
+} from "@/features/setup/mutations";
 import { useSetupStatus } from "@/features/setup/queries";
 import { Section } from "@/features/setup/sections";
 import { Badge } from "@/ui/badge";
@@ -142,13 +147,18 @@ function Approval({ gateway }: { gateway: GatewaySetup }) {
     <div role="group" aria-label="승인 대기" className="flex flex-col gap-2 rounded-md border p-3">
       <p className="text-sm font-medium">승인 대기 — 승인하면 서버가 이 주소에 접속합니다</p>
       <code className="font-mono text-base break-all">{gateway.url}</code>
+      {isUrlChanged(approve.error) && (
+        <p role="alert" className="text-sm text-destructive">
+          {GATEWAY_URL_CHANGED}
+        </p>
+      )}
       <div>
         <Button
           type="button"
           size="sm"
           aria-label={`${gateway.name} 승인`}
           disabled={approve.isPending}
-          onClick={() => approve.mutate()}
+          onClick={() => approve.mutate(gateway.url)}
         >
           승인
         </Button>

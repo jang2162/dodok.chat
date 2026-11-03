@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type ApproveGatewayBody,
   type CreateGatewayBody,
   type DeleteGatewayResult,
   type GatewaySummary,
@@ -93,15 +94,26 @@ export function useUpdateGateway(id: string) {
   });
 }
 
-/** Gateway 승인(admin 이상, 연결 탭 통합 스펙 5.4) — 승인하면 서버가 그 주소로 접속을 시작한다 */
+/**
+ * 승인이 409 — 그 사이 주인이 주소를 바꿨다. CONFLICT 는 폼 오류 코드라 전역 토스트가 나지 않으므로 승인 줄이 이 문구를 그린다
+ */
+export const GATEWAY_URL_CHANGED = "주소가 바뀌었습니다 — 다시 확인하세요";
+export const isUrlChanged = (e: unknown) => e instanceof ApiRequestError && e.code === "CONFLICT";
+
+/**
+ * Gateway 승인(admin 이상, 연결 탭 통합 스펙 5.4) — 승인하면 서버가 그 주소로 접속을 시작한다. 화면에서 본 주소(`url`)를 함께 보내고,
+ * 그 사이 주인이 주소를 바꿨으면 서버가 409 로 거절한다 — 그때는 설정 상태·트리를 다시 받아 새 주소를 보이게 한다
+ */
 export function useApproveGateway(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<GatewaySummary>("POST", `/gateways/${id}/approve`),
+    mutationFn: (url: string) =>
+      api<GatewaySummary>("POST", `/gateways/${id}/approve`, { url } satisfies ApproveGatewayBody),
     meta: gatewayErrorMeta,
     onSuccess: () => gatewaysChanged(qc),
     onError: (e) => {
-      if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
+      if (isUrlChanged(e)) void gatewaysChanged(qc);
+      else if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
     },
   });
 }

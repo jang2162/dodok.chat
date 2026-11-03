@@ -11,7 +11,7 @@ import {
   statusOf,
   stubSetupServer,
 } from "../../../test/setupServer";
-import { ME, TEST_GATEWAY } from "../../../test/shellApi";
+import { ME, TEST_GATEWAY, json } from "../../../test/shellApi";
 
 // Gateway 상세(연결 탭 통합 스펙 3.3) — 섹션 셋과 역할별로 보이는 것. 섹션 안의 자세한 동작은 setup/connection·gateways 시험
 
@@ -90,10 +90,12 @@ describe("연결의 주인·승인(2단계)", () => {
     // 무엇을 승인하는지 — 주소를 한 줄로
     expect(within(approval).getByText("wss://gateway.example.com")).toBeInTheDocument();
     await userEvent.click(within(approval).getByRole("button", { name: "사무실 승인" }));
+    // 화면에 그린 주소를 함께 보낸다 — 서버는 그 주소일 때만 승인한다(리뷰 M1)
     await waitFor(() =>
       expect(
-        server.calls.some((c) => c.method === "POST" && c.url === `/api/v1/gateways/${GATEWAY_ID}/approve`),
-      ).toBe(true),
+        server.calls.find((c) => c.method === "POST" && c.url === `/api/v1/gateways/${GATEWAY_ID}/approve`)
+          ?.body,
+      ).toEqual({ url: "wss://gateway.example.com" }),
     );
     // admin 은 남의 Gateway 도 관리한다 — 플러그인·브리지 토큰
     expect(
@@ -101,6 +103,32 @@ describe("연결의 주인·승인(2단계)", () => {
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
     ).toEqual(["플러그인", "브리지 토큰", "에이전트 0"]);
+  });
+
+  it("approve 409 (url changed meanwhile) — 승인 줄에 「주소가 바뀌었습니다」 한 줄, 설정 상태를 다시 받는다", async () => {
+    const server = stubSetupServer({
+      me: ADMIN,
+      status: statusOf({ first: { approved: false }, gateway: { state: "disabled" }, plugin: null }),
+      connections: listOf({ approved: false, owner: { id: MIA, name: "mia" } }),
+    });
+    // 승인만 409 로 — 나머지는 가짜 서버 그대로
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (input, init) =>
+        init?.method === "POST" && String(input) === `/api/v1/gateways/${GATEWAY_ID}/approve`
+          ? json(409, { code: "CONFLICT", message: "gateway url changed — review it again" })
+          : base(input, init),
+      ),
+    );
+    renderConnection(ADMIN, undefined, gatewayDetailPath(GATEWAY_ID));
+    const approval = within(await detail()).getByRole("group", { name: "승인 대기" });
+    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(1));
+    await userEvent.click(within(approval).getByRole("button", { name: "사무실 승인" }));
+    expect(await within(approval).findByRole("alert")).toHaveTextContent(
+      "주소가 바뀌었습니다 — 다시 확인하세요",
+    );
+    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(2));
   });
 
   it("member's new gateway shows pending approval — 플러그인·브리지 토큰은 미리 준비할 수 있고, 승인 단추는 없다", async () => {
