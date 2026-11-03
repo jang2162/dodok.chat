@@ -118,6 +118,8 @@ Orca 환경이면 아래 한 줄이 이 절과 3절의 검증을 전부 수행�
 scripts/orca-worker.sh spawn <슬러그> <역할> [--model opus|sonnet] [--brief <파일>] [--base <브랜치>]
 ```
 
+Orca 1.4.246 부터 `orca orchestration … --json` 기본 응답이 짧아졌고, 스크립트는 응답을 파싱하는 `orchestration` 호출에 `--full` 을 붙여 옛 모양을 받는다(`--full` 을 모르는 그 전 판은 지원하지 않는다 — 거절이 실패로 드러난다). 손으로 `orchestration` 명령을 부를 때도 옛 필드(`workerState`·`dispatchStatus`·`agentTerminalHandle`, `.result.run.id`)를 보려면 `--full` 을 붙인다.
+
 스크립트가 밟는 단계 — **전부 아래에 이미 적혀 있던 것들이고, 사람이 반복해서 빠뜨리는 것들이다.**
 
 1. `orca status --json` 으로 running runtime 확인 → 아니면 즉시 실패(조용한 이탈 차단)
@@ -613,9 +615,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 스크립트는 이것을 종료코드로 가른다 — `0` 은 `worker_done` 수신, `3` 은 타임아웃, `1` 은 오류.
 **exit 3 을 보고 워커가 죽었다고 판단하지 마라. 같은 명령을 다시 부르면 된다.**
 
-**`wait` 은 받은 Delivery 를 `--ack` 로 확인 처리한다.** 이것을 빼면 Run 이 같은 배치를
-계속 재생하므로(`orca orchestration check --help`: *"replays the same Delivery until `--ack`"*),
-**먼저 끝난 워커의 보고가 다음 `wait` 에서 그대로 다시 나와 아직 도는 워커를 끝난 것으로 오인한다.**
+Orca 1.4.246 부터 consuming `check` 는 돌려준 배치를 바로 처리됨으로 표시해 재생이 없고, `--ack` 는 옛 판 호환용으로 처리된 배치에는 아무 일도 하지 않는다(`orca orchestration check --help`). 대신 응답을 잃으면 그 배치도 잃는다 — `check` 가 찍은 `--retry-request` 로 같은 배치를 다시 받거나 `orca orchestration inbox --terminal run:<runId> --limit <n> --full` 로 찾는다.
+그래서 `wait` 은 `check` 가 0 이 아닌 코드로 끝났거나 결과를 끝까지 읽지 못하면 체크포인트(3)가 아니라 **오류(1)** 로 끝내고, 끝까지 읽힌 메시지의 본문과 응답 원문·stderr·두 복구 명령을 먼저 보인다. **exit 1 이면 다시 `wait` 하기 전에 그 출력부터 읽는다** — 다시 기다려도 잃은 배치는 오지 않는다.
 
 워커가 `ask` 로 물어봐도 코디네이터가 수신하고 있지 않으면 **타임아웃(기본 15분)까지 방치되고**, 워커는 스스로 가정을
 세워 진행하거나 멈춘다. 브리프 오류를 발견한 워커의 질문이 무응답으로 흘러 워커가 독자 판단으로 진행하는 것이 그 결과다.
@@ -780,11 +781,22 @@ scripts/orca-worker.sh stop <슬러그>           # 끝난 워커 회수 뒤 그
 scripts/orca-worker.sh stop --all --dry-run   # 무엇이 정지될지 먼저 본다
 ```
 
+슬러그는 워크트리 경로의 마지막 이름(`.worktrees/dodok.chat/<슬러그>`)이다 — Orca 의 `displayName` 이 아니다. Orca 는 워커의 브랜치 이름을 바꾸며 `displayName` 도 바꾸므로(예: `orca-1246` 이 「Fix orca worker orca」가 됐다), 그 이름을 쓰면 spawn 이 준 슬러그로 `reap`·`stop`·`keep` 이 「없다」가 된다.
+
 `status` 는 **미정리가 하나라도 있으면 exit 1**, 없으면 exit 0 이다.
 `.claude/hooks/orca-worker-check.sh` 가 세션 시작과 매 프롬프트마다 이 종료코드만 보고 세션에 현황을 알린다
 (`.claude/settings.json` 의 `SessionStart`·`UserPromptSubmit` 훅). "미정리"는 둘뿐이다 — **워커가 `done` 인데 터미널이
 살아 있는 것**과 **기준 브랜치에 병합됐는데 워크트리가 남아 있는 것.** 도는 워커는 미정리가 아니고, `.orca-keep` 으로
 보호한 워크트리(`keep`)도 아니다.
+
+사람과 대화하는 워커(브레인스토밍)는 답을 기다리는 동안 activity 가 `done`, 브랜치가 커밋 0 으로 보인다. dispatch 가 진행 중이면 회수하지 않는다.
+스크립트는 그 판정을 `worker-list` 의 dispatch 로 한다 — 그 워크트리 것으로 증명된 dispatch 가 아직 진행 중(`dispatchStatus: dispatched`)이면
+`status` 는 `dispatched` 로 내고(미정리로 세지 않는다 — 훅이 깨지 않는다), `reap`·`stop` 은 거부하며 `--all-merged`·`--all` 은 건너뛴다
+(슬러그를 찍은 `--force` 로만 넘는다). **`status` 는 `worker-list` 를 한 장만 읽는다** — 부른 터미널의 Run(바인딩이 없으면 모든 Run)에서
+최신 100행이다. 모든 Run 을 끝까지 읽으면 이 머신에서 16초(Run 100개 넘게·4800행)라 훅의 시간 한도(15초)를 넘는다. 그 한 장 밖의
+dispatch(지난 세션의 Run 에서 띄운 워커 등)는 `status` 에서 예전처럼 `recover` 로 보일 수 있고, `reap`·`stop` 은 끝까지 읽어 막는다. 사람이 읽는 표의 BRANCH 칸은 만든 뒤 커밋이 하나도 없는 브랜치를 `merged` 가 아니라 `nocommit`
+으로 보인다(브랜치 reflog 로 잰다 — 생성과 이름 바꿈 말고 항목이 없다). 진행 중으로 남은 채 터미널이 죽은 dispatch 도 같은 취급이다 —
+일을 끝내지 못하고 죽은 워커일 수 있으니 터미널·보고를 확인하고 정한다.
 
 **`reap` 은 지우기 전에 두 관문을 통과시킨다. 하나라도 걸리면 거부한다.**
 
@@ -862,7 +874,7 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 타임아웃을 넉넉히 준다(왕복 수는 `orca orchestration run-list --json` 을 끝 장까지 센 Run 수다).
 그래서 한 명령은 목록을 한 번만 읽는다. `reap --all-merged`·`stop --all` 은 처음 회수할 때 읽은
 목록(과 못 읽었다는 사실)을 다음 워크트리에 돌려 쓰고 — 한 워크트리의 회수는 다른 워크트리의 행을
-바꾸지 않는다 — `attach` 는 Task 를 만들기 전에 한 번 읽어 진행 중 검사와 `--retry-of` 가 함께 쓴다. 목록을 못 읽어도 닫기는 그대로 간다(`reap` 은 폐기까지) — 그 워크트리 워커의 터미널 꼬리는 보관되지 않는다(「터미널을 끄는 것은 `stop` 이 한다」 절). 일괄 모드는 못 읽었다는 사실도 돌려 쓰므로, 한 번만 실패해도 남은 워크트리 전부가 회수 없이 닫힌다.
+바꾸지 않는다 — `attach` 는 Task 를 만들기 전에 한 번 읽어 진행 중 검사와 `--retry-of` 가 함께 쓴다. **목록을 못 읽으면 진행 중인 dispatch 가 있는지 모르므로 지우지도 끄지도 않는다(fail closed)** — 슬러그를 찍은 `reap`·`stop` 은 거부하고, `reap --all-merged`·`stop --all` 은 그 워크트리를 건너뛴다(일괄 모드는 못 읽었다는 사실도 돌려 쓰므로 한 번 실패하면 전부 건너뛴다). 터미널을 읽어 확인했으면 슬러그를 찍은 `--force` 로만 넘는다 — 그때는 닫기가 그대로 가고(`reap` 은 폐기까지) 그 워크트리 워커의 터미널 꼬리는 보관되지 않는다(「터미널을 끄는 것은 `stop` 이 한다」 절).
 
 **소유 증명과 회수 대상 판정은 다른 일이다.** 증명은 「이 워크트리 것인가」를 묻고, 판정은
 「부르면 무엇이 닫히는가」를 묻는다. 증명 단계에서 상태로 걸러 버리면 건너뛴 것과 그 이유를

@@ -52,16 +52,16 @@ allowed_flags() {
     ("terminal wait")               printf 'help json pairing-code environment terminal for timeout-ms' ;;
     ("terminal rename")             printf 'help json pairing-code environment terminal title' ;;
     ("terminal close")              printf 'help json pairing-code environment terminal tab worktree all' ;;
-    ("orchestration run-current")   printf 'help json pairing-code environment from' ;;
-    ("orchestration run-create")    printf 'help json pairing-code environment objective from retry-request' ;;
-    ("orchestration task-create")   printf 'help json pairing-code environment spec task-title display-name deps parent run from retry-request' ;;
-    ("orchestration worker-start")  printf 'help json pairing-code environment task on worktree name repo base-branch display-name comment setup agent model effort terminal retry-of timeout-ms run from retry-request' ;;
-    ("orchestration worker-list")   printf 'help json pairing-code environment run terminal-state include-remote cursor limit' ;;
-    ("orchestration run-list")      printf 'help json pairing-code environment limit cursor' ;;
-    ("orchestration request-show")  printf 'help json pairing-code environment request' ;;
-    ("orchestration worker-show")   printf 'help json pairing-code environment dispatch' ;;
-    ("orchestration worker-release") printf 'help json pairing-code environment dispatch retry-request' ;;
-    ("orchestration check")         printf 'help json pairing-code environment terminal run ack unread peek all types format wait timeout-ms retry-request' ;;
+    ("orchestration run-current")   printf 'help json pairing-code environment from full' ;;
+    ("orchestration run-create")    printf 'help json pairing-code environment objective from retry-request full' ;;
+    ("orchestration task-create")   printf 'help json pairing-code environment spec task-title display-name deps parent run from retry-request full' ;;
+    ("orchestration worker-start")  printf 'help json pairing-code environment task on worktree name repo base-branch display-name comment setup agent model effort terminal retry-of timeout-ms run from retry-request full' ;;
+    ("orchestration worker-list")   printf 'help json pairing-code environment run terminal-state include-remote cursor limit full' ;;
+    ("orchestration run-list")      printf 'help json pairing-code environment limit cursor full' ;;
+    ("orchestration request-show")  printf 'help json pairing-code environment request full' ;;
+    ("orchestration worker-show")   printf 'help json pairing-code environment dispatch full' ;;
+    ("orchestration worker-release") printf 'help json pairing-code environment dispatch retry-request full' ;;
+    ("orchestration check")         printf 'help json pairing-code environment terminal run ack unread peek all types format wait timeout-ms retry-request full' ;;
     (*)                             return 1 ;;
   esac
 }
@@ -97,6 +97,20 @@ die_invalid() {
 }
 
 ALLOWED="$(allowed_flags "$sub")" || die_invalid "Unknown command: $sub"
+
+# 응답 모양. Orca 1.4.246 부터 `orchestration` 명령의 `--json` 기본 응답은 짧은 모양이고
+# `--full` 이어야 옛(긴) 모양이 온다. 스텁도 그렇게 답해야 `--full` 을 빠뜨린 호출이 시험에서
+# 드러난다. STUB_ORCA_FORCE_SHORT=1 이면 `--full` 이 있어도 짧은 모양을 낸다 — 짧은 모양을
+# 받았을 때의 동작(파싱 폴백)을 재기 위한 것이다.
+#
+# 짧은 모양은 실물 표본(2026-11-02, 1.4.246)을 옮겼다. 긴 모양 중 `task-create` 와
+# `worker-start` 의 영수증은 **1.4.246 의 `--full` 실물을 이 저장소에서 재지 못했다**
+# (워커 터미널은 남의 Run 에 태스크를 만들 수 없다) — 그 둘은 이전 스텁의 모양 그대로다.
+full=no
+for arg in "$@"; do
+  [ "$arg" = "--full" ] && full=yes
+done
+[ "${STUB_ORCA_FORCE_SHORT:-}" = "1" ] && full=no
 
 # 미지 플래그를 거부한다.
 for arg in "$@"; do
@@ -371,7 +385,16 @@ stub_worker_list() {
     | .result.scope = (if $source == "all" then {source: "all"} else {source: $source, run: $run} end)
     | .result.page = {limit: $n, total: $total, hasMore: ($more or $stuck != ""),
         nextCursor: (if $stuck != "" then "stub-cursor-\($n)"
-                     elif $more then "stub-cursor-\($off + $n)" else null end)}' "$WORKERS_FIXTURE"
+                     elif $more then "stub-cursor-\($off + $n)" else null end)}' "$WORKERS_FIXTURE" \
+    | if [ "$full" = "yes" ]; then cat; else
+        # 짧은 모양: 실물 표본의 키만 남긴다(workerState·dispatchStatus·agentTerminalHandle·
+        # resource·projection 이 없다).
+        jq '.result.workers |= map({dispatchId, taskId, state: .workerState,
+              outcome: (.projection.outcome? // (if .dispatchStatus == "dispatched" then "in_progress" else .dispatchStatus end)),
+              liveness: "unverifiable", terminal: .agentTerminalHandle,
+              terminalState, workspace: (.resource.worktreeId? // .projection.workspace.id?),
+              host: "local"})'
+      fi
 }
 
 # run-list 는 픽스처 행의 runId 로 Run 목록을 만든다. 실물처럼 다음 커서는 `page` 가 아니라
@@ -388,6 +411,20 @@ stub_run_list() {
     "$WORKERS_FIXTURE"
 }
 
+stub_check_body() {
+  # STUB_ORCA_CHECK_HEARTBEAT_ONCE 가 가리키는 파일이 아직 없으면 **첫 호출만**
+  # heartbeat 배치를 낸다(그 뒤로는 평소 픽스처). 런타임이 --types 로 heartbeat 를
+  # 걸러 주지 않는 실제 동작을 재현한다.
+  if [ -n "${STUB_ORCA_CHECK_HEARTBEAT_ONCE:-}" ] && [ ! -f "$STUB_ORCA_CHECK_HEARTBEAT_ONCE" ]; then
+    : > "$STUB_ORCA_CHECK_HEARTBEAT_ONCE"
+    printf '{"ok":true,"result":{"count":1,"deliveryId":"dlv_hb","messages":[{"type":"heartbeat","subject":"alive","body":""}]}}\n'
+  elif [ -n "${STUB_ORCA_CHECK_FIXTURE:-}" ]; then
+    cat "$STUB_ORCA_CHECK_FIXTURE"
+  else
+    printf '{"ok":true,"result":{"count":0,"messages":[]}}\n'
+  fi
+}
+
 case "$sub" in
   (status)           printf '{"ok":true,"result":{"runtime":{"state":"ready"}}}\n' ;;
   ("orchestration request-show")
@@ -399,7 +436,10 @@ case "$sub" in
     # (.result.worker.agent_terminal_handle / .result.dispatch.id)과 같은 이름을 쓴다.
     # STUB_ORCA_WS_NO_HANDLE 이면 핸들이 빠진 영수증을 낸다 — 그때 프로덕션이
     # terminal list 로 되짚는지 재기 위한 것이다.
-    if [ -n "${STUB_ORCA_WS_NO_HANDLE:-}" ]; then
+    if [ "$full" != "yes" ]; then
+      # 1.4.246 의 짧은 영수증 — 핸들이 `.result.terminal` 에 문자열로 온다.
+      printf '{"ok":true,"result":{"dispatchId":"ctx_stub","taskId":"task_stub","runId":"run_stub","state":"ready","agent":"claude","model":null,"mode":"supervised","terminal":"term_stub","workspace":"repo1::/w","next":"wait"}}\n'
+    elif [ -n "${STUB_ORCA_WS_NO_HANDLE:-}" ]; then
       printf '{"ok":true,"result":{"dispatch":{"id":"ctx_stub"},"worker":{"state":"ready","stage":"input_accepted"},"mutation":{"requestId":"%s","replayed":false}}}\n' "$ws_request_id"
     else
       printf '{"ok":true,"result":{"dispatch":{"id":"ctx_stub"},"worker":{"state":"ready","stage":"input_accepted","agent_terminal_handle":"term_stub","effects":[{"kind":"dispatch_input","role":"agent","id":"term_stub","state":"accepted"}]},"mutation":{"requestId":"%s","replayed":false}}}\n' "$ws_request_id"
@@ -423,24 +463,33 @@ case "$sub" in
   ("orchestration run-current")
     # STUB_ORCA_NO_RUN 이면 바인딩이 없는 응답을 낸다(실물의 run_required 재현).
     if [ -n "${STUB_ORCA_NO_RUN:-}" ]; then
-      printf '{"ok":true,"result":{}}\n'
-    else
+      # 짧은 모양도 바인딩이 없으면 runId 가 null 이다(실물 워커 터미널에서 확인).
+      if [ "$full" = "yes" ]; then printf '{"ok":true,"result":{}}\n'
+      else printf '{"ok":true,"result":{"runId":null}}\n'; fi
+    elif [ "$full" = "yes" ]; then
       printf '{"ok":true,"result":{"run":{"id":"run_stub"}}}\n'
+    else
+      printf '{"ok":true,"result":{"runId":"run_stub","objective":"stub"}}\n'
     fi
     ;;
   ("orchestration run-create")
     if [ -n "${STUB_ORCA_NO_RUN_ID:-}" ]; then
       printf '{"ok":true,"result":{}}\n'
-    else
+    elif [ "$full" = "yes" ]; then
       printf '{"ok":true,"result":{"run":{"id":"run_stub_created"}}}\n'
+    else
+      printf '{"ok":true,"result":{"runId":"run_stub_created"}}\n'
     fi
     ;;
   ("orchestration task-create")
     # STUB_ORCA_NO_TASK_ID 면 id 가 빠진 응답을 낸다(실물 실패 재현).
     if [ -n "${STUB_ORCA_NO_TASK_ID:-}" ]; then
       printf '{"ok":true,"result":{}}\n'
-    else
+    elif [ "$full" = "yes" ]; then
       printf '{"ok":true,"result":{"task":{"id":"task_stub"}}}\n'
+    else
+      # 1.4.246 의 짧은 모양(조율자가 실물에서 본 것).
+      printf '{"ok":true,"result":{"taskId":"task_stub","status":"ready"}}\n'
     fi
     ;;
   ("terminal create")
@@ -485,17 +534,26 @@ case "$sub" in
     fi
     ;;
   ("orchestration check")
-    # STUB_ORCA_CHECK_HEARTBEAT_ONCE 가 가리키는 파일이 아직 없으면 **첫 호출만**
-    # heartbeat 배치를 낸다(그 뒤로는 평소 픽스처). 런타임이 --types 로 heartbeat 를
-    # 걸러 주지 않는 실제 동작을 재현한다.
-    if [ -n "${STUB_ORCA_CHECK_HEARTBEAT_ONCE:-}" ] && [ ! -f "$STUB_ORCA_CHECK_HEARTBEAT_ONCE" ]; then
-      : > "$STUB_ORCA_CHECK_HEARTBEAT_ONCE"
-      printf '{"ok":true,"result":{"count":1,"deliveryId":"dlv_hb","messages":[{"type":"heartbeat","subject":"alive","body":""}]}}\n'
-    elif [ -n "${STUB_ORCA_CHECK_FIXTURE:-}" ]; then
-      cat "$STUB_ORCA_CHECK_FIXTURE"
-    else
-      printf '{"ok":true,"result":{"count":0,"messages":[]}}\n'
+    # 짧은 모양은 `count`·`deliveryId` 가 없다(실물 표본). 결과 앞에 keepalive 줄을 붙이려면
+    # STUB_ORCA_CHECK_KEEPALIVE 에 줄 수를 준다 — 실물 `check --wait` 는 15초마다
+    # `{"_keepalive":true,...}` 를 내고, 두 흐름을 합쳐 받은 표본은 그 줄이 결과 앞에 있었다.
+    i=0
+    while [ "$i" -lt "${STUB_ORCA_CHECK_KEEPALIVE:-0}" ]; do
+      i=$((i + 1))
+      printf '{"_keepalive":true,"_heartbeat":true,"elapsedMs":%s,"deadlineMs":600000}\n' "$((i * 15000))"
+    done
+    stub_check_body | if [ "$full" = "yes" ]; then cat; else
+      jq -c 'if type == "object" and (.result? | type) == "object"
+             then .result |= del(.count, .deliveryId) else . end' 2>/dev/null || cat
     fi
+    # CLI 가 결과를 내다 실패한 꼴. 1.4.246 의 consuming check 는 배치를 돌려주는 순간 처리됨으로
+    # 표시하므로, 이 꼴에서 받은 것을 버리면 그 배치를 잃는다. 잘린 응답은 픽스처 파일로 준다.
+    #   STUB_ORCA_CHECK_STDERR  stderr 에 낼 줄. `check --help` 는 「the --retry-request it printed」라고만
+    #                           하고, 실물이 그것을 어느 흐름에 찍는지는 이 저장소에서 재지 못했다
+    #   STUB_ORCA_CHECK_EXIT    종료 코드
+    [ -z "${STUB_ORCA_CHECK_STDERR:-}" ] || printf '%s\n' "$STUB_ORCA_CHECK_STDERR" >&2
+    exit "${STUB_ORCA_CHECK_EXIT:-0}"
     ;;
   (*)                printf '{"ok":true,"result":{}}\n' ;;
 esac
+

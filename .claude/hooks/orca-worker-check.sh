@@ -44,6 +44,10 @@ body="$(
       # 조용히 빠져서, 터미널이 붙은 잔해는 사람이 status 를 직접 칠 때만 보인다.
       (orphan-live)
         printf '  %-14s 잔해 디렉터리에 터미널 %s개 → 그 터미널을 끝내야 제거된다\n' "$slug" "$live" ;;
+      # dispatched 도 미정리로 세지 않는다 — activity 는 done 이지만 dispatch 가 진행 중인 워커다
+      # (사람의 답을 기다리는 브레인스토밍 워커가 그렇다). 회수 대상으로 읽히지 않게 따로 적는다.
+      (dispatched)
+        printf '  %-14s 워커 done 으로 보이나 dispatch 진행 중 → 회수하지 않는다(답을 기다리는 워커일 수 있다)\n' "$slug" ;;
     esac
   done
   printf '\n정리: scripts/orca-worker.sh reap <슬러그> (또는 --all-merged)\n'

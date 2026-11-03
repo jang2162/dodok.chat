@@ -6,7 +6,7 @@
 #     --terminal 이 없으면 살아 있는 에이전트 터미널을 재사용하되, review 는 늘 새로 띄운다
 #     (리뷰어는 구현자와 다른 세션이어야 한다).
 #   status [--porcelain]
-#   wait [--timeout-ms <n>]
+#   wait [--timeout-ms <n>]       # 0=받았다, 3=타임아웃(체크포인트), 1=check 가 오류로 답했다
 #   reap <슬러그> | --all-merged [--base <브랜치>] [--force]
 #   stop <슬러그> | --all [--force] [--dry-run]   # 끝난 워커를 회수하고 워크트리의 터미널만 정지
 #   keep <슬러그> [--remove]
@@ -18,6 +18,16 @@
 set -u
 
 # Orca CLI 실행파일. 테스트는 ORCA_CLI_COMMAND 로 스텁을 주입한다.
+#
+# **응답을 파싱하는 `orchestration` 호출에는 `--full` 을 붙인다.** Orca 1.4.246 부터
+# `--json` 기본 응답이 짧은 모양이 됐다 — `run-current` 는 `.result.run.id` 대신
+# `.result.runId`, `task-create` 는 `.result.taskId`, `worker-list` 항목은 `workerState`·
+# `dispatchStatus`·`agentTerminalHandle`·`resource` 가 없고, `check` 는 `count`·`deliveryId`
+# 가 없다. 옛 모양을 파싱하던 이 스크립트는 오류 없이 어긋났다(태스크를 만들고도
+# 「task-create 실패」, worker_done 을 소비하고도 「아직 신호 없음」). `--full` 이면 옛 모양이
+# 그대로 온다. `terminal`·`worktree`·`status` 명령은 `--full` 이 없고 모양도 그대로다.
+# **`--full` 을 모르는 옛 Orca 는 지원하지 않는다**(1.4.246 이상) — 그 판은 invalid_argument 로
+# 거절하므로 조용히 어긋나지 않고 실패로 드러난다.
 orca_cli() {
   if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
     printf '%s\n' "$ORCA_CLI_COMMAND"
@@ -201,7 +211,11 @@ collect_worktrees() {
         | $w[]
         | select(.repoId == $repo)
         | select(.isMainWorktree != true)
-        | [ .displayName,
+        # 슬러그는 경로의 마지막 이름이다(`.worktrees/<저장소>/<슬러그>`) — `displayName` 이 아니다.
+        # Orca 는 워커의 브랜치 이름을 바꾸며 displayName 도 바꾼다(2026-11-02 실물: orca-1246 이
+        # 「Fix orca worker orca」가 됐다). 그 이름을 쓰면 spawn 이 준 슬러그로 reap·stop·keep 이
+        # 「없다」가 되고, 잔해 판정(collect_orphans 의 basename 비교)과도 어긋난다.
+        | [ (.path | sub("/+$"; "") | split("/") | last),
             # F3: 마지막 원소 하나가 아니라 "살아 있는 agent 가 하나라도 있는가"다.
             # 실물은 한 워크트리에 agent 가 여럿 붙고 순서 보장이 없다.
             ( [ .agents[]? | .state ] as $st
@@ -333,6 +347,10 @@ next_action() {
       printf '잔해 디렉터리인데 터미널 %s개가 붙어 있다 — 그 터미널을 끝내야 제거된다\n' "$3"
       ;;
     (keep)    printf '보호됨(.orca-keep) — 해제는 keep %s --remove\n' "$2" ;;
+    (dispatched)
+      # 워커가 끝난 것처럼 보이지만 dispatch 가 아직 진행 중이다(`live_dispatch_in`).
+      printf 'dispatch %s 진행 중 — 회수하지 않는다(사람의 답을 기다리는 워커일 수 있다)\n' "$3"
+      ;;
     (waiting) printf '대기 중\n' ;;
     (*)       printf '작업 중\n' ;;
   esac
@@ -351,6 +369,7 @@ cmd_status() {
 
   local unsettled=0 printed_header=no rows tl=""
   local slug state live path branch merged dirty token
+  local repo="" wl="" wl_rc=- live_dispatch="" branch_label
   rows="$(collect_worktrees)"
 
   while IFS="$(printf '\t')" read -r slug state live path branch; do
@@ -363,7 +382,32 @@ cmd_status() {
     else
       token="$(classify_worktree "$state" "$live" "$merged" "$dirty")"
     fi
+    # 손을 요구하는 판정은 dispatch 로 한 번 더 잰다(`live_dispatch_in`). 목록은 그런 행이
+    # 있을 때 한 번만 읽는다 — 대부분의 실행(훅이 매 프롬프트 부른다)은 왕복이 늘지 않는다.
+    # 못 읽으면 판정을 바꾸지 않는다(이전과 같은 표가 나온다).
+    #
+    # **여기서는 `all_workers` 를 부르지 않고 한 장만 읽는다**(`status_workers`). 모든 Run 을
+    # 끝까지 읽으면 2026-11-03 이 머신에서 16초(Run 100개 넘게·4816행)였고, 이 함수를 부르는
+    # 훅의 시간 한도는 15초다 — 넘으면 훅이 죽어 현황이 통째로 사라진다. reap·stop 은 끝까지 읽는다.
+    live_dispatch=""
+    case "$token" in
+      (recover|reap|blocked)
+        [ "$wl_rc" != "-" ] || { wl="$(status_workers)"; wl_rc=$?; }
+        if [ "$wl_rc" -eq 0 ]; then
+          [ -n "$repo" ] || repo="$(repo_id)"
+          live_dispatch="$(live_dispatch_in "$repo::$path" "$wl")"
+          [ -z "$live_dispatch" ] || token=dispatched
+        fi
+        ;;
+    esac
     [ "$(is_unsettled "$token")" = "yes" ] && unsettled=$((unsettled + 1))
+    if [ "$merged" != yes ]; then
+      branch_label=ahead
+    elif [ "$(branch_without_commits "$branch")" = yes ]; then
+      branch_label=nocommit
+    else
+      branch_label=merged
+    fi
 
     if [ "$porcelain" = "yes" ]; then
       printf '%s\t%s\t%s\t%s\t%s\n' "$token" "$slug" "$state" "$live" "$dirty"
@@ -374,9 +418,8 @@ cmd_status() {
         printed_header=yes
       fi
       printf '%-14s %-8s %6s %8s  → %s\n' \
-        "$slug" "$state" "$live" \
-        "$([ "$merged" = yes ] && printf 'merged' || printf 'ahead')" \
-        "$(next_action "$token" "$slug" "$dirty")"
+        "$slug" "$state" "$live" "$branch_label" \
+        "$(next_action "$token" "$slug" "$([ "$token" = dispatched ] && printf '%s' "$live_dispatch" || printf '%s' "$dirty")")"
     fi
   done <<EOF
 $rows
@@ -500,7 +543,7 @@ orca_pages() {
 # 못 읽으면 rc=1 이다(「0건」과 다르다 — `orca_pages`).
 all_workers() {
   local pages first scope bound runs rid more
-  pages="$(orca_pages '.result.page.nextCursor' orchestration worker-list --json)" || return 1
+  pages="$(orca_pages '.result.page.nextCursor' orchestration worker-list --json --full)" || return 1
   # 범위는 첫 장의 `scope` 가 말한다. 그것을 싣지 않는 CLI 는 Run 범위가 생기기 전 것이라
   # 늘 모든 dispatch 를 냈다.
   first="$(printf '%s\n' "$pages" | sed -n 1p)"
@@ -510,12 +553,12 @@ all_workers() {
     # 읽는다 — 같은 Run 을 두 번 읽으면 같은 dispatch 를 두 번 회수하고 두 번 센다.
     bound="$(printf '%s' "$first" | jq -r '.result.scope.run // empty' 2>/dev/null)"
     [ -n "$bound" ] || pages=""
-    runs="$(orca_pages '.result.nextCursor' orchestration run-list --json)" || return 1
+    runs="$(orca_pages '.result.nextCursor' orchestration run-list --json --full)" || return 1
     printf '%s\n' "$runs" | jq -s -e 'all(.[]; .result.runs | type == "array")' >/dev/null 2>&1 \
       || return 1
     for rid in $(printf '%s\n' "$runs" | jq -r '.result.runs[].id // empty'); do
       [ "$rid" != "$bound" ] || continue
-      more="$(orca_pages '.result.page.nextCursor' orchestration worker-list --run "$rid" --json)" \
+      more="$(orca_pages '.result.page.nextCursor' orchestration worker-list --run "$rid" --json --full)" \
         || return 1
       pages="$pages
 $more"
@@ -696,6 +739,62 @@ EOF
     "$n" "$skipped" "$failed"
 }
 
+# 이 워크트리에서 **아직 진행 중인** dispatch 하나의 id 를 낸다. 없으면 빈 문자열.
+#
+# `worktree ps` 의 activity(`collect_worktrees` 의 워커 상태)만으로는 「끝났다」를 알 수 없다.
+# 사람과 대화하는 워커(브레인스토밍)는 답을 기다리는 동안 activity 가 `done` 이고, 아직
+# 커밋이 없어 브랜치가 base 에 들어간 것(merged)으로 보인다 — status 와 정리 훅이 그 워커를
+# 「워커 done · 회수 필요」로 내고, reap 은 병합·클린 관문을 그대로 통과한다. 정본은 dispatch 다:
+# worker_done 을 보내기 전까지 `dispatchStatus` 가 `dispatched`(짧은 모양으로는 `outcome:
+# in_progress`)다. 그 dispatch 가 있으면 회수·폐기 대상이 아니다.
+#
+# 소속은 정확 일치로만 잰다 — 자원 기록(`resource.worktreeId`)이나 projection 의 작업 자리
+# (`projection.workspace.id`). 터미널이 이미 죽은 dispatch 도 진행 중이면 낸다(일을 끝내지
+# 못하고 죽은 워커일 수 있다 — 그때도 사람이 터미널을 읽고 정한다).
+#
+# 사용: live_dispatch_in <워크트리 id> <all_workers 의 출력>
+live_dispatch_in() {
+  printf '%s\n' "$2" | jq -r --arg wt "$1" '
+    .result.workers[]?
+    | select((.resource.worktreeId? // "") == $wt
+             or (.projection.workspace.id? // "") == $wt
+             or ((.workspace? | strings) // "") == $wt)
+    | select(.dispatchStatus? == "dispatched"
+             or (.projection.outcome? // .outcome? // "") == "in_progress")
+    | .dispatchId // empty' 2>/dev/null | sed -n 1p
+}
+
+# status 가 진행 중 dispatch 를 재는 목록 — `worker-list` 한 장(최신 100행)이다.
+# 범위는 부른 터미널의 Run(바인딩이 없으면 모든 Run)이다. 조율자는 spawn 이 Run 을 묶으므로
+# 그 세션에서 띄운 워커가 여기 든다. 그 밖(지난 세션의 Run·100행 뒤)은 보지 못한다 —
+# status 의 판정은 예전처럼 recover 로 남고, reap·stop 이 `all_workers` 로 끝까지 읽어 막는다.
+# 못 읽으면 rc=1 이다.
+status_workers() {
+  local out
+  out="$("$(orca_cli)" orchestration worker-list --json --full 2>/dev/null)" || return 1
+  printf '%s' "$out" | jq -e '.result.workers | type == "array"' >/dev/null 2>&1 || return 1
+  printf '%s\n' "$out"
+}
+
+# 브랜치에 커밋이 하나도 없는가(만들어진 뒤 이름만 바뀌었다). yes|no|unknown.
+#
+# 커밋이 없는 브랜치는 base 의 조상이라 `git_merged` 가 `yes` 다 — 「병합됐다」와 「아무것도
+# 안 했다」가 같은 `merged` 로 보인다. 둘을 가르는 것은 브랜치 reflog 다: 생성(`branch: Created`)과
+# 이름 바꿈(`Branch: renamed` — Orca 가 워커의 브랜치 이름을 바꾼다) 말고 항목이 없으면 커밋이 없다.
+# reflog 가 없으면(꺼졌거나 만료) 모른다 — `merged` 로 둔다.
+# 사용: branch_without_commits <브랜치> [저장소경로]
+branch_without_commits() {
+  local branch="$1" root="${2:-$(repo_root)}" log
+  log="$(git -C "$root" reflog show --format='%gs' "refs/heads/$branch" -- 2>/dev/null)"
+  if [ -z "$log" ]; then
+    printf 'unknown\n'
+  elif printf '%s\n' "$log" | grep -v -E '^(branch: Created|Branch: renamed)' | grep -q .; then
+    printf 'no\n'
+  else
+    printf 'yes\n'
+  fi
+}
+
 # 경로 하나에 붙어 있는 Orca 터미널 수. 판정 불가면 `unknown` 을 낸다.
 #
 # 잔해(orphan) 디렉터리는 Orca 의 워크트리 목록에 없어 `liveTerminalCount` 를 갖지
@@ -793,7 +892,7 @@ cmd_reap() {
   [ -n "$base" ] || base="$(git -C "$root" branch --show-current)"
 
   local slug state live path branch refused=0 matched=0 wt_id merged dirty token rows tl=""
-  local wl="" wl_rc=-
+  local wl="" wl_rc=- live_dispatch
   rows="$(collect_worktrees)"
   while IFS="$(printf '\t')" read -r slug state live path branch; do
     [ -n "$slug" ] || continue
@@ -829,6 +928,39 @@ cmd_reap() {
         "$slug" "$state" "$live" >&2
       refused=$((refused + 1))
       continue
+    fi
+
+    # activity 가 done 이어도 dispatch 가 진행 중이면 끝난 워커가 아니다(`live_dispatch_in`) —
+    # 사람의 답을 기다리는 브레인스토밍 워커는 커밋 0 이라 병합·클린 관문을 그대로 통과한다.
+    # 목록은 여기서 처음 읽고 아래 회수가 돌려 쓴다. **못 읽으면 지우지 않는다(fail closed)** —
+    # 진행 중인지 모르는 채 지나가면 답을 기다리는 워커의 워크트리가 그대로 사라진다. 일괄 모드는
+    # 건너뛰고, 슬러그는 거부하며, 슬러그를 찍은 `--force` 만 넘는다(진행 중 dispatch 와 같은 규칙).
+    [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+    if [ "$wl_rc" -ne 0 ] && [ "$force" != "yes" ]; then
+      if [ "$target" = "__all__" ]; then
+        printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인지 모른다 — 건너뛴다\n' "$slug" >&2
+        continue
+      fi
+      printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인 dispatch 가 있는지 모른다 — 지우지 않았다. 다시 부르거나, 터미널을 읽어 확인했으면 --force\n' \
+        "$slug" >&2
+      refused=$((refused + 1))
+      continue
+    fi
+    if [ "$wl_rc" -eq 0 ]; then
+      live_dispatch="$(live_dispatch_in "$(repo_id)::$path" "$wl")"
+      if [ -n "$live_dispatch" ]; then
+        if [ "$target" = "__all__" ]; then
+          printf '%s: dispatch %s 가 진행 중이라 건너뛴다(사람의 답을 기다리는 워커일 수 있다)\n' \
+            "$slug" "$live_dispatch"
+          continue
+        fi
+        if [ "$force" != "yes" ]; then
+          printf '%s: dispatch %s 가 아직 진행 중이다 — 사람의 답을 기다리는 워커일 수 있다. 터미널을 읽어 확인하고, 그래도 지우려면 --force\n' \
+            "$slug" "$live_dispatch" >&2
+          refused=$((refused + 1))
+          continue
+        fi
+      fi
     fi
 
     # 자기가 서 있는 워크트리는 지우지 않는다.
@@ -952,7 +1084,7 @@ cmd_stop() {
     return 2
   fi
 
-  local slug state live path branch refused=0 matched=0 rows repo wl="" wl_rc=-
+  local slug state live path branch refused=0 matched=0 rows repo wl="" wl_rc=- live_dispatch
   repo="$(repo_id)"
   [ -n "$repo" ] || { printf 'stop: 이 저장소의 repoId 를 얻지 못했다. 중단한다\n' >&2; return 1; }
   rows="$(collect_worktrees)"
@@ -994,6 +1126,38 @@ cmd_stop() {
         "$slug" "$state" >&2
       refused=$((refused + 1))
       continue
+    fi
+
+    # activity 가 done 이어도 dispatch 가 진행 중이면 도는 워커와 같게 다룬다(`live_dispatch_in`) —
+    # 답을 기다리는 브레인스토밍 워커의 터미널을 끄면 그 대화가 통째로 사라진다.
+    # 터미널이 없으면 끌 것도 없으니 목록을 읽지 않는다. **못 읽으면 끄지 않는다(fail closed)** —
+    # 일괄 모드는 건너뛰고 슬러그는 거부한다. 슬러그를 찍은 `--force` 만 넘는다.
+    if [ "$force" != "yes" ] && [ "$live" != "0" ]; then
+      [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+      if [ "$wl_rc" -ne 0 ]; then
+        if [ "$target" = "__all__" ]; then
+          printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인지 모른다 — 건너뛴다\n' "$slug" >&2
+          continue
+        fi
+        printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인 dispatch 가 있는지 모른다 — 끄지 않았다. 다시 부르거나, 터미널을 읽어 확인했으면 --force\n' \
+          "$slug" >&2
+        refused=$((refused + 1))
+        continue
+      fi
+      if [ "$wl_rc" -eq 0 ]; then
+        live_dispatch="$(live_dispatch_in "$repo::$path" "$wl")"
+        if [ -n "$live_dispatch" ]; then
+          if [ "$target" = "__all__" ]; then
+            printf '%s: dispatch %s 가 진행 중이라 건너뛴다(사람의 답을 기다리는 워커일 수 있다). 끄려면 슬러그를 찍고 --force\n' \
+              "$slug" "$live_dispatch"
+            continue
+          fi
+          printf '%s: dispatch %s 가 아직 진행 중이다(워커 %s) — 사람의 답을 기다리는 워커일 수 있다. 정말 끊으려면 --force 를 준다\n' \
+            "$slug" "$live_dispatch" "$state" >&2
+          refused=$((refused + 1))
+          continue
+        fi
+      fi
     fi
 
     if [ "$live" = "0" ]; then
@@ -1336,21 +1500,33 @@ wait_rendered() {
 #
 # 워크트리를 만들기 *전에* 부른다 — 2026-09-01 에 이 확인이 없어 task-create 가
 # run_required 로 죽었는데, 그때는 이미 워크트리가 만들어진 뒤라 잔해가 남았다.
+#
+# id 는 `--full` 의 옛 모양(`.result.run.id`)으로 읽고, 짧은 모양(`.result.runId`)도 함께 받는다.
+# 1.4.246 이 기본 모양을 바꿨을 때 이 한 줄이 Run 을 못 찾아 spawn 이 멈췄다 — `--full` 의
+# 뜻이 다음 판에서 또 바뀌어도 바인딩된 Run 을 놓치지 않게 두 자리를 다 본다.
 ensure_run() {
   local objective="$1" rid
-  rid="$("$(orca_cli)" orchestration run-current --json 2>/dev/null \
+  rid="$("$(orca_cli)" orchestration run-current --json --full 2>/dev/null \
     | jq -r '.result.run.id // .result.runId // empty')"
   if [ -n "$rid" ]; then
     printf 'Run 바인딩 확인: %s\n' "$rid" >&2
     return 0
   fi
-  rid="$("$(orca_cli)" orchestration run-create --objective "$objective" --json 2>/dev/null \
+  rid="$("$(orca_cli)" orchestration run-create --objective "$objective" --json --full 2>/dev/null \
     | jq -r '.result.run.id // .result.runId // empty')"
   [ -n "$rid" ] || {
     printf 'spawn: Run 을 만들지 못했다(run-create 실패). 워크트리를 만들지 않고 중단한다\n' >&2
     return 1
   }
   printf 'Run 생성: %s\n' "$rid" >&2
+}
+
+# task-create 응답에서 태스크 id 를 낸다. 없으면 빈 문자열.
+# `--full` 의 옛 모양(`.result.task.id`)과 1.4.246 의 짧은 모양(`.result.taskId`)을 다 읽는다 —
+# 짧은 모양을 못 읽어 태스크를 만들고도 「task-create 실패」로 멈춘 일이 있다(ensure_run 과 같은 이유).
+task_id_from() {
+  printf '%s' "$1" \
+    | jq -r '.result.task.id? // .result.taskId? // .result.id? // empty' 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -1483,7 +1659,7 @@ attach_verdict() {
                     | if . == null then "" else tostring end' "$resp" 2>/dev/null)"
 
   if [ -n "$rid" ]; then
-    state="$("$(orca_cli)" orchestration request-show --request "$rid" --json 2>/dev/null \
+    state="$("$(orca_cli)" orchestration request-show --request "$rid" --json --full 2>/dev/null \
       | jq -r '.result.state? // empty')"
     case "$state" in
       completed) printf 'landed %s\n' "$rid";    return 0 ;;
@@ -1531,7 +1707,7 @@ uint_env() {
 # 사용: replay_worker_start <응답파일> <requestId> <worker-start 인자...>
 replay_worker_start() {
   local resp="$1" rid="$2"; shift 2
-  "$(orca_cli)" orchestration worker-start "$@" --retry-request "$rid" --json \
+  "$(orca_cli)" orchestration worker-start "$@" --retry-request "$rid" --json --full \
     >"$resp" 2>"$resp.err"
 }
 
@@ -1557,7 +1733,7 @@ attach_worker() {
 
   while :; do
     tries=$((tries + 1))
-    if "$(orca_cli)" orchestration worker-start "$@" --json >"$resp" 2>"$resp.err"; then
+    if "$(orca_cli)" orchestration worker-start "$@" --json --full >"$resp" 2>"$resp.err"; then
       return 0
     fi
 
@@ -1648,12 +1824,17 @@ attach_worker() {
 # 붙은 뒤 워커의 터미널 핸들을 찾는다.
 # 영수증의 필드 위치는 런타임 버전마다 다르므로, 못 찾으면 워크트리로 되짚는다
 # (orca skills get orchestration 의 핸들 복구 순서와 같다).
+#
+# 1.4.246 의 짧은 영수증은 핸들을 `.result.terminal` 에 **문자열로** 둔다. 그 자리를 못 읽으면
+# 되짚기로 넘어가는데, 갓 뜬 터미널은 `agentIdentity` 가 아직 null 일 수 있어 그쪽도 비고
+# spawn 이 「붙긴 했으나 터미널 핸들을 얻지 못했다」로 멈췄다. 호출은 `--full` 이지만 그 자리도 읽는다.
 attach_handle() {
   local resp="$1" wt_id="$2" handle
   handle="$(jq -r '.result.worker.agent_terminal_handle?
                    // .result.worker.agentTerminalHandle?
                    // .result.agentTerminalHandle?
                    // .result.terminal.handle?
+                   // (.result.terminal? | strings)
                    // empty' "$resp" 2>/dev/null)"
   if [ -z "$handle" ]; then
     handle="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
@@ -1729,8 +1910,8 @@ cmd_spawn() {
 
   local tc_out
   tc_out="$("$(orca_cli)" orchestration task-create \
-      --spec "$spec" --task-title "$role:$slug" --json 2>&1)"
-  task_id="$(printf '%s' "$tc_out" | jq -r '.result.task.id // .result.id // empty' 2>/dev/null)"
+      --spec "$spec" --task-title "$role:$slug" --json --full 2>&1)"
+  task_id="$(task_id_from "$tc_out")"
   # handle 에만 있고 task_id 에는 없던 가드다. 없으면 task-create 실패가
   # worker-start 실패로 이어지고도 exit 0 성공 요약으로 끝난다.
   [ -n "$task_id" ] || {
@@ -1928,8 +2109,8 @@ cmd_attach() {
   fi
 
   tc_out="$("$(orca_cli)" orchestration task-create \
-      --spec "$spec" --task-title "$role:$slug" --json 2>&1)"
-  task_id="$(printf '%s' "$tc_out" | jq -r '.result.task.id // .result.id // empty' 2>/dev/null)"
+      --spec "$spec" --task-title "$role:$slug" --json --full 2>&1)"
+  task_id="$(task_id_from "$tc_out")"
   [ -n "$task_id" ] || {
     printf 'attach: 태스크를 만들지 못했다(task-create 실패)\n' >&2
     printf '  %s\n' "$(printf '%s' "$tc_out" | jq -r '.error.message // .' 2>/dev/null | head -3)" >&2
@@ -2063,9 +2244,10 @@ EOF
   fi
 }
 
-# 받은 배치를 확인 처리한다. 빼면 Run 이 --ack 할 때까지 같은 배치를 재생하므로
-# (orca orchestration check --help: "replays the same Delivery until --ack"),
-# 먼저 끝난 워커의 보고가 다음 wait 에 다시 나와 아직 도는 워커를 끝난 것으로 판정한다.
+# 받은 배치를 확인 처리한다. Orca 1.4.246 부터는 consuming check 가 돌려준 배치를 바로 처리됨으로
+# 표시하므로 `--ack` 는 아무 일도 하지 않는다(`check --help`: "--ack of a handled Delivery is a
+# no-op"). 그 전 판은 `--ack` 할 때까지 같은 배치를 재생해, 먼저 끝난 워커의 보고가 다음 wait 에
+# 다시 나와 아직 도는 워커를 끝난 것으로 판정했다 — 그 판을 위해 남겨 둔다.
 # 필드 위치는 런타임 버전마다 다를 수 있어 fallback 을 둔다.
 ack_delivery() {
   local out="$1" delivery
@@ -2073,12 +2255,56 @@ ack_delivery() {
     | jq -r '.result.deliveryId // .result.delivery.id // .result.batchId // empty' 2>/dev/null)"
   if [ -n "$delivery" ]; then
     "$(orca_cli)" orchestration check --ack "$delivery" --json >/dev/null 2>&1 \
-      || printf '경고: Delivery %s 확인 처리 실패 — 다음 wait 에서 같은 보고가 재생될 수 있다\n' \
+      || printf '경고: Delivery %s 확인 처리 실패 — 옛 Orca 면 다음 wait 에서 같은 보고가 재생될 수 있다\n' \
            "$delivery" >&2
   else
     printf '경고: 응답에서 deliveryId 를 찾지 못해 확인 처리하지 못했다.\n' >&2
+    printf '  Orca 1.4.246 이상은 check 가 이미 처리됨으로 표시했으니 괜찮다. 그 전 판이면\n' >&2
     printf '  다음 wait 이 같은 배치를 다시 낼 수 있으니 메시지 내용으로 구분하라\n' >&2
   fi
+}
+
+# 받은 메시지(한 줄에 객체 하나)를 사람이 읽는 꼴로 낸다. heartbeat 는 보고가 아니다.
+wait_print_messages() {
+  jq -r 'select(type == "object" and .type != "heartbeat")
+         | "[\(.type)] \(.subject // "")\n\(.body // "")\n"' 2>/dev/null
+}
+
+# wait 의 check 가 실패로 끝났거나 응답을 끝까지 읽지 못했을 때 — 받은 것을 잃지 않게 다 보이고 복구 길을 낸다.
+#
+# Orca 1.4.246 부터 consuming check 는 배치를 **돌려주는 순간** 처리됨으로 표시한다
+# (`check --help`: "A consuming check marks the batch it returns as handled"). 응답이 끊기거나
+# CLI 가 실패해 그 배치를 못 읽으면, 다시 wait 해도 그 배치는 오지 않는다 — 「아직 신호 없음」(3)으로
+# 돌려보내면 그 worker_done 은 아무도 모르게 사라진다. 그래서:
+#   1) 응답에서 끝까지 읽힌 메시지는 전부 stdout 으로 낸다(잘린 응답도 JSON 스트림으로 건진다)
+#   2) 원문(keepalive 줄 제외)과 stderr 를 stderr 로 그대로 보인다
+#   3) `--retry-request`(같은 배치를 다시 받는 길)와 `inbox`(찾는 길)를 낸다
+# 사용: wait_lost <raw stdout> <stderr(keepalive 제외)> <종료 코드>
+wait_lost() {
+  local raw="$1" err="$2" rc="$3" body retry rid
+  body="$(printf '%s' "$raw" | grep -v '"_keepalive"')"
+  printf '%s' "$raw" | jq -c -n --stream '
+      fromstream(3 | truncate_stream(inputs | select(.[0][0:2] == ["result","messages"])))' \
+    2>/dev/null | wait_print_messages
+  printf 'wait: orchestration check 가 실패로 끝났거나 응답을 끝까지 읽지 못했다(종료 코드 %s) — 받은 배치를 잃었을 수 있다\n' "$rc" >&2
+  printf '  Orca 1.4.246 부터 check 는 돌려준 배치를 바로 처리됨으로 표시한다 — 다시 wait 해도 그 배치는 오지 않는다.\n' >&2
+  if printf '%s' "$raw" | grep -q 'worker_done'; then
+    printf '  응답에 worker_done 이 있었다. 위에 본문이 없으면 아래 원문이나 복구 길로 확인하라.\n' >&2
+  fi
+  [ -z "$err" ] || printf '  stderr:\n%s\n' "$err" >&2
+  if [ -n "$body" ]; then
+    printf '  응답 원문(keepalive 줄 제외):\n%s\n' "$body" >&2
+  else
+    printf '  응답 원문: 비어 있다(keepalive 줄 말고 아무것도 오지 않았다)\n' >&2
+  fi
+  retry="$(printf '%s\n%s\n' "$err" "$raw" \
+    | grep -o -E -- '--retry-request[ =][A-Za-z0-9_.:-]+' | sed -n 1p | sed -E 's/^--retry-request[ =]//')"
+  rid="$("$(orca_cli)" orchestration run-current --json --full 2>/dev/null \
+    | jq -r '.result.run.id // .result.runId // empty' 2>/dev/null)"
+  printf '  복구:\n' >&2
+  [ -z "$retry" ] || printf '    orca orchestration check --retry-request %s --json --full   # 같은 배치를 다시 받는다\n' "$retry" >&2
+  printf '    orca orchestration inbox --terminal run:%s --limit 20 --full   # 놓친 메일을 찾는다\n' \
+    "${rid:-<runId>}" >&2
 }
 
 cmd_wait() {
@@ -2096,20 +2322,59 @@ cmd_wait() {
   # 다음 호출까지 방치된다 — 2026-09-01 seg-apply 배치에서 워커가 두 번 물은 판정이
   # 그렇게 묻혔고, 워커가 스스로 가정을 세워 진행했다.
   # 그러므로 heartbeat 만 온 배치는 확인 처리하고 **같은 호출 안에서 계속 기다린다.**
-  local out count real
+  #
+  # **응답은 마지막 결과 객체 하나만 읽는다.** `check --wait` 는 기다리는 동안 15초마다
+  # `{"_keepalive":true,...}` 줄을 낸다(`check --help` 는 stderr 라고 하지만, 두 흐름을 합쳐
+  # 받은 실물 표본은 결과 앞에 그 줄이 스무 개 넘게 붙어 있었다). 통째로 한 JSON 으로 읽으면
+  # 그 앞줄들이 결과로 읽히거나 파싱이 깨진다. `--full` 의 결과는 여러 줄로 pretty-print
+  # 되므로 줄 단위가 아니라 JSON 값 단위로 거른다.
+  #
+  # `count` 는 `--full` 에만 있다. 짧은 모양(1.4.246 기본)은 `messages` 만 낸다 — `count` 만
+  # 읽으면 **이미 소비된 배치를 「아직 신호 없음」으로 버린다**(새 Orca 는 consuming check 가
+  # 배치를 바로 처리됨으로 표시한다). 그래서 `messages` 의 길이로도 센다.
+  #
+  # 오류 봉투(`ok:false`)는 타임아웃이 아니다. 체크포인트(3)로 돌려보내면 조율자가 같은
+  # 실패를 영원히 기다린다 — 오류를 보이고 1 로 끝낸다.
+  #
+  # **응답을 끝까지 못 읽었으면 그것도 1 이다.** CLI 가 0 이 아닌 코드로 끝났거나, 결과 객체
+  # (`ok:true` 와 `result`)를 끝까지 파싱하지 못했으면 — 1.4.246 은 돌려준 배치를 이미 처리됨으로
+  # 표시했으므로 「신호 없음」(3)으로 보면 그 배치를 잃는다. 읽힌 메시지를 먼저 내고 1 로 끝낸다
+  # (`wait_lost`). stderr 는 그래서 버리지 않고 받는다(keepalive 줄은 거른다).
+  local raw out count real rc jrc errf err
+  errf="$(mktemp)" || { printf 'wait: 임시 파일을 만들지 못했다\n' >&2; return 1; }
   while :; do
-    out="$("$(orca_cli)" orchestration check --wait \
+    raw="$("$(orca_cli)" orchestration check --wait \
             --types worker_done,escalation,question \
-            --timeout-ms "$timeout" --json 2>/dev/null)"
-    count="$(printf '%s' "$out" | jq -r '.result.count // 0' 2>/dev/null || printf '0')"
-    # 응답이 깨져 count 를 못 읽으면 "받은 게 없다"로 본다.
-    # 빈 값을 통과시키면 아무것도 안 왔는데 완료로 보고하게 된다.
+            --timeout-ms "$timeout" --json --full 2>"$errf")"
+    rc=$?
+    err="$(grep -v '"_keepalive"' "$errf" 2>/dev/null)"
+    out="$(printf '%s' "$raw" \
+      | jq -c 'select(type == "object" and (._keepalive | not))' 2>/dev/null)"
+    jrc=$?
+    out="$(printf '%s\n' "$out" | tail -n 1)"
+    if printf '%s' "$out" | jq -e '.ok == false' >/dev/null 2>&1; then
+      printf 'wait: orchestration check 가 실패했다 — %s\n' \
+        "$(printf '%s' "$out" | jq -r '.error.message // .error.code // "이유 없음"' 2>/dev/null)" >&2
+      rm -f "$errf"
+      return 1
+    fi
+    # 결과를 다 읽었어도 CLI 가 실패로 끝났으면 성공으로 삼키지 않는다 — 받은 것은 낸다.
+    if [ "$rc" -ne 0 ] || [ "$jrc" -ne 0 ] \
+       || ! printf '%s' "$out" | jq -e '.ok == true and (.result | type == "object")' >/dev/null 2>&1; then
+      wait_lost "$raw" "$err" "$rc"
+      rm -f "$errf"
+      return 1
+    fi
+    count="$(printf '%s' "$out" \
+      | jq -r '.result.count // (.result.messages? | arrays | length) // 0' 2>/dev/null \
+      || printf '0')"
     [ -n "$count" ] || count=0
 
     if [ "$count" = "0" ]; then
       # 타임아웃은 체크포인트지 실패가 아니다. 긴 작업은 15~60분이 예사다.
       printf '아직 완료 신호가 없다(체크포인트). 워커는 계속 도는 중일 수 있다.\n'
       printf '다시 기다리려면 같은 명령을 반복한다.\n'
+      rm -f "$errf"
       return 3
     fi
 
@@ -2122,11 +2387,9 @@ cmd_wait() {
 
     printf 'heartbeat 만 왔다. 계속 기다린다\n' >&2
   done
+  rm -f "$errf"
 
-  printf '%s' "$out" | jq -r '
-    .result.messages[]? |
-    select(.type != "heartbeat") |
-    "[\(.type)] \(.subject // "")\n\(.body // "")\n"'
+  printf '%s' "$out" | jq -c '.result.messages[]?' 2>/dev/null | wait_print_messages
 
   # question 이 있으면 메인 세션이 답해야 한다.
   if printf '%s' "$out" | jq -e '.result.messages[]? | select(.type=="question")' >/dev/null 2>&1; then
