@@ -154,7 +154,7 @@ docker compose logs app | grep -E 'gateway connected|pairing required'
   7. 계정 설정(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 `openclaw config patch --stdin` 으로 넣는다.
   8. Gateway 를 올린다(`openclaw gateway start`).
   - 4번 뒤 어디서 실패하든 내린 Gateway 를 다시 올리고 실패로 끝난다. 7번이 실패하면 「이번에 발급한 토큰은 쓰이지 않았으니 설정 → 연결의 그 Gateway 화면에서 폐기하세요」를 덧붙인다 — 그 토큰은 폐기하고 새로 발급해 다시 돌린다.
-- **Gateway 가 서비스(systemd·launchd)가 아니면** 4번에서 「이 호스트의 Gateway 가 서비스로 깔려 있지 않아 설치하지 않았습니다」(또는 「Gateway 서비스를 내리지 못해 …」)로 멈춘다(아무것도 바꾸지 않았다). 서비스가 없을 때의 `openclaw gateway stop` 은 실패하지 않고 떠 있는 Gateway 를 내리는데 `gateway start` 로는 다시 올릴 수 없어서, 스크립트가 먼저 잰다. Gateway 를 직접 내린 뒤 같은 줄의 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여(`… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash`) 다시 돌리고, 끝나면 Gateway 를 직접 올린다.
+- **Gateway 가 서비스(systemd·launchd)가 아니면** 4번에서 「이 호스트의 Gateway 가 서비스로 깔려 있지 않아 설치하지 않았습니다」로 멈춘다(아무것도 바꾸지 않았다). 서비스인데 내리다 실패하면 「Gateway 서비스를 내리지 못해 설치하지 않았습니다」로 멈추고, 반쯤 내려갔을 수 있어 `openclaw gateway start` 를 한 번 시도한다. 서비스가 없을 때의 `openclaw gateway stop` 은 실패하지 않고 떠 있는 Gateway 를 내리는데 `gateway start` 로는 다시 올릴 수 없어서, 스크립트가 먼저 잰다. Gateway 를 직접 내린 뒤 같은 줄의 bash 앞에 `DODOK_GATEWAY_SERVICE=0` 을 붙여(`… | DODOK_GATEWAY_SERVICE=0 DODOK_BRIDGE_TOKEN='…' bash`) 다시 돌리고, 끝나면 Gateway 를 직접 올린다.
 - 상태 디렉터리를 바꿔 쓰는 호스트(`OPENCLAW_STATE_DIR`)면 같은 셸에 그 값이 있어야 번들 대조가 맞는 파일을 본다.
 - `--accept-capabilities` 가 없으면 설치되지 않는다(스크립트가 붙인다). 호스트에 `security.installPolicy` 가 있으면 archive 설치(`provenance-invalid`)가 막힐 수 있다 — ADR 0002 「원격 배포 절차」.
 - 첨부를 쓰기 전에 [B] 의 `attachments.ttlHours`·`tools.fs.workspaceOnly` 를 정한다 — `docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절의 첨부 항목.
