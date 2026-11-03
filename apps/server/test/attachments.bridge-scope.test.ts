@@ -5,13 +5,14 @@
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { type Attachment, dodokSessionKey, type OutboundMessage } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
-import { attachments } from "../src/db/schema.sqlite";
+import { attachments, gateways } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { uploadAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
@@ -263,6 +264,38 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     // 끈 것은 고장이 아니다 — 거듭 거절돼도 주소가 막히지 않아 다시 켜면 곧바로 통한다
     for (let i = 0; i < 30; i++) expect(await bridgeGet(tokens.home, own.id)).toBe(401);
     expect((await patch(true)).statusCode).toBe(200);
+    expect(await bridgeGet(tokens.home, own.id)).toBe(200);
+  });
+  it("승인 전 Gateway 의 브리지 토큰은 첨부 HTTP 에서 거절된다 — 핸드셰이크와 같은 401, 실패로 세지 않고 승인하면 곧바로 통한다", async () => {
+    const { app, tokens, channel, bridgeUpload, bridgeGet } = await setup();
+    const own = await bridgeUpload(tokens.home);
+    // 주인이 주소를 바꿔 승인이 풀린 꼴 — 행의 승인만 걷는다(켜짐은 그대로)
+    const setApproved = (at: Date | null) =>
+      app.db.update(gateways).set({ approvedAt: at }).where(eq(gateways.id, HOME_ID)).run();
+    setApproved(null);
+
+    const post = await app.fastify.inject({
+      method: "POST",
+      url: "/bridge/attachments",
+      headers: {
+        authorization: `Bearer ${tokens.home}`,
+        "x-dodok-conversation-id": channelConversation(app.db, channel.id),
+        "content-type": "application/octet-stream",
+      },
+      payload: PDF_BYTES,
+    });
+    expect([post.statusCode, post.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    const get = await app.fastify.inject({
+      method: "GET",
+      url: `/bridge/attachments/${own.id}`,
+      headers: { authorization: `Bearer ${tokens.home}` },
+    });
+    expect([get.statusCode, get.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    // 다른(승인된) Gateway 는 그대로
+    expect(await bridgeGet(tokens.office, (await bridgeUpload(tokens.office)).id)).toBe(200);
+    // 승인 대기는 고장이 아니다 — 거듭 거절돼도 주소가 막히지 않아 승인하면 곧바로 통한다
+    for (let i = 0; i < 30; i++) expect(await bridgeGet(tokens.home, own.id)).toBe(401);
+    setApproved(new Date());
     expect(await bridgeGet(tokens.home, own.id)).toBe(200);
   });
 });

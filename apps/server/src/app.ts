@@ -43,7 +43,7 @@ import { type ControlService, createControlService } from "./modules/control/ser
 import { getChannel } from "./modules/channels/service";
 import { registerConnectionRoutes } from "./modules/connections/routes";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
-import { bootGateways, getGatewayRow, listGatewayRows } from "./modules/gateways/service";
+import { bootGateways, gatewayConfig, getGatewayRow, listGatewayRows } from "./modules/gateways/service";
 import { registerMemberManageRoutes } from "./modules/members/manage.routes";
 import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
@@ -234,8 +234,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
     const auth = createAuth(db, config, logger);
     const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
-    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다 — 토큰 id 와 그 토큰의 Gateway. 꺼진 Gateway 의 토큰은 핸드셰이크에서 어댑터가,
-    // 첨부 HTTP 에서 acceptBridgeGateway 가 거절한다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
+    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다 — 토큰 id 와 그 토큰의 Gateway. 꺼진·승인 전 Gateway 의 토큰은 핸드셰이크에서
+    // 어댑터가, 첨부 HTTP 에서 acceptBridgeGateway 가 거절한다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
     const verifyBridgeToken = (presented: unknown) => verifyBridgeTokenDb(db, presented);
     const verifyRunnerToken: RunnerTokenVerifier = (presented) => verifyRunnerTokenDb(db, presented);
     const bus = new ServerBus();
@@ -557,8 +557,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
     mkdirSync(config.attachmentsDir, { recursive: true });
     const blobLocks = deps.blobLocks ?? createBlobLocks();
-    // 꺼진 Gateway 의 토큰은 401 이되 실패로 세지 않는다 — 첨부 HTTP·설치 파일이 같은 판정(핸드셰이크는 어댑터가 가른다)
-    const acceptBridgeGateway = (gatewayId: string) =>
+    // 꺼진(또는 아직 승인되지 않은) Gateway 의 토큰은 401 이되 실패로 세지 않는다. 첨부 HTTP 는 핸드셰이크와 같은 값 — 어댑터에 넘기는
+    // gatewayConfig 의 enabled(켜짐 && 승인)를 그대로 본다(승인 전에는 이 서버의 일에 끼지 않는다, 연결 탭 통합 스펙 5.4).
+    // 설치 파일(plugin.tgz 등)은 켜짐만 본다 — 승인 전에도 미리 설치해 둘 수 있어야 한다(같은 절)
+    const acceptBridgeGateway = (gatewayId: string) => {
+      const row = getGatewayRow(db, workspaceId, gatewayId);
+      return row !== undefined && gatewayConfig(row).enabled;
+    };
+    const acceptInstallerGateway = (gatewayId: string) =>
       getGatewayRow(db, workspaceId, gatewayId)?.enabled === true;
     const agentTokenGuard: AgentTokenGuard = {
       guard: bridgeGuard,
@@ -715,7 +721,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         guard: agentTokenGuard,
         path: "bridge",
         route: "installer",
-        accept: (result) => acceptBridgeGateway((result as { gatewayId: string }).gatewayId),
+        accept: (result) => acceptInstallerGateway((result as { gatewayId: string }).gatewayId),
       }),
       // 파일은 부팅 때 한 번 잰다 — 본문도 그때 한 번(다시 빌드된 파일은 재시작해야 내려 주는 것과 같다)
       llmsTxt: renderLlmsTxt({
