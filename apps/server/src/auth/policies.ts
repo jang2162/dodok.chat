@@ -157,9 +157,17 @@ export function authorizeConnectionRead(actor: ConnectionActor): void {
   requireConnection(actor);
 }
 
+/**
+ * Gateway 를 승인할 수 있는가(admin 이상, 연결 탭 통합 스펙 5.4) — 승인 단추(authorizeGatewayApprove)와 서비스의 두 자리(만들 때 자동
+ * 승인·주소를 바꿀 때 승인 유지)가 함께 본다. 한쪽만 바뀌면 「승인할 수 없는 사람이 만들면 승인된다」가 생긴다
+ */
+export function canApproveGateway(role: TeamRole | undefined): boolean {
+  return roleAtLeast(role, "admin");
+}
+
 /** POST /gateways/:id/approve(admin 이상) */
 export function authorizeGatewayApprove(role: TeamRole | undefined): void {
-  requireAtLeast(role, "admin");
+  if (!canApproveGateway(role)) throw apiError("FORBIDDEN", "admin 이상만 쓸 수 있다");
 }
 
 // ── 에이전트 ─────────────────────────────────────────────────

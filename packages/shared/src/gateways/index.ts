@@ -52,6 +52,13 @@ export const UpdateGatewayBody = z.object({
 });
 export type UpdateGatewayBody = z.infer<typeof UpdateGatewayBody>;
 
+/**
+ * POST /api/v1/gateways/:id/approve 본문 — 승인하는 사람이 화면에서 본 주소. 서버는 지금 행의 주소와 글자 그대로 같을 때만 승인하고
+ * 다르면 CONFLICT(그 사이 주인이 주소를 바꿨다 — 본 적 없는 주소를 승인하지 않게, 연결 탭 통합 스펙 5.4)
+ */
+export const ApproveGatewayBody = z.object({ url: z.string().min(1) });
+export type ApproveGatewayBody = z.infer<typeof ApproveGatewayBody>;
+
 /** 목록·추가·수정 응답의 Gateway 한 줄 — 공유 토큰은 싣지 않는다(늘 설정돼 있다) */
 export const GatewaySummary = z.object({
   id: Id,

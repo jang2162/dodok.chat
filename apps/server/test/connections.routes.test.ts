@@ -234,7 +234,11 @@ describe("연결 목록·걸러진 설정 상태", () => {
         },
         201,
       );
-      await step("approve", () => call(ada.token, "POST", `/gateways/${gatewayId}/approve`), 200);
+      await step(
+        "approve",
+        () => call(ada.token, "POST", `/gateways/${gatewayId}/approve`, { url: "ws://x:1" }),
+        200,
+      );
       await step(
         "PATCH /gateways",
         () => call(mia.token, "PATCH", `/gateways/${gatewayId}`, { name: `바꿈${++n}` }),

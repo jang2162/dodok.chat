@@ -21,6 +21,7 @@ import {
   authorizeProjectMove,
   authorizeRead,
   authorizeRunnerManage,
+  canApproveGateway,
   type ConnectionActor,
 } from "../src/auth/policies";
 import { HttpError } from "../src/http/errors";
@@ -179,6 +180,20 @@ describe("역할 정책(auth/policies.ts)", () => {
     expect(() => authorizeConnectionManage(actor)).toThrow(HttpError);
     expect(() => authorizeAgentPatch(actor)).toThrow(HttpError);
     expect(() => authorizeAgentMoveGateway(undefined, true)).toThrow(HttpError);
+  });
+
+  it("canApproveGateway 는 admin 이상만 참 — 승인 단추(authorizeGatewayApprove)와 같은 판정(서비스의 자동 승인·승인 유지도 이것)", () => {
+    for (const role of ROLES) {
+      const expected = role === "admin" || role === "owner";
+      expect(canApproveGateway(role), role ?? "(멤버 아님)").toBe(expected);
+      let passed = true;
+      try {
+        authorizeGatewayApprove(role);
+      } catch {
+        passed = false;
+      }
+      expect(passed, role ?? "(멤버 아님)").toBe(expected);
+    }
   });
 
   it("남의 연결 거절 문구는 주인을 함께 말한다", () => {

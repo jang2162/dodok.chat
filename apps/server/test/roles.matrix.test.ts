@@ -640,7 +640,8 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/status" }),
     },
-    // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 「권한」 절)
+    // Gateway·브리지 토큰 — 만들기는 member, 관리는 주인·admin, 승인은 admin(연결 탭 통합 스펙 5.2·5.4). 아래 관리 줄의 대상은
+    // owner 의 Gateway 라 member 에게는 남의 것이다
     {
       name: "GET /gateways",
       min: "member",
@@ -656,6 +657,25 @@ describe("역할 매트릭스(스펙 2장)", () => {
         url: "/api/v1/gateways",
         payload: { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
       }),
+    },
+    {
+      name: "POST /gateways/:id/approve",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        // member 가 만든 승인 대기 Gateway — 본문에 지금 주소
+        const pending = createGateway(
+          app.db,
+          app.workspaceId,
+          { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
+          { userId: newMember(null), role: "member" },
+        );
+        return {
+          method: "POST",
+          url: `/api/v1/gateways/${pending.id}/approve`,
+          payload: { url: pending.url },
+        };
+      },
     },
     {
       name: "PATCH /gateways/:id",

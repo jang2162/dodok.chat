@@ -8,7 +8,7 @@ import { type Agent, GatewaySummary, IssueRunnerTokenResult, type RunnerSummary 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { createAgent } from "../src/modules/agents/service";
-import { createGateway } from "../src/modules/gateways/service";
+import { createGateway, getGatewayRow } from "../src/modules/gateways/service";
 import { createProject } from "../src/modules/runners/projects";
 import { issueRunnerToken } from "../src/modules/runners/tokens";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
@@ -65,6 +65,11 @@ describe("연결의 주인 — REST·제어 도구", () => {
       ...(payload === undefined ? {} : { payload }),
     });
   const lastUpsert = () => adapter.calls.upsertGateway.at(-1);
+  /** 승인 — 본문에 지금 행의 주소(화면이 본 주소)를 싣는다 */
+  const approve = (token: string, id: string, url?: string) =>
+    call(token, "POST", `/gateways/${id}/approve`, {
+      url: url ?? getGatewayRow(app.db, app.workspaceId, id)?.url,
+    });
   const gatewayOf = (userId: string, role: "member" | "admin" | "owner" = "member") =>
     createGateway(
       app.db,
@@ -115,7 +120,7 @@ describe("연결의 주인 — REST·제어 도구", () => {
 
   it("member changing url of own approved gateway drops approval and disconnects — 같은 PATCH 의 enabled:true 로도 접속하지 않는다", async () => {
     const id = gatewayOf(mia.id);
-    const approved = await call(ada.token, "POST", `/gateways/${id}/approve`);
+    const approved = await approve(ada.token, id);
     expect(approved.statusCode).toBe(200);
     expect(GatewaySummary.parse(approved.json()).approved).toBe(true);
     expect(lastUpsert()).toMatchObject({ id, enabled: true });
@@ -135,9 +140,51 @@ describe("연결의 주인 — REST·제어 도구", () => {
 
   it("member cannot approve — 자기 Gateway 도. admin 이상만", async () => {
     const id = gatewayOf(mia.id);
-    expect((await call(mia.token, "POST", `/gateways/${id}/approve`)).statusCode).toBe(403);
+    expect((await approve(mia.token, id)).statusCode).toBe(403);
     expect(lastUpsert()?.id === id && lastUpsert()?.enabled).not.toBe(true);
-    expect((await call(ownerToken, "POST", `/gateways/${id}/approve`)).statusCode).toBe(200);
+    expect((await approve(ownerToken, id)).statusCode).toBe(200);
+  });
+
+  it("approve binds the url the approver saw — 그 사이 주소가 바뀌었으면 409, 승인도 접속도 없다(리뷰 M1)", async () => {
+    const id = gatewayOf(mia.id);
+    const seen = getGatewayRow(app.db, app.workspaceId, id)?.url ?? "";
+    expect(
+      (await call(mia.token, "PATCH", `/gateways/${id}`, { url: "ws://169.254.169.254:80" })).statusCode,
+    ).toBe(200);
+    const upserts = adapter.calls.upsertGateway.length;
+    const stale = await approve(ownerToken, id, seen);
+    expect([stale.statusCode, stale.json().code]).toEqual([409, "CONFLICT"]);
+    expect(getGatewayRow(app.db, app.workspaceId, id)).toMatchObject({ approvedAt: null, approvedBy: null });
+    expect(adapter.calls.upsertGateway.length).toBe(upserts);
+    // 본문 없는 승인도 받지 않는다
+    expect((await call(ownerToken, "POST", `/gateways/${id}/approve`)).statusCode).toBe(400);
+    expect(adapter.calls.upsertGateway.length).toBe(upserts);
+
+    const fresh = await approve(ownerToken, id, "ws://169.254.169.254:80");
+    expect(fresh.statusCode).toBe(200);
+    expect(GatewaySummary.parse(fresh.json()).approved).toBe(true);
+    expect(lastUpsert()).toMatchObject({ id, url: "ws://169.254.169.254:80", enabled: true });
+  });
+
+  it("GET /gateways — member 는 자기 Gateway 만(남의 id·주소가 응답에 없다), admin 은 모두(리뷰 L1)", async () => {
+    const own = gatewayOf(mia.id);
+    const others = gatewayOf(bob.id);
+    const ownUrl = getGatewayRow(app.db, app.workspaceId, own)?.url ?? "";
+    const othersUrl = getGatewayRow(app.db, app.workspaceId, others)?.url ?? "";
+    const asMia = await call(mia.token, "GET", "/gateways");
+    expect(asMia.statusCode).toBe(200);
+    const miaIds = (asMia.json() as GatewaySummary[]).map((g) => g.id);
+    expect(miaIds).toContain(own);
+    expect(asMia.body).toContain(ownUrl);
+    expect(asMia.body).not.toContain(others);
+    expect(asMia.body).not.toContain(othersUrl);
+    expect(asMia.body).not.toContain(FAKE_GATEWAY_ID);
+    expect((asMia.json() as GatewaySummary[]).every((g) => g.ownerUserId === mia.id)).toBe(true);
+
+    const asAda = await call(ada.token, "GET", "/gateways");
+    const adaIds = (asAda.json() as GatewaySummary[]).map((g) => g.id);
+    expect(adaIds).toEqual(expect.arrayContaining([own, others, FAKE_GATEWAY_ID]));
+    expect(asAda.body).toContain(othersUrl);
   });
 
   it("member manages own gateway and its bridge tokens but not another's", async () => {

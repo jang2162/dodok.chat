@@ -27,6 +27,7 @@ import {
   approveGateway,
   createGateway,
   gatewayConfig,
+  getGatewayRow,
   toGatewaySummary,
   updateGateway,
 } from "../src/modules/gateways/service";
@@ -510,7 +511,14 @@ describe("Gateway 주인·승인 — 서비스(연결의 주인 스펙 5.1·5.4)
   it("member 가 승인된 Gateway 의 주소를 바꾸면 승인이 풀린다 — 같은 수정에 enabled:true 를 실어도 어댑터에는 꺼진 채로", () => {
     const { db, workspaceId, userId } = fresh();
     const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
-    const approved = approveGateway(db, workspaceId, created.id, { userId, role: "admin" }, T);
+    const { row: approved } = approveGateway(
+      db,
+      workspaceId,
+      created.id,
+      created.url,
+      { userId, role: "admin" },
+      T,
+    );
     expect(gatewayConfig(approved).enabled).toBe(true);
     const { row } = updateGateway(
       db,
@@ -527,7 +535,7 @@ describe("Gateway 주인·승인 — 서비스(연결의 주인 스펙 5.1·5.4)
   it("member 가 이름·토큰만 바꾸면 승인이 남는다", () => {
     const { db, workspaceId, userId } = fresh();
     const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
-    approveGateway(db, workspaceId, created.id, { userId, role: "owner" }, T);
+    approveGateway(db, workspaceId, created.id, created.url, { userId, role: "owner" }, T);
     const { row } = updateGateway(
       db,
       workspaceId,
@@ -557,10 +565,55 @@ describe("Gateway 주인·승인 — 서비스(연결의 주인 스펙 5.1·5.4)
   it("승인하면 어댑터 설정이 켜진다 — 꺼 둔 Gateway 는 승인해도 꺼진 채", () => {
     const { db, workspaceId, userId } = fresh();
     const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
-    const approved = approveGateway(db, workspaceId, created.id, { userId, role: "admin" }, T);
+    const { row: approved, approved: changed } = approveGateway(
+      db,
+      workspaceId,
+      created.id,
+      created.url,
+      { userId, role: "admin" },
+      T,
+    );
+    expect(changed).toBe(true);
     expect(approved).toMatchObject({ approvedAt: T, approvedBy: userId });
     expect(gatewayConfig(approved).enabled).toBe(true);
     const off = updateGateway(db, workspaceId, created.id, { enabled: false }, { userId, role: "admin" }, T);
     expect(gatewayConfig(off.row).enabled).toBe(false);
+  });
+
+  it("승인은 본 주소를 묶는다 — 지금 주소와 다르면 CONFLICT, 행은 승인되지 않은 채(같은 주소면 승인, 이미 승인됐으면 그대로)", () => {
+    const { db, workspaceId, userId } = fresh();
+    const created = createGateway(db, workspaceId, body, { userId, role: "member" }, T);
+    updateGateway(
+      db,
+      workspaceId,
+      created.id,
+      { url: "ws://169.254.169.254:80" },
+      { userId, role: "member" },
+      T,
+    );
+    expect(() =>
+      approveGateway(db, workspaceId, created.id, created.url, { userId, role: "admin" }, T),
+    ).toThrow(expect.objectContaining({ status: 409, body: expect.objectContaining({ code: "CONFLICT" }) }));
+    expect(getGatewayRow(db, workspaceId, created.id)).toMatchObject({ approvedAt: null, approvedBy: null });
+
+    const first = approveGateway(
+      db,
+      workspaceId,
+      created.id,
+      "ws://169.254.169.254:80",
+      { userId, role: "admin" },
+      T,
+    );
+    expect(first.approved).toBe(true);
+    expect(first.row.approvedAt).toEqual(T);
+    const again = approveGateway(
+      db,
+      workspaceId,
+      created.id,
+      "ws://169.254.169.254:80",
+      { userId, role: "admin" },
+      T,
+    );
+    expect(again.approved).toBe(false);
   });
 });

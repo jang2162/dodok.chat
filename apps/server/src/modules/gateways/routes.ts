@@ -5,6 +5,7 @@
  * 그 응답은 `Cache-Control: no-store`.
  */
 import {
+  ApproveGatewayBody,
   CreateGatewayBody,
   type DeleteGatewayResult,
   Id,
@@ -134,14 +135,18 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
     return toGatewaySummary(row);
   });
 
-  /** 승인(admin 이상) — 그 자리에서 어댑터에 켜진 설정을 넣어 접속을 시작한다(꺼 둔 Gateway 면 꺼진 채) */
+  /**
+   * 승인(admin 이상) — 본문의 url 은 승인하는 사람이 본 주소다. 지금 주소와 다르면 409 이고 승인도 접속도 없다(스펙 5.4). 승인되면 그
+   * 자리에서 어댑터에 켜진 설정을 넣어 접속을 시작한다(꺼 둔 Gateway 면 꺼진 채)
+   */
   fastify.post("/api/v1/gateways/:id/approve", session, async (request) => {
     const { id } = parseParams(GatewayParams, request.params);
-    const before = requireGateway(id);
+    requireGateway(id);
     const { user, actor } = actorOf(request);
     authorizeGatewayApprove(user.role);
-    const row = approveGateway(ctx.db, ctx.workspaceId, id, actor);
-    if (before.approvedAt === null) {
+    const { url } = parseBody(ApproveGatewayBody, request.body);
+    const { row, approved } = approveGateway(ctx.db, ctx.workspaceId, id, url, actor);
+    if (approved) {
       ctx.gateways.upsertGateway(gatewayConfig(row));
       ctx.logger.info({ gatewayId: id, approvedBy: user.id }, "gateway approved");
       ctx.changed();

@@ -7,13 +7,13 @@ import {
   type CreateGatewayBody,
   type DeleteGatewayResult,
   type GatewaySummary,
-  roleAtLeast,
   type TeamRole,
   type UpdateGatewayBody,
 } from "@dodok/shared";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { GatewayConnectionConfig, OpenClawGateways } from "../../adapters/types";
+import { canApproveGateway } from "../../auth/policies";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, bridgeTokens, gateways } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -99,7 +99,7 @@ export function createGateway(
   actor: GatewayActor,
   now = new Date(),
 ): GatewayRow {
-  const approved = roleAtLeast(actor.role, "admin");
+  const approved = canApproveGateway(actor.role);
   return db.transaction((tx) => {
     assertNameFree(tx, workspaceId, body.name);
     return tx
@@ -144,7 +144,7 @@ export function updateGateway(
     }
     if (patch.url !== undefined && patch.url !== current.url) {
       set.url = patch.url;
-      if (!roleAtLeast(actor.role, "admin")) {
+      if (!canApproveGateway(actor.role)) {
         set.approvedAt = null;
         set.approvedBy = null;
       }
@@ -163,23 +163,31 @@ export function updateGateway(
   });
 }
 
-/** 승인(admin 이상 — 권한은 부르는 쪽이 본다). 이미 승인됐으면 행을 그대로 돌려준다 */
+/**
+ * 승인(admin 이상 — 권한은 부르는 쪽이 본다). `seenUrl` 은 승인하는 사람이 화면에서 본 주소 — 지금 행의 주소와 다르면 CONFLICT 로 거절하고
+ * 행을 쓰지 않는다(그 사이 주인이 주소를 바꿨다. 본 적 없는 주소로 서버가 나가지 않게, 스펙 5.4). 같은 트랜잭션에서 읽고 쓰므로 비교와
+ * 승인 사이에 주소가 바뀌지 않는다. 이미 승인됐으면 행을 그대로 돌려준다(approved 거짓)
+ */
 export function approveGateway(
   db: Db,
   workspaceId: string,
   id: string,
+  seenUrl: string,
   actor: GatewayActor,
   now = new Date(),
-): GatewayRow {
+): { row: GatewayRow; approved: boolean } {
   return db.transaction((tx) => {
     const current = requireGatewayRow(tx, workspaceId, id);
-    if (current.approvedAt !== null) return current;
-    return tx
+    if (current.url !== seenUrl)
+      throw apiError("CONFLICT", "gateway url changed — review it again", { field: "url" });
+    if (current.approvedAt !== null) return { row: current, approved: false };
+    const row = tx
       .update(gateways)
       .set({ approvedAt: now, approvedBy: actor.userId })
       .where(eq(gateways.id, id))
       .returning()
       .get();
+    return { row, approved: true };
   });
 }
 
