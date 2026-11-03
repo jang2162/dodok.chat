@@ -885,11 +885,11 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 - **지금 열린 상세의 트리 줄을 다시 누르면 초점 표지가 남는다** — `focusDetail` 표지가 서서 다음 상세의 제목이 초점을 받는다(`DetailHeader`).
 - **프로젝트 보관·옮기기 뒤 같은 주소로 두 번 이동한다** — `ArchiveProjectButton` 이 `afterRemove` 를 두 번 불러 같은 주소로 두 번 navigate 한다(무해).
-- **브라우저로 보지 않았다** — 1단계는 시험까지다. 사람이 `dev:fake` 로 넓은 화면 트리+상세 두 칸, 390px 트리 ↔ 상세, Gateway 상세의 「새 토큰 발급」, 러너 상세의 로그인 표시를 한 번 본다.
+- **브라우저 확인은 독립 리뷰어의 헤드리스 Chromium 한 번이다** — 구현자는 시험까지, 리뷰어가 `dev:fake` 에서 owner·member·admin × 1280·390px 로 트리·상세·옛 주소 리다이렉트·없는 id·뒤로 가기 하나를 봤다(권한 토스트·401/403 0). BrowserOS neo·사람 눈으로는 보지 않았다.
 
 **연결 탭 통합(2단계 — 연결의 주인, 2026-11-02)** — 스펙 `docs/superpowers/specs/2026-11-02-settings-connect-merge-design.md` 5장. 아래 출처의 원장은 `.superpowers/sdd/2026-11-02-settings-connect-merge/`(git 제외).
 
-- **실연·브라우저 확인을 안 했다** — 시험(서버·웹·shared)과 구분력 실증까지다. `dev:fake` 에서 member(mia)로 Gateway 를 더해 「승인 대기」 → owner 로 「승인」 → 접속, mia 가 주소를 바꿔 다시 승인 대기, mia 의 러너 토큰 발급 → 그 러너 상세가 관리 꼴인지는 사람이나 다음 브라우저 배치가 본다.
+- **실물 Gateway 로는 보지 않았다** — 시험·구분력 실증과, 독립 리뷰어의 `dev:fake` 실제 요청·헤드리스 Chromium(owner·mia, 1280·390px — mia 가 Gateway 를 더해 「승인 대기」 → owner 「승인」, mia 가 주소를 바꿔 다시 승인 대기)까지다. 리뷰가 찾은 승인 경합(M1)·미승인 토큰의 첨부 HTTP(M2)는 고친 뒤 같은 요청으로 막힘(409·401)을 다시 쟀다. 실물 원격 Gateway 의 승인 → 접속은 사람이 첫 배포 때 본다.
 - **화면 몇 곳이 아직 역할로만 가른다** — 사이드바 OpenClaw 배너의 「연결 설정 보기」(owner 만, `app/layout/Banners.tsx`), 프로필 패널의 에이전트 편집(admin 이상, `features/profile/AgentProfile.tsx`), DM 목록 응답의 러너 에이전트 정의(`modules/dms/service.ts` 의 `agentForRole` — 주인이어도 싣지 않는다). 서버 권한은 주인 규칙대로라 숨김 편의만 어긋난다.
 - **방금 만든 연결의 상세가 잠깐 「찾을 수 없습니다」일 수 있다** — 연결 추가 뒤 상세가 낡은 연결 목록으로 한 번 그린 뒤 다시 받는다(member 만 — admin 이상은 목록을 기다리지 않는다). 상세가 `isFetching` 동안 「불러오는 중」을 보이면 닫힌다.
 - **승인 대기 알림이 없다** — 스펙 5.4 의 「설정 배지·운영 사건」(있으면 좋음)을 넣지 않았다. admin 은 트리의 「승인 대기」 배지로만 안다.
