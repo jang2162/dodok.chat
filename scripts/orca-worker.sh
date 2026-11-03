@@ -211,7 +211,11 @@ collect_worktrees() {
         | $w[]
         | select(.repoId == $repo)
         | select(.isMainWorktree != true)
-        | [ .displayName,
+        # 슬러그는 경로의 마지막 이름이다(`.worktrees/<저장소>/<슬러그>`) — `displayName` 이 아니다.
+        # Orca 는 워커의 브랜치 이름을 바꾸며 displayName 도 바꾼다(2026-11-02 실물: orca-1246 이
+        # 「Fix orca worker orca」가 됐다). 그 이름을 쓰면 spawn 이 준 슬러그로 reap·stop·keep 이
+        # 「없다」가 되고, 잔해 판정(collect_orphans 의 basename 비교)과도 어긋난다.
+        | [ (.path | sub("/+$"; "") | split("/") | last),
             # F3: 마지막 원소 하나가 아니라 "살아 있는 agent 가 하나라도 있는가"다.
             # 실물은 한 워크트리에 agent 가 여럿 붙고 순서 보장이 없다.
             ( [ .agents[]? | .state ] as $st
@@ -928,8 +932,20 @@ cmd_reap() {
 
     # activity 가 done 이어도 dispatch 가 진행 중이면 끝난 워커가 아니다(`live_dispatch_in`) —
     # 사람의 답을 기다리는 브레인스토밍 워커는 커밋 0 이라 병합·클린 관문을 그대로 통과한다.
-    # 목록은 여기서 처음 읽고 아래 회수가 돌려 쓴다. 못 읽으면 이전처럼 진행한다(회수가 경고한다).
+    # 목록은 여기서 처음 읽고 아래 회수가 돌려 쓴다. **못 읽으면 지우지 않는다(fail closed)** —
+    # 진행 중인지 모르는 채 지나가면 답을 기다리는 워커의 워크트리가 그대로 사라진다. 일괄 모드는
+    # 건너뛰고, 슬러그는 거부하며, 슬러그를 찍은 `--force` 만 넘는다(진행 중 dispatch 와 같은 규칙).
     [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+    if [ "$wl_rc" -ne 0 ] && [ "$force" != "yes" ]; then
+      if [ "$target" = "__all__" ]; then
+        printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인지 모른다 — 건너뛴다\n' "$slug" >&2
+        continue
+      fi
+      printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인 dispatch 가 있는지 모른다 — 지우지 않았다. 다시 부르거나, 터미널을 읽어 확인했으면 --force\n' \
+        "$slug" >&2
+      refused=$((refused + 1))
+      continue
+    fi
     if [ "$wl_rc" -eq 0 ]; then
       live_dispatch="$(live_dispatch_in "$(repo_id)::$path" "$wl")"
       if [ -n "$live_dispatch" ]; then
@@ -1114,9 +1130,20 @@ cmd_stop() {
 
     # activity 가 done 이어도 dispatch 가 진행 중이면 도는 워커와 같게 다룬다(`live_dispatch_in`) —
     # 답을 기다리는 브레인스토밍 워커의 터미널을 끄면 그 대화가 통째로 사라진다.
-    # 터미널이 없으면 끌 것도 없으니 목록을 읽지 않는다. 못 읽으면 이전처럼 진행한다.
+    # 터미널이 없으면 끌 것도 없으니 목록을 읽지 않는다. **못 읽으면 끄지 않는다(fail closed)** —
+    # 일괄 모드는 건너뛰고 슬러그는 거부한다. 슬러그를 찍은 `--force` 만 넘는다.
     if [ "$force" != "yes" ] && [ "$live" != "0" ]; then
       [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+      if [ "$wl_rc" -ne 0 ]; then
+        if [ "$target" = "__all__" ]; then
+          printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인지 모른다 — 건너뛴다\n' "$slug" >&2
+          continue
+        fi
+        printf '%s: dispatch 목록(worker-list)을 읽지 못해 진행 중인 dispatch 가 있는지 모른다 — 끄지 않았다. 다시 부르거나, 터미널을 읽어 확인했으면 --force\n' \
+          "$slug" >&2
+        refused=$((refused + 1))
+        continue
+      fi
       if [ "$wl_rc" -eq 0 ]; then
         live_dispatch="$(live_dispatch_in "$repo::$path" "$wl")"
         if [ -n "$live_dispatch" ]; then
@@ -2217,9 +2244,10 @@ EOF
   fi
 }
 
-# 받은 배치를 확인 처리한다. 빼면 Run 이 --ack 할 때까지 같은 배치를 재생하므로
-# (orca orchestration check --help: "replays the same Delivery until --ack"),
-# 먼저 끝난 워커의 보고가 다음 wait 에 다시 나와 아직 도는 워커를 끝난 것으로 판정한다.
+# 받은 배치를 확인 처리한다. Orca 1.4.246 부터는 consuming check 가 돌려준 배치를 바로 처리됨으로
+# 표시하므로 `--ack` 는 아무 일도 하지 않는다(`check --help`: "--ack of a handled Delivery is a
+# no-op"). 그 전 판은 `--ack` 할 때까지 같은 배치를 재생해, 먼저 끝난 워커의 보고가 다음 wait 에
+# 다시 나와 아직 도는 워커를 끝난 것으로 판정했다 — 그 판을 위해 남겨 둔다.
 # 필드 위치는 런타임 버전마다 다를 수 있어 fallback 을 둔다.
 ack_delivery() {
   local out="$1" delivery
@@ -2227,12 +2255,56 @@ ack_delivery() {
     | jq -r '.result.deliveryId // .result.delivery.id // .result.batchId // empty' 2>/dev/null)"
   if [ -n "$delivery" ]; then
     "$(orca_cli)" orchestration check --ack "$delivery" --json >/dev/null 2>&1 \
-      || printf '경고: Delivery %s 확인 처리 실패 — 다음 wait 에서 같은 보고가 재생될 수 있다\n' \
+      || printf '경고: Delivery %s 확인 처리 실패 — 옛 Orca 면 다음 wait 에서 같은 보고가 재생될 수 있다\n' \
            "$delivery" >&2
   else
     printf '경고: 응답에서 deliveryId 를 찾지 못해 확인 처리하지 못했다.\n' >&2
+    printf '  Orca 1.4.246 이상은 check 가 이미 처리됨으로 표시했으니 괜찮다. 그 전 판이면\n' >&2
     printf '  다음 wait 이 같은 배치를 다시 낼 수 있으니 메시지 내용으로 구분하라\n' >&2
   fi
+}
+
+# 받은 메시지(한 줄에 객체 하나)를 사람이 읽는 꼴로 낸다. heartbeat 는 보고가 아니다.
+wait_print_messages() {
+  jq -r 'select(type == "object" and .type != "heartbeat")
+         | "[\(.type)] \(.subject // "")\n\(.body // "")\n"' 2>/dev/null
+}
+
+# wait 의 check 가 실패로 끝났거나 응답을 끝까지 읽지 못했을 때 — 받은 것을 잃지 않게 다 보이고 복구 길을 낸다.
+#
+# Orca 1.4.246 부터 consuming check 는 배치를 **돌려주는 순간** 처리됨으로 표시한다
+# (`check --help`: "A consuming check marks the batch it returns as handled"). 응답이 끊기거나
+# CLI 가 실패해 그 배치를 못 읽으면, 다시 wait 해도 그 배치는 오지 않는다 — 「아직 신호 없음」(3)으로
+# 돌려보내면 그 worker_done 은 아무도 모르게 사라진다. 그래서:
+#   1) 응답에서 끝까지 읽힌 메시지는 전부 stdout 으로 낸다(잘린 응답도 JSON 스트림으로 건진다)
+#   2) 원문(keepalive 줄 제외)과 stderr 를 stderr 로 그대로 보인다
+#   3) `--retry-request`(같은 배치를 다시 받는 길)와 `inbox`(찾는 길)를 낸다
+# 사용: wait_lost <raw stdout> <stderr(keepalive 제외)> <종료 코드>
+wait_lost() {
+  local raw="$1" err="$2" rc="$3" body retry rid
+  body="$(printf '%s' "$raw" | grep -v '"_keepalive"')"
+  printf '%s' "$raw" | jq -c -n --stream '
+      fromstream(3 | truncate_stream(inputs | select(.[0][0:2] == ["result","messages"])))' \
+    2>/dev/null | wait_print_messages
+  printf 'wait: orchestration check 가 실패로 끝났거나 응답을 끝까지 읽지 못했다(종료 코드 %s) — 받은 배치를 잃었을 수 있다\n' "$rc" >&2
+  printf '  Orca 1.4.246 부터 check 는 돌려준 배치를 바로 처리됨으로 표시한다 — 다시 wait 해도 그 배치는 오지 않는다.\n' >&2
+  if printf '%s' "$raw" | grep -q 'worker_done'; then
+    printf '  응답에 worker_done 이 있었다. 위에 본문이 없으면 아래 원문이나 복구 길로 확인하라.\n' >&2
+  fi
+  [ -z "$err" ] || printf '  stderr:\n%s\n' "$err" >&2
+  if [ -n "$body" ]; then
+    printf '  응답 원문(keepalive 줄 제외):\n%s\n' "$body" >&2
+  else
+    printf '  응답 원문: 비어 있다(keepalive 줄 말고 아무것도 오지 않았다)\n' >&2
+  fi
+  retry="$(printf '%s\n%s\n' "$err" "$raw" \
+    | grep -o -E -- '--retry-request[ =][A-Za-z0-9_.:-]+' | sed -n 1p | sed -E 's/^--retry-request[ =]//')"
+  rid="$("$(orca_cli)" orchestration run-current --json --full 2>/dev/null \
+    | jq -r '.result.run.id // .result.runId // empty' 2>/dev/null)"
+  printf '  복구:\n' >&2
+  [ -z "$retry" ] || printf '    orca orchestration check --retry-request %s --json --full   # 같은 배치를 다시 받는다\n' "$retry" >&2
+  printf '    orca orchestration inbox --terminal run:%s --limit 20 --full   # 놓친 메일을 찾는다\n' \
+    "${rid:-<runId>}" >&2
 }
 
 cmd_wait() {
@@ -2263,29 +2335,46 @@ cmd_wait() {
   #
   # 오류 봉투(`ok:false`)는 타임아웃이 아니다. 체크포인트(3)로 돌려보내면 조율자가 같은
   # 실패를 영원히 기다린다 — 오류를 보이고 1 로 끝낸다.
-  local raw out count real
+  #
+  # **응답을 끝까지 못 읽었으면 그것도 1 이다.** CLI 가 0 이 아닌 코드로 끝났거나, 결과 객체
+  # (`ok:true` 와 `result`)를 끝까지 파싱하지 못했으면 — 1.4.246 은 돌려준 배치를 이미 처리됨으로
+  # 표시했으므로 「신호 없음」(3)으로 보면 그 배치를 잃는다. 읽힌 메시지를 먼저 내고 1 로 끝낸다
+  # (`wait_lost`). stderr 는 그래서 버리지 않고 받는다(keepalive 줄은 거른다).
+  local raw out count real rc jrc errf err
+  errf="$(mktemp)" || { printf 'wait: 임시 파일을 만들지 못했다\n' >&2; return 1; }
   while :; do
     raw="$("$(orca_cli)" orchestration check --wait \
             --types worker_done,escalation,question \
-            --timeout-ms "$timeout" --json --full 2>/dev/null)"
+            --timeout-ms "$timeout" --json --full 2>"$errf")"
+    rc=$?
+    err="$(grep -v '"_keepalive"' "$errf" 2>/dev/null)"
     out="$(printf '%s' "$raw" \
-      | jq -c 'select(type == "object" and (._keepalive | not))' 2>/dev/null | tail -n 1)"
+      | jq -c 'select(type == "object" and (._keepalive | not))' 2>/dev/null)"
+    jrc=$?
+    out="$(printf '%s\n' "$out" | tail -n 1)"
     if printf '%s' "$out" | jq -e '.ok == false' >/dev/null 2>&1; then
       printf 'wait: orchestration check 가 실패했다 — %s\n' \
         "$(printf '%s' "$out" | jq -r '.error.message // .error.code // "이유 없음"' 2>/dev/null)" >&2
+      rm -f "$errf"
+      return 1
+    fi
+    # 결과를 다 읽었어도 CLI 가 실패로 끝났으면 성공으로 삼키지 않는다 — 받은 것은 낸다.
+    if [ "$rc" -ne 0 ] || [ "$jrc" -ne 0 ] \
+       || ! printf '%s' "$out" | jq -e '.ok == true and (.result | type == "object")' >/dev/null 2>&1; then
+      wait_lost "$raw" "$err" "$rc"
+      rm -f "$errf"
       return 1
     fi
     count="$(printf '%s' "$out" \
       | jq -r '.result.count // (.result.messages? | arrays | length) // 0' 2>/dev/null \
       || printf '0')"
-    # 응답이 깨져 count 를 못 읽으면 "받은 게 없다"로 본다.
-    # 빈 값을 통과시키면 아무것도 안 왔는데 완료로 보고하게 된다.
     [ -n "$count" ] || count=0
 
     if [ "$count" = "0" ]; then
       # 타임아웃은 체크포인트지 실패가 아니다. 긴 작업은 15~60분이 예사다.
       printf '아직 완료 신호가 없다(체크포인트). 워커는 계속 도는 중일 수 있다.\n'
       printf '다시 기다리려면 같은 명령을 반복한다.\n'
+      rm -f "$errf"
       return 3
     fi
 
@@ -2298,11 +2387,9 @@ cmd_wait() {
 
     printf 'heartbeat 만 왔다. 계속 기다린다\n' >&2
   done
+  rm -f "$errf"
 
-  printf '%s' "$out" | jq -r '
-    .result.messages[]? |
-    select(.type != "heartbeat") |
-    "[\(.type)] \(.subject // "")\n\(.body // "")\n"'
+  printf '%s' "$out" | jq -c '.result.messages[]?' 2>/dev/null | wait_print_messages
 
   # question 이 있으면 메인 세션이 답해야 한다.
   if printf '%s' "$out" | jq -e '.result.messages[]? | select(.type=="question")' >/dev/null 2>&1; then

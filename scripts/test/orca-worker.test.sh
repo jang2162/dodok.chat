@@ -1065,10 +1065,11 @@ assert_eq "$(cmd_wait --timeout-ms 1000 | grep -c 'heartbeat')" "0" \
 rm -f "$HB"
 unset STUB_ORCA_CHECK_HEARTBEAT_ONCE
 
-# 응답이 깨져도 완료로 착각하지 않는다.
+# 응답이 깨져도 완료로 착각하지 않는다. 체크포인트(3)로도 보지 않는다 — 1.4.246 의 consuming
+# check 는 돌려준 배치를 이미 처리됨으로 표시했으므로, 다시 기다리면 그 배치는 오지 않는다.
 printf 'not json\n' > "$W/broken.json"
 STUB_ORCA_CHECK_FIXTURE="$W/broken.json"
-assert_status 3 "응답이 깨지면 완료가 아니라 체크포인트로 본다" cmd_wait --timeout-ms 1000
+assert_status 1 "응답이 깨지면 완료도 체크포인트도 아니라 실패(1)다" cmd_wait --timeout-ms 1000
 unset STUB_ORCA_CHECK_FIXTURE
 rm -rf "$W"
 rm -f "$STUB_ORCA_LOG"; unset STUB_ORCA_LOG
@@ -1192,7 +1193,7 @@ unset STUB_ORCA_CHECK_FIXTURE
 # F12 — 빈 응답에서 count 가 빈 문자열이 되는 경로. jq 는 빈 입력에 exit 0 + 무출력이다.
 : > "$A/empty.json"
 STUB_ORCA_CHECK_FIXTURE="$A/empty.json"; export STUB_ORCA_CHECK_FIXTURE
-assert_status 3 "응답이 통째로 비어도 완료로 착각하지 않는다" cmd_wait --timeout-ms 1000
+assert_status 1 "응답이 통째로 비어도 완료로 착각하지 않고 실패(1)로 드러낸다" cmd_wait --timeout-ms 1000
 unset STUB_ORCA_CHECK_FIXTURE
 rm -f "$STUB_ORCA_LOG"; rm -rf "$A"; unset STUB_ORCA_LOG
 
@@ -2009,8 +2010,8 @@ assert_eq "$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" "1" \
 out="$(STUB_ORCA_FAIL="orchestration worker-list" cmd_reap --all-merged --base main 2>&1)"
 assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "1" \
   "--all-merged: 목록을 못 읽어도 워크트리마다 다시 읽지 않는다"
-assert_eq "$(printf '%s\n' "$out" | grep -c '판정하지 못했다')" "3" \
-  "--all-merged: 못 읽었으면 워크트리마다 판정하지 못했다고 말한다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '읽지 못해 진행 중인지 모른다 — 건너뛴다')" "3" \
+  "--all-merged: 못 읽었으면 워크트리마다 진행 중인지 모른다며 건너뛴다(fail closed)"
 assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
   "--all-merged: 목록을 못 읽으면 아무것도 회수하지 않는다"
 
@@ -2488,6 +2489,53 @@ assert_status 1 "check 가 오류로 답하면 체크포인트(3)가 아니라 �
   env STUB_ORCA_CHECK_FIXTURE="$NS/err.json" bash -c '. "$0"; cmd_wait --timeout-ms 1000' "$SUT"
 assert_eq "$(STUB_ORCA_CHECK_FIXTURE="$NS/err.json" cmd_wait --timeout-ms 1000 2>&1 >/dev/null | grep -c 'Unknown flag --full')" "1" \
   "오류의 이유를 그대로 보인다"
+
+# keepalive 줄이 결과 **뒤에** 와도 결과를 읽는다(두 흐름을 합치면 순서 보장이 없다). 값 단위로
+# 거르지 않고 마지막 값을 집으면 keepalive 를 결과로 읽는다.
+{ cat "$NS/done-pretty.json"; printf '%s\n' '{"_keepalive":true,"_heartbeat":true,"elapsedMs":15000,"deadlineMs":600000}'; } \
+  > "$NS/done-then-ka.json"
+out="$(STUB_ORCA_CHECK_FIXTURE="$NS/done-then-ka.json" cmd_wait --timeout-ms 1000 2>/dev/null)"
+assert_eq "$?" "0" "결과 뒤에 keepalive 줄이 와도 worker_done 을 받아 exit 0"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'keepalive 뒤의 본문')" "1" \
+  "결과 뒤의 keepalive 줄을 결과로 읽지 않는다"
+
+# CLI 실패·잘린 응답 — 1.4.246 의 consuming check 는 배치를 돌려주는 순간 처리됨으로 표시한다.
+# 그것을 「아직 신호 없음」(3)으로 버리면 그 worker_done 을 아무도 모르게 잃는다(리뷰 H1 재현).
+: > "$NS/empty.json"
+assert_status 1 "check 가 실패(exit 1)하고 keepalive 말고 아무것도 없으면 체크포인트가 아니라 실패(1)다" \
+  env STUB_ORCA_CHECK_KEEPALIVE=1 STUB_ORCA_CHECK_FIXTURE="$NS/empty.json" STUB_ORCA_CHECK_EXIT=1 \
+  bash -c '. "$0"; cmd_wait --timeout-ms 1000' "$SUT"
+printf '%s' '{"ok":true,"result":{"count":1,"messages":[{"type":"worker_done","subject":"끝","body":"잘린' \
+  > "$NS/cut-mid.json"
+assert_status 1 "worker_done 중간에서 잘리고 exit 1 이면 실패(1)다" \
+  env STUB_ORCA_CHECK_FIXTURE="$NS/cut-mid.json" STUB_ORCA_CHECK_EXIT=1 \
+  bash -c '. "$0"; cmd_wait --timeout-ms 1000' "$SUT"
+assert_status 1 "잘린 응답은 종료 코드가 0 이어도 실패(1)다" \
+  env STUB_ORCA_CHECK_FIXTURE="$NS/cut-mid.json" bash -c '. "$0"; cmd_wait --timeout-ms 1000' "$SUT"
+err="$(STUB_ORCA_CHECK_FIXTURE="$NS/cut-mid.json" STUB_ORCA_CHECK_EXIT=1 \
+       STUB_ORCA_CHECK_STDERR="response lost; rerun with --retry-request req_lost1" \
+       cmd_wait --timeout-ms 1000 2>&1 >/dev/null)"
+assert_eq "$(printf '%s\n' "$err" | grep -c '응답에 worker_done 이 있었다')" "1" \
+  "본문을 못 건진 worker_done 이 있었다고 알린다"
+assert_eq "$(printf '%s\n' "$err" | grep -c '"body":"잘린')" "1" "잘린 원문을 그대로 보인다"
+assert_eq "$(printf '%s\n' "$err" | grep -c 'check --retry-request req_lost1 --json --full')" "1" \
+  "CLI 가 찍은 --retry-request 로 같은 배치를 다시 받는 길을 낸다"
+assert_eq "$(printf '%s\n' "$err" | grep -c 'inbox --terminal run:run_stub --limit 20 --full')" "1" \
+  "inbox 로 찾는 길을 바인딩된 Run 으로 낸다"
+assert_eq "$(printf '%s\n' "$err" | grep -c 'stderr:')" "1" "CLI 의 stderr 를 버리지 않고 보인다"
+
+# 첫 메시지는 끝까지 왔고 둘째에서 잘렸다 — 끝까지 온 worker_done 의 본문은 반드시 낸다.
+printf '%s' '{"ok":true,"result":{"count":2,"messages":[{"type":"worker_done","subject":"A 끝","body":"A 의 본문"},{"type":"worker_done","subject":"B' \
+  > "$NS/cut-second.json"
+out="$(STUB_ORCA_CHECK_FIXTURE="$NS/cut-second.json" STUB_ORCA_CHECK_EXIT=1 cmd_wait --timeout-ms 1000 2>/dev/null)"
+assert_eq "$?" "1" "둘째 메시지에서 잘리면 실패(1)로 끝낸다"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'A 의 본문')" "1" \
+  "잘리기 전까지 끝까지 온 worker_done 의 본문은 stdout 으로 낸다(잃지 않는다)"
+
+# 결과는 끝까지 왔지만 CLI 가 실패로 끝났다 — 본문은 내고 성공으로 삼키지 않는다.
+out="$(STUB_ORCA_CHECK_FIXTURE="$NS/done-pretty.json" STUB_ORCA_CHECK_EXIT=1 cmd_wait --timeout-ms 1000 2>/dev/null)"
+assert_eq "$?" "1" "결과를 다 읽었어도 check 가 exit 1 이면 실패(1)다"
+assert_eq "$(printf '%s\n' "$out" | grep -c 'keepalive 뒤의 본문')" "1" "그때도 받은 본문은 낸다"
 rm -rf "$NS"; unset STUB_ORCA_LOG
 
 # ---------------------------------------------------------------------------
@@ -2552,6 +2600,12 @@ assert_eq "$(live_dispatch_in "repo1::/w" \
 assert_eq "$(live_dispatch_in "repo1::/w" \
   '{"result":{"workers":[{"dispatchId":"ctx_o","dispatchStatus":"dispatched","resource":{"worktreeId":"repo1::/other"}}]}}')" "" \
   "다른 워크트리의 진행 중 dispatch 는 세지 않는다"
+assert_eq "$(live_dispatch_in "repo1::/w" \
+  '{"result":{"workers":[{"dispatchId":"ctx_f","dispatchStatus":"dispatched","resource":{"worktreeId":"repo1::/w"}}]}}')" "ctx_f" \
+  "--full 모양의 dispatchStatus 하나만으로도 진행 중 dispatch 를 찾는다(projection 이 없어도)"
+assert_eq "$(live_dispatch_in "repo1::/w" \
+  '{"result":{"workers":[{"dispatchId":"ctx_c","dispatchStatus":"completed","resource":{"worktreeId":"repo1::/w"}}]}}')" "" \
+  "dispatchStatus 가 completed 면 진행 중이 아니다"
 
 assert_eq "$(env $DENV bash -c '. "$0"; cmd_status --porcelain --base main' "$SUT" 2>/dev/null \
   | cut -f1,2 | sort | tr '\t\n' ':,')" "dispatched:w-talk,recover:w-fin," \
@@ -2573,6 +2627,16 @@ assert_eq "$(env $DENV STUB_ORCA_BOUND_RUN=run_a bash -c '. "$0"; cmd_status --p
   "묶인 Run 의 한 장에 든 진행 중 dispatch 는 status 가 잡는다"
 
 jq '.result.worktrees |= map(select(.displayName == "w-talk"))' "$DR/ps.json" > "$DR/ps-talk.json"
+
+# 슬러그는 경로의 마지막 이름이다. Orca 는 워커의 브랜치 이름을 바꾸며 displayName 도 바꾼다
+# (실물: orca-1246 → 「Fix orca worker orca」). displayName 을 쓰면 spawn 이 준 슬러그로 reap·stop 이
+# 「없다」가 된다.
+jq '.result.worktrees |= map(.displayName = "Renamed " + .displayName)' "$DR/ps.json" > "$DR/ps-renamed.json"
+assert_eq "$(env $DENV STUB_ORCA_PS_FIXTURE="$DR/ps-renamed.json" bash -c '. "$0"; cmd_status --porcelain --base main' "$SUT" 2>/dev/null \
+  | cut -f2 | sort | tr '\n' ',')" "w-fin,w-talk," \
+  "displayName 이 바뀌어도 슬러그는 워크트리 경로의 마지막 이름이다"
+assert_eq "$(env $DENV STUB_ORCA_PS_FIXTURE="$DR/ps-renamed.json" bash -c '. "$0"; cmd_stop w-fin --dry-run' "$SUT" 2>&1 | grep -c '정지 대상')" "1" \
+  "displayName 이 바뀐 워크트리도 경로의 슬러그로 stop 이 찾는다"
 assert_status 0 "진행 중 dispatch 만 있으면 미정리가 없다(exit 0 — 훅이 깨지 않는다)" \
   env $DENV STUB_ORCA_PS_FIXTURE="$DR/ps-talk.json" bash -c '. "$0"; cmd_status --base main' "$SUT"
 
@@ -2606,6 +2670,31 @@ assert_eq "$(env $DENV bash -c '. "$0"; cmd_stop --all --dry-run' "$SUT" 2>&1 | 
   "끝난 dispatch 의 워크트리는 그대로 정지 대상이다"
 assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
   "진행 중 판정 경로의 모든 Orca 호출이 실물 인자 검증을 통과한다"
+
+# 목록(worker-list)을 못 읽으면 진행 중인지 모른다 — 지우지도 끄지도 않는다(fail closed, 리뷰 M1).
+# 그대로 지나가면 답을 기다리는 워커의 워크트리·터미널이 사라진다. 슬러그를 찍은 --force 만 넘는다.
+: > "$STUB_ORCA_LOG"
+assert_status 1 "worker-list 를 못 읽으면 reap 은 거부한다" \
+  env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_reap w-talk --base main' "$SUT"
+assert_eq "$(grep -c -E 'worker-release|terminal close|worktree rm' "$STUB_ORCA_LOG")" "0" \
+  "목록을 못 읽어 거부한 reap 은 회수·정지·삭제를 하나도 부르지 않는다"
+assert_eq "$([ -d "$DR/.worktrees/$DB/w-talk" ] && printf 'kept' || printf 'gone')" "kept" \
+  "목록을 못 읽었을 때 워크트리가 남아 있다"
+assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_reap w-talk --base main --dry-run' "$SUT" 2>&1 | grep -c '읽지 못해 진행 중인 dispatch 가 있는지 모른다')" "1" \
+  "reap 은 목록을 못 읽어 거부한 이유를 말한다"
+assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_reap w-talk --base main --dry-run --force' "$SUT" 2>&1 | grep -c '정리 대상')" "1" \
+  "슬러그를 찍은 --force 는 목록을 못 읽어도 넘는다"
+assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_reap --all-merged --base main --dry-run' "$SUT" 2>&1 | grep -c '정리 대상')" "0" \
+  "reap --all-merged 는 목록을 못 읽으면 아무것도 정리 대상으로 내지 않는다"
+: > "$STUB_ORCA_LOG"
+assert_status 1 "worker-list 를 못 읽으면 stop 은 거부한다" \
+  env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_stop w-talk' "$SUT"
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
+  "목록을 못 읽어 거부한 stop 은 terminal close 를 부르지 않는다"
+assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_stop w-talk --force --dry-run' "$SUT" 2>&1 | grep -c '정지 대상')" "1" \
+  "stop 도 슬러그를 찍은 --force 는 목록을 못 읽어도 넘는다"
+assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_stop --all --dry-run' "$SUT" 2>&1 | grep -c '정지 대상')" "0" \
+  "stop --all 은 목록을 못 읽으면 아무것도 정지 대상으로 내지 않는다"
 rm -rf "$DT"; unset STUB_ORCA_LOG
 
 finish

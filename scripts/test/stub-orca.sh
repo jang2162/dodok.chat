@@ -546,6 +546,13 @@ case "$sub" in
       jq -c 'if type == "object" and (.result? | type) == "object"
              then .result |= del(.count, .deliveryId) else . end' 2>/dev/null || cat
     fi
+    # CLI 가 결과를 내다 실패한 꼴. 1.4.246 의 consuming check 는 배치를 돌려주는 순간 처리됨으로
+    # 표시하므로, 이 꼴에서 받은 것을 버리면 그 배치를 잃는다. 잘린 응답은 픽스처 파일로 준다.
+    #   STUB_ORCA_CHECK_STDERR  stderr 에 낼 줄. `check --help` 는 「the --retry-request it printed」라고만
+    #                           하고, 실물이 그것을 어느 흐름에 찍는지는 이 저장소에서 재지 못했다
+    #   STUB_ORCA_CHECK_EXIT    종료 코드
+    [ -z "${STUB_ORCA_CHECK_STDERR:-}" ] || printf '%s\n' "$STUB_ORCA_CHECK_STDERR" >&2
+    exit "${STUB_ORCA_CHECK_EXIT:-0}"
     ;;
   (*)                printf '{"ok":true,"result":{}}\n' ;;
 esac
