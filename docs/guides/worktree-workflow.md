@@ -118,6 +118,8 @@ Orca 환경이면 아래 한 줄이 이 절과 3절의 검증을 전부 수행�
 scripts/orca-worker.sh spawn <슬러그> <역할> [--model opus|sonnet] [--brief <파일>] [--base <브랜치>]
 ```
 
+Orca 1.4.246 부터 `orca orchestration … --json` 기본 응답이 짧아졌고, 스크립트는 응답을 파싱하는 `orchestration` 호출에 `--full` 을 붙여 옛 모양을 받는다(`--full` 을 모르는 그 전 판은 지원하지 않는다 — 거절이 실패로 드러난다). 손으로 `orchestration` 명령을 부를 때도 옛 필드(`workerState`·`dispatchStatus`·`agentTerminalHandle`, `.result.run.id`)를 보려면 `--full` 을 붙인다.
+
 스크립트가 밟는 단계 — **전부 아래에 이미 적혀 있던 것들이고, 사람이 반복해서 빠뜨리는 것들이다.**
 
 1. `orca status --json` 으로 running runtime 확인 → 아니면 즉시 실패(조용한 이탈 차단)
@@ -785,6 +787,15 @@ scripts/orca-worker.sh stop --all --dry-run   # 무엇이 정지될지 먼저 �
 (`.claude/settings.json` 의 `SessionStart`·`UserPromptSubmit` 훅). "미정리"는 둘뿐이다 — **워커가 `done` 인데 터미널이
 살아 있는 것**과 **기준 브랜치에 병합됐는데 워크트리가 남아 있는 것.** 도는 워커는 미정리가 아니고, `.orca-keep` 으로
 보호한 워크트리(`keep`)도 아니다.
+
+사람과 대화하는 워커(브레인스토밍)는 답을 기다리는 동안 activity 가 `done`, 브랜치가 커밋 0 으로 보인다. dispatch 가 진행 중이면 회수하지 않는다.
+스크립트는 그 판정을 `worker-list` 의 dispatch 로 한다 — 그 워크트리 것으로 증명된 dispatch 가 아직 진행 중(`dispatchStatus: dispatched`)이면
+`status` 는 `dispatched` 로 내고(미정리로 세지 않는다 — 훅이 깨지 않는다), `reap`·`stop` 은 거부하며 `--all-merged`·`--all` 은 건너뛴다
+(슬러그를 찍은 `--force` 로만 넘는다). **`status` 는 `worker-list` 를 한 장만 읽는다** — 부른 터미널의 Run(바인딩이 없으면 모든 Run)에서
+최신 100행이다. 모든 Run 을 끝까지 읽으면 이 머신에서 16초(Run 100개 넘게·4800행)라 훅의 시간 한도(15초)를 넘는다. 그 한 장 밖의
+dispatch(지난 세션의 Run 에서 띄운 워커 등)는 `status` 에서 예전처럼 `recover` 로 보일 수 있고, `reap`·`stop` 은 끝까지 읽어 막는다. 사람이 읽는 표의 BRANCH 칸은 만든 뒤 커밋이 하나도 없는 브랜치를 `merged` 가 아니라 `nocommit`
+으로 보인다(브랜치 reflog 로 잰다 — 생성과 이름 바꿈 말고 항목이 없다). 진행 중으로 남은 채 터미널이 죽은 dispatch 도 같은 취급이다 —
+일을 끝내지 못하고 죽은 워커일 수 있으니 터미널·보고를 확인하고 정한다.
 
 **`reap` 은 지우기 전에 두 관문을 통과시킨다. 하나라도 걸리면 거부한다.**
 
