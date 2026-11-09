@@ -75,6 +75,7 @@ const directOf = (
   channel: directChannel(id),
   users,
   agents,
+  sessions: agents.length > 0,
   lastMessageAt: "2026-11-09T01:00:00.000Z",
   readOnlyReason: null,
   ...over,

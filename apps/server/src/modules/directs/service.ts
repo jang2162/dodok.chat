@@ -254,7 +254,8 @@ export function directReadOnlyReason(
 
 /**
  * GET /directs — 내가 참여한 direct 전부(글이 없는 것도 — 웹이 lastMessageAt 으로 가른다), 최근 활동순(listDms 와 같은 식: 가장 최근
- * 글 시각, 없으면 연 시각). users 는 나를 뺀 사람 참여자(비활성 포함), agents 는 보관하지 않은 참여 에이전트(agentForRole 을 지난다)
+ * 글 시각, 없으면 연 시각). users 는 나를 뺀 사람 참여자(비활성 포함), agents 는 보관하지 않은 참여 에이전트(agentForRole 을 지난다),
+ * sessions 는 directHasAgents 와 같은 값(보관한 에이전트도 센다)
  */
 export function listDirects(
   db: DbOrTx,
@@ -285,6 +286,7 @@ export function listDirects(
         const agentRow = db.select().from(agents).where(eq(agents.id, id)).get();
         return agentRow && agentRow.archivedAt === null ? [agentForRole(apiAgent(db, agentRow), role)] : [];
       }),
+      sessions: directHasAgents(db, channel.id),
       lastMessageAt: at === null ? null : new Date(at).toISOString(),
       readOnlyReason: directReadOnlyReason(db, channel, userId),
     };
