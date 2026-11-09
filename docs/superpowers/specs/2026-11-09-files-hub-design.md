@@ -224,3 +224,51 @@ API 응답 필드 이름(겹치는 것은 `SearchHit` 이름), 커서 꼴, 색�
 - **5.1 패널 탭** — C 가 `ChannelPage.tsx` 에 종류별 탭 거름(`only`·「그 주소로 와도 그리지 않음」)을 두었으므로 세 종류 모두에 `files` 를 더하는 자리를 적었다. 「C 계획 PH4」 참조를 C 스펙 13.1 PH4 로.
 - **5.2 대화 이름·메시지로 가기·올린 사람 후보** — ⌘K 결과 줄의 `nameOf`(C 가 `direct` 의 「DM · 이름」·「(그룹)」 을 더했다)를 꺼내 함께 쓰고, `requestJump` 를 그대로 부르며, `direct` 의 후보는 `DirectSummary.users`·`agents` 에서 고른다고 적었다. 한 줄기 `direct` 의 파일 줄에는 세션 제목을 싣지 않는다.
 - **9장** — 「C 와 겹치는 자리」(병합 전 기준)를 「C 위에서 짓는다」(고치지 않고 부르는 자리)로 바꿨다. `docs/guides/plan.md` 8장 「이월」 의 글자 충돌 걱정은 없어졌다 — C 묶음과 A 보류 묶음 뒤에 「파일함」 묶음을 더한다.
+
+## 14. 구현과 맞춘 것(2026-11-09)
+
+구현 계획 `docs/superpowers/plans/2026-11-09-files-hub.md`(태스크 1~5)·리뷰·브라우저 검증에서 이 설계와 달라지거나 빈칸을 채운 것만 모았다. 결정(1장)은 바뀌지 않았다. 남은 문제는 `docs/guides/plan.md` 8장 「이월」 의 「파일함」 묶음 한곳에 있다.
+
+**계획이 정한 것(PF1~PF8 — 12장 「빌더에게 맡긴 것」)**
+
+- **PF1 — shared 계약은 `packages/shared/src/files/index.ts`**: `FILE_PAGE_SIZE` 50·`FILE_PAGE_MAX` 100·`FileListQuery`(`q` 는 trim 뒤 1~100)·`FileListItem`(4.1 의 응답 그대로 — 겹치는 이름은 `SearchHit` 과 같다)·`FileList`. 사람 파일 상한 이름은 `ATTACHMENT_LIMITS.userFileMaxBytes`(20 MiB, `agentFileMaxBytes` 와 같은 값의 따로 둔 이름).
+- **PF2 — 서버 조회는 `apps/server/src/modules/attachments/list.ts` 의 `listFiles`**, 라우트는 `routes.ts` 의 세션 스코프 `GET /api/v1/attachments`(`:id` 와 나란히). `m.kind = 'normal'`·`a.message_id IS NOT NULL` 도 건다 — 뒤의 것은 방어용이다(메시지 JOIN 이 이미 거른다).
+- **PF3 — 색인** `attachments_channel_message (channel_id, message_id)`, 마이그레이션 `0036_attachments_channel_message`(생성기 출력 그대로).
+- **PF4 — 커서**는 `{ createdAt, messageId, pos }` 의 base64url JSON, 틀리면 `VALIDATION`.
+- **PF5 — 웹 쿼리 키**(5.3 의 `['files', {channelId?, …}]` 정정): 패널 탭 `qk.files(channelId)` = `["files", channelId]`, 전체 화면 `qk.filesAll` = `["files", "all"]`, 거름은 그 뒤 원소. `channel.activity` 는 그 채널 키만 무효화한다(전체 화면 키는 건드리지 않는다).
+- **PF6 — 대화 이름**은 `features/search/SearchResults.tsx` 의 `nameOf` 를 `apps/web/src/features/search/conversationNames.ts` 의 `useConversationNames` 로 꺼내 ⌘K 결과와 파일함이 같이 쓴다.
+- **PF7 — 메시지로 가기**는 `features/files/goToFile.ts` 의 `useGoToFile`.
+- **PF8 — 크게 보기의 「메시지로 가기」**는 `ImageViewer` 의 `onGoToMessage` 가 있을 때만 그린다 — 파일함 격자만 주고 메시지 본문의 격자는 주지 않는다.
+
+**서버(태스크 1·2)**
+
+- **한 메시지 안의 순서는 `attachments.id ASC` 가 아니라 `attachments_json` 안 자리 `pos`**(4.1 정렬 정정) — `json_each` 의 key. 4.1 이 「`attachments_json` 순서와 같게」 라 한 뜻을 따른 것이다. 정렬은 `messages.created_at DESC, messages.id DESC, pos ASC`.
+- **항목의 `attachment` 는 `attachments` 행에서 짓는다**(메시지의 `attachments_json` 이 아니라) — 둘은 NFC 백필이 함께 맞춘다.
+- **새로 올리는 첨부 이름에서 양방향 제어 문자를 뺀다**(4.2 보탬) — `invoice<U+202E>fdp.exe` 가 `invoiceexe.pdf` 로 보이는 위장을 막는다. 빼는 집합(U+202A–202E·U+2066–2069·U+200E·U+200F·U+061C)은 shared `domain/` 의 `BIDI_CONTROLS_RE` 한 벌이고, 저장 `sanitizeAttachmentName` 과 표시 `displayAttachmentName` 이 같이 쓴다. 이미 저장된 이름은 다시 쓰지 않는다(이월).
+- **역할 매트릭스의 목록 줄은 `DM_CASES` 에만 둔다** — `DIRECT_CASES` 가 `DM_CASES` 를 다시 돌리므로 `direct` 도 덮인다.
+- **413 과 400 의 문구·`maxBytes`** — 라우트 `bodyLimit` 은 `userFileMaxBytes` 라 20 MiB 를 넘으면 Fastify 413 이 먼저 나고, `routes.ts` 가 그것을 서비스와 같은 문구·`maxBytes` 로 다시 씌운다(`sizeLimitError`). 사진 5 MB 는 서비스 400.
+
+**웹 — 작성기(태스크 3)**
+
+- **칩 문구** — 413 은 늘 「20 MB 를 넘습니다」, `maxBytes` 가 실린 400 은 그 값이 사진 상한 이하면 「5 MB 를 넘습니다」 아니면 「20 MB 를 넘습니다」.
+- **`type` 이 빈 파일은 `application/octet-stream` 으로 보낸다.** 업로드 함수 이름은 `uploadAttachment`, 검사는 `checkAttachmentFile`.
+- **웹·서버 판별이 갈리는 두 꼴은 남긴다** — PNG 내용 + 비이미지 확장자 5~20 MB 는 웹이 지나보내고 서버가 400 「5 MB」, HTML 내용 + `.png` 이름 5~20 MB 는 웹이 사진 상한으로 먼저 막는다. 6장 「웹의 MIME 은 힌트」 그대로다.
+- **빈 파일과 폴더를 웹이 먼저 막는다**(6장 보탬) — 빈 파일은 칩에 「빈 파일은 보낼 수 없습니다」(서버의 해라체 원문을 칩에 쓰지 않게), 놓은 폴더는 `dataTransfer.items` 의 `webkitGetAsEntry().isDirectory` 로 걸러 토스트 「폴더는 보낼 수 없습니다」.
+- **사진 칩의 미리보기는 서버 판별을 따른다**(태스크 5 브라우저 결함) — 브라우저가 `image/png` 라 한 `.png` 이름의 HTML 이 깨진 썸네일로 보였다. 서버 응답의 `attachment.kind` 가 `file` 이거나 `<img>` 가 `onError` 면 파일 칩(아이콘·크기)으로 그린다.
+
+**웹 — 파일 탭과 전체 화면(태스크 4)**
+
+- **PF7 보탬 — 시트를 따로 닫지 않는다.** 세션 주소로 옮기면 패널이 내려간다 — **넓은 화면에서도 파일 패널이 닫힌다**(5.2 는 좁은 화면만 적었다, ⌘K 와 같은 길). 답글이면 스레드 탭이 열린다. 패널을 남길지는 설계 판단으로 이월했다.
+- **파일 줄은 `FileCard` 를 다시 썼다** — 메타(올린 사람·대화·날짜·「보관됨」)·단추 칸을 더했다. 머리의 「파일」 단추는 `app/layout/PanelTabs.tsx` 의 `FilesTabLink` 하나를 세 머리(채널·에이전트 DM·사람 DM)가 쓴다.
+- **사진 격자는 `AttachmentGrid` 가 아니라 `AttachmentImage`** 를 3열(전체 화면이 넓으면 6열)로.
+- **설계자가 정한 문구**: 「불러오는 중…」, 「파일을 불러오지 못했습니다」(오류 원문이 있으면 「파일을 불러오지 못했습니다 — …」), 대화 고르기 「모든 대화」, 올린 사람 「모두」, 크게 보기 단추 「메시지로 가기」, 빈 파일·폴더 문구(위).
+- **전체 화면 「대화」 고르기는 보관하지 않은 채널·DM 만 싣는다** — 보관 채널의 줄은 「모든 대화」에서 보이고 「보관됨」이 붙는다.
+- **이름은 `displayAttachmentName` + `<bdi>`** 로 그린다(리뷰 수정) — `<bdi>` 는 둘레만 격리하고 이름 안의 U+202E 는 남아 위장이 그대로 보였다. 파일 줄 이름·`title`·`aria-label`, 크게 보기 제목·`alt`, 격자 `label`, 작성기 칩, 첨부로 풀리지 않는 `file` 블록(`FileBlock.tsx`)까지.
+- **다시 붙으면 `["files"]` 를 모두 무효화한다**(5.3 보탬, 리뷰 수정) — 끊긴 사이 온 첨부가 열린 탭에 안 보이던 것.
+
+**검증(태스크 5)**
+
+- **`dev:fake` 씨앗은 새 글이 아니라 기존 씨앗 글에 묶었다** — 씨앗 채널 「세션」 의 「dev:fake 새 세션」 owner 글에 사진 둘·PDF 하나(`DEV_FAKE_CHANNEL_FILES`), mia ↔ dev DM 의 mia 첫 글에 사진 하나(`DEV_FAKE_DM_FILE` — owner 의 파일함에 없어야 하는 것). 기존 세션·글 수 단언을 바꾸지 않으려고. 서비스 `uploadAttachment` + 메시지 묶기로, 채널 첨부는 씨앗 채널과 같은 조건, DM 사진은 DM 씨앗과 같은 조건·같은 건너뛰기.
+- **플러그인 `[첨부 파일: …]` 줄은 실제 플러그인 `prepareInboundMedia` 로 단언한다** — 가짜 플러그인은 본문을 만들지 않으므로 통합 시험이 가짜 플러그인이 받은 deliver 의 첨부를 실제 함수에 넣는다.
+- **「메시지로 가기」 뒤 초점**(브라우저 결함) — 누른 단추가 활성인 채 목록이 초점을 포기했고, 시트·크게 보기의 초점 가둠이 초점을 머리 단추로 돌려줬다. `goToFile.ts` 가 누른 단추의 초점을 내려놓고(입력 칸은 제외), 대화상자가 열려 있었으면 초점 목표 없이 먼저 건 뒤 대화상자가 다 내려가면(상한 1.5초) 초점 목표로 다시 건다. jsdom 이 못 잡는 갈래라 실제 Chromium 으로 확인했다.
+- **브라우저 검증은 전부 독립 Chromium 으로 했다**(10장 「화면은 neo」 대신) — owner·mia 두 계정이 필요했다. https `file` 블록 카드는 `dev:fake` 대본에 없어 단위 시험으로만, 20 MiB 넘는 파일의 413 은 웹이 먼저 막아 단위·서버 시험으로만 본다.

@@ -404,15 +404,16 @@ DOM 사실은 이미 확인돼 있다: 확정·만료 안내는 **텍스트를 �
 
 자동화는 파일 선택을 숨은 `input` 에 파일을 넣는 것으로, 붙여넣기를 페이지 안에서 만든 `ClipboardEvent` 로 대신한다. 칩·사유 문구·「서식 없이 글만」 같은 **코드가 하는 일**은 그것으로 잰다.
 **실제 OS 가 채우는 클립보드·드래그 데이터**는 자동화가 흉내 낼 수 없다 — 아래는 사람이 한 번 본다. `dev:fake` + 웹이면 된다(모델 런 0회, `AGENTS.md` 「명령」 절의 「웹 손 확인」).
+첨부를 많이 올리는 확인은 업로드 레이트리밋(`apps/server/src/modules/ops/limits.ts` 의 `uploadPerMin` 30 — 사용자당 분당)에 걸린다 — 묶음마다 쉰다.
 
 | # | 볼 것 | 어떻게 | 통과 기준 |
 | --- | --- | --- | --- |
 | 1 | **웹 페이지 이미지 붙여넣기** | 다른 탭에서 이미지를 우클릭 → 「이미지 복사」 → 작성기에 붙여넣기 | 칩이 생기고 올라간다. 보내면 메시지에 이미지가 그려진다 |
 | 2 | **오피스·문서에서 이미지와 글을 함께 붙여넣기** | Word·한글·구글 문서에서 이미지와 글이 섞인 구간을 복사 → 붙여넣기 | 이미지가 파일로 실리는 앱이면 칩이 생긴다. 글은 **서식 없이** 들어온다 — 굵게·표·깨진 HTML 이 본문에 보이지 않는다. 이미지를 파일로 싣지 않는 앱이면 글만 들어오는 것이 정상이다. 앱마다 어땠는지 적는다 |
 | 3 | **PNG 끌어다 놓기** | Finder 에서 PNG 를 작성기(칩 줄·버튼 위 포함) 위로 끌어 놓는다 | 커서가 「복사」 모양이고 칩이 생긴다 |
-| 4 | **SVG·PDF 끌어다 놓기** | SVG(또는 PDF)를 작성기 위로 | 칩 없이 토스트 「이미지만 올릴 수 있습니다」. 서버 요청 0건 |
-| 5 | **작성기 밖에 놓기** | 이미지를 메시지 목록 위로 끌어 놓는다 | 커서가 「놓을 수 없음」, 토스트 「이미지는 입력 칸에 놓아 주세요」. 브라우저가 이미지를 열어 앱을 떠나지 않는다 |
-| 6 | **OS 파일 선택창** | 「이미지 첨부」 → 파일 창 | PNG·JPEG·GIF·WebP 만 고를 수 있다(`accept`). SVG 는 흐리거나 안 보인다 |
+| 4 | **PDF·SVG·폴더 끌어다 놓기** | PDF(또는 SVG)를 작성기 위로, 그다음 Finder 의 폴더를 작성기 위로 | 파일은 아이콘·크기가 든 파일 칩이 생기고 올라간다(SVG 도 사진이 아니라 파일 칩). 폴더는 칩 없이 토스트 「폴더는 보낼 수 없습니다」, 서버 요청 0건 |
+| 5 | **작성기 밖에 놓기** | 파일을 메시지 목록 위로 끌어 놓는다 | 커서가 「놓을 수 없음」, 토스트 「파일은 입력 칸에 놓아 주세요」. 브라우저가 파일을 열어 앱을 떠나지 않는다 |
+| 6 | **OS 파일 선택창** | 「파일 첨부」 → 파일 창 | 모든 형식을 고를 수 있다(`accept` 없음)·여러 개를 한 번에 고를 수 있다 |
 | 7 | **Safari 에서 크게 보기를 닫은 뒤 초점** | Safari 에서 이미지를 **마우스로** 눌러 크게 보기 → Esc → Tab | 초점이 그 이미지 버튼 자리에서 이어진다(`body` 로 떨어져 문서 처음부터 다시 돌지 않는다). Chromium·jsdom 은 클릭한 버튼에 초점을 줘 이 차이를 못 잰다 |
 
 ---
@@ -658,7 +659,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 - **로그 머리가 둘이다.** 인바운드·최종 응답 쪽은 런타임 `logger` 라 `[dodok] inbound-media`·`[dodok] deliver`·`[dodok] deliver-media`, 툴 쪽은 `console.info` 라 `dodok:tool-send`·`dodok:tool-send-media` 다. `grep -a 'inbound-media\|deliver-media\|tool-send'` 로 한 번에 본다. 로그에 색 코드가 섞여 있어 `sed 's/\x1b\[[0-9;]*m//g'` 를 먼저 건다.
 - **`fake-args.json` 을 배열로도 받고, 한 번 쓰면 치운다.** 한 런에서 여러 호출(b·e·상대 경로)을 한 번에 두드리고, 릴레이(에이전트 A 의 툴 전송이 `@dev` 를 불러 dev 의 런이 이어지는 것)에서 두 번째 런이 같은 툴을 다시 부르지 않게 한다. 스크립트의 `const args = …; const call = …` 자리를 `const raw = fs.readFileSync(ARGS_FILE); fs.renameSync(ARGS_FILE, ARGS_FILE + ".used-" + Date.now()); const calls = [].concat(JSON.parse(raw));` 와 `for (const args of calls) …` 로 바꾼다.
 - **`stdin-record` 에 두 가지를 더 적었다.** `atRefs` 마다 `sha256` 앞 16자(원본과 바이트 동일을 크기·magic 보다 세게 본다), 그리고 프롬프트에서 `/Users/…` 가 든 줄의 **꼴만**(`hostPathLines` — 홈을 `~` 로 바꾸고 160자로 자른다). 알림 줄은 `^\[(첨부 파일|이미지를 불러오지)` 로 뽑아 `notes` 에 둔다. Gateway 가 프롬프트에 `[media attached i/N: <스테이징 호스트 경로> …]` 를 스스로 붙이는 것이 이것으로 보인다.
-- **6 MiB 넘는 인바운드는 릴레이로만 잰다.** 사람 업로드 상한이 5 MiB 라 웹으로는 `saveMediaBuffer` 의 `maxBytes`(20 MiB)를 두드릴 수 없다. 채널에 `fin` 을 더하고, `fake-args.json` 을 `{"action":"send","target":"channel:<CV>","message":"@dev …","mediaUrls":["<WS>/a3-harness/big.png","<WS>/a3-harness/월간 보고서.pdf"]}` 로 둔 채 `@fin …` 을 보낸다 — fin 의 가짜 런이 큰 PNG·PDF 를 올리고, 그 메시지가 dev 를 불러 dev 의 인바운드에 이미지 하나 + `[첨부 파일: 월간 보고서.pdf]` 가 실린다. 무작위 픽셀 PNG(1700×1700, 8.7 MB)는 PIL 로 만든다.
+- **6 MiB 넘는 인바운드는 릴레이로만 잰다.** 사람 사진 상한이 5 MiB 이고 사진이 아닌 파일은 플러그인이 받지 않아 웹으로는 `saveMediaBuffer` 의 `maxBytes`(20 MiB)를 두드릴 수 없다. 채널에 `fin` 을 더하고, `fake-args.json` 을 `{"action":"send","target":"channel:<CV>","message":"@dev …","mediaUrls":["<WS>/a3-harness/big.png","<WS>/a3-harness/월간 보고서.pdf"]}` 로 둔 채 `@fin …` 을 보낸다 — fin 의 가짜 런이 큰 PNG·PDF 를 올리고, 그 메시지가 dev 를 불러 dev 의 인바운드에 이미지 하나 + `[첨부 파일: 월간 보고서.pdf]` 가 실린다. 무작위 픽셀 PNG(1700×1700, 8.7 MB)는 PIL 로 만든다.
 - **델타를 쪼개 흘리려면 `stream_event` 레코드를 낸다.** `assistant` 레코드만 내면 Gateway 는 그것을 `result` 가 올 때 **한 델타로** 흘린다(`assistant` 와 `result` 사이에 지연을 넣어도 버블이 먼저 보이지 않는다). 진짜 CLI 처럼 `stream_event` 를 내면 Gateway 가 조각마다 따로 흘린다 — 코어의 claude-cli 파서가 `stream_event` 의 `content_block_delta`·`text_delta` 를 델타로 읽는다(9.5 `dist/cli-live-session-registry-*.mjs` 의 `parseClaudeCliStreamingDelta`). 그래서 **모델 런 없이 델타 쪼개기·시각을 잴 수 있다**. 스크립트의 `assistant`·`result` 두 줄 앞에 아래를 넣는다(`fake-stream.json` = `{"gapMs":600,"deltas":["…","…"]}`, 최종 텍스트는 `deltas` 를 이은 것).
   ```js
   const MID = "msg_fake_" + Date.now(), se = (event) => out({ type: "stream_event", session_id: SID, event });
