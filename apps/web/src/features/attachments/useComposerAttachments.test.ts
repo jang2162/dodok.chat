@@ -4,10 +4,10 @@ import { createElement, type ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, type MockInstance, vi } from "vitest";
 import { CH, CH2 } from "../../../test/fixtures";
-import { FakeXhr, pngFile, stubObjectUrls, uploaded } from "../../../test/fakeXhr";
+import { FakeXhr, pdfFile, pngFile, stubObjectUrls, uploaded } from "../../../test/fakeXhr";
 import { qk } from "@/api/queries";
 import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
-import { ONLY_IMAGES, TOO_BIG } from "./upload";
+import { TOO_BIG, TOO_BIG_FILE } from "./upload";
 import { useComposerAttachments } from "./useComposerAttachments";
 
 let urls: ReturnType<typeof stubObjectUrls>;
@@ -25,7 +25,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const svg = () => new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
+/** 파일 상한을 넘는 PDF — 칩은 곧바로 오류 */
+const bigPdf = () => pdfFile("big.pdf", 20 * 1024 * 1024 + 1);
 const xhrAt = (i: number) => FakeXhr.all[i] as FakeXhr;
 
 const CONV = "01a00000-0000-7000-8000-000000003001";
@@ -37,15 +38,15 @@ function renderAttachments(channelId = CH) {
   });
 }
 
-it("add([png, svg]) — 둘 다 칩, svg 는 곧바로 오류(올리지 않음), png 는 올리는 중 → 진행 → done", async () => {
+it("add([png, 큰 pdf]) — 둘 다 칩, 큰 pdf 는 곧바로 오류(올리지 않음), png 는 올리는 중 → 진행 → done", async () => {
   const { result } = renderAttachments();
-  act(() => result.current.add([pngFile("a.png"), svg()]));
+  act(() => result.current.add([pngFile("a.png"), bigPdf()]));
 
   expect(FakeXhr.all).toHaveLength(1);
   expect(xhrAt(0).url).toBe(`/api/v1/attachments?channelId=${CH}`);
   expect(result.current.items.map((i) => [i.name, i.status, i.error, i.previewUrl])).toEqual([
     ["a.png", "uploading", undefined, "blob:1"],
-    ["x.svg", "error", ONLY_IMAGES, "blob:2"],
+    ["big.pdf", "error", TOO_BIG_FILE, undefined],
   ]);
   expect(result.current.uploading).toBe(true);
   expect(result.current.failed).toBe(true);
@@ -67,24 +68,39 @@ it("5 MiB 를 넘는 png 도 올리지 않고 칩에 이유", () => {
   expect(result.current.items[0]).toMatchObject({ status: "error", error: TOO_BIG });
 });
 
+it("PDF — 미리보기 URL 을 만들지 않고 곧바로 올린다", () => {
+  const { result } = renderAttachments();
+  act(() => result.current.add([pdfFile("report.pdf")]));
+  expect(urls.create).not.toHaveBeenCalled();
+  expect(result.current.items).toEqual([
+    expect.objectContaining({ name: "report.pdf", status: "uploading", previewUrl: undefined }),
+  ]);
+  expect(FakeXhr.all).toHaveLength(1);
+  expect(xhrAt(0).headers["content-type"]).toBe("application/pdf");
+});
+
 it("서버 거절도 칩에 이유", async () => {
   const { result } = renderAttachments();
   act(() => result.current.add([pngFile()]));
-  await act(async () => xhrAt(0).respond(400, { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" }));
-  expect(result.current.items[0]).toMatchObject({ status: "error", error: ONLY_IMAGES });
+  await act(async () => xhrAt(0).respond(400, { code: "VALIDATION", message: "빈 파일이다" }));
+  expect(result.current.items[0]).toMatchObject({ status: "error", error: "빈 파일이다" });
   expect(result.current.failed).toBe(true);
 });
 
-it("11개째부터는 칩을 만들지 않고 한 번 알린다 — 여러 번 넣어도 합쳐서 10", () => {
+it("11개째부터는 칩을 만들지 않고 한 번 알린다 — 사진·파일 합쳐서, 여러 번 넣어도 합쳐서 10", () => {
   const { result } = renderAttachments();
-  act(() => result.current.add(Array.from({ length: 7 }, (_, i) => pngFile(`${i}.png`))));
+  act(() =>
+    result.current.add(
+      Array.from({ length: 7 }, (_, i) => (i % 2 ? pdfFile(`${i}.pdf`) : pngFile(`${i}.png`))),
+    ),
+  );
   expect(toastInfo).not.toHaveBeenCalled();
   act(() => result.current.add(Array.from({ length: 5 }, (_, i) => pngFile(`b${i}.png`))));
   expect(result.current.items).toHaveLength(10);
   expect(result.current.items.at(-1)?.name).toBe("b2.png");
   expect(FakeXhr.all).toHaveLength(10);
   expect(toastInfo).toHaveBeenCalledTimes(1);
-  expect(toastInfo).toHaveBeenCalledWith("이미지는 한 번에 10장까지 보낼 수 있습니다", {
+  expect(toastInfo).toHaveBeenCalledWith("첨부는 한 번에 10개까지 보낼 수 있습니다", {
     id: "attach-limit",
   });
 });
@@ -126,16 +142,16 @@ it("remove — 끝난 칩은 끊을 것 없이 빠지고 ready 에서도 빠진�
 
 it("오류 칩을 빼면 failed 가 풀린다", () => {
   const { result } = renderAttachments();
-  act(() => result.current.add([svg()]));
+  act(() => result.current.add([bigPdf()]));
   expect(result.current.failed).toBe(true);
   act(() => result.current.remove(result.current.items[0]?.key ?? ""));
   expect(result.current.failed).toBe(false);
   expect(result.current.items).toEqual([]);
 });
 
-it("clear — 모두 비우고 URL 을 놓는다", async () => {
+it("clear — 모두 비우고 URL 을 놓는다(파일 칩은 놓을 URL 이 없다)", async () => {
   const { result } = renderAttachments();
-  act(() => result.current.add([pngFile("a.png"), svg()]));
+  act(() => result.current.add([pngFile("a.png"), bigPdf(), pngFile("b.png")]));
   await act(async () => xhrAt(0).respond(200, uploaded(1)));
   act(() => result.current.clear());
   expect(result.current.items).toEqual([]);
@@ -172,10 +188,11 @@ it("[t5-review M2] 같은 채널의 다른 세션으로 옮기면 모두 끊고 
 
 it("언마운트 때 모두 끊고 놓는다", () => {
   const { result, unmount } = renderAttachments();
-  act(() => result.current.add([pngFile("a.png"), svg()]));
+  act(() => result.current.add([pngFile("a.png"), pdfFile("b.pdf")]));
   unmount();
   expect(xhrAt(0).aborted).toBe(true);
-  expect(urls.revoke.mock.calls.map(([u]) => u).sort()).toEqual(["blob:1", "blob:2"]);
+  expect(xhrAt(1).aborted).toBe(true);
+  expect(urls.revoke.mock.calls.map(([u]) => u)).toEqual(["blob:1"]);
 });
 
 it("409 DM_READ_ONLY — 칩은 그 사유 문구로 오류, DM 목록을 다시 받는다(에이전트 DM 리뷰 L3)", async () => {

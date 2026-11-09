@@ -1004,7 +1004,7 @@ describe("주소·세션 전환", () => {
       document.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement,
       pngFile("a.png"),
     );
-    const chips = () => screen.queryByRole("list", { name: "첨부할 이미지" });
+    const chips = () => screen.queryByRole("list", { name: "첨부할 파일" });
     expect(chips()).not.toBeNull();
 
     await act(async () =>
@@ -1054,7 +1054,7 @@ describe("주소·세션 전환", () => {
       document.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement,
       pngFile("a.png"),
     );
-    const chips = () => screen.queryByRole("list", { name: "첨부할 이미지" });
+    const chips = () => screen.queryByRole("list", { name: "첨부할 파일" });
     expect(chips()).not.toBeNull();
 
     await userEvent.click(within(await pane()).getByRole("link", { name: /세션-1/ }));

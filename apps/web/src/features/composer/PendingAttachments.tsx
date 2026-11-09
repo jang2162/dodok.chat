@@ -1,5 +1,6 @@
-import { XIcon } from "lucide-react";
+import { FileIcon, XIcon } from "lucide-react";
 import { useRef } from "react";
+import { formatSize } from "@/features/attachments/format";
 import type { ComposerAttachment } from "@/features/attachments/useComposerAttachments";
 import { Button } from "@/ui/button";
 
@@ -11,7 +12,8 @@ export function focusAfterRemove(keys: readonly string[], removed: string): stri
 }
 
 /**
- * 작성기 위 첨부 칩(스펙 6.1) — 로컬 미리보기·이름, 올리는 중이면 진행 막대, 오류면 빨간 이유, 빼기 버튼.
+ * 작성기 위 첨부 칩(스펙 6.1·파일함 스펙 6장) — 사진은 로컬 미리보기·이름, 그 밖은 파일 아이콘·이름·크기. 올리는 중이면 진행 막대,
+ * 오류면 빨간 이유, 빼기 버튼.
  * 빼기 버튼으로 뺄 때만 초점을 옆 칩의 빼기 버튼으로, 칩이 다 빠지면 onEmptied 로 넘긴다 — 누른 버튼이 사라져도 body 로 떨어지지 않게.
  * 비었으면 아무것도 그리지 않는다
  */
@@ -36,18 +38,27 @@ export function PendingAttachments({
     else buttons.current.get(next)?.focus();
   };
   return (
-    <ul role="list" aria-label="첨부할 이미지" className="flex flex-wrap gap-2 pt-1 pb-1.5">
+    <ul role="list" aria-label="첨부할 파일" className="flex flex-wrap gap-2 pt-1 pb-1.5">
       {items.map((item) => (
         <li
           key={item.key}
           data-status={item.status}
           className="flex w-52 max-w-full items-center gap-2 rounded-md border border-input bg-background p-1.5"
         >
-          <img src={item.previewUrl} alt="" className="size-10 shrink-0 rounded object-cover" />
+          {item.previewUrl ? (
+            <img src={item.previewUrl} alt="" className="size-10 shrink-0 rounded object-cover" />
+          ) : (
+            <span className="flex size-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+              <FileIcon data-icon="file" aria-hidden className="size-5" />
+            </span>
+          )}
           <div className="min-w-0 flex-1 text-xs">
             <p className="truncate" title={item.name}>
               {item.name}
             </p>
+            {!item.previewUrl && item.status !== "error" && (
+              <p className="text-muted-foreground">{formatSize(item.size)}</p>
+            )}
             {item.status === "uploading" && (
               <div
                 role="progressbar"

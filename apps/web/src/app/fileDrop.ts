@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 
-/** 이미지는 작성기만 받는다(스펙 6.1) — 그 밖의 자리에 끌어 놓으면 이 문구 */
-export const DROP_ON_COMPOSER = "이미지는 입력 칸에 놓아 주세요";
+/** 파일은 작성기만 받는다(스펙 6.1) — 그 밖의 자리에 끌어 놓으면 이 문구 */
+export const DROP_ON_COMPOSER = "파일은 입력 칸에 놓아 주세요";
 export const DROP_ON_COMPOSER_TOAST_ID = "drop-on-composer";
 
 const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;

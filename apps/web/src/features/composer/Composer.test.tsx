@@ -1,10 +1,11 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
+import { FakeXhr, stubObjectUrls } from "../../../test/fakeXhr";
 import { AGENT, CH, CH2 } from "../../../test/fixtures";
 import {
   confirmed,
@@ -125,34 +126,48 @@ it("(d) wire 가 connected 가 아니면 전송 버튼 비활성 + 「연결되�
   expect(button).toBeEnabled();
 });
 
-describe("(g) 붙여넣기·끌어 놓기 — 이미지 아닌 파일(이미지는 Composer.attachments.test)", () => {
+describe("(g) 붙여넣기·끌어 놓기 — 이미지 아닌 파일도 칩(칩 꼴은 Composer.attachments.test)", () => {
   const pdf = () => new File(["x"], "a.pdf", { type: "application/pdf" });
+  const chips = () => screen.queryByRole("list", { name: "첨부할 파일" });
+  // 칩은 곧바로 올린다 — 실제 XHR 이 나가지 않게
+  let urls: ReturnType<typeof stubObjectUrls>;
+  beforeEach(() => {
+    FakeXhr.reset();
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    urls = stubObjectUrls();
+  });
+  afterEach(() => {
+    urls.restore();
+    vi.unstubAllGlobals();
+  });
 
-  it("이미지 아닌 파일만 온 붙여넣기 → 「이미지만 올릴 수 있습니다」 토스트, 본문 변화 없음", () => {
+  it("이미지 아닌 파일만 온 붙여넣기 → 칩, 토스트 없음, 본문 변화 없음", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("그대로"))));
     fireEvent.paste(box, { clipboardData: { files: [pdf()], types: ["Files"], getData: () => "" } });
-    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
+    expect(toastInfo).not.toHaveBeenCalled();
     expect(editor.getJSON()).toEqual(doc(p(t("그대로"))));
-    expect(screen.queryByRole("list", { name: "첨부할 이미지" })).toBeNull();
+    expect(within(chips() as HTMLElement).getByText("a.pdf")).toBeInTheDocument();
   });
 
-  it("글과 이미지 아닌 파일이 함께 오면 글은 들어가고 파일은 알린다", () => {
+  it("글과 이미지 아닌 파일이 함께 오면 글도 들어가고 칩도 생긴다", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("앞 "))));
     const getData = (type: string) => (type === "text/plain" ? "붙인 글" : "");
     fireEvent.paste(box, { clipboardData: { files: [pdf()], types: ["text/plain", "Files"], getData } });
-    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
+    expect(toastInfo).not.toHaveBeenCalled();
     expect(editor.getText()).toBe("앞 붙인 글");
+    expect(within(chips() as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
   });
 
-  it("이미지 아닌 파일 끌어 놓기 → 토스트, 브라우저가 열지 않게 막는다", () => {
+  it("이미지 아닌 파일 끌어 놓기 → 칩, 브라우저가 열지 않게 막는다", () => {
     const { box } = renderComposer();
     const dropped = fireEvent.drop(box, {
       dataTransfer: { files: [pdf()], types: ["Files"], getData: () => "" },
     });
     expect(dropped).toBe(false);
-    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
+    expect(toastInfo).not.toHaveBeenCalled();
+    expect(within(chips() as HTMLElement).getByText("a.pdf")).toBeInTheDocument();
   });
 });
 

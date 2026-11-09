@@ -3,13 +3,11 @@ import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
-import { isImageMime } from "@dodok/shared";
-import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
+import { PaperclipIcon, SendHorizontalIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAgents, useMe, useMembers, usePeople } from "@/api/queries";
-import { ONLY_IMAGES } from "@/features/attachments/upload";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { abortErrorMessage } from "@/features/runs/abortError";
@@ -32,13 +30,12 @@ const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
 const THREAD_PLACEHOLDER = "스레드에 답하기 — @로 에이전트 부르기";
 /** 에이전트 DM 에는 멘션이 없다(에이전트 DM 계획 판정 PD6) — 모든 글이 그 에이전트에게 간다. 에이전트 없는 사람 DM 도 이 문구 */
 const DM_PLACEHOLDER = "메시지 보내기";
-const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 
 /** 보내기를 막는 사유 — 우선순위 순(끊김이 먼저) */
 const BLOCKED = {
   disconnected: "연결되면 보낼 수 있습니다",
-  uploading: "이미지를 올리는 중입니다",
-  failed: "올리지 못한 이미지를 빼 주세요",
+  uploading: "파일을 올리는 중입니다",
+  failed: "올리지 못한 파일을 빼 주세요",
 } as const;
 
 const draggingFiles = (e: { dataTransfer: DataTransfer | null }) =>
@@ -60,7 +57,7 @@ const EDITOR_CLASS = [
  * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 세션마다 따로 둔다 — 채널·세션을 옮겨도 이 인스턴스가 유지된다.
  * 다만 새 세션 창의 첫 보내기가 세션을 만들어 주소가 그 세션으로 바뀔 때는 세션 전환이 아니다 — ack 를 기다리는 사이 쓰던 초안·넣은 첨부
  * 칩을 그대로 들고 간다(`settledFromNew` — 채널 세션 계획 Task 6 의 ④).
- * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다.
+ * 파일(사진 포함)은 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 첨부만도 된다.
  * 메시지는 그 세션으로(`conversationId` — 새 세션 창이면 첫 보내기가 세션을 만든다, `useSendMessage`), `/stop` 은 그 세션의 런만.
  * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만.
  * 작성 중 알림(`typing`)은 세션 단위라 스레드 작성기는 보내지 않는다 —
@@ -165,7 +162,7 @@ export function Composer({
           "aria-autocomplete": "list",
           class: EDITOR_CLASS,
         },
-        // 붙여넣은 파일 중 이미지는 칩으로(스펙 6.1), 그 밖은 알린다. 글이 함께 오면 글도 들어간다
+        // 붙여넣은 파일은 모두 칩으로(파일함 스펙 6장). 글이 함께 오면 글도 들어간다
         handlePaste: (_view, event) => {
           const data = event.clipboardData;
           const files = Array.from(data?.files ?? []);
@@ -232,9 +229,7 @@ export function Composer({
     threadRootId !== undefined ? THREAD_PLACEHOLDER : plain ? DM_PLACEHOLDER : PLACEHOLDER;
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};
   live.current.addFiles = (files) => {
-    const images = files.filter((f) => isImageMime(f.type));
-    if (images.length < files.length) toast.info(ONLY_IMAGES, { id: "attach-only-images" });
-    if (images.length > 0) attachments.add(images);
+    if (files.length > 0) attachments.add(files);
   };
   const blocked = !connected
     ? BLOCKED.disconnected
@@ -292,18 +287,17 @@ export function Composer({
             type="button"
             size="icon"
             variant="ghost"
-            aria-label="이미지 첨부"
+            aria-label="파일 첨부"
             ref={attachButton}
             className="-ml-2"
             onClick={() => fileInput.current?.click()}
           >
-            <ImagePlusIcon />
+            <PaperclipIcon />
           </Button>
           <input
             ref={fileInput}
             type="file"
             multiple
-            accept={IMAGE_ACCEPT}
             className="hidden"
             tabIndex={-1}
             aria-hidden
