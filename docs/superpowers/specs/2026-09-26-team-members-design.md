@@ -56,6 +56,7 @@
 | --- | --- | --- | --- |
 | 채널 읽기·쓰기·만들기(만들 때 `name`·`topic` 밖의 필드 — 프롬프트·릴레이 정책·공개 범위 — 를 주면 admin 이상), 채널 이름·설명(`name`·`topic`) 바꾸기, 멘션, 카드·모달, 첨부, 검색, 런 중지(`run.abort`) | ✅ | ✅ | ✅ |
 | 읽지 않음 현황(`GET /api/v1/me/unread`) — 자기 것만 | ✅ | ✅ | ✅ |
+| 파일 목록(`GET /api/v1/attachments`) — 읽을 수 있는 대화의 첨부만, 못 읽는 `channelId` 는 404(파일함 스펙 4.1) | ✅ | ✅ | ✅ |
 | 읽음 위치 올리기(wire `channel.read`) — 자기 것만, 보관한 채널도 | ✅ | ✅ | ✅ |
 | 반응 켜기·끄기(wire `reaction.set`) — 자기 것만, 보관한 채널은 409 `CHANNEL_ARCHIVED` | ✅ | ✅ | ✅ |
 | 세션 목록·세션·세션 메시지 읽기(`GET /channels/:id/conversations`·`/conversations/:id`·`/conversations/:id/messages`·`/conversations/:id/threads/:rootId/messages`), 새 세션(wire `message.send` 의 `newConversation`) — 채널 세션 정책이 「세션 관리자만」(`managers`)이면 그 채널의 세션 관리자와 admin 이상만(채널 세션 스펙 「권한」 장) | ✅ | ✅ | ✅ |

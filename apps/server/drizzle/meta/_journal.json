@@ -253,6 +253,13 @@
       "when": 1794195452763,
       "tag": "0035_human_dms",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1794214262306,
+      "tag": "0036_attachments_channel_message",
+      "breakpoints": true
     }
   ]
 }

@@ -35,6 +35,30 @@ describe("첨부 계약", () => {
     expect(sanitizeAttachmentName('보고서 "최종" 😀.pdf')).toBe('보고서 "최종" 😀.pdf');
   });
 
+  it("양방향 제어 문자를 뺀다 — RLO 로 확장자를 뒤집어 보이게 하는 위장(invoice<U+202E>fdp.exe 가 invoiceexe.pdf 로 보임)", () => {
+    expect(sanitizeAttachmentName("invoice\u202Efdp.exe")).toBe("invoicefdp.exe");
+    const bidi = [
+      "\u202A",
+      "\u202B",
+      "\u202C",
+      "\u202D",
+      "\u202E",
+      "\u2066",
+      "\u2067",
+      "\u2068",
+      "\u2069",
+      "\u200E",
+      "\u200F",
+      "\u061C",
+    ];
+    for (const c of bidi)
+      expect(sanitizeAttachmentName(`a${c}b.txt`), c.codePointAt(0)?.toString(16)).toBe("ab.txt");
+    expect(sanitizeAttachmentName(bidi.join(""))).toBe("file");
+    // 방향 제어가 아닌 글자 결합·이음 문자는 그대로 — 이모지 ZWJ 열·아랍어 이름이 깨지지 않게
+    expect(sanitizeAttachmentName("👩\u200D💻.png")).toBe("👩\u200D💻.png");
+    expect(sanitizeAttachmentName("تقرير.pdf")).toBe("تقرير.pdf");
+  });
+
   it("artifact URL 왕복", () => {
     expect(artifactUrl(ID)).toBe(`artifact://${ID}`);
     expect(parseArtifactUrl(`artifact://${ID}`)).toBe(ID);

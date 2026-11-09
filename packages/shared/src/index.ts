@@ -8,6 +8,7 @@ export * from "./domain";
 export * from "./dms";
 export * from "./directs";
 export * from "./events";
+export * from "./files";
 export * from "./mention";
 export * from "./members";
 export * from "./profile";

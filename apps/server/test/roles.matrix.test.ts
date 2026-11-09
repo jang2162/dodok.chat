@@ -1469,6 +1469,11 @@ describe("역할 매트릭스(스펙 2장)", () => {
         owner: 200,
         request: async (fx) => ({ method: "GET", url: `/api/v1/attachments/${await dmAttachment(fx)}` }),
       },
+      {
+        name: "GET /attachments?channelId=(파일함 목록)",
+        owner: 200,
+        request: (fx) => ({ method: "GET", url: `/api/v1/attachments?channelId=${fx.channelId}` }),
+      },
     ];
     const dmCall = (token: string, req: DmRequest) =>
       app.fastify.inject({

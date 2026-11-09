@@ -372,6 +372,8 @@ export const attachments = sqliteTable(
     index("attachments_message").on(t.messageId),
     index("attachments_sha256").on(t.sha256),
     index("attachments_unbound").on(t.messageId, t.createdAt),
+    // 파일함 목록(GET /attachments)의 채널 거름 — 읽을 수 있는 채널 IN (…) 으로 첨부를 고르고 메시지에 잇는다
+    index("attachments_channel_message").on(t.channelId, t.messageId),
   ],
 );
 

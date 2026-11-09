@@ -8,6 +8,7 @@ import {
   type Attachment,
   BRIDGE_ATTACHMENT_HEADERS as H,
   BRIDGE_ATTACHMENTS_PATH,
+  FileListQuery,
   Id,
   RUNNER_ATTACHMENTS_PATH,
 } from "@dodok/shared";
@@ -31,6 +32,7 @@ import {
   type Uploader,
   uploadAttachment,
 } from "./service";
+import { listFiles } from "./list";
 import type { BlobLocks } from "./store";
 
 /** locks 는 정리 타이머와 같은 객체여야 한다(app.ts 가 하나를 만들어 둘에 준다) */
@@ -198,6 +200,15 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
         });
       },
     );
+
+    // 파일함 목록 — 정적 경로라 :id 보다 먼저 맞는다. 채널을 고르면 그 채널을 먼저 판정한다: 못 읽는 채널은 빈 목록이 아니라 없는 채널과 같은
+    // 404 다(파일함 스펙 4.1)
+    scope.get("/api/v1/attachments", { onRequest: session }, async (request) => {
+      const query = parseQuery(FileListQuery, request.query);
+      const user = sessionUser(request);
+      if (query.channelId) loadReadableChannel(ctx.db, query.channelId, user.workspaceId, user.id);
+      return listFiles(ctx.db, { userId: user.id, workspaceId: user.workspaceId }, query);
+    });
 
     scope.get("/api/v1/attachments/:id", { onRequest: session }, async (request, reply) => {
       const { id } = parseParams(IdParams, request.params);
