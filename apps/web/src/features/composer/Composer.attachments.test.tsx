@@ -244,6 +244,34 @@ describe("붙여넣기·끌어 놓기", () => {
     expect(toastInfo).not.toHaveBeenCalled();
   });
 
+  it("이름·형식은 사진인데 그려지지 않는 파일(.png 이름의 HTML) — 미리보기가 깨지면 파일 칩, 서버가 file 로 판별해도 파일 칩", async () => {
+    const { box } = renderComposer();
+    fireEvent.paste(box, {
+      clipboardData: {
+        files: [pngFile("가짜.png", 40), pngFile("깨짐.png", 40)],
+        types: ["Files"],
+        getData: () => "",
+      },
+    });
+    const [served, broken] = within(chips() as HTMLElement).getAllByRole("listitem");
+    // 서버 판별이 file 이면 미리보기를 걷는다 — 올리기가 끝나기 전 깨진 그림이 보이는 동안은 아래 onError 가 받는다
+    await finish(0, {
+      ...uploaded(1, "가짜.png"),
+      kind: "file",
+      mime: "application/octet-stream",
+      width: undefined,
+      height: undefined,
+    });
+    expect(served?.querySelector("img")).toBeNull();
+    expect(served?.querySelector('[data-icon="file"]')).not.toBeNull();
+    expect(within(served as HTMLElement).getByText("40 B")).toBeInTheDocument();
+    // 브라우저가 그림으로 못 읽으면(error) 그 자리에서 파일 칩
+    fireEvent.error(broken?.querySelector("img") as HTMLImageElement);
+    expect(broken?.querySelector("img")).toBeNull();
+    expect(broken?.querySelector('[data-icon="file"]')).not.toBeNull();
+    expect(within(broken as HTMLElement).getByText("40 B")).toBeInTheDocument();
+  });
+
   it("작성기에 이미지를 끌어 놓으면 칩 — 브라우저가 파일을 열지 않게 막는다", () => {
     const { box } = renderComposer();
     const dragging = { dataTransfer: { files: [], types: ["Files"], dropEffect: "none" } };
