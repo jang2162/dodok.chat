@@ -24,6 +24,7 @@ const READ_ONLY_TEXT: Record<DmReadOnlyReason, string> = {
   agent_archived: "보관된 에이전트라 읽기만 할 수 있습니다",
   agent_disabled: "꺼진 에이전트라 읽기만 할 수 있습니다",
   dm_not_allowed: "이 에이전트와의 DM 이 허용되지 않아 읽기만 할 수 있습니다",
+  peer_deactivated: "상대가 비활성화되어 읽기만 할 수 있습니다",
 };
 
 /** dmAccess 가 그 역할을 들이는가 — off 는 아무도, admins 는 admin 이상, everyone 은 모든 활성 멤버(역할이 없으면 아무도) */

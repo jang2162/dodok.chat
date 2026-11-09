@@ -555,11 +555,12 @@ describe("읽기 전용 DM (Review Focus 4)", () => {
     },
   );
 
-  it("세 문구는 계획의 글자 그대로", () => {
+  it("네 문구는 계획의 글자 그대로", () => {
     expect(DM_READ_ONLY_TEXT).toEqual({
       agent_archived: "보관된 에이전트라 읽기만 할 수 있습니다",
       agent_disabled: "꺼진 에이전트라 읽기만 할 수 있습니다",
       dm_not_allowed: "이 에이전트와의 DM 이 허용되지 않아 읽기만 할 수 있습니다",
+      peer_deactivated: "상대가 비활성화되어 읽기만 할 수 있습니다",
     });
   });
 

@@ -116,7 +116,8 @@ export type RelayPolicy = z.infer<typeof RelayPolicy>;
 export const SessionPolicy = z.object({ create: z.enum(["members", "managers"]) });
 export type SessionPolicy = z.infer<typeof SessionPolicy>;
 
-export const ChannelKind = z.enum(["channel", "dm"]);
+/** direct 는 사람 DM·그룹 DM(사람 간 DM 스펙 3장) — 참여자는 channel_members 행이고 그 사람들만 읽는다 */
+export const ChannelKind = z.enum(["channel", "dm", "direct"]);
 export type ChannelKind = z.infer<typeof ChannelKind>;
 
 export const Channel = z.object({
@@ -142,8 +143,16 @@ export const Channel = z.object({
 });
 export type Channel = z.infer<typeof Channel>;
 
-/** 읽기 전용 DM 의 사유(에이전트 DM 스펙 3.3) — 보관 → 꺼짐 → 허용 범위 순으로 하나 */
-export const DmReadOnlyReason = z.enum(["agent_archived", "agent_disabled", "dm_not_allowed"]);
+/**
+ * 읽기 전용 DM 의 사유 — 에이전트 DM 은 보관 → 꺼짐 → 허용 범위 순으로 하나(에이전트 DM 스펙 3.3), 사람 1:1 DM 은 상대 비활성
+ * peer_deactivated 하나(사람 간 DM 스펙 4.3)
+ */
+export const DmReadOnlyReason = z.enum([
+  "agent_archived",
+  "agent_disabled",
+  "dm_not_allowed",
+  "peer_deactivated",
+]);
 export type DmReadOnlyReason = z.infer<typeof DmReadOnlyReason>;
 
 /** 세션 제목(채널 세션 스펙 2.1) — 1~80자 */

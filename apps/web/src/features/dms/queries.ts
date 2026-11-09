@@ -19,6 +19,7 @@ export const DM_READ_ONLY_TEXT: Record<DmReadOnlyReason, string> = {
   agent_archived: "보관된 에이전트라 읽기만 할 수 있습니다",
   agent_disabled: "꺼진 에이전트라 읽기만 할 수 있습니다",
   dm_not_allowed: "이 에이전트와의 DM 이 허용되지 않아 읽기만 할 수 있습니다",
+  peer_deactivated: "상대가 비활성화되어 읽기만 할 수 있습니다",
 };
 
 /** ack·REST 의 `DM_READ_ONLY` 오류의 `details.reason` — 외부 입력이라 파싱한다. 읽지 못하면 허용 철회로 본다(셋 중 가장 넓은 사유) */
