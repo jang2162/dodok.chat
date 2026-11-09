@@ -57,17 +57,17 @@ function agentMentions(
   return { bodyMd, mentions: { ...mentions, users: mentions.users.filter((id) => people.has(id)) } };
 }
 
+/** 채널 행의 kind — 채널 id 만 가진 자리(메시지 저장). 없는 채널은 undefined(어느 갈래에도 열리지 않는다) */
+function channelKind(tx: DbOrTx, channelId: string): string | undefined {
+  return getChannel(tx, channelId)?.kind;
+}
+
 /**
  * DM 의 본문 — 멘션을 토큰으로 바꾸지 않는다(에이전트 DM 스펙 2장). 토큰이 되면 멘션된 사람이 자동 참여(joinChannelIfAbsent)로 DM 멤버가
  * 되고 멘션 푸시·배지를 받는다. 본문에 토큰 꼴을 그대로 적어 와도 멘션으로 읽히지 않게 막는다(neutralizeMentionTokens) — 그래서 DM 메시지의
  * mentions 는 늘 비고, 라우터는 DM 의 autoRespond 에이전트 하나만 고른다(계획 판정 PD6). 일반 채널이 아닌 kind 는 모두 이 꼴이다 — 멘션이
  * 토큰이 되는 것은 일반 채널뿐(기본이 닫힘)
  */
-/** 채널 행의 kind — 채널 id 만 가진 자리(메시지 저장). 없는 채널은 undefined(어느 갈래에도 열리지 않는다) */
-function channelKind(tx: DbOrTx, channelId: string): string | undefined {
-  return getChannel(tx, channelId)?.kind;
-}
-
 function plainInDm(text: string): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
   return { bodyMd: neutralizeMentionTokens(text), mentions: { users: [], agents: [] } };
 }
