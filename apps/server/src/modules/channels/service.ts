@@ -221,18 +221,15 @@ export function loadReadableChannel(
   workspaceId: string,
   reader: ChannelReader,
 ): ChannelRecord {
-  if (typeof reader !== "string") {
-    const row = db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
-      .get();
-    if (!row) throw apiError("NOT_FOUND", "channel not found");
-    return rowToChannel(row);
-  }
-  const channel = getChannel(db, id, workspaceId);
-  if (!channel) throw apiError("NOT_FOUND", "channel not found");
-  assertChannelReadable(channel, reader);
+  // 조회가 먼저 거른다 — 못 읽는 행(모르는 kind 포함)은 계약 파싱(rowToChannel)에 닿기 전에 없는 채널이 된다
+  const row = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "channel not found");
+  const channel = rowToChannel(row);
+  if (typeof reader === "string") assertChannelReadable(db, channel, reader);
   return channel;
 }
 

@@ -34,12 +34,12 @@ import {
 } from "../attachments/service";
 import {
   channelParticipants,
+  getChannel,
   joinChannelIfAbsent,
   listMembers,
   userMessageParticipants,
 } from "../channels/service";
 import { assertConversationWritable, getConversation, touchConversation } from "../conversations/store";
-import { isDmChannel } from "../dms/service";
 import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
 
@@ -60,8 +60,14 @@ function agentMentions(
 /**
  * DM 의 본문 — 멘션을 토큰으로 바꾸지 않는다(에이전트 DM 스펙 2장). 토큰이 되면 멘션된 사람이 자동 참여(joinChannelIfAbsent)로 DM 멤버가
  * 되고 멘션 푸시·배지를 받는다. 본문에 토큰 꼴을 그대로 적어 와도 멘션으로 읽히지 않게 막는다(neutralizeMentionTokens) — 그래서 DM 메시지의
- * mentions 는 늘 비고, 라우터는 DM 의 autoRespond 에이전트 하나만 고른다(계획 판정 PD6)
+ * mentions 는 늘 비고, 라우터는 DM 의 autoRespond 에이전트 하나만 고른다(계획 판정 PD6). 일반 채널이 아닌 kind 는 모두 이 꼴이다 — 멘션이
+ * 토큰이 되는 것은 일반 채널뿐(기본이 닫힘)
  */
+/** 채널 행의 kind — 채널 id 만 가진 자리(메시지 저장). 없는 채널은 undefined(어느 갈래에도 열리지 않는다) */
+function channelKind(tx: DbOrTx, channelId: string): string | undefined {
+  return getChannel(tx, channelId)?.kind;
+}
+
 function plainInDm(text: string): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
   return { bodyMd: neutralizeMentionTokens(text), mentions: { users: [], agents: [] } };
 }
@@ -381,9 +387,10 @@ export function sendUserMessage(
       userId: input.authorId,
     });
     const message = storeMessage(tx, conversation, input.threadRootId, () => {
-      const { bodyMd, mentions } = isDmChannel(tx, channelId)
-        ? plainInDm(input.bodyMd)
-        : tokenize(input.bodyMd, userMessageParticipants(tx, channelId));
+      const { bodyMd, mentions } =
+        channelKind(tx, channelId) === "channel"
+          ? tokenize(input.bodyMd, userMessageParticipants(tx, channelId))
+          : plainInDm(input.bodyMd);
       return {
         kind: "normal",
         authorType: "user",
@@ -447,9 +454,10 @@ export function createAgentMessage(
     });
     const message = storeMessage(tx, conversation, input.threadRootId, () => {
       const now = new Date();
-      const { bodyMd, mentions } = isDmChannel(tx, channelId)
-        ? plainInDm(input.bodyMd)
-        : agentMentions(input.bodyMd, channelParticipants(tx, channelId));
+      const { bodyMd, mentions } =
+        channelKind(tx, channelId) === "channel"
+          ? agentMentions(input.bodyMd, channelParticipants(tx, channelId))
+          : plainInDm(input.bodyMd);
       return {
         kind: "normal",
         authorType: "agent",
@@ -712,9 +720,11 @@ function storeMessage(
   build: () => MessageFields,
 ): Message {
   const { id: conversationId, channelId } = conversation;
-  // DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7) — 세션이 이미 주제를 가른다
-  if (threadRootId !== undefined && isDmChannel(tx, channelId))
-    throw apiError("VALIDATION", "DM 에는 스레드가 없다");
+  // 스레드는 일반 채널과 direct 에만 — 에이전트 DM 에는 없다(에이전트 DM 스펙 결정 7, 세션이 이미 주제를 가른다). 모르는 kind 도 막는다
+  if (threadRootId !== undefined) {
+    const kind = channelKind(tx, channelId);
+    if (kind !== "channel" && kind !== "direct") throw apiError("VALIDATION", "DM 에는 스레드가 없다");
+  }
   if (
     threadRootId !== undefined &&
     getThreadRoot(tx, channelId, threadRootId)?.conversationId !== conversationId

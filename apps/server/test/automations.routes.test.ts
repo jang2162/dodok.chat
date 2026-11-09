@@ -14,7 +14,7 @@ import { addMember, createChannel } from "../src/modules/channels/service";
 import { getOpsSettings } from "../src/modules/ops/settings";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { createDmChannelForTest } from "./helpers/seed";
+import { createDirectChannelForTest, createDmChannelForTest } from "./helpers/seed";
 
 const SEOUL = "Asia/Seoul";
 const PUBLIC_HOST = "hooks.example.test";
@@ -530,6 +530,39 @@ describe("자동화 관리 API", () => {
       expect(postsOf(hooked.automation.id)).toEqual([]);
       expect(app.db.select().from(conversations).where(eq(conversations.channelId, dm)).all()).toEqual([]);
       expect(getAutomation(app.db, app.workspaceId, hooked.automation.id)?.lastStatus).toBe("error");
+    });
+
+    // direct(사람 간 DM)도 일반 채널이 아니니 같은 규칙 — 참여하지 않은 direct 는 404, 참여한 direct 는 VALIDATION, 방어선도 게시하지 않는다
+    it("direct — 참여하지 않으면 404, 참여했으면 400 VALIDATION, 가리키게 된 자동화는 「지금 실행」이 게시하지 않는다", async () => {
+      const directOf = (createdBy: string, userIds: string[]) =>
+        createDirectChannelForTest(app.db, { workspaceId: app.workspaceId, createdBy, userIds }).id;
+      const outsider = (await userWithRole(app, `auto-jun${++n}`, "member")).id;
+      const payload = (channelId: string) => ({
+        kind: "schedule",
+        name: `direct ${++n}`,
+        channelId,
+        bodyMd: "엿보기",
+        schedule: DAILY_NINE,
+      });
+      const unknown = await call({ method: "POST", url: "/automations", payload: payload(missing) });
+      const foreign = await call({
+        method: "POST",
+        url: "/automations",
+        payload: payload(directOf(mia.id, [outsider])),
+      });
+      expect(foreign.statusCode, foreign.body).toBe(404);
+      expect(foreign.json()).toEqual(unknown.json());
+      const ownDirect = directOf(app.ownerUserId, [mia.id]);
+      const own = await call({ method: "POST", url: "/automations", payload: payload(ownDirect) });
+      expect(own.statusCode, own.body).toBe(400);
+      expect(own.json()).toMatchObject({ code: "VALIDATION" });
+
+      const sched = (await schedule(newChannel().id)).automation;
+      app.db.update(automations).set({ channelId: ownDirect }).where(eq(automations.id, sched.id)).run();
+      const run = await call({ method: "POST", url: `/automations/${sched.id}/run` });
+      expect(run.statusCode, run.body).toBe(400);
+      expect(run.json()).toMatchObject({ code: "VALIDATION" });
+      expect(postsOf(sched.id)).toEqual([]);
     });
   });
 

@@ -14,7 +14,7 @@ import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, conversations } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { agentForRole, apiAgent, getAgent, isAgentActive } from "../agents/service";
-import { type ChannelRecord, getChannel, rowToChannel } from "../channels/service";
+import { type ChannelRecord, rowToChannel } from "../channels/service";
 
 // 에이전트 DM(에이전트 DM 스펙) — DM 은 kind = 'dm' 인 채널이라 메시지·세션·런은 채널의 것을 그대로 쓰고, 여기는 DM 만의 것만 둔다:
 // 찾거나 만들기(계획 판정 PD1), 내 DM 목록(PD3), 누가 DM 을 여나(dmAccess), 읽기 전용 사유, DM 에 맞지 않는 채널 관리(PD9)
@@ -24,6 +24,7 @@ const READ_ONLY_TEXT: Record<DmReadOnlyReason, string> = {
   agent_archived: "보관된 에이전트라 읽기만 할 수 있습니다",
   agent_disabled: "꺼진 에이전트라 읽기만 할 수 있습니다",
   dm_not_allowed: "이 에이전트와의 DM 이 허용되지 않아 읽기만 할 수 있습니다",
+  peer_deactivated: "상대가 비활성화되어 읽기만 할 수 있습니다",
 };
 
 /** dmAccess 가 그 역할을 들이는가 — off 는 아무도, admins 는 admin 이상, everyone 은 모든 활성 멤버(역할이 없으면 아무도) */
@@ -34,7 +35,8 @@ export function dmAccessAllows(access: DmAccess, role: TeamRole | undefined): bo
 
 /**
  * DM 이 지금 읽기만 되는 사유 — 보관 → 꺼짐 → 허용 범위 순으로 하나, 쓸 수 있으면 null. 허용 범위는 주인의 **지금** 역할로 본다(강등되면
- * 읽기 전용, 되돌리면 이어 쓴다 — Review Focus 3). 일반 채널은 늘 null. 주인 역할을 넘기지 않으면 읽는다
+ * 읽기 전용, 되돌리면 이어 쓴다 — Review Focus 3). 에이전트 DM 이 아니면 늘 null — 모르는 kind 는 이보다 앞의 접근 판정이 404 로 막는다.
+ * 주인 역할을 넘기지 않으면 읽는다
  */
 export function dmReadOnlyReason(
   db: DbOrTx,
@@ -67,11 +69,11 @@ export function assertDmWritable(
 }
 
 /**
- * DM 에 맞지 않는 채널 관리(이름·주제·멤버·보관·세션 관리자·세션 정책·한도·제어 쓰기 도구 — 계획 판정 PD9)는 VALIDATION. 남의 DM 은
- * 이보다 먼저 접근 판정이 404 로 막는다 — 이것은 주인에게만 닿는다
+ * 채널 관리(이름·주제·멤버·보관·세션 관리자·세션 정책·한도·제어 쓰기 도구 — 계획 판정 PD9)는 일반 채널에서만 — 에이전트 DM·direct
+ * (사람 간 DM 스펙 4.3)·모르는 kind 는 VALIDATION. 못 읽는 사람은 이보다 먼저 접근 판정이 404 로 막는다 — 이것은 읽는 사람에게만 닿는다
  */
 export function assertNotDm(channel: Pick<Channel, "kind">): void {
-  if (channel.kind === "dm") throw apiError("VALIDATION", "DM 에서는 채널 관리를 할 수 없다");
+  if (channel.kind !== "channel") throw apiError("VALIDATION", "DM 에서는 채널 관리를 할 수 없다");
 }
 
 /** DM 의 PATCH /channels/:id 는 prompt(「이 DM 의 지시」)만 받는다 — 다른 키가 하나라도 있으면 통째로 VALIDATION(계획 판정 PD9) */
@@ -217,9 +219,4 @@ export function listDms(
       readOnlyReason: dmReadOnlyReason(db, channel, role),
     };
   });
-}
-
-/** 채널 행 하나가 DM 인지 — 채널 id 만 가진 자리(메시지 저장·런 관문) */
-export function isDmChannel(db: DbOrTx, channelId: string): boolean {
-  return getChannel(db, channelId)?.kind === "dm";
 }

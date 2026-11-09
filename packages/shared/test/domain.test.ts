@@ -226,8 +226,13 @@ describe("DM 계약(에이전트 DM 스펙 2장·5장)", () => {
     expect(Agent.parse({ ...agent, dmAccess: "everyone" }).dmAccess).toBe("everyone");
     expect(Agent.safeParse({ ...agent, dmAccess: "members" }).success).toBe(false);
   });
-  it("읽기 전용 사유 셋과 오류 코드 DM_READ_ONLY", () => {
-    expect(DmReadOnlyReason.options).toEqual(["agent_archived", "agent_disabled", "dm_not_allowed"]);
+  it("읽기 전용 사유 넷(사람 1:1 의 peer_deactivated 포함)과 오류 코드 DM_READ_ONLY", () => {
+    expect(DmReadOnlyReason.options).toEqual([
+      "agent_archived",
+      "agent_disabled",
+      "dm_not_allowed",
+      "peer_deactivated",
+    ]);
     expect(ErrorCode.safeParse("DM_READ_ONLY").success).toBe(true);
   });
 });

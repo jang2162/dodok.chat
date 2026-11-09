@@ -199,10 +199,10 @@ function writable(ctx: HandlerContext, channelId: string): void {
   assertChannelWritable(ctx.db, channelId, ctx.workspaceId);
 }
 
-/** 확인 카드·변경 기록의 채널 이름 — DM 은 내부용 이름 대신 「DM」(에이전트 DM 계획 판정 PD4) */
+/** 확인 카드·변경 기록의 채널 이름 — 일반 채널만 #이름, DM·direct 는 내부용 이름 대신 「DM」(에이전트 DM 계획 판정 PD4) */
 const name = (ctx: HandlerContext, channelId: string) => {
   const channel = channelOf(ctx, channelId);
-  return channel.kind === "dm" ? "DM" : `#${channel.name}`;
+  return channel.kind === "channel" ? `#${channel.name}` : "DM";
 };
 
 /** 목적격 조사 — 「을(를)」처럼 병기하지 않는다(util/josa.ts) */

@@ -68,11 +68,11 @@ export function registerAutomationRoutes(fastify: FastifyInstance, ctx: Automati
   };
   const webhookUrl = (raw: string) => `${ctx.publicOrigin()}/hooks/${raw}`;
   /**
-   * 게시할 채널 — 남의 DM 은 없는 채널과 같은 404 가 먼저(auth/channel-access.ts), 내 DM 은 VALIDATION(자동화는 DM 에 게시하지
-   * 않는다 — 에이전트 DM 스펙 5장·계획 판정 PD5), 보관했으면 CHANNEL_ARCHIVED, 없으면 NOT_FOUND
+   * 게시할 채널 — 못 읽는 채널은 없는 채널과 같은 404 가 먼저(auth/channel-access.ts), 읽는 채널이라도 일반 채널이 아니면(DM·direct)
+   * VALIDATION(자동화는 DM 에 게시하지 않는다 — 에이전트 DM 스펙 5장·계획 판정 PD5), 보관했으면 CHANNEL_ARCHIVED, 없으면 NOT_FOUND
    */
   const assertTarget = (tx: DbOrTx, channelId: string, userId: string): void => {
-    if (loadReadableChannel(tx, channelId, ctx.workspaceId, userId).kind === "dm")
+    if (loadReadableChannel(tx, channelId, ctx.workspaceId, userId).kind !== "channel")
       throw apiError("VALIDATION", "자동화는 DM 에 게시할 수 없다", { field: "channelId" });
     assertChannelWritable(tx, channelId, ctx.workspaceId);
   };

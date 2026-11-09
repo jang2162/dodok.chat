@@ -12,7 +12,7 @@ import {
   type UnreadSnapshot,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
@@ -51,7 +51,12 @@ import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng } from "./helpers/png";
 import { connectWire, openWire, recordEvents, waitFor, type WireClient } from "./helpers/wire";
-import { channelConversation, createDmChannelForTest, seedConversation } from "./helpers/seed";
+import {
+  channelConversation,
+  createDirectChannelForTest,
+  createDmChannelForTest,
+  seedConversation,
+} from "./helpers/seed";
 
 // 역할 매트릭스(팀 스펙 2장 표) — owner·admin·member 세 세션으로 경로마다 허용·거부를 본다.
 // 거부는 REST 403 FORBIDDEN·wire ack FORBIDDEN, membership 이 없는 세션은 어디서나 401
@@ -1913,5 +1918,359 @@ describe("역할 매트릭스(스펙 2장)", () => {
         expect(hitChannels(await as("search_messages", { q: word }))).toEqual([]);
       },
     );
+
+    // ── 남의 direct — DIRECT_CASES(사람 간 DM 스펙 4장) ──
+    // 에이전트 DM 의 경로·wire·제어 목록(DM_CASES·WIRE_CASES·CONTROL_CASES)을 그대로 direct 에 친다 — 참여하지 않은 owner·admin·member 는
+    // 모두 404(wire·제어는 NOT_FOUND), 사람 참여자 mia 는 404 가 아니다. 1:1(mia·jun)과 그룹(mia·jun·에이전트) 둘 다
+    describe("남의 direct — DIRECT_CASES", () => {
+      let jun: { id: string; token: string };
+      beforeAll(async () => {
+        jun = await userWithRole(app, `direct-jun${++n}`, "member");
+      });
+
+      /** 1:1 의 상대 — 같은 묶음은 direct 하나뿐이라(direct_key 유일) 픽스처마다 새 활성 member */
+      const newPeer = (): string => {
+        const id = uuid();
+        app.db
+          .insert(users)
+          .values({
+            id,
+            workspaceId: app.workspaceId,
+            handle: `peer${++n}`,
+            displayName: `peer${n}`,
+            authProvider: "local",
+            createdAt: new Date(),
+          })
+          .run();
+        app.db
+          .insert(memberships)
+          .values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role: "member" })
+          .run();
+        return id;
+      };
+
+      /** 경로마다·사람마다 새 direct. 1:1 의 런·카드는 참여하지 않은 에이전트의 것이다 — 행만 있으면 판정을 친다 */
+      const directFixture = (shape: "1:1" | "group", alsoUserIds: string[] = []): DmFixture => {
+        const agent = newAgent();
+        const direct = createDirectChannelForTest(app.db, {
+          workspaceId: app.workspaceId,
+          createdBy: mia.id,
+          userIds: [shape === "1:1" ? newPeer() : jun.id, ...alsoUserIds],
+          ...(shape === "group" ? { agentIds: [agent.id] } : {}),
+        });
+        const conversationId =
+          shape === "1:1" ? channelConversation(app.db, direct.id) : seedConversation(app.db, direct.id);
+        const root = createUserMessage(app.db, app.bus, {
+          conversationId,
+          authorId: mia.id,
+          bodyMd: "direct 루트",
+          clientMsgId: `direct-root-${++n}`,
+        });
+        const run = insertRun(app.db, {
+          channelId: direct.id,
+          conversationId,
+          agentId: agent.id,
+          triggerKind: "mention",
+          triggerMessageId: root.id,
+          rootMessageId: root.id,
+          relayDepth: 0,
+          sessionKey: adapter.sessionKeyFor(agent.providerAgentId, conversationId),
+          connectionId: FAKE_GATEWAY_ID,
+          requestedBy: mia.id,
+          createdAt: new Date(),
+        });
+        const answer = createAgentMessage(app.db, app.bus, {
+          conversationId,
+          agentId: agent.id,
+          runId: run.id,
+          bodyMd: "골라 주세요",
+          externalId: `direct-answer-${++n}`,
+          components: {
+            blocks: [{ type: "actions", id: "row", items: [{ type: "button", id: "go", label: "진행" }] }],
+          },
+        });
+        return { channelId: direct.id, agent, conversationId, rootId: root.id, answer, runId: run.id };
+      };
+      const SHAPES = ["1:1", "group"] as const;
+
+      it.each(
+        SHAPES.flatMap((shape) =>
+          DM_CASES.flatMap((c) => ROLES.map((role) => [shape, c.name, role, c] as const)),
+        ),
+      )("%s %s — 참여하지 않은 %s 는 404", async (shape, _name, role, c) => {
+        const res = await dmCall(tokens[role], await c.request(directFixture(shape)));
+        expect(res.statusCode, res.body).toBe(404);
+        expect(res.json()).toMatchObject({ code: "NOT_FOUND" });
+      });
+
+      it.each(SHAPES.flatMap((shape) => DM_CASES.map((c) => [shape, c.name, c] as const)))(
+        "%s %s — 참여자 mia 는 404 가 아니다(채널 관리는 400 VALIDATION)",
+        async (shape, _name, c) => {
+          const res = await dmCall(mia.token, await c.request(directFixture(shape)));
+          // direct 에는 바꿀 채널 설정이 없다 — DM 에서 주인이 받는 prompt 도(사람 간 DM 스펙 4.3)
+          if (c.owner === 400 || c.name.startsWith("PATCH /channels/:id {prompt}")) {
+            expect(res.statusCode, res.body).toBe(400);
+            expect(res.json()).toMatchObject({ code: "VALIDATION" });
+          } else expect(res.statusCode, res.body).not.toBe(404);
+        },
+      );
+
+      it.each(
+        SHAPES.flatMap((shape) =>
+          WIRE_CASES.flatMap((c) => ROLES.map((role) => [shape, c.name, role, c] as const)),
+        ),
+      )("wire %s %s — 참여하지 않은 %s 는 ack NOT_FOUND", async (shape, _name, role, c) => {
+        const fx = directFixture(shape);
+        const socket = await connectWire(app, tokens[role]);
+        sockets.push(socket);
+        expect(await c.emit(socket, fx)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      });
+
+      it.each(SHAPES.flatMap((shape) => WIRE_CASES.map((c) => [shape, c.name, c] as const)))(
+        "wire %s %s — 참여자 mia 는 NOT_FOUND 가 아니다",
+        async (shape, _name, c) => {
+          const fx = directFixture(shape);
+          const socket = await connectWire(app, mia.token);
+          sockets.push(socket);
+          const res = (await c.emit(socket, fx)) as { ok: boolean; error?: { code: string } };
+          expect(res.ok ? "ok" : res.error?.code, JSON.stringify(res)).not.toBe("NOT_FOUND");
+        },
+      );
+
+      it.each(
+        SHAPES.flatMap((shape) =>
+          CONTROL_CASES.flatMap((c) => ROLES.map((role) => [shape, c.tool, role, c] as const)),
+        ),
+      )("제어 %s %s — 참여하지 않은 %s 는 NOT_FOUND", async (shape, _tool, role, c) => {
+        const res = await controlAs(ids[role], c.tool, c.args(directFixture(shape)));
+        expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      });
+
+      it.each(SHAPES.flatMap((shape) => CONTROL_CASES.map((c) => [shape, c.tool, c] as const)))(
+        "제어 %s %s — 참여자 mia 는 NOT_FOUND 가 아니다(채널 쓰기 도구는 VALIDATION)",
+        async (shape, _tool, c) => {
+          const res = await controlAs(mia.id, c.tool, c.args(directFixture(shape)));
+          const code = res.ok ? "ok" : res.error.code;
+          if (c.owner === "VALIDATION") expect(code, JSON.stringify(res)).toBe("VALIDATION");
+          else expect(code, JSON.stringify(res)).not.toBe("NOT_FOUND");
+        },
+      );
+
+      it("제어 — direct 런의 에이전트는 그 direct 를 읽고(시킨 사람이 참여자) mia 의 다른 direct 는 NOT_FOUND·목록 밖", async () => {
+        const own = directFixture("group");
+        const other = directFixture("group");
+        const principal: Principal = {
+          userId: mia.id,
+          via: "agent",
+          agentId: own.agent.id,
+          runId: own.runId,
+        };
+        const as = (tool: string, args: object) => app.control.call(principal, tool, args);
+        expectOk(await as("get_channel", { channelId: own.channelId }));
+        expect(await as("get_channel", { channelId: other.channelId })).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+        const listed = channelIds(await as("list_channels", {}));
+        expect(listed).toContain(own.channelId);
+        expect(listed).not.toContain(other.channelId);
+        // 시킨 사람이 참여자가 아니면 그 런의 direct 도 열리지 않는다(주체의 userId 는 런의 시킨 사람이다)
+        app.db.update(runs).set({ requestedBy: ids.admin }).where(eq(runs.id, own.runId)).run();
+        const outsider: Principal = {
+          userId: ids.admin,
+          via: "agent",
+          agentId: own.agent.id,
+          runId: own.runId,
+        };
+        expect(await app.control.call(outsider, "get_channel", { channelId: own.channelId })).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+        expect(channelIds(await app.control.call(outsider, "list_channels", {}))).not.toContain(
+          own.channelId,
+        );
+      });
+
+      /** 그룹 direct 런의 도구 승인 — 참여하지 않은 owner·admin 이 일반 채널 갈래(「admin 이상이면 결정」)로 새지 않는지(Review Focus 1) */
+      const directApproval = async (alsoUserIds: string[] = []) => {
+        const fx = directFixture("group", alsoUserIds);
+        const frame: ProviderApproval = {
+          providerApprovalId: `plugin:${uuid()}`,
+          kind: "plugin",
+          sessionKey: adapter.sessionKeyFor(fx.agent.providerAgentId, fx.conversationId),
+          providerAgentId: fx.agent.providerAgentId,
+          conversationId: fx.conversationId,
+          toolCallId: `toolu_${++n}`,
+          toolName: "Write",
+          pluginId: "fs",
+          title: "Write 실행",
+          severity: "warning",
+          allowedDecisions: ["allow-once", "deny"],
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        };
+        adapter.emitApproval(frame);
+        await vi.waitFor(() =>
+          expect(approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId)?.status).toBe(
+            "pending",
+          ),
+        );
+        const approval = approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId);
+        if (!approval) throw new Error("승인이 저장되지 않았다");
+        expect(approval.channelId).toBe(fx.channelId);
+        return approval;
+      };
+
+      it.each(ROLES)(
+        "approval.resolve — 그룹 direct 에 참여하지 않은 %s 는 ack NOT_FOUND, Gateway 로 안 가고 pending 그대로",
+        async (role) => {
+          const approval = await directApproval();
+          const socket = await connectWire(app, tokens[role]);
+          sockets.push(socket);
+          const sent = adapter.calls.resolveApproval.length;
+          const res = await socket.emitWithAck("approval.resolve", {
+            approvalId: approval.id,
+            decision: "allow-once",
+          });
+          expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+          expect(adapter.calls.resolveApproval.length).toBe(sent);
+          expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+        },
+      );
+
+      it("approval.resolve — 참여자 mia 도 아직 결정하지 못한다(direct 의 결정자 규칙 전까지 기본이 닫힘 — FORBIDDEN, pending 그대로)", async () => {
+        const approval = await directApproval();
+        const socket = await connectWire(app, mia.token);
+        sockets.push(socket);
+        const sent = adapter.calls.resolveApproval.length;
+        const res = await socket.emitWithAck("approval.resolve", {
+          approvalId: approval.id,
+          decision: "deny",
+        });
+        expect(res).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+        expect(adapter.calls.resolveApproval.length).toBe(sent);
+        expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+      });
+
+      it("approval.resolve — 참여한 admin 도 일반 채널 갈래(「admin 이상이면 결정」)로 새지 않는다 — FORBIDDEN, pending 그대로", async () => {
+        const approval = await directApproval([ids.admin]);
+        const socket = await connectWire(app, tokens.admin);
+        sockets.push(socket);
+        const sent = adapter.calls.resolveApproval.length;
+        const res = await socket.emitWithAck("approval.resolve", {
+          approvalId: approval.id,
+          decision: "deny",
+        });
+        expect(res).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+        expect(adapter.calls.resolveApproval.length).toBe(sent);
+        expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+      });
+
+      // ── 목록 ──
+      it("GET /channels 에는 direct 가 없다 — 참여자에게도", async () => {
+        const fx = directFixture("1:1");
+        const group = directFixture("group");
+        for (const token of [...ROLES.map((r) => tokens[r]), mia.token, jun.token]) {
+          const res = await dmCall(token, { method: "GET", url: "/api/v1/channels" });
+          expect(res.statusCode).toBe(200);
+          const listed = (res.json() as { channels: Channel[] }).channels;
+          expect(listed.map((c) => c.id)).not.toContain(fx.channelId);
+          expect(listed.map((c) => c.id)).not.toContain(group.channelId);
+          expect(listed.every((c) => c.kind === "channel")).toBe(true);
+        }
+      });
+
+      it("GET /search·/me/unread·제어 list_channels·search_messages — direct 는 사람 참여자에게만", async () => {
+        const fx = directFixture("group");
+        const word = `directsecret${++n}word`;
+        createUserMessage(app.db, app.bus, {
+          conversationId: fx.conversationId,
+          authorId: mia.id,
+          bodyMd: `비밀 ${word}`,
+          clientMsgId: `direct-word-${n}`,
+        });
+        const search = async (token: string) =>
+          (
+            (await dmCall(token, { method: "GET", url: `/api/v1/search?q=${word}` })).json() as SearchResult
+          ).hits.map((h) => h.channelId);
+        const unread = async (token: string) =>
+          (await dmCall(token, { method: "GET", url: "/api/v1/me/unread" })).json() as UnreadSnapshot;
+        for (const role of ROLES) {
+          expect(await search(tokens[role])).toEqual([]);
+          const snap = await unread(tokens[role]);
+          expect(snap.conversations.map((c) => c.conversationId)).not.toContain(fx.conversationId);
+          expect(snap.channels).not.toContain(fx.channelId);
+          expect(channelIds(await controlAs(ids[role], "list_channels", {}))).not.toContain(fx.channelId);
+          expect(hitChannels(await controlAs(ids[role], "search_messages", { q: word }))).toEqual([]);
+        }
+        // jun 은 글을 쓰지 않은 참여자 — mia 의 글이 그에게 읽지 않음이다
+        expect(await search(jun.token)).toEqual([fx.channelId]);
+        expect((await unread(jun.token)).conversations.map((c) => c.conversationId)).toContain(
+          fx.conversationId,
+        );
+        expect(channelIds(await controlAs(jun.id, "list_channels", {}))).toContain(fx.channelId);
+        expect(hitChannels(await controlAs(jun.id, "search_messages", { q: word }))).toEqual([fx.channelId]);
+      });
+    });
+
+    // ── 모르는 kind(Review Focus 2 의 당겨 가는 쪽) — 서비스로는 못 만드는 kind = 'zzz' 행을 직접 넣는다 ──
+    it("모르는 kind 의 채널은 만든 사람에게도 목록·검색·읽지 않음·제어 list_channels 에 없고 GET /channels/:id 는 404", async () => {
+      const id = uuid();
+      app.db
+        .insert(channels)
+        .values({
+          id,
+          workspaceId: app.workspaceId,
+          name: "zzz",
+          relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
+          visibility: "public",
+          createdBy: mia.id,
+          createdAt: new Date(),
+          dmOwnerId: mia.id,
+        })
+        .run();
+      app.db
+        .insert(channelMembers)
+        .values({
+          id: uuid(),
+          channelId: id,
+          memberType: "user",
+          memberId: mia.id,
+          role: "member",
+          joinedAt: new Date(),
+        })
+        .run();
+      const conversationId = seedConversation(app.db, id, { createdBy: ids.owner });
+      const word = `zzzsecret${++n}word`;
+      createUserMessage(app.db, app.bus, {
+        conversationId,
+        authorId: ids.owner,
+        bodyMd: `비밀 ${word}`,
+        clientMsgId: `zzz-word-${n}`,
+      });
+      // 글까지 일반 채널로 넣은 뒤 kind 만 바꾼다 — 계약(ChannelKind)이 모르는 값이라 서비스로는 못 만든다
+      app.db.run(sql`UPDATE channels SET kind = 'zzz' WHERE id = ${id}`);
+      for (const [token, userId] of [
+        ...ROLES.map((r) => [tokens[r], ids[r]] as const),
+        [mia.token, mia.id] as const,
+      ]) {
+        expect((await dmCall(token, { method: "GET", url: `/api/v1/channels/${id}` })).statusCode).toBe(404);
+        const listed = (await dmCall(token, { method: "GET", url: "/api/v1/channels" })).json() as {
+          channels: Channel[];
+        };
+        expect(listed.channels.map((c) => c.id)).not.toContain(id);
+        const hits = (
+          await dmCall(token, { method: "GET", url: `/api/v1/search?q=${word}` })
+        ).json() as SearchResult;
+        expect(hits.hits).toEqual([]);
+        const snap = (
+          await dmCall(token, { method: "GET", url: "/api/v1/me/unread" })
+        ).json() as UnreadSnapshot;
+        expect(snap.channels).not.toContain(id);
+        expect(snap.conversations.map((c) => c.conversationId)).not.toContain(conversationId);
+        expect(channelIds(await controlAs(userId, "list_channels", {}))).not.toContain(id);
+      }
+    });
   });
 });

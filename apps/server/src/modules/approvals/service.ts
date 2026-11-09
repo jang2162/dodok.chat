@@ -291,7 +291,8 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       if (!approval) throw apiError("NOT_FOUND", "approval not found");
       // DM 의 승인은 주인만 결정한다(에이전트 DM 계획 판정 PD7) — 남에게는 없는 승인과 같다. wire 가 앞에서 같은 판정을 하지만 결정자
       // 규칙은 여기에도 둔다(이 함수를 부르는 다른 길이 생겨도 주인 말고는 결정하지 못하게)
-      if (channel && !canReadChannel({ userId }, channel)) throw apiError("NOT_FOUND", "approval not found");
+      if (channel && !canReadChannel(db, { userId }, channel))
+        throw apiError("NOT_FOUND", "approval not found");
       if (approval.status !== "pending") throw apiError("CONFLICT", "approval is already resolved");
       if (Date.parse(approval.expiresAt) <= now().getTime()) {
         throw apiError("CONFLICT", "approval has expired");

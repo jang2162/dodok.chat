@@ -1,11 +1,11 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { dodokSessionKey, Message } from "@dodok/shared";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import type { Db } from "../src/db/client";
-import { agentSessions } from "../src/db/schema.sqlite";
+import { agentSessions, channelMembers, memberships, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import {
@@ -21,7 +21,7 @@ import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace, sendTarget } from "./helpers/seed";
+import { channelConversation, createDirectChannelForTest, seedWorkspace, sendTarget } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 function setup() {
@@ -636,5 +636,73 @@ describe("wire·REST — 스레드", () => {
     });
     await b.emitWithAck("channel.unsubscribe", { channelId: uuid() });
     expect(seen).toHaveLength(0);
+  });
+});
+
+// direct(사람 간 DM) 의 글 — 스레드는 채널처럼 열리고(사람 간 DM 스펙 결정 10), 멘션은 일반 채널에서만 토큰이 된다(기본이 닫힘)
+describe("direct 의 글", () => {
+  function directSetup() {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const { workspaceId, userId: mia } = seedWorkspace(db, { userHandle: "mia" });
+    const person = (handle: string) => {
+      const id = uuid();
+      db.insert(users)
+        .values({
+          id,
+          workspaceId,
+          handle,
+          displayName: handle,
+          authProvider: "local",
+          createdAt: new Date(),
+        })
+        .run();
+      db.insert(memberships).values({ id: uuid(), workspaceId, userId: id, role: "member" }).run();
+      return id;
+    };
+    const jun = person("jun");
+    const outsider = person("kai");
+    const direct = createDirectChannelForTest(db, { workspaceId, createdBy: mia, userIds: [jun] });
+    return { db, bus, mia, jun, outsider, direct, conversationId: channelConversation(db, direct.id) };
+  }
+
+  it("스레드 답글을 받는다", () => {
+    const { db, bus, mia, jun, conversationId } = directSetup();
+    const root = createUserMessage(db, bus, {
+      conversationId,
+      authorId: mia,
+      bodyMd: "루트",
+      clientMsgId: "r",
+    });
+    const reply = createUserMessage(db, bus, {
+      conversationId,
+      authorId: jun,
+      bodyMd: "답글",
+      clientMsgId: "a",
+      threadRootId: root.id,
+    });
+    expect(reply.threadRootId).toBe(root.id);
+  });
+
+  it("참여자가 아닌 사람의 멘션 토큰은 멘션이 되지 않고 그 사람을 멤버로 들이지 않는다", () => {
+    const { db, bus, mia, outsider, direct, conversationId } = directSetup();
+    const members = () =>
+      db
+        .select({ id: channelMembers.memberId })
+        .from(channelMembers)
+        .where(eq(channelMembers.channelId, direct.id))
+        .all()
+        .map((r) => r.id)
+        .sort();
+    const before = members();
+    const message = createUserMessage(db, bus, {
+      conversationId,
+      authorId: mia,
+      bodyMd: `<@u:${outsider}> @kai 보세요`,
+      clientMsgId: "m",
+    });
+    expect(message.mentions.users).toEqual([]);
+    expect(message.bodyMd).not.toContain(`<@u:${outsider}>`);
+    expect(members()).toEqual(before);
   });
 });

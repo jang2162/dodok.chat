@@ -197,12 +197,17 @@ export const channels = sqliteTable(
     kind: text("kind").$type<ChannelKind>().notNull().default("channel"),
     dmOwnerId: text("dm_owner_id").references(() => users.id),
     dmAgentId: text("dm_agent_id").references(() => agents.id),
+    // direct 의 참여자 묶음 열쇠(사람 간 DM 스펙 3.1) — 만드는 함수는 modules/directs/service.ts directKey 하나. direct 가 아니면 null
+    directKey: text("direct_key"),
   },
-  // (주인, 에이전트)마다 DM 하나 — 동시에 두 번 열어도 행은 하나다
+  // (주인, 에이전트)마다 DM 하나, 참여자 묶음마다 direct 하나 — 동시에 두 번 열어도 행은 하나다
   (t) => [
     uniqueIndex("channels_dm_pair")
       .on(t.dmOwnerId, t.dmAgentId)
       .where(sql`kind = 'dm'`),
+    uniqueIndex("channels_direct_key")
+      .on(t.workspaceId, t.directKey)
+      .where(sql`kind = 'direct'`),
   ],
 );
 

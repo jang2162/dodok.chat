@@ -145,7 +145,7 @@ function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput,
   const message = getMessage(tx, input.messageId);
   const channel = message && getChannel(tx, message.channelId, workspaceId);
   // 남의 DM 의 카드는 없는 메시지와 같다(auth/channel-access.ts)
-  if (!message || !channel || !canReadChannel({ userId: input.userId }, channel)) {
+  if (!message || !channel || !canReadChannel(tx, { userId: input.userId }, channel)) {
     throw apiError("NOT_FOUND", "message not found");
   }
   assertConversationWritable(tx, message.conversationId, workspaceId);
