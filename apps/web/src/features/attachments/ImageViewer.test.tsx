@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useImageViewer, type ViewerImage } from "./ImageViewer";
 
 const IMAGES: ViewerImage[] = [
@@ -124,5 +124,19 @@ describe("ImageViewer — 크게 보기(스펙 6.4)", () => {
     render(<Harness images={spoof} />);
     await user.click(screen.getByRole("button", { name: "photo\u202Egnp.exe 크게 보기" }));
     expect(screen.getByText("photo\u202Egnp.exe", { selector: "bdi" })).toBeInTheDocument();
+  });
+
+  it("onGoToMessage 가 있으면 「메시지로 가기」 — 누르면 닫고 부른다. 없으면 단추가 없다(메시지 본문의 격자)", async () => {
+    const user = userEvent.setup();
+    const go = vi.fn();
+    const { unmount } = render(<Harness images={[{ ...(IMAGES[0] as ViewerImage), onGoToMessage: go }]} />);
+    await user.click(screen.getByRole("button", { name: "하나.png 크게 보기" }));
+    await user.click(screen.getByRole("button", { name: "메시지로 가기" }));
+    expect(go).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    unmount();
+    render(<Harness images={IMAGES} />);
+    await user.click(screen.getByRole("button", { name: "하나.png 크게 보기" }));
+    expect(screen.queryByRole("button", { name: "메시지로 가기" })).toBeNull();
   });
 });

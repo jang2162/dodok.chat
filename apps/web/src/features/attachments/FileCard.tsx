@@ -1,4 +1,5 @@
 import { FileIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { LINK_BLOCKED } from "@/features/components/blocks/artifact";
 import { Button } from "@/ui/button";
@@ -24,13 +25,27 @@ type Props = {
   href?: string;
   /** 이름 아래 한 줄(「이미지를 불러오지 못했습니다」 등) */
   note?: string;
+  /** 크기·종류 아래 한 줄 더 — 파일함의 올린 사람·대화·날짜 */
+  meta?: ReactNode;
+  /** 「내려받기」 옆에 둘 단추 — 파일함의 「메시지로 가기」 */
+  actions?: ReactNode;
   /** 바깥에서 부를 이름 — components 의 file 블록은 `file` 로 부른다 */
   slot?: string;
   className?: string;
 };
 
-/** 파일 카드 — 아이콘·이름·크기·종류와 「내려받기」. 메시지 첨부·이미지 물러남·components 가 같이 쓴다 */
-export function FileCard({ name, size, mime, href, note, slot = "file-card", className }: Props) {
+/** 파일 카드 — 아이콘·이름·크기·종류와 「내려받기」. 메시지 첨부·이미지 물러남·components·파일함이 같이 쓴다 */
+export function FileCard({
+  name,
+  size,
+  mime,
+  href,
+  note,
+  meta,
+  actions,
+  slot = "file-card",
+  className,
+}: Props) {
   const sizeText = size === undefined ? undefined : formatSize(size);
   const kind = kindLabel(mime, name);
   const line = note ?? (href ? undefined : LINK_BLOCKED);
@@ -52,6 +67,7 @@ export function FileCard({ name, size, mime, href, note, slot = "file-card", cla
             {kind && <span data-slot="file-kind">{kind}</span>}
           </span>
         )}
+        {meta}
         {line && <span className="text-xs text-muted-foreground">{line}</span>}
       </div>
       {href && (
@@ -61,6 +77,7 @@ export function FileCard({ name, size, mime, href, note, slot = "file-card", cla
           </a>
         </Button>
       )}
+      {actions}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { ActivityIcon, ListIcon, NotebookPenIcon, SquarePenIcon } from "lucide-r
 import { type FormEvent, type RefObject, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
+import { FilesTabLink } from "@/app/layout/PanelTabs";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { providerName } from "@/features/agents/providerLabels";
 import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
@@ -130,6 +131,7 @@ export function DmHeader({
         </Button>
       )}
       <CloseConversationButton channelId={channel.id} conversationId={conversationId} />
+      <FilesTabLink channelId={channel.id} conversationId={conversationId} />
       <Button asChild variant="ghost" size="icon-sm">
         <Link
           ref={activityRef}

@@ -1,6 +1,6 @@
 import { onlineManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
@@ -77,6 +77,7 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
           lists.push(url);
           return json(200, { conversations: sessions.map((c) => conversationOf("abc", c)) });
         }
+        if (url.startsWith("/api/v1/attachments")) return json(200, { items: [] });
         return shellGet(input, init) ?? json(200, ME);
       }),
     );
@@ -110,6 +111,15 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
     const router = renderAt("/c/abc/t/root1");
     await waitFor(() => expect(router.state.location.pathname).toBe("/c/abc/s/abc/t/root1"));
     expect(lists).toEqual([]);
+  });
+
+  it("/c/<ch>/s/<conv>/files 는 그 세션 화면에 파일 탭, /files 는 전체 화면", async () => {
+    serve([{ id: SESSION }]);
+    const router = renderAt(`/c/abc/s/${SESSION}/files`);
+    expect(await screen.findByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "files");
+    await act(() => router.navigate({ to: "/files" }));
+    expect(await screen.findByTestId("page-files")).toBeInTheDocument();
+    expect(screen.queryByTestId("page-channel")).toBeNull();
   });
 
   it("/c/<ch>/s/<conv>/t/<root> 새로고침은 그 세션과 그 스레드 패널을 연다", async () => {

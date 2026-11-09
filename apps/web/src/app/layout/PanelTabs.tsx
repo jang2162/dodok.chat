@@ -1,5 +1,5 @@
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { XIcon } from "lucide-react";
+import { FolderIcon, XIcon } from "lucide-react";
 import { type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ThreadOpener } from "@/features/threads/threadOpener";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 
-export type PanelTab = "settings" | "activity" | "thread" | "profile";
+export type PanelTab = "settings" | "activity" | "files" | "thread" | "profile";
 
 /**
  * 오른쪽 패널의 탭(설계 5.1). 순서가 화면 순서다.
@@ -29,6 +29,13 @@ const TABS = [
     title: "활동",
     to: "/c/$channelId/s/$conversationId/activity",
     scroll: false,
+  },
+  {
+    id: "files",
+    label: "파일",
+    title: "파일",
+    to: "/c/$channelId/s/$conversationId/files",
+    scroll: true,
   },
   {
     id: "thread",
@@ -104,7 +111,7 @@ export function PanelTabs({
   openerRef?: RefObject<HTMLAnchorElement | null>;
   /** 스레드를 연 자리(칩·「스레드에서 답하기」) — 스레드 탭을 닫으면 그 자리가 아직 화면에 있을 때 `openerRef` 대신 여기로 */
   threadOpenerRef?: RefObject<ThreadOpener | null>;
-  /** 머리에 둘 탭(없으면 전부) — DM 은 활동 탭만(설정·스레드가 없다, 에이전트 DM 계획 판정 PD2) */
+  /** 머리에 둘 탭(없으면 전부) — 에이전트 DM 은 설정·스레드가 없다(에이전트 DM 계획 판정 PD2) */
   only?: readonly PanelTab[];
 }) {
   const narrow = useIsNarrow();
@@ -315,5 +322,37 @@ function TabBar({
         ),
       )}
     </nav>
+  );
+}
+
+/**
+ * 머리의 「파일」 단추(파일함 스펙 「어디서 여나」) — 파일 탭을 여닫는다. 채널·에이전트 DM·사람 DM 머리가 같이 쓴다. `ref` 는 한 줄기
+ * direct 처럼 머리에 설정·활동 단추가 없을 때 패널을 닫으면 초점이 돌아올 자리로 쓴다
+ */
+export function FilesTabLink({
+  channelId,
+  conversationId,
+  ref,
+}: {
+  channelId: string;
+  conversationId: string;
+  ref?: RefObject<HTMLAnchorElement | null>;
+}) {
+  const matchRoute = useMatchRoute();
+  const params = { channelId, conversationId };
+  const open = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/files", params }));
+  return (
+    <Button asChild variant="ghost" size="icon-sm">
+      <Link
+        ref={ref}
+        to={open ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/files"}
+        params={params}
+        activeOptions={{ exact: true }}
+        aria-label="파일"
+        aria-expanded={open}
+      >
+        <FolderIcon />
+      </Link>
+    </Button>
   );
 }

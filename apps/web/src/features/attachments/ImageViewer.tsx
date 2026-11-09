@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, MessageSquareIcon, XIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { Button } from "@/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/ui/dialog";
@@ -8,6 +8,8 @@ export type ViewerImage = {
   name: string;
   /** 원본 내려받기(`?download=1`) — 자기 서버 첨부만. https 이미지는 없다 */
   downloadHref?: string;
+  /** 있으면 「메시지로 가기」 단추 — 파일함 격자만 준다(메시지 본문의 격자는 이미 그 메시지 곁이다) */
+  onGoToMessage?: () => void;
 };
 
 type Props = {
@@ -70,6 +72,21 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
                 <DownloadIcon aria-hidden />
                 원본 내려받기
               </a>
+            </Button>
+          )}
+          {image.onGoToMessage && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-white hover:bg-white/10 hover:text-white"
+              onClick={() => {
+                const go = image.onGoToMessage;
+                onClose();
+                go?.();
+              }}
+            >
+              <MessageSquareIcon aria-hidden />
+              메시지로 가기
             </Button>
           )}
           <DialogClose asChild>

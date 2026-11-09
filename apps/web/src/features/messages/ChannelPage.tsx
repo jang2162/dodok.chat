@@ -97,10 +97,10 @@ export function ChannelPage() {
           : null,
     [dmChannel, directChannel, readOnly],
   );
-  // 에이전트 DM 에는 채널 설정·스레드가 없다(계획 판정 PD2·스펙 결정 7) — 그 주소로 와도 패널을 그리지 않는다. 활동 탭만 연다.
-  // 사람 DM·그룹 DM 에는 설정 탭이 없고, 활동 탭은 세션이 있을 때만(런은 에이전트가 있는 그룹에만 있다)
+  // 에이전트 DM 에는 채널 설정·스레드가 없다(계획 판정 PD2·스펙 결정 7) — 그 주소로 와도 패널을 그리지 않는다. 활동·파일 탭만 연다.
+  // 사람 DM·그룹 DM 에는 설정 탭이 없고, 활동 탭은 세션이 있을 때만(런은 에이전트가 있는 그룹에만 있다). 파일 탭은 세 종류 모두
   const tab = dmChannel
-    ? routeTab === "activity"
+    ? routeTab === "activity" || routeTab === "files"
       ? routeTab
       : undefined
     : directChannel && (routeTab === "settings" || (routeTab === "activity" && !sessions))
@@ -357,11 +357,11 @@ export function ChannelPage() {
                   threadOpenerRef={threadOpenerRef}
                   only={
                     dmChannel
-                      ? ["activity", "profile"]
+                      ? ["activity", "files", "profile"]
                       : directChannel
                         ? sessions
-                          ? ["activity", "thread", "profile"]
-                          : ["thread", "profile"]
+                          ? ["activity", "files", "thread", "profile"]
+                          : ["files", "thread", "profile"]
                         : undefined
                   }
                 >

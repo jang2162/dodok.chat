@@ -113,6 +113,24 @@ afterEach(() => {
   for (const detach of detachers.splice(0)) detach();
 });
 
+describe("파일함", () => {
+  it("channel.activity 는 그 채널의 파일 탭 키만 무효화한다 — 다른 채널·전체 화면 키는 그대로", () => {
+    const { fake, queryClient } = setup();
+    const keys = [qk.files(CH), qk.files(CH2), qk.filesAll];
+    for (const key of keys) queryClient.setQueryData([...key, {}], { pages: [], pageParams: [] });
+    fake.serverEmit("channel.activity", {
+      channelId: CH,
+      conversationId: CH,
+      seq: 3,
+      authorType: "user",
+      authorId: uid(10),
+      mentionedUserIds: [],
+    });
+    const stale = keys.map((key) => queryClient.getQueryState([...key, {}])?.isInvalidated);
+    expect(stale).toEqual([true, false, false]);
+  });
+});
+
 describe("타임라인 이벤트", () => {
   it("message.created: 그 채널 캐시가 있으면 upsert, 구독한 적 없는 채널(캐시 없음)은 무시한다", () => {
     const { fake, queryClient } = setup();

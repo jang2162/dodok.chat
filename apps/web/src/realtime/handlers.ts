@@ -419,6 +419,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         bumpDm(qc, activity.channelId);
         bumpDirect(qc, activity.channelId);
       }
+      // 그 채널의 파일 탭 — 열려 있을 때만 다시 받는다(활성 쿼리). 전체 화면 키는 건드리지 않는다(파일함 계획 판정 PF5).
+      // 메시지 삭제가 들어오면 그 이벤트도 여기서 낡게 한다(파일함 스펙 「A 가 들어올 때」)
+      void qc.invalidateQueries({ queryKey: qk.files(activity.channelId) });
       useUnread.getState().applyActivity(activity, {
         me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
         viewing: subscriptions.active(),

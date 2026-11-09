@@ -1,12 +1,9 @@
 import type { SearchHit } from "@dodok/shared";
-import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { useArchivedChannels, useChannels } from "@/api/queries";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
-import { directTitle, isLoneGroup, useDirects } from "@/features/directs/queries";
-import { useDms } from "@/features/dms/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { Button } from "@/ui/button";
+import { useConversationNames } from "./conversationNames";
 import { Snippet } from "./highlight";
 import type { useSearch } from "./useSearch";
 
@@ -25,9 +22,8 @@ export function searchErrorText(e: unknown): string {
  * 결과 목록(스레드·검색 스펙 5.4) — 줄마다 채널·작성자·시각·스니펫(일치 부분 강조), 답글이면 「스레드 답글」, 보관한 채널이면 「보관됨」
  * (누르면 읽기 전용 채널 화면으로 간다 — 채널 화면이 상세를 받아 안다).
  * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄.
- * 내 DM 의 결과(서버는 주인에게만 준다 — 에이전트 DM 계획 판정 PD3)는 채널 이름 대신 「DM · <에이전트 이름>」, 사람 DM·그룹 DM 의 결과(참여자
- * 에게만 준다)는 「DM · <참여자 이름>」(사람 간 DM 스펙 「검색」 — 1:1 은 상대 이름, 그룹은 나를 뺀 이름 나열, 상대가 하나뿐인 그룹은
- * 사이드바처럼 「(그룹)」 — `isLoneGroup`)
+ * DM 의 결과(서버는 그 DM 을 읽는 사람에게만 준다 — 에이전트 DM 계획 판정 PD3·사람 간 DM 스펙 「검색」)는 채널 이름 대신 「DM · …」 —
+ * 규칙은 `useConversationNames`
  */
 export function SearchResults({
   search,
@@ -36,23 +32,8 @@ export function SearchResults({
   search: ReturnType<typeof useSearch>;
   onPick: (hit: SearchHit) => void;
 }) {
-  const channels = useChannels().data;
   // 보관한 채널은 사이드바 목록에 없다 — 그 결과가 있을 때만 보관 목록을 받아 이름을 찾는다
-  const archived = useArchivedChannels({ enabled: search.hits.some((h) => h.channelArchived) }).data;
-  const dms = useDms().data;
-  const directs = useDirects().data;
-  const nameOf = useMemo(
-    () =>
-      new Map([
-        ...[...(channels ?? []), ...(archived ?? [])].map((c): [string, string] => [c.id, `#${c.name}`]),
-        ...(dms ?? []).map((d): [string, string] => [d.channel.id, `DM · ${d.agent.name}`]),
-        ...(directs ?? []).map((d): [string, string] => [
-          d.channel.id,
-          `DM · ${directTitle(d)}${isLoneGroup(d) ? " (그룹)" : ""}`,
-        ]),
-      ]),
-    [channels, archived, dms, directs],
-  );
+  const nameOf = useConversationNames({ includeArchived: search.hits.some((h) => h.channelArchived) });
   const { author } = useAuthors();
   useLoadAutomationAuthors(search.hits);
 
@@ -90,7 +71,7 @@ export function SearchResults({
               >
                 <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
-                    {nameOf.get(hit.channelId) ?? "#알 수 없는 채널"}
+                    {nameOf(hit.channelId) ?? "#알 수 없는 채널"}
                   </span>
                   <span className="max-w-48 truncate" title={hit.conversationTitle}>
                     {hit.conversationTitle}

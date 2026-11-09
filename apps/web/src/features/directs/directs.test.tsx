@@ -508,6 +508,38 @@ describe("대화 화면", () => {
     expect(within(header).getByTestId("direct-session-title")).toHaveClass("min-w-0", "flex-1");
   });
 
+  it("한 줄기 direct 도 …/files 로 오면 파일 탭 — 탭 머리는 파일뿐, 머리에 「파일」 단추", async () => {
+    stubServer({ directs: [ONE_D], conversations: { [ONE]: [conv(ONE, ONE_CONV)] } });
+    renderRoute(`/c/${ONE}/s/${ONE_CONV}/files`);
+    const panel = await screen.findByTestId("page-channel-panel");
+    expect(panel).toHaveAttribute("data-panel-tab", "files");
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(
+      within(tabs)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["파일"]);
+    expect(
+      within(screen.getByTestId("direct-header")).getByRole("link", { name: "파일" }),
+    ).toBeInTheDocument();
+  });
+
+  it("세션 direct 도 …/files 로 오면 파일 탭 — 탭 머리는 활동·파일", async () => {
+    stubServer({
+      directs: [{ ...AGROUP_D, lastMessageAt: "2026-11-09T01:00:00.000Z" }],
+      conversations: { [AGROUP]: [conv(AGROUP, S1)] },
+    });
+    renderRoute(`/c/${AGROUP}/s/${S1}/files`);
+    const panel = await screen.findByTestId("page-channel-panel");
+    expect(panel).toHaveAttribute("data-panel-tab", "files");
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(
+      within(tabs)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["활동", "파일"]);
+  });
+
   it("에이전트가 있는 그룹의 세션 화면 — member 참여자에게 「새 세션」, 설정 주소로 와도 설정 패널은 없다", async () => {
     stubServer({
       role: "member",
