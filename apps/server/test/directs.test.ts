@@ -945,7 +945,14 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
         (await wire(who)).emitWithAck("approval.resolve", { approvalId: approval.id, decision: "deny" });
       const sentBefore = adapter.calls.resolveApproval.length;
       expect(await resolve(owner)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
-      expect(await resolve(mia)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+      // wire 가 먼저 막는다 — 승인 서비스까지 가지 않는다(서비스의 같은 판정은 아래에서 따로 본다)
+      const service = vi.spyOn(app.services.approvals, "resolve");
+      try {
+        expect(await resolve(mia)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+        expect(service).not.toHaveBeenCalled();
+      } finally {
+        service.mockRestore();
+      }
       // wire 앞단을 거치지 않는 호출도 같은 결과(태스크 1 리뷰 L1)
       await expect(
         app.services.approvals.resolve({ approvalId: approval.id, decision: "deny", userId: mia.id }),
