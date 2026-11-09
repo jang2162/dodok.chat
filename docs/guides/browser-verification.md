@@ -51,6 +51,8 @@
   맞게 간다) — 실제 브라우저에서 본다(`features/runners/ProjectList.tsx`·`MoveProjectDialog.tsx`).
   대화상자 안에서는 jsdom 의 `blur()` 도 Radix 초점 가둠이 되돌린다 — 「body 로 떨어진 뒤」를 재려면 `vi.spyOn(document, "activeElement", "get")` 으로
   흉내 낸다(`features/settings/ConfirmDialog.test.tsx`).
+- ⚠ **Vite HMR 이 같은 모듈을 `?t=` 가 다른 URL 로 두 번 내면 모듈 변수가 두 벌로 갈린다** — 한쪽이 바꾼 모듈 상태(점프 목표 스토어 같은 것)를 다른 쪽이 못 본다.
+  모듈 상태를 바꾸는 코드를 고친 뒤 브라우저로 재는 확인은 웹 개발 서버를 다시 띄우고 본다.
 
 ## Playwright 로 여러 번 나눠 돌릴 때
 

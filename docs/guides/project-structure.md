@@ -124,6 +124,9 @@ src/
 │                 네이티브: PushDeviceInput(platform 으로 가르는 합집합 — iOS 토큰은 64자 hex 를 소문자로 모으고 `environment` 필수, Android 토큰 1~4096자, appId `/^[A-Za-z0-9][A-Za-z0-9._-]*$/` 200자)·PushDeviceRemove·PushCapabilities.
 │                 ErrorCode `PUSH_UNAVAILABLE`(common.ts)·운영 사건 종류 `OpsEventKind` 의 `push_credentials_invalid` 도 shared 에 있다.
 │                 wire 쪽 `presence.update`(`PresenceUpdate` { visible, channelId? }, ack 없음)는 `wire/` 의 Typing 옆에 있다
+├─ files/         파일함. `GET /api/v1/attachments` 계약 — FILE_PAGE_SIZE 50·FILE_PAGE_MAX 100·FileListQuery(channelId?·kind image|file·q trim 1~100·authorType·authorId·cursor·limit)·
+│                 FileListItem(attachment·messageId·channelId·conversationId·conversationTitle·seq·threadRootId?·작성자·createdAt·channelArchived — 겹치는 이름은 SearchHit 과 같다)·FileList(items·nextCursor).
+│                 첨부 이름의 양방향 제어 문자 정규식은 `domain/` 의 BIDI_CONTROLS_RE 한 벌 — sanitizeAttachmentName(저장)·displayAttachmentName(표시)이 같이 쓴다
 ├─ search/        Phase 4 ①. `GET /api/v1/search` 계약 — SearchQuery(q 2~200 코드 포인트·채널·`conversationId?`·작성자·기간·커서)·SearchHit(messageId·channelId·conversationId·conversationTitle·**seq**(결과로 가기가
 │                 `?around=` 로 받는다)·threadRootId?·작성자(authorType user·agent·automation — 거르개 SearchQuery.authorType 은 user·agent 뿐)·createdAt·snippet ≤400·channelArchived — 보관한 채널의 결과)·SearchResult(hits·nextCursor?·limited — 2글자 경로)·
 │                 스니펫 표시 문자 `SEARCH_SNIPPET_OPEN`/`CLOSE`(STX·ETX — 서버는 HTML 을 만들지 않는다)
@@ -257,6 +260,7 @@ src/
 │  │                      사람 간 DM(0035 — 생성기 출력 그대로): channels.direct_key(text, nullable — 참여자 `u:<id>`·`a:<id>` 를 사전순으로 `,` 로 이은 꼴, modules/directs/service.ts directKey 하나가 만든다)·
 │  │                      유일 channels_direct_key (workspace_id, direct_key) WHERE kind = 'direct'. direct 행은 name `direct`·visibility private·dm_owner_id·dm_agent_id null, channel_members 는
 │  │                      참여자마다 한 행(사람 role member, 에이전트 autoRespond false) — 만든 뒤 더하거나 빼지 않는다. 한 줄기(에이전트 참여자 없음)인지는 저장하지 않는다(directHasAgents).
+│  │                      파일함(0036): 색인 attachments_channel_message (channel_id, message_id) — 채널 하나를 고른 파일 목록이 이 색인으로 찾는다(새 표는 없다).
 │  │                      멤버 비활성화(0016): memberships.deactivated_at(비활성화한 시각, null 이면 활성)·users.left_handle 삭제. 채널 보관(0017): channels.archived_at(보관한 시각, null 이면 살아 있음).
 │  │                      두 열 모두 FK·인덱스 없음 — 행·핸들·이메일·채널 참여·메시지는 남고 읽는 자리가 거른다(채널 멤버는 channels/service.ts memberNotDeactivated, 쓰기는 assertChannelWritable).
 │  │                      읽지 않음(0028): conversation_reads — user_id·conversation_id(기본 키 (user_id, conversation_id), 둘 다 FK ON DELETE CASCADE)·last_read_seq(커지기만 한다 —
@@ -341,9 +345,10 @@ src/
 │  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 디스크 블롭(`<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>`, 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
 │  │                      sniff.ts(순수: 매직 바이트 → kind·mime, 이미지면 image-size 로 가로·세로 — EXIF 회전 5~8 은 바꿔서, 못 읽으면 file. SVG 는 늘 file) ·
 │  │                      store.ts(sha256·블롭 쓰기(임시 파일 → rename)·지우기, sha 별 잠금 BlobLocks — 업로드와 정리가 같은 잠금을 지난다) ·
-│  │                      service.ts(올리기(사람 이미지 5 MB·브리지 파일 20 MiB)·잡기 claimUser/claimBridge·묶기·읽기 권한 findReadable·정리 sweepAttachments —
+│  │                      service.ts(올리기(사람은 판별이 image 면 5 MB·그 밖 20 MiB, 브리지 파일 20 MiB)·잡기 claimUser/claimBridge·묶기·읽기 권한 findReadable·정리 sweepAttachments —
 │  │                      24시간 넘은 미묶음 행, 행 없는 블롭, 1시간 넘은 .tmp) ·
-│  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
+│  │                      list.ts(파일함 목록 listFiles — attachments ⋈ messages, 읽기 거름은 readableChannelSql 을 SQL 단계에, 최신순 + 한 메시지 안은 attachments_json 자리 pos, 커서 { createdAt, messageId, pos } base64url) ·
+│  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션 — 목록 `GET /api/v1/attachments`(channelId 를 주면 loadReadableChannel 로 먼저 404)·하나 `GET /api/v1/attachments/:id`), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
 │  │                      GET 은 블롭을 먼저 열어 없으면 404, nosniff·CSP sandbox·immutable, Content-Disposition 은 RFC 5987).
 │  │                      브리지 범위(멀티 Gateway 스펙 6.4): 브리지 토큰의 Gateway 가 올린 것과 그 Gateway 에서 열린 런(runs.connection_id)의 트리거 첨부만 읽고(범위 밖은 404),
 │  │                      정본에 묶는 것(claimBridgeAttachments)도 그 Gateway 가 올린 것만 — 러너 정본은 자기 러너 토큰이 올린 것만 묶는다.
@@ -909,7 +914,7 @@ src/
 │  │                       409 CHANNEL_ARCHIVED 는 「보관된 채널입니다」(토스트 id `channel-archived` 하나) + 채널 상세·사이드바 목록을 다시 받는다(보관을 놓친 탭이 읽기 전용으로).
 │  │                       me 는 토스트하지 않고, 값이 없는 me 의 401(첫 가드)은 가드에 맡기며, 값을 가진 me 의 401(사본으로 뜬 뒤 세션 만료)은 onUnauthorized
 │  ├─ session.ts           로그아웃·401 정리(resetClientState — 등록된 정리 훅: 오프라인 사본 지우기·dropLocalPush)와 Query 밖 REST 401 통지
-│  ├─ fileDrop.ts          앱 수준 파일 드롭 막기(브라우저가 파일을 열어 앱을 떠나지 않게) + 「이미지는 입력 칸에 놓아 주세요」 한 문구·한 토스트 id. 작성기가 받은 드롭은 건드리지 않는다
+│  ├─ fileDrop.ts          앱 수준 파일 드롭 막기(브라우저가 파일을 열어 앱을 떠나지 않게) + 「파일은 입력 칸에 놓아 주세요」 한 문구·한 토스트 id. 작성기가 받은 드롭은 건드리지 않는다
 │  ├─ NotFound.tsx         없는 경로(defaultNotFoundComponent)
 │  ├─ RouteError.tsx       라우트 오류 화면(연결 문제 ↔ 코드 오류를 가른다)
 │  └─ layout/
@@ -917,7 +922,7 @@ src/
 │     │                    스크롤해 사이드바·배너는 제자리에 있다(채널 화면은 그 높이에 맞추고 목록이 스스로 스크롤). 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀. 검색 대화상자(`⌘K`/`Ctrl+K` — 다른 대화상자가 열려 있으면 무시,
 │     │                    `preventDefault`)와 그것을 여는 컨텍스트 `OpenSearchContext`. DM 목록(`features/dms` 의 useDms)을 늘 들고 있다 — 좁은 화면은 사이드바를 시트를 열 때만 그리는데
 │     │                    실시간 처리기가 그 캐시로 DM 의 승인 알림·읽지 않음 항목을 정한다
-│     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·하단 연결 상태와 「설정」(lucide 톱니 + 글자 — `/settings`).
+│     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·「파일」(`/files` 전체 화면)·채널 목록·「채널 만들기」·하단 연결 상태와 「설정」(lucide 톱니 + 글자 — `/settings`).
 │     │                    admin 이상이면 「설정」에 확인 안 한 운영 사건 배지(features/settings-shell OpsBadge — ops/status 의 unacked warn + error, 0 이면 없음, 100 이상 「99+」,
 │     │                    sr-only 「(확인 안 한 사건 n건)」, `ops.event` 로 실시간, 주기 재조회는 없다). 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 설정 탭에 있다
 │     ├─ ChannelHeader.tsx 채널 이름(보관한 채널이면 「보관됨」)·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
@@ -926,7 +931,7 @@ src/
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
 │     ├─ ConnectionDots.tsx Gateway·플러그인 점 — 켜진 Gateway 를 모아 하나로(모두 연결 초록 · 일부 끊김 노랑 · 붙은 것이 없어도 다시 붙는 중이면 노랑 「Gateway 다시 연결 중」 ·
 │     │                    모두 끊김 빨강 · 켜진 Gateway 없음 회색 「Gateway 없음」), 툴팁에 Gateway 마다 한 줄. wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
-│     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」, 스레드를 연 동안만 「스레드」, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
+│     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」·「파일」, 스레드를 연 동안만 「스레드」 — 대화 종류별로 그리는 탭은 ChannelPage 의 `only`, 세 머리(채널·DM·direct)가 쓰는 「파일」 단추 FilesTabLink, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
 │     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다.
 │     │                    초점: 좁은 화면 시트는 열면 지금 탭 링크(`data-tab-id`), Esc·닫기면 헤더 「채널 설정」 링크. 넓은 화면은 「설정 닫기」·「활동 닫기」
 │     │                    링크를 누르면 패널이 내려가기 전에 같은 헤더 링크로 옮긴다(헤더에 활동을 여는 자리가 없어 두 탭 모두 그 자리).
@@ -993,7 +998,7 @@ src/
 │  │                       FileCard.tsx(아이콘·이름·크기·종류·「내려받기」 — `download` 속성 없이 서버 Content-Disposition 에 맡긴다) ·
 │  │                       ImageViewer.tsx(크게 보기 — ui/dialog 위, ←/→·`n / 전체`·「원본 내려받기」·Esc, 닫으면 연 이미지로 초점. `useImageViewer` 를 메시지 격자와 media 블록이 같이 쓴다) ·
 │  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
-│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구, 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」, 409 CHANNEL_ARCHIVED 면 「보관된 채널입니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
+│  │                       upload.ts(XHR 업로드·진행·취소, 크기 검사와 문구 — 빈 파일 「빈 파일은 보낼 수 없습니다」, 이미지 MIME 이면 「5 MB 를 넘습니다」, 그 밖 「20 MB 를 넘습니다」(형식은 막지 않는다, 413 은 늘 20 MB 문구), 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」, 409 CHANNEL_ARCHIVED 면 「보관된 채널입니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10개 상한 「첨부는 한 번에 10개까지 보낼 수 있습니다」). 이름은 displayAttachmentName + `<bdi>` 로 그린다(FileCard·ImageViewer·AttachmentImage·칩)
 │  ├─ auth/                LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」, 403 MEMBER_DEACTIVATED 는 서버 문구가 아니라 코드로 「비활성화된 계정입니다. 관리자에게 문의하세요.」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
 │  │                       `POST /invites/lookup` 을 본문 토큰으로 부른 뒤 폼(무효·다른 종류 링크는 한 문구, 초대 경로 IP 버킷이라 `retry: false`, 쿼리 키에 토큰 원문 대신 `useId` — 토큰이 바뀌면 `key={token}` 으로 다시 마운트), 409 는 `details.field` 칸 아래, 수락 404 는 무효 화면.
 │  │                       성공하면 `useFinishInvite` 가 클라이언트 상태를 비우고 `/` 로 replace(주소창의 토큰을 걷는다). 로그인된 채 열면 폼 위에 「지금 @<핸들> 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다」 ·
@@ -1124,8 +1129,8 @@ src/
 │  │                       `useSendMessage` 의 settleNew 가 남기는 표 `["composerSettled"]`, 메인 작성기가 `new` 를 떠날 때 지운다) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(membership 없는 사람·비활성 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
 │  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`) · useSendMessage(channelId, conversationId, threadRootId? — conversationId 가 NEW_CONVERSATION("new")이면 newConversation 으로 보내고 ack 의 세션 주소로 바꿔 간다, 같은 틱의 둘째 글은 그 세션으로(「만드는 중」 표지 `composerCreating` — 결과 불명(TIMEOUT)인 첫 글은 그 항목이 `/s/new` 창에 있을 때만 같은 clientMsgId 로 다시 보낸다), ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, CHANNEL_ARCHIVED 면 사유 channel_archived(토스트 없이)·채널 다시 받기, CONVERSATION_CLOSED 면 사유 conversation_closed(「다시 보내기」 없음)·세션 다시 받기, FORBIDDEN 이면 「다시 보내기」 없음, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 세션 단위) ·
-│  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
-│  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
+│  │                       PendingAttachments.tsx(「첨부할 파일」 칩 — 사진은 미리보기(서버가 file 로 판별하거나 못 그리면 파일 칩), 그 밖은 아이콘·크기, 진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「파일 첨부」로). Composer 는 「파일 첨부」 버튼(accept 없음)·붙여넣기·
+│  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「파일을 올리는 중입니다」 → 「올리지 못한 파일을 빼 주세요」). 놓은 폴더는 거르고 「폴더는 보낼 수 없습니다」. 글 없이 첨부만 보낼 수 있다
 │  ├─ agents/              에이전트 부품 — 「연결」 탭의 에이전트 상세(features/connections AgentDetail)가 쓴다. AgentRow(`as="div"` 로 상세 본문 — 사용 토글·기본 프롬프트 — member 에게는 값만 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 그 러너 상세 링크와 옮기라는 안내), admin 이상이면 RunnerDefinition(정의 요약 + 「러너 설정 고치기」 → RunnerAgentForm.tsx RunnerDefinitionForm — 프로그램·프로젝트는 읽기만)) · RunnerAgentForm(프로젝트 상세의 「에이전트 만들기」 — 러너·프로젝트 고정(runnerId·projectId) → 프로그램 → 핸들·이름·모델·권한 모드(상한까지)·허용 도구(상한 부분집합)·지시·DM 허용, 폼을 연 뒤 러너가 끊기거나 폐기되거나 프로젝트가 보관되면 잠김) · DiscoverDialog(Gateway 상세의 「에이전트 가져오기」 — 그 Gateway 하나로 고정(gatewayId), 같은 Gateway·같은 id 만 숨김,
 │  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
 │  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
@@ -1139,11 +1144,16 @@ src/
 │  │                       ProjectList.tsx(프로젝트 줄 — 라벨은 프로젝트 상세 링크, 확인·이름 바꾸기·옮기기·보관 — ProjectRow 를 프로젝트 상세도 쓴다, 붙은 러너가 그 루트를 안 알리면 「루트 없음」, 줄을 빼는 mutation 뒤 초점은 `.then` 에서)·
 │  │                       AddProjectDialog.tsx(루트 → 둘러보기(빵 부스러기·git·truncated, 열린 동안 다시 받지 않는다)/직접 입력 → 「확인하고 추가」)·MoveProjectDialog.tsx·copy.ts(확인 실패 사유 넷 등 문구)·
 │  │                       queries.ts·mutations.ts(키는 `src/api/queries.ts` 의 `qk.runners()`·`qk.runnerProjects(id)`·`qk.runnerFs(id, root, rel)`, 무효화 앞머리 `runnersAll`(wire `adapter.status` runner)·`runnerProjectsAll`(agents.changed)·`runnerFsOf`).
+│  ├─ files/               파일함. FilesPanel.tsx(패널 「파일」 탭 — `/c/<채널>/s/<세션>/files`, FilesView 의 key 가 채널 id 라 옮기면 거름이 초기화) · FilesPage.tsx(사이드바 「파일」 → `/files` 전체 화면, 「대화」 고르기·줄의 「#채널 · 세션 제목」·「DM · …」) ·
+│  │                       FilesView.tsx(둘이 같이 쓰는 몸 — 「전체」·「사진」·「파일」, 「이름으로 찾기」, 「올린 사람」, 사진 격자 3열(전체 화면 넓으면 6열)·파일 줄 FileCard, 「더 보기」, 빈 상태·「거름 지우기」) ·
+│  │                       queries.ts(useFiles — useInfiniteQuery, 키 `[...qk.files(channelId), filters]`·전체 화면 `qk.filesAll`, 이름 입력 300ms 디바운스 — 무효화는 realtime `channel.activity` 의 그 채널 키, 다시 붙으면 `["files"]`) ·
+│  │                       goToFile.ts(useGoToFile — requestJump(focus) 뒤 그 세션(답글이면 `…/t/<루트>`)으로, 패널이 닫힌다. 열린 대화상자(시트·크게 보기)가 내려간 뒤 초점 목표를 다시 건다)
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 세션(지금 세션이 아니어도)·스레드로, 닫으면 연 자리로 초점 —
 │  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(결과 줄에 세션 제목, 보관한 채널 결과는 「보관됨」 — 채널 이름은 그런 결과가 있을 때만 받는 보관 목록에서 · 2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
 │  │                       429·오류는 대화상자 안 한 줄, 다음 쪽 실패는 받은 결과를 두고 목록 아래 한 줄, 입력이 2글자 미만이면 옛 결과를 곧바로 숨긴다) ·
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
-│  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
+│  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시) ·
+│  │                       conversationNames.ts(useConversationNames — 채널 id → `#이름`·`DM · <에이전트>`·`DM · <참여자>`(+「 (그룹)」), 검색 결과와 파일함이 같이 쓴다)
 │  ├─ setup/               Phase 3 ②. 연결 설정 부품(owner — setup API) — 「연결」 탭의 Gateway 상세·러너 상세·연결 추가(features/connections)가 쓴다.
 │  │                       RunnerSection.tsx(InstallSteps — 러너 상세 「설치 안내」 · RunnerExposure — 드러나는 것 넷) · RunnerTokenList.tsx(러너 상세가 그 러너의 토큰 한 줄로) ·
 │  │                       GatewayCard.tsx(Gateway 상세의 섹션 — GatewayMeta 한 줄·PairingNotice·PluginStatus(설치 상자 PluginInstall — 플러그인이 없으면 펼침)·BridgeTokens(한 줄 + 「?」) · 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
