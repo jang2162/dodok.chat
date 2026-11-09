@@ -1,4 +1,13 @@
-import type { Agent, Channel, Conversation, DirectSummary, DmSummary, Message, Person } from "@dodok/shared";
+import type {
+  Agent,
+  Channel,
+  Conversation,
+  DirectSummary,
+  DmSummary,
+  Message,
+  Person,
+  SearchHit,
+} from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +19,8 @@ import { DmViewContext } from "@/features/dms/context";
 import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { useUnread } from "@/features/reads/useUnread";
+import { SearchResults } from "@/features/search/SearchResults";
+import type { useSearch } from "@/features/search/useSearch";
 import { attachHandlers } from "@/realtime/handlers";
 import { createSubscriptions } from "@/realtime/subscriptions";
 import { useWireStatus } from "@/realtime/wire";
@@ -509,6 +520,39 @@ describe("보관한 에이전트가 든 그룹(sessions 참, agents 빔)", () =>
     renderRoute(`/c/${CH}/s/new`);
     const nav = await dmNav();
     await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "준준(그룹)"]));
+  });
+
+  it("검색 결과 — 사이드바처럼 1:1 은 「DM · 준」, 그룹은 「DM · 준 (그룹)」(재리뷰 L3)", async () => {
+    stubServer({ directs: [ARCH_D, JUN_D] });
+    const hit = (channelId: string, n: number): SearchHit => ({
+      messageId: uid(9_000 + n),
+      channelId,
+      conversationId: channelId,
+      conversationTitle: "이전 대화",
+      seq: 1,
+      channelArchived: false,
+      authorType: "user",
+      authorId: ME.user.id,
+      createdAt: "2026-11-09T04:00:00.000Z",
+      snippet: "배포",
+    });
+    // 결과 목록만 본다 — 대화상자·검색 요청은 search.test 가 잰다
+    const search = {
+      enabled: true,
+      isError: false,
+      isPending: false,
+      isFetchNextPageError: false,
+      hasNextPage: false,
+      limited: false,
+      hits: [hit(JUN_ONE, 1), hit(ARCH, 2)],
+    } as unknown as ReturnType<typeof useSearch>;
+    renderWithClient(<SearchResults search={search} onPick={() => {}} />);
+    const list = await screen.findByRole("list", { name: "검색 결과" });
+    const names = () =>
+      within(list)
+        .getAllByRole("button")
+        .map((b) => b.querySelector("span > span")?.textContent);
+    await waitFor(() => expect(names()).toEqual(["DM · 준", "DM · 준 (그룹)"]));
   });
 
   it("세션 화면 — 세션 목록·「새 세션」·활동이 있고 머리는 참여자 목록 단추", async () => {

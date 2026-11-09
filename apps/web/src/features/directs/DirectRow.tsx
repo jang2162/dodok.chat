@@ -7,7 +7,7 @@ import { MENTIONS_MAX, useChannelUnread } from "@/features/reads/useUnread";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from "@/ui/avatar";
-import { directNames, directPeer, personName } from "./queries";
+import { directNames, directPeer, isLoneGroup, personName } from "./queries";
 
 /** 사람 아바타 — 사진이 없으면 이름 첫 글자 */
 export function PersonAvatar({ person, size = "sm" }: { person: Person; size?: "sm" | "default" }) {
@@ -142,14 +142,12 @@ export function DirectRow({ direct, onNavigate }: { direct: DirectSummary; onNav
       />
     );
   }
-  // 보관한 에이전트가 빠져 보이는 상대가 하나뿐인 그룹 — 이름만으로는 그 사람과의 1:1 줄과 같아 보이므로 그룹임을 덧붙인다
-  const lone = direct.users.length + direct.agents.length <= 1;
   return (
     <DmRowLink
       channelId={direct.channel.id}
       avatar={<GroupAvatars direct={direct} />}
       label={directNames(direct)}
-      suffix={lone ? "(그룹)" : undefined}
+      suffix={isLoneGroup(direct) ? "(그룹)" : undefined}
       onNavigate={onNavigate}
     />
   );

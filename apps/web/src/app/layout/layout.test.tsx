@@ -10,6 +10,11 @@ import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
+import { attachHandlers } from "@/realtime/handlers";
+import { createSubscriptions } from "@/realtime/subscriptions";
+import { stubNotification } from "../../../test/domStubs";
+import { createFakeSocket } from "../../../test/fakeSocket";
+import { approval, CH, CH2 } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import {
   ADAPTER_OK,
@@ -358,6 +363,55 @@ describe("AppShell", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/c/b/s/b"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "채널 목록" })).not.toBeInTheDocument());
     expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
+  });
+
+  /**
+   * 재리뷰 R1 — 승인 알림은 채널이 어느 캐시에도 없으면 종류를 몰라 띄우지 않는다. 좁은 화면은 사이드바(채널 목록)를 시트를 열 때만
+   * 그리므로 셸이 목록을 따로 들지 않으면 지금 보지 않는 일반 채널의 새 승인이 알려지지 않는다
+   */
+  it("좁은 화면에서도 시트를 열지 않은 채 다른 일반 채널의 새 승인을 탭 알림으로 띄운다", async () => {
+    stubMedia(true);
+    const notification = stubNotification("granted");
+    const channels = [channelOf(CH, { name: "general" }), channelOf(CH2, { name: "random" })];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (url === "/api/v1/auth/me") return json(200, ME);
+        if (url === "/api/v1/channels") return json(200, { channels });
+        return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
+      }),
+    );
+    try {
+      const { queryClient } = renderRoute(`/c/${CH}`);
+      await screen.findByTestId("channel-header");
+      expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
+
+      const fake = createFakeSocket();
+      fake.socket.connected = true;
+      const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
+      const detach = attachHandlers(fake.wire, {
+        queryClient,
+        subscriptions,
+        onUnauthorized: () => {},
+        notify: {
+          currentChannelId: () => CH,
+          currentConversationId: () => CH,
+          openActivity: () => {},
+        },
+      });
+      try {
+        // 셸이 든 목록이 도착한 뒤의 새 승인 — 부팅 직후 목록 응답 전의 짧은 창은 이 시험이 재지 않는다
+        await waitFor(() => expect(queryClient.getQueryData(qk.channels)).toHaveLength(2));
+        fake.serverEmit("approval.requested", { approval: approval({ channelId: CH2 }) });
+        expect(notification.made).toHaveLength(1);
+        expect(notification.made[0]?.options?.body).toBe("random 채널");
+      } finally {
+        detach();
+      }
+    } finally {
+      notification.restore();
+    }
   });
 
   it("시트가 링크로 닫히면 초점은 연 메뉴 버튼으로 돌아간다(Esc 로 닫아도)", async () => {

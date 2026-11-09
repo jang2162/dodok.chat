@@ -75,6 +75,13 @@ export function directTitle(direct: Pick<DirectSummary, "users" | "agents" | "se
   return peer ? personName(peer) : directNames(direct);
 }
 
+/**
+ * 보관한 에이전트가 빠져 보이는 상대가 하나뿐인 그룹인가 — 이름만으로는 그 사람과의 1:1 과 같아 보이므로 이름을 쓰는 자리(사이드바 줄·
+ * 검색 결과)가 「(그룹)」 을 덧붙인다
+ */
+export const isLoneGroup = (direct: Pick<DirectSummary, "users" | "agents" | "sessions">): boolean =>
+  directPeer(direct) === undefined && direct.users.length + direct.agents.length <= 1;
+
 /** 캐시에서 direct 채널을 찾는다 — 채널 상세 캐시, 아니면 direct 목록. 라우터 밖(realtime)에서 부른다 */
 export function cachedDirectChannel(qc: QueryClient, channelId: string): Channel | undefined {
   const detail = qc.getQueryData<Channel>(qk.channel(channelId));

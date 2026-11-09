@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useArchivedChannels, useChannels } from "@/api/queries";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
-import { directTitle, useDirects } from "@/features/directs/queries";
+import { directTitle, isLoneGroup, useDirects } from "@/features/directs/queries";
 import { useDms } from "@/features/dms/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { Button } from "@/ui/button";
@@ -26,7 +26,8 @@ export function searchErrorText(e: unknown): string {
  * (누르면 읽기 전용 채널 화면으로 간다 — 채널 화면이 상세를 받아 안다).
  * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄.
  * 내 DM 의 결과(서버는 주인에게만 준다 — 에이전트 DM 계획 판정 PD3)는 채널 이름 대신 「DM · <에이전트 이름>」, 사람 DM·그룹 DM 의 결과(참여자
- * 에게만 준다)는 「DM · <참여자 이름>」(사람 간 DM 스펙 「검색」 — 1:1 은 상대 이름, 그룹은 나를 뺀 이름 나열)
+ * 에게만 준다)는 「DM · <참여자 이름>」(사람 간 DM 스펙 「검색」 — 1:1 은 상대 이름, 그룹은 나를 뺀 이름 나열, 상대가 하나뿐인 그룹은
+ * 사이드바처럼 「(그룹)」 — `isLoneGroup`)
  */
 export function SearchResults({
   search,
@@ -45,7 +46,10 @@ export function SearchResults({
       new Map([
         ...[...(channels ?? []), ...(archived ?? [])].map((c): [string, string] => [c.id, `#${c.name}`]),
         ...(dms ?? []).map((d): [string, string] => [d.channel.id, `DM · ${d.agent.name}`]),
-        ...(directs ?? []).map((d): [string, string] => [d.channel.id, `DM · ${directTitle(d)}`]),
+        ...(directs ?? []).map((d): [string, string] => [
+          d.channel.id,
+          `DM · ${directTitle(d)}${isLoneGroup(d) ? " (그룹)" : ""}`,
+        ]),
       ]),
     [channels, archived, dms, directs],
   );
