@@ -7,17 +7,20 @@ export const TOO_BIG = "5 MB 를 넘습니다";
 /** 사진이 아닌 파일의 상한(`ATTACHMENT_LIMITS.userFileMaxBytes`)을 넘음 */
 export const TOO_BIG_FILE = "20 MB 를 넘습니다";
 export const UPLOAD_FAILED = "올리지 못했습니다";
+/** 0 B 파일 — 서버가 400 으로 거절한다(그 원문을 칩에 그대로 쓰지 않게 먼저 막는다) */
+export const EMPTY_FILE = "빈 파일은 보낼 수 없습니다";
 /** 서버 디스크 여유가 부족해 거절(507) — 사람이 고칠 수 없는 원인이라 따로 말한다(운영 보강 브라우저 검증 O1) */
 export const DISK_FULL = "서버 디스크 여유가 부족해 올리지 못했습니다";
 /** 읽기 전용 DM 이라 거절(409 DM_READ_ONLY)된 오류의 `name` — 부르는 쪽이 DM 목록을 다시 받아 작성기 자리를 사유 줄로 바꾼다 */
 export const DM_READ_ONLY_ERROR = "DmReadOnlyError";
 
 /**
- * 올리기 전 검사(파일함 스펙 6장) — 넘으면 칩에 쓸 이유, 맞으면 undefined. 형식은 막지 않는다.
+ * 올리기 전 검사(파일함 스펙 6장) — 넘거나 비었으면 칩에 쓸 이유, 맞으면 undefined. 형식은 막지 않는다.
  * 이미지 MIME 이면 사진 상한, 그 밖(SVG 포함 — 첨부 스펙 결정 8)은 파일 상한. 브라우저의 `type` 은 확장자에서 온 힌트라
  * 서버가 내용으로 다시 판별하고, 갈리면 서버가 이긴다
  */
 export function checkAttachmentFile(file: Pick<File, "type" | "size">): string | undefined {
+  if (file.size === 0) return EMPTY_FILE;
   if (isImageMime(file.type)) return file.size > ATTACHMENT_LIMITS.userImageMaxBytes ? TOO_BIG : undefined;
   return file.size > ATTACHMENT_LIMITS.userFileMaxBytes ? TOO_BIG_FILE : undefined;
 }

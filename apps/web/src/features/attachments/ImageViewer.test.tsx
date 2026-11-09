@@ -117,4 +117,12 @@ describe("ImageViewer — 크게 보기(스펙 6.4)", () => {
     expect(screen.queryByRole("button", { name: "다음 이미지" })).toBeNull();
     expect(screen.getByRole("img", { name: "바깥 그림" })).toHaveAttribute("referrerpolicy", "no-referrer");
   });
+
+  it("대화상자 제목의 이름은 <bdi> 로 격리한다 — 방향 제어 문자가 「n / 전체」 쪽으로 새지 않게", async () => {
+    const user = userEvent.setup();
+    const spoof = [{ ...IMAGES[0], name: "photo\u202Egnp.exe" } as ViewerImage];
+    render(<Harness images={spoof} />);
+    await user.click(screen.getByRole("button", { name: "photo\u202Egnp.exe 크게 보기" }));
+    expect(screen.getByText("photo\u202Egnp.exe", { selector: "bdi" })).toBeInTheDocument();
+  });
 });

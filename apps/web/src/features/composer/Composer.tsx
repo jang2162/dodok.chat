@@ -41,6 +41,29 @@ const BLOCKED = {
 const draggingFiles = (e: { dataTransfer: DataTransfer | null }) =>
   e.dataTransfer?.types.includes("Files") ?? false;
 
+export const DROP_FOLDER = "폴더는 보낼 수 없습니다";
+const DROP_FOLDER_TOAST_ID = "drop-folder";
+
+/**
+ * 놓은 것 가운데 파일만 — 폴더도 `files` 에 `type` 빈 항목으로 들어와 올리면 오류 칩이 된다. 폴더인지는 `items` 의
+ * `webkitGetAsEntry()` 만 안다(drop 처리 안에서만 읽힌다). `items` 가 없는 환경이면 `files` 그대로
+ */
+function droppedFiles(dt: DataTransfer | null): { files: File[]; folders: number } {
+  if (!dt) return { files: [], folders: 0 };
+  const items = Array.from(dt.items ?? []).filter((item) => item.kind === "file");
+  if (items.length === 0) return { files: Array.from(dt.files), folders: 0 };
+  let folders = 0;
+  const files: File[] = [];
+  for (const item of items) {
+    if (item.webkitGetAsEntry?.()?.isDirectory) folders++;
+    else {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  return { files, folders };
+}
+
 /** ProseMirror 요소 — 입력 영역 높이 제한, 자리표시(Placeholder 의 data-placeholder), 목록·코드·인용·멘션 모양 */
 const EDITOR_CLASS = [
   "max-h-[40vh] min-h-6 overflow-y-auto py-1 text-[15px] leading-normal break-words outline-none",
@@ -264,9 +287,10 @@ export function Composer({
     e.dataTransfer.dropEffect = "copy";
   };
   const onDrop = (e: DragEvent) => {
-    const files = Array.from(e.dataTransfer?.files ?? []);
-    if (files.length === 0) return;
+    const { files, folders } = droppedFiles(e.dataTransfer);
+    if (files.length === 0 && folders === 0) return;
     e.preventDefault();
+    if (folders > 0) toast.info(DROP_FOLDER, { id: DROP_FOLDER_TOAST_ID });
     live.current.addFiles(files);
   };
 

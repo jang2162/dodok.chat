@@ -2,7 +2,7 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { TOO_BIG } from "@/features/attachments/upload";
+import { EMPTY_FILE, TOO_BIG } from "@/features/attachments/upload";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
@@ -18,6 +18,7 @@ import {
   setDoc,
   t,
 } from "../../../test/composerHarness";
+import { DROP_FOLDER } from "./Composer";
 import { focusAfterRemove } from "./PendingAttachments";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
@@ -285,6 +286,53 @@ describe("붙여넣기·끌어 놓기", () => {
         attachments: [photo.id, pdf.id],
       },
     ]);
+  });
+
+  /** 끌어 놓은 항목 — 폴더는 `webkitGetAsEntry().isDirectory`(jsdom 은 폴더를 만들 수 없어 그 모양만 흉내 낸다) */
+  const entry = (file: File, isDirectory = false) => ({
+    kind: "file",
+    getAsFile: () => file,
+    webkitGetAsEntry: () => ({ isDirectory, isFile: !isDirectory, name: file.name }),
+  });
+
+  it("폴더는 거르고 안내 — 함께 놓은 파일만 칩이 된다(옛 「이미지만」 거름이 걸러 주던 폴더가 오류 칩이 되지 않게)", () => {
+    const { box } = renderComposer();
+    const folder = new File([], "사진첩");
+    const png = pngFile("끈.png");
+    const dropped = fireEvent.drop(box, {
+      dataTransfer: {
+        files: [folder, png],
+        items: [entry(folder, true), entry(png)],
+        types: ["Files"],
+        getData: () => "",
+      },
+    });
+    expect(dropped).toBe(false);
+    const items = within(chips() as HTMLElement).getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent("끈.png");
+    expect(toastInfo).toHaveBeenCalledWith(DROP_FOLDER, expect.anything());
+  });
+
+  it("폴더만 놓으면 칩 없이 안내만 — 브라우저가 폴더를 열지 않게 막는다", () => {
+    const { box } = renderComposer();
+    const folder = new File([], "사진첩");
+    const dropped = fireEvent.drop(box, {
+      dataTransfer: { files: [folder], items: [entry(folder, true)], types: ["Files"], getData: () => "" },
+    });
+    expect(dropped).toBe(false);
+    expect(chips()).toBeNull();
+    expect(toastInfo).toHaveBeenCalledWith(DROP_FOLDER, expect.anything());
+  });
+
+  it("빈 파일은 서버에 보내지 않고 칩에 웹 문구", () => {
+    const { box } = renderComposer();
+    fireEvent.drop(box, {
+      dataTransfer: { files: [new File([], "notes.txt")], types: ["Files"], getData: () => "" },
+    });
+    const [chip] = within(chips() as HTMLElement).getAllByRole("listitem");
+    expect(within(chip as HTMLElement).getByText(EMPTY_FILE)).toHaveClass("text-destructive");
+    expect(FakeXhr.all).toHaveLength(0);
   });
 
   it("이미지 상한·파일 상한을 칩마다 따로 — 큰 사진은 「5 MB 를 넘습니다」, 같은 크기의 PDF 는 올린다", () => {

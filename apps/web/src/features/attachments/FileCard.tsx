@@ -38,8 +38,9 @@ export function FileCard({ name, size, mime, href, note, slot = "file-card", cla
     <div data-slot={slot} className={cn("flex items-center gap-2 rounded-md border px-3 py-2", className)}>
       <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* 이름은 남이 지은 글자다 — 방향 제어 문자(U+202E 등)가 둘레의 크기·종류 글자 순서를 뒤집지 못하게 격리한다 */}
         <span className="truncate text-sm" title={name}>
-          {name}
+          <bdi>{name}</bdi>
         </span>
         {(sizeText || kind) && (
           <span className="flex gap-1.5 text-xs text-muted-foreground">

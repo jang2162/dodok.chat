@@ -52,7 +52,8 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
         <div className="flex items-center gap-2">
           <div className="flex min-w-0 flex-1 items-baseline gap-2">
             <DialogTitle className="truncate text-base" title={image.name}>
-              {image.name}
+              {/* 남이 지은 이름 — 방향 제어 문자가 옆의 「n / 전체」 순서를 뒤집지 못하게 격리한다 */}
+              <bdi>{image.name}</bdi>
             </DialogTitle>
             <DialogDescription className={many ? "shrink-0 text-white/70 tabular-nums" : "sr-only"}>
               {index + 1} / {images.length}

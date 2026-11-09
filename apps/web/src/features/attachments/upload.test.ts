@@ -7,6 +7,7 @@ import {
   checkAttachmentFile,
   DISK_FULL,
   DM_READ_ONLY_ERROR,
+  EMPTY_FILE,
   TOO_BIG,
   TOO_BIG_FILE,
   UPLOAD_FAILED,
@@ -34,6 +35,14 @@ describe("checkAttachmentFile", () => {
     expect(checkAttachmentFile({ type: "", size: 10 })).toBeUndefined();
     expect(checkAttachmentFile({ type: "image/svg+xml", size: 6 * 1024 * 1024 })).toBeUndefined();
     expect(checkAttachmentFile({ type: "application/zip", size: 10 })).toBeUndefined();
+  });
+
+  it("빈 파일(0 B)은 올리지 않는다 — 서버의 400 원문 대신 웹 문구, 형식과 상관없이", () => {
+    expect(EMPTY_FILE).toBe("빈 파일은 보낼 수 없습니다");
+    expect(checkAttachmentFile({ type: "text/plain", size: 0 })).toBe(EMPTY_FILE);
+    expect(checkAttachmentFile({ type: "image/png", size: 0 })).toBe(EMPTY_FILE);
+    expect(checkAttachmentFile({ type: "", size: 0 })).toBe(EMPTY_FILE);
+    expect(checkAttachmentFile({ type: "text/plain", size: 1 })).toBeUndefined();
   });
 
   it("네 이미지 형식은 통과", () => {

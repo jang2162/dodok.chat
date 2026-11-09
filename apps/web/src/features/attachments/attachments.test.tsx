@@ -129,6 +129,14 @@ describe("MessageAttachments — 파일", () => {
     expect(link).toHaveTextContent("내려받기");
   });
 
+  it("이름은 <bdi> 로 격리한다 — 이름 속 방향 제어 문자(U+202E)가 둘레의 크기·종류 글자 순서를 뒤집지 못하게", () => {
+    const spoof = { ...report, name: "invoice\u202Efdp.exe" };
+    const { container } = render(<MessageAttachments attachments={[spoof]} />);
+    const card = container.querySelector("[data-slot=file-card]") as HTMLElement;
+    const name = within(card).getByText("invoice\u202Efdp.exe");
+    expect(name.tagName).toBe("BDI");
+  });
+
   it("종류는 MIME 으로 — 이미지·텍스트, 그 밖은 확장자 대문자", () => {
     const f = (id: string, name: string, mime: string): Attachment => ({
       ...report,
