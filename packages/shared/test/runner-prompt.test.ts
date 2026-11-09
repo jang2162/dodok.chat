@@ -580,6 +580,30 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(renderRunnerPrompt(deliver())).not.toMatch(HOST_PATH);
   });
 
+  it("사람이 올린 PDF 는 그 턴 사실에 이름 한 줄(파일함 스펙 4.2) — 주소는 싣지 않는다", () => {
+    const base = deliver();
+    expect(base.message.author.type).toBe("user");
+    const text = renderRunnerPrompt({
+      ...base,
+      message: {
+        ...base.message,
+        attachments: [
+          {
+            id: "01a09fc9-d204-7551-89d6-38544d07a1ac",
+            kind: "file",
+            url: "artifact://01a09fc9-d204-7551-89d6-38544d07a1ac",
+            name: "사람 보고서.pdf",
+            mime: "application/pdf",
+            size: 30,
+          },
+        ],
+      },
+    });
+    expect(text).toContain("첨부 파일 1개: 사람 보고서.pdf\n");
+    expect(text).not.toContain("첨부 이미지");
+    expect(text).not.toContain("artifact://");
+  });
+
   it("자기 참여자가 없으면 에이전트 id 로 나를 적는다", () => {
     const base = deliver();
     const text = renderRunnerPrompt({ ...base, context: { ...base.context, participants: [] } });

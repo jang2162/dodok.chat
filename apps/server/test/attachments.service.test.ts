@@ -25,7 +25,7 @@ import { createUserMessage } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
-import { makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
+import { HTML_BYTES, makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
 import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 const RUNNER = "runner-token-1";
@@ -122,11 +122,62 @@ describe("attachments service", () => {
     expect(db.select().from(attachments).where(eq(attachments.id, a.id)).get()?.name).toBe("회의록.pdf");
   });
 
-  it("사람은 이미지가 아니면 VALIDATION(이미지만 올릴 수 있습니다), SVG 도", async () => {
-    for (const bytes of [PDF_BYTES, SVG_BYTES])
-      await expect(
-        uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "user", userId: alice }, bytes }),
-      ).rejects.toMatchObject({ body: { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" } });
+  it("사람도 이미지가 아닌 파일을 올린다 — PDF 는 file·application/pdf, SVG 는 file", async () => {
+    const pdf = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "user", userId: alice }, bytes: PDF_BYTES, nameHint: "보고서.pdf" },
+    );
+    expect(pdf).toMatchObject({ kind: "file", mime: "application/pdf", name: "보고서.pdf" });
+    const svg = await uploadAttachment(
+      { db, dir },
+      {
+        channelId: chA,
+        uploader: { type: "user", userId: alice },
+        bytes: SVG_BYTES,
+        mimeHint: "image/svg+xml",
+      },
+    );
+    expect(svg).toMatchObject({ kind: "file", mime: "application/octet-stream", name: "file" });
+  });
+
+  it("[Review Focus 4] 사람이 .png 이름·image/png 로 올린 HTML 은 file·application/octet-stream", async () => {
+    const a = await uploadAttachment(
+      { db, dir },
+      {
+        channelId: chA,
+        uploader: { type: "user", userId: alice },
+        bytes: HTML_BYTES,
+        nameHint: "x.png",
+        mimeHint: "image/png",
+      },
+    );
+    expect(a).toMatchObject({ kind: "file", mime: "application/octet-stream", name: "x.png" });
+  });
+
+  it("사람 상한은 판별 종류별 — 파일은 정확히 20 MiB 까지, 이미지는 5 MiB 까지", async () => {
+    const user: Uploader = { type: "user", userId: alice };
+    const fileAt = (size: number) => Buffer.concat([PDF_BYTES, Buffer.alloc(size - PDF_BYTES.length)]);
+    await expect(
+      uploadAttachment(
+        { db, dir },
+        { channelId: chA, uploader: user, bytes: fileAt(ATTACHMENT_LIMITS.userFileMaxBytes) },
+      ),
+    ).resolves.toMatchObject({ kind: "file", size: ATTACHMENT_LIMITS.userFileMaxBytes });
+    await expect(
+      uploadAttachment(
+        { db, dir },
+        { channelId: chA, uploader: user, bytes: fileAt(ATTACHMENT_LIMITS.userFileMaxBytes + 1) },
+      ),
+    ).rejects.toMatchObject({ body: { code: "VALIDATION", details: { maxBytes: 20971520 } } });
+    // 5 MiB 를 넘는 PNG 는 파일 상한 안이어도 이미지 상한으로 막는다
+    const png = makePng(1, 1);
+    const bigPng = Buffer.concat([png, Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes + 1 - png.length)]);
+    await expect(
+      uploadAttachment({ db, dir }, { channelId: chA, uploader: user, bytes: bigPng }),
+    ).rejects.toMatchObject({ body: { code: "VALIDATION", details: { maxBytes: 5242880 } } });
+    await expect(
+      uploadAttachment({ db, dir }, { channelId: chA, uploader: user, bytes: Buffer.alloc(0) }),
+    ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
   });
 
   it("빈 파일은 VALIDATION", async () => {

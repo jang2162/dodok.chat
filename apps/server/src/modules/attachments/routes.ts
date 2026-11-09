@@ -152,7 +152,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
   void fastify.register(async (scope) => {
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
-    // 라우트 bodyLimit 이 앱 상한과 같아 Fastify 의 413 이 서비스 검사보다 먼저 난다 — 그 일반 문구를 서비스와 같은 문구·maxBytes 로
+    // 라우트 bodyLimit 이 서비스의 판별 전 상한(사람은 파일 상한)과 같아 Fastify 의 413 이 서비스 검사보다 먼저 난다 — 그 일반 문구를 서비스와 같은 문구·maxBytes 로
     // 다시 씌워 바깥 오류 처리기로 넘긴다(던지면 부모 처리기가 받는다)
     scope.setErrorHandler((error, request) => {
       if ((error as { code?: unknown }).code === "FST_ERR_CTP_BODY_TOO_LARGE")
@@ -181,7 +181,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
 
     scope.post(
       "/api/v1/attachments",
-      { onRequest: [session, uploadLimit, storage], bodyLimit: ATTACHMENT_LIMITS.userImageMaxBytes },
+      { onRequest: [session, uploadLimit, storage], bodyLimit: ATTACHMENT_LIMITS.userFileMaxBytes },
       async (request) => {
         const { channelId } = parseQuery(UploadQuery, request.query);
         const user = sessionUser(request);

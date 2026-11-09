@@ -79,15 +79,14 @@ export async function uploadAttachment(
   deps: AttachmentDeps,
   input: { channelId: string; uploader: Uploader; bytes: Uint8Array; nameHint?: string; mimeHint?: string },
 ): Promise<Attachment> {
-  const max =
-    input.uploader.type === "user"
-      ? ATTACHMENT_LIMITS.userImageMaxBytes
-      : ATTACHMENT_LIMITS.agentFileMaxBytes;
+  const user = input.uploader.type === "user";
+  // 사람 상한은 판별 종류에 따른다 — 판별 전에는 큰 쪽(파일)으로 먼저 막고, 이미지는 판별 뒤에 작은 상한으로(파일함 스펙 4.2)
+  const max = user ? ATTACHMENT_LIMITS.userFileMaxBytes : ATTACHMENT_LIMITS.agentFileMaxBytes;
   if (input.bytes.length > max) throw sizeLimitError(max);
   if (input.bytes.length === 0) throw apiError("VALIDATION", "빈 파일이다");
   const s = sniff(input.bytes, input.mimeHint);
-  if (input.uploader.type === "user" && s.kind !== "image")
-    throw apiError("VALIDATION", "이미지만 올릴 수 있습니다");
+  if (user && s.kind === "image" && input.bytes.length > ATTACHMENT_LIMITS.userImageMaxBytes)
+    throw sizeLimitError(ATTACHMENT_LIMITS.userImageMaxBytes);
   const sha = sha256Of(input.bytes);
   const fallback = s.kind === "image" ? `image.${EXT[s.mime] ?? "bin"}` : "file";
   const row = await (deps.locks ?? defaultBlobLocks).run(sha, async () => {

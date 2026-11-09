@@ -224,6 +224,8 @@ export type Attachment = z.infer<typeof Attachment>;
 /** 첨부 상한(스펙 3장 4). 웹·서버·플러그인이 같은 값을 읽는다 */
 export const ATTACHMENT_LIMITS = {
   userImageMaxBytes: 5 * 1024 * 1024,
+  /** 사람이 올리는 이미지가 아닌 파일 — 이미지는 모델에게 내용으로 가므로 userImageMaxBytes 로 따로 묶는다(파일함 스펙 4.2) */
+  userFileMaxBytes: 20 * 1024 * 1024,
   agentFileMaxBytes: 20 * 1024 * 1024,
   perMessage: 10,
   imageMimes: ["image/png", "image/jpeg", "image/gif", "image/webp"],
