@@ -205,7 +205,7 @@ describe("통합 시나리오 11 — 첨부", () => {
     expect((await l.plugin.downloadAttachment(att.id, { token: "wrong" })).status).toBe(401);
   });
 
-  it("11d 판별 — image/png 라고 한 HTML·SVG 는 file(브리지), 사람 업로드면 거부, 5 MiB 넘는 이미지는 413", async () => {
+  it("11d 판별 — image/png 라고 한 HTML·SVG 는 브리지·사람 모두 file, 5 MiB 넘는 이미지는 400(maxBytes 5 MiB)", async () => {
     const l = await boot();
     const setup = await setupRelayChannel(l, RELAY_POLICY);
     for (const bytes of [HTML_BYTES, SVG_BYTES]) {
@@ -218,11 +218,16 @@ describe("통합 시나리오 11 — 첨부", () => {
       expect(viaBridge.kind).toBe("file");
       expect(viaBridge.mime).not.toMatch(/^image\//);
       const human = await rawUpload(l, setup.channel.id, bytes);
-      expect(human.statusCode).toBe(400);
-      expect(human.json()).toMatchObject({ code: "VALIDATION" });
+      expect(human.statusCode).toBe(200);
+      expect(human.json()).toMatchObject({ kind: "file", mime: "application/octet-stream" });
     }
     const big = Buffer.concat([makePng(1, 1), Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes)]);
-    expect((await rawUpload(l, setup.channel.id, big)).statusCode).toBe(413);
+    const tooBig = await rawUpload(l, setup.channel.id, big);
+    expect(tooBig.statusCode).toBe(400);
+    expect(tooBig.json()).toMatchObject({
+      code: "VALIDATION",
+      details: { maxBytes: ATTACHMENT_LIMITS.userImageMaxBytes },
+    });
   });
 
   it("11e 에이전트 — 올린 파일 둘을 attachmentIds 순서대로 묶고, 다른 채널 id 는 그것만 뺀다", async () => {

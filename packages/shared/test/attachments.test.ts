@@ -14,6 +14,7 @@ const ID = "01a0cc16-22ee-7018-826c-e4783d25fa14";
 describe("첨부 계약", () => {
   it("상한 값", () => {
     expect(ATTACHMENT_LIMITS.userImageMaxBytes).toBe(5 * 1024 * 1024);
+    expect(ATTACHMENT_LIMITS.userFileMaxBytes).toBe(20 * 1024 * 1024);
     expect(ATTACHMENT_LIMITS.agentFileMaxBytes).toBe(20 * 1024 * 1024);
     expect(ATTACHMENT_LIMITS.perMessage).toBe(10);
   });

@@ -162,19 +162,64 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(up.json()).toMatchObject({ name: "image.png" });
   });
 
-  it("사람: 5 MiB 넘으면 413, 이미지 아니면 400 VALIDATION 「이미지만 올릴 수 있습니다」", async () => {
-    const big = Buffer.concat([makePng(1, 1), Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes)]);
-    const r = await upload(big);
+  it("사람: 20 MiB 넘는 본문은 413(서비스와 같은 문구·maxBytes), 5 MiB 넘는 PNG 는 400(maxBytes 5 MiB)", async () => {
+    const huge = Buffer.concat([
+      PDF_BYTES,
+      Buffer.alloc(ATTACHMENT_LIMITS.userFileMaxBytes + 1 - PDF_BYTES.length),
+    ]);
+    const r = await upload(huge, { "content-type": "application/pdf" });
     expect(r.statusCode).toBe(413);
     // Fastify 의 일반 문구가 아니라 첨부 서비스의 문구·상한
     expect(r.json()).toEqual({
       code: "VALIDATION",
       message: "크기 상한을 넘는다",
-      details: { maxBytes: ATTACHMENT_LIMITS.userImageMaxBytes },
+      details: { maxBytes: 20971520 },
     });
-    const pdf = await upload(PDF_BYTES, { "content-type": "application/pdf" });
-    expect(pdf.statusCode).toBe(400);
-    expect(pdf.json()).toMatchObject({ code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
+    // 본문 상한(20 MiB)은 지나고 판별 뒤 이미지 상한이 막는다
+    const png = makePng(1, 1);
+    const big = Buffer.concat([png, Buffer.alloc(6 * 1024 * 1024 - png.length)]);
+    const img = await upload(big);
+    expect(img.statusCode).toBe(400);
+    expect(img.json()).toEqual({
+      code: "VALIDATION",
+      message: "크기 상한을 넘는다",
+      details: { maxBytes: 5242880 },
+    });
+  });
+
+  it("사람: PDF 는 200 file, 정확히 20 MiB 파일도 200", async () => {
+    const pdf = await upload(PDF_BYTES, {
+      "content-type": "application/pdf",
+      "x-dodok-file-name": encodeURIComponent("보고서.pdf"),
+    });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.json()).toMatchObject({ kind: "file", mime: "application/pdf", name: "보고서.pdf" });
+    const max = Buffer.concat([
+      PDF_BYTES,
+      Buffer.alloc(ATTACHMENT_LIMITS.userFileMaxBytes - PDF_BYTES.length),
+    ]);
+    const r = await upload(max, { "content-type": "application/pdf" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ kind: "file", size: ATTACHMENT_LIMITS.userFileMaxBytes });
+  });
+
+  it("[Review Focus 4] 사람이 .png 이름으로 올린 HTML — file 로 저장, 받기는 octet-stream·attachment·sandbox·nosniff", async () => {
+    const up = await upload(Buffer.from("<html><script>alert(1)</script></html>"), {
+      "x-dodok-file-name": encodeURIComponent("x.png"),
+    });
+    expect(up.statusCode).toBe(200);
+    const a = up.json() as Attachment;
+    expect(a).toMatchObject({ kind: "file", mime: "application/octet-stream", name: "x.png" });
+    const get = await app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${a.id}`,
+      headers: session,
+    });
+    expect(get.statusCode).toBe(200);
+    expect(get.headers["content-type"]).toBe("application/octet-stream");
+    expect(String(get.headers["content-disposition"])).toMatch(/^attachment;/);
+    expect(get.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+    expect(get.headers["x-content-type-options"]).toBe("nosniff");
   });
 
   it("사람: 1 MiB 넘는 이미지(2 MiB)·정확히 5 MiB 이미지는 200 — 라우트 bodyLimit 이 서버 기본 1 MiB 를 넓힌다", async () => {
@@ -188,8 +233,8 @@ describe("첨부 HTTP (스펙 4.3)", () => {
 
   it("사람: JSON content-type 으로 올려도 JSON 으로 파싱하지 않는다(바이트 그대로 판별)", async () => {
     const r = await upload('{"a":1}', { "content-type": "application/json" });
-    expect(r.statusCode).toBe(400);
-    expect(r.json()).toMatchObject({ code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ kind: "file", mime: "application/json", size: 7 });
   });
 
   it("사람: 처음 보는 content-type 이어도 바이트로 판별한다", async () => {

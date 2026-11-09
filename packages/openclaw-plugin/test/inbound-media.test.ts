@@ -28,6 +28,15 @@ describe("prepareInboundMedia", () => {
     expect(save).toHaveBeenCalledWith(Buffer.from([1]), "image/png", "a.png");
   });
 
+  it("사람이 올린 PDF(파일함 스펙 4.2) — 받지 않고 이름 한 줄만, facts 없음", async () => {
+    const download = vi.fn();
+    const save = vi.fn();
+    const r = await prepareInboundMedia([file("사람 보고서.pdf")], { download, save });
+    expect(r).toEqual({ facts: [], notes: ["[첨부 파일: 사람 보고서.pdf]"], reasons: [] });
+    expect(download).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("MIME 은 서버 기록(a.mime)이 정본 — 받은 content-type 이 달라도 기록을 저장에 넘기고, 저장이 contentType 을 안 주면 기록을 fact 에", async () => {
     const save = vi.fn(async () => ({ path: "/m/inbound/x.webp" }));
     const r = await prepareInboundMedia([img("x.webp", "image/webp")], {

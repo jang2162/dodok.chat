@@ -63,6 +63,15 @@ describe("loadImageBlocks", () => {
     expect(asked).toEqual([]);
   });
 
+  it("사람이 올린 PDF 가 실린 deliver(파일함 스펙 4.2) — 받기 0회, 블록 없음", async () => {
+    const { http, asked } = fakeHttp({});
+    const pdf: Attachment = { ...image(5), kind: "file", mime: "application/pdf", name: "사람 보고서.pdf" };
+    const d = deliverWith([pdf]);
+    expect(d.message.author.type).toBe("user");
+    expect(await loadImageBlocks(d, http)).toEqual({ blocks: [], failed: 0 });
+    expect(asked).toEqual([]);
+  });
+
   it("5 MiB 를 넘는 이미지·그릴 수 없는 MIME·서버 첨부가 아닌 URL 은 못 불러온 것으로 센다", async () => {
     const big = Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes + 1);
     const { http, asked } = fakeHttp({ [id(1)]: big, [id(2)]: Buffer.from([1]), [id(4)]: Buffer.from([4]) });
