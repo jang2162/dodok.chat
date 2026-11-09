@@ -36,7 +36,9 @@ vi.mock("@dodok/openclaw-adapter", async (importOriginal) => {
   };
 });
 import {
+  DEV_FAKE_CHANNEL_FILES,
   DEV_FAKE_CHANNEL_NAME,
+  DEV_FAKE_DM_FILE,
   DEV_FAKE_DISK_PATH,
   DEV_FAKE_DIRECT_TEXT,
   DEV_FAKE_DM_TEXT,
@@ -1956,6 +1958,13 @@ describe("startDevFake 세션 — 씨앗 채널에 「이전 대화」와 새 �
     expect(first.conversations.map((c) => c.title)).toEqual([DEV_FAKE_SESSION_TITLE, DEV_FAKE_LEGACY_TITLE]);
     expect(first.conversations[1]?.id).toBe(seed.id);
     expect(first.conversations.every((c) => c.lastMessageAt !== undefined)).toBe(true);
+    // 씨앗 첨부 — 새 세션의 owner 글에 묶인 PNG 둘·PDF 하나가 그 채널 파일함에 글 안 순서대로
+    type Files = { items: Array<{ attachment: { name: string; kind: string }; conversationId: string }> };
+    const files = await restAs<Files>(dev.url, owner.cookie, "GET", `/attachments?channelId=${seed.id}`);
+    expect(files.items.map((i) => [i.attachment.name, i.attachment.kind])).toEqual(
+      DEV_FAKE_CHANNEL_FILES.map((f) => [f.name, f.mime === "application/pdf" ? "file" : "image"]),
+    );
+    expect(new Set(files.items.map((i) => i.conversationId))).toEqual(new Set([first.conversations[0]?.id]));
     const { members } = await restAs<{ members: Array<{ memberType: string; memberId: string }> }>(
       dev.url,
       owner.cookie,
@@ -2303,6 +2312,15 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
     expect(seeded.map((m) => m.authorType)).toEqual(["user", "agent"]);
     expect(seeded[0]?.bodyMd).toBe(DEV_FAKE_DM_TEXT);
     expect(seeded[1]?.bodyMd).toContain("잘 받았어요");
+    // 씨앗 DM 사진 — mia 의 파일함에는 있고 owner 의 전체 파일함에는 없다
+    type Files = { items: Array<{ attachment: { name: string }; channelId: string }> };
+    const miaFiles = await restAs<Files>(dev.url, mia.cookie, "GET", `/attachments?channelId=${dmId}`);
+    expect(miaFiles.items.map((i) => i.attachment.name)).toEqual([DEV_FAKE_DM_FILE.name]);
+    const ownerFiles = await restAs<Files>(dev.url, owner.cookie, "GET", "/attachments?limit=100");
+    expect(ownerFiles.items.length).toBeGreaterThan(0);
+    expect(
+      ownerFiles.items.some((i) => i.channelId === dmId || i.attachment.name === DEV_FAKE_DM_FILE.name),
+    ).toBe(false);
 
     // 사람 DM 씨앗 — mia 의 /directs 에 owner 1:1(한 줄기 — owner 글 하나)과 owner·dev 그룹(세션 하나 — owner 의 @dev 글 + 대본 답)
     type Directs = {

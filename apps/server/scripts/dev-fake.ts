@@ -41,6 +41,8 @@
  * mia ↔ dev DM 에 세션 하나를 둔다 — mia 글 하나(`DEV_FAKE_DM_TEXT`)를 서버 저장·라우터 경로로 보내고 가짜 대본의 답이 올 때까지 기다린다.
  * 같은 시작에서 사람 DM 씨앗 둘 — owner ↔ mia 1:1(owner 글 `DEV_FAKE_DIRECT_TEXT`)과 owner·mia·사무실 dev 그룹 DM 의 세션 하나(owner 의
  * `DEV_FAKE_GROUP_TEXT` + 대본 답).
+ * 씨앗 첨부(파일함 계획 태스크 5) — 씨앗 채널 새 세션의 owner 글에 PNG 둘과 PDF 하나(`DEV_FAKE_CHANNEL_FILES`), mia ↔ dev DM 의 mia 글에
+ * PNG 하나(`DEV_FAKE_DM_FILE` — owner 의 파일함에 없어야 하는 것). 사람 업로드와 같은 `uploadAttachment` 로 올려 그 글에 묶는다.
  * 인바운드 로그 줄(`dev:fake inbound reactions`)은 DM 런이면 헤더의 DM 줄(`dm`)을, 그룹 DM 런이면 그룹 DM 줄(`groupDm`)을, 늘 세션 줄
  * (`session`)을 싣는다.
  */
@@ -88,6 +90,7 @@ import {
   runnerTokens,
   users,
 } from "../src/db/schema.sqlite";
+import { uploadAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createConversation } from "../src/modules/conversations/store";
 import { resolveSendConversation } from "../src/modules/conversations/service";
@@ -180,6 +183,18 @@ export const DEV_FAKE_CHANNEL_AGENTS = ["dev", "coder"] as const;
 /** 마이그레이션(0025)이 기존 채널에 만든 대화와 같은 제목 */
 export const DEV_FAKE_LEGACY_TITLE = "이전 대화";
 export const DEV_FAKE_SESSION_TITLE = "dev:fake 새 세션";
+/** 씨앗 채널 새 세션의 owner 글에 묶는 첨부 — 파일함의 「사진」·「파일」 칸이 둘 다 차게 */
+export const DEV_FAKE_CHANNEL_FILES: readonly FakeFile[] = [
+  { name: "씨앗 사진 1.png", mime: "image/png", bytes: makePng(320, 200, [40, 160, 90]) },
+  { name: "씨앗 사진 2.png", mime: "image/png", bytes: makePng(200, 320, [200, 80, 60]) },
+  { name: "씨앗 문서.pdf", mime: "application/pdf", bytes: PDF_BYTES },
+];
+/** 씨앗 DM(mia ↔ dev)의 mia 글에 묶는 사진 — mia 의 에이전트 DM 이라 owner 에게는 어디에도 보이지 않아야 한다 */
+export const DEV_FAKE_DM_FILE: FakeFile = {
+  name: "mia 의 DM 사진.png",
+  mime: "image/png",
+  bytes: makePng(240, 240, [150, 60, 200]),
+};
 /** 씨앗 DM(mia ↔ 사무실 dev)의 첫 글 — 키워드가 없어 대본은 기본 답(인용)을 낸다. 세션 제목은 이 글의 자동 제목 */
 export const DEV_FAKE_DM_AGENT = "dev";
 export const DEV_FAKE_DM_TEXT = "DM 은 처음이에요 — 이 세션은 나만 보죠?";
@@ -1460,7 +1475,7 @@ function ensureDevFakeAgents(app: App): void {
  * DM 은 「살아 있는 채널」로 치지 않는다 — 보관할 길이 없어, 치면 채널을 모두 보관해도 씨앗이 다시 생기지 않는다.
  * 씨앗을 만들었으면 true — 같은 시작이 DM 씨앗도 둔다(`ensureDevFakeDm`)
  */
-function ensureDevFakeSessions(app: App): boolean {
+async function ensureDevFakeSessions(app: App, attachmentsDir: string): Promise<boolean> {
   const { db, workspaceId, ownerUserId } = app;
   const live = db
     .select({ id: channels.id })
@@ -1480,8 +1495,14 @@ function ensureDevFakeSessions(app: App): boolean {
       .get();
     if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   }
-  const seed = (conversationId: string, bodyMd: string) =>
-    createUserMessage(db, app.bus, { conversationId, authorId: ownerUserId, bodyMd, clientMsgId: uuidv7() });
+  const seed = (conversationId: string, bodyMd: string, attachments?: string[]) =>
+    createUserMessage(db, app.bus, {
+      conversationId,
+      authorId: ownerUserId,
+      bodyMd,
+      clientMsgId: uuidv7(),
+      ...(attachments ? { attachments } : {}),
+    });
   db.insert(conversations)
     .values({
       id: channel.id,
@@ -1501,8 +1522,28 @@ function ensureDevFakeSessions(app: App): boolean {
     createdBy: { type: "user", id: ownerUserId },
     createdAt: new Date(),
   });
-  seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.");
+  const files = await uploadSeedFiles(app, attachmentsDir, channel.id, ownerUserId, DEV_FAKE_CHANNEL_FILES);
+  seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.", files);
   return true;
+}
+
+/** 씨앗 첨부를 사람 업로드 경로(`uploadAttachment`)로 올리고 id 를 그 순서로 돌려준다 — 묶기는 메시지 저장이 한다 */
+async function uploadSeedFiles(
+  app: App,
+  dir: string,
+  channelId: string,
+  userId: string,
+  files: readonly FakeFile[],
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const f of files) {
+    const a = await uploadAttachment(
+      { db: app.db, dir, locks: app.blobLocks },
+      { channelId, uploader: { type: "user", userId }, bytes: f.bytes, nameHint: f.name, mimeHint: f.mime },
+    );
+    ids.push(a.id);
+  }
+  return ids;
 }
 
 /**
@@ -1514,7 +1555,10 @@ function ensureDevFakeSessions(app: App): boolean {
  * 닿은 DB 는 그대로 뜬다(플러그인 갈래와 같다). 새 DB 에서 답이 안 오면 던진다 — DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로
  * 오인하지 않게
  */
-async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected: boolean }): Promise<void> {
+async function ensureDevFakeDm(
+  app: App,
+  opts: { keep: boolean; officeConnected: boolean; attachmentsDir: string },
+): Promise<void> {
   const { db, workspaceId } = app;
   if (opts.keep) {
     app.logger.warn("dev:fake dm seed skipped — --keep keeps the inherited DB as it is");
@@ -1558,6 +1602,7 @@ async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected:
       userId: mia.id,
       role: "member",
       bodyMd: DEV_FAKE_DM_TEXT,
+      attachments: await uploadSeedFiles(app, opts.attachmentsDir, channel.id, mia.id, [DEV_FAKE_DM_FILE]),
     });
   await seedDevFakeDirects(app, { miaId: mia.id, agentId: agent.id });
 }
@@ -1615,7 +1660,7 @@ async function seedDevFakeDirects(app: App, ids: { miaId: string; agentId: strin
  */
 async function sendAndAwaitReply(
   app: App,
-  input: { channelId: string; userId: string; role: TeamRole; bodyMd: string },
+  input: { channelId: string; userId: string; role: TeamRole; bodyMd: string; attachments?: string[] },
 ): Promise<void> {
   const { db } = app;
   let off: (() => void) | undefined;
@@ -1652,6 +1697,7 @@ async function sendAndAwaitReply(
       authorId: input.userId,
       bodyMd: input.bodyMd,
       clientMsgId: uuidv7(),
+      ...(input.attachments ? { attachments: input.attachments } : {}),
     }).message;
     await app.services.router.routeMessage(sent);
     await replied;
@@ -1785,7 +1831,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     claimDevFakeGateways(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
-    const seeded = ensureDevFakeSessions(app);
+    const seeded = await ensureDevFakeSessions(app, config.attachmentsDir);
     const live: App = app;
     /** 훅의 gatewayId 로 짝을 고른다 — 사무실·집이 아니면 undefined(400) */
     const pairOf = (gatewayId: string) => pairs.find((p) => p.spec.id === gatewayId);
@@ -2047,6 +2093,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       await ensureDevFakeDm(app, {
         keep: opts.keep === true,
         officeConnected: pairs.some((p) => p.spec.id === DEV_FAKE_OFFICE_GATEWAY_ID && p.plugin),
+        attachmentsDir: config.attachmentsDir,
       });
     return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {
