@@ -95,6 +95,8 @@ export const InboundDeliver = z.object({
   conversationTitle: ConversationTitle, // 헤더 `세션:` 줄 — formatSessionLine 으로만 싣는다(사람이 쓴 글이다)
   /** DM 런만 — 헤더 `다이렉트 메시지:` 줄(formatDmLine). 선택 필드라 옛 플러그인도 받는다(DM 줄이 없을 뿐) */
   dm: z.object({ ownerHandle: z.string() }).optional(),
+  /** 그룹 DM(direct) 런만 — 헤더 `그룹 DM:` 줄(formatGroupDmLine). 선택 필드라 옛 플러그인은 버리고 받는다(그 줄이 없을 뿐) */
+  groupDm: z.literal(true).optional(),
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
   sessionKey: z.string(), // dodokSessionKey(agentId, conversationId, threadId)
   threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다
@@ -168,6 +170,14 @@ export function formatSessionLine(title: string): string {
  */
 export function formatDmLine(ownerHandle: string): string {
   return `다이렉트 메시지: @${foldHeaderText(ownerHandle)} 님과 1:1`;
+}
+
+/**
+ * 에이전트 헤더의 그룹 DM 줄(사람 간 DM 계획 PH12) — DM 줄과 같은 자리(`[dodok context]` 줄 바로 다음, 세션 줄 앞)에 싣는다. 채널처럼 보이는
+ * 자리가 참여자만 보는 대화임을 밝힌다 — 참여자는 그 아래 `참여자:` 줄이 말한다
+ */
+export function formatGroupDmLine(): string {
+  return "그룹 DM: 참여자만 보는 대화";
 }
 
 function foldHeaderText(text: string): string {

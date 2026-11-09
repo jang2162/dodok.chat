@@ -3,9 +3,11 @@
  * 않은 사람의 404 는 roles.matrix 「남의 direct — DIRECT_CASES」, 팬아웃은 realtime.dm-fanout 이 본다 — 여기는 참여자 쪽 동작이다.
  * direct_key 는 유일이라 테스트마다 새 사람으로 묶음을 만든다
  */
+import type { ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import {
   type Agent,
+  type Approval,
   type Channel,
   type DirectList,
   type DmAccess,
@@ -13,15 +15,25 @@ import {
   PushPayload,
   type UnreadSnapshot,
 } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App, AppDeps } from "../src/app";
-import { channelMembers, channels, conversations, memberships, runs } from "../src/db/schema.sqlite";
+import {
+  channelMembers,
+  channels,
+  conversations,
+  memberships,
+  messages,
+  runs,
+  users,
+} from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import * as approvalStore from "../src/modules/approvals/store";
 import { channelParticipants, listMembers } from "../src/modules/channels/service";
 import { directKey } from "../src/modules/directs/service";
-import { createAgentMessage } from "../src/modules/messages/service";
+import { createAgentMessage, createSystemMessage } from "../src/modules/messages/service";
+import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng } from "./helpers/png";
@@ -41,6 +53,7 @@ type Person = { id: string; token: string; handle: string };
 describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
   let app: App;
   let owner: Person;
+  const adapter = new FakeAdapter();
   const sockets: WireClient[] = [];
   let sent: Array<{ endpoint: string; payload: PushPayload }> = [];
   let n = 0;
@@ -53,7 +66,7 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
   const sentTo = (p: Person) => sent.filter((s) => s.endpoint === endpointOf(p));
 
   beforeAll(async () => {
-    app = await bootTestApp({}, { adapters: [new FakeAdapter()], pushSend });
+    app = await bootTestApp({}, { adapters: [adapter], pushSend });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     owner = { id: app.ownerUserId, token: (await login(app)).token, handle: "owner" };
   });
@@ -593,6 +606,9 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
     const outsider = await person();
     const group = await open(mia, { userIds: [jun.id, kai.id] });
     const conversationId = lineOf(group.id);
+    // 제목은 표시 이름이다 — 도우미는 표시 이름을 핸들과 같게 만들어 둘을 가르지 못하므로 여기서 다르게 바꾼다
+    const miaName = `미아 ${mia.handle}`;
+    app.db.update(users).set({ displayName: miaName }).where(eq(users.id, mia.id)).run();
     const socket = await wire(mia);
     sent = [];
     const root = await sentOk(socket, { channelId: group.id, conversationId, bodyMd: "본문은 싣지 않는다" });
@@ -602,7 +618,7 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
       expect(payload).toEqual({
         kind: "mention",
         channelId: group.id,
-        title: `${mia.handle} 님의 메시지`,
+        title: `${miaName} 님의 메시지`,
         body: "DM",
         url: `/c/${group.id}/s/${conversationId}`,
         tag: `direct:${conversationId}`,
@@ -645,5 +661,372 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
     await rest(jun, "PUT", "/api/v1/me/status", { mode: "auto" });
     await sentOk(miaSocket, { channelId: line.id, conversationId });
     await vi.waitFor(() => expect(sentTo(jun)).toHaveLength(1));
+  });
+
+  // ── 그룹 DM 의 에이전트 런(태스크 4) ─────────────────────────────
+
+  const runsOf = (channelId: string) =>
+    app.db.select().from(runs).where(eq(runs.channelId, channelId)).orderBy(runs.createdAt, runs.id).all();
+  const systemOf = (conversationId: string) =>
+    app.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, conversationId), eq(messages.kind, "system")))
+      .all();
+  const setRole = (who: Person, role: "admin" | "member") =>
+    app.db
+      .update(memberships)
+      .set({ role })
+      .where(and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, who.id)))
+      .run();
+  const blockedBody = (handle: string, why: "dm" | "none") =>
+    `@${handle} 는 이 요청에 답하지 않았습니다 — ${why === "dm" ? "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다" : "시킨 사람이 없습니다"}`;
+  /** 에이전트가 있는 그룹 DM 의 첫 세션 — 첫 글을 보내 세션을 만든다 */
+  async function groupSession(
+    who: Person,
+    group: Channel,
+    bodyMd = "세션을 엽니다",
+  ): Promise<{ socket: WireClient; conversationId: string; first: Message }> {
+    const socket = await wire(who);
+    const res = await send(socket, { channelId: group.id, newConversation: {}, bodyMd });
+    if (!res.ok) throw new Error(JSON.stringify(res));
+    return { socket, conversationId: res.data.message.conversationId, first: res.data.message };
+  }
+
+  it("에이전트는 멘션받을 때만 — 멘션 없는 글은 런 0, @dev 는 dev 런(시킨 사람 mia), 정본의 @fin 은 fin 런(물려받음), 턴 4 를 넘으면 relay_limit", async () => {
+    const mia = await person();
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const fin = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id, fin.id] });
+    const { socket, conversationId } = await groupSession(mia, group);
+    await sentOk(socket, { channelId: group.id, conversationId, bodyMd: "그냥 하는 말" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(runsOf(group.id)).toEqual([]);
+
+    await sentOk(socket, { channelId: group.id, conversationId, bodyMd: `@${dev.handle} 해 주세요` });
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    const devRun = runsOf(group.id)[0];
+    if (!devRun) throw new Error("런이 없다");
+    expect(devRun).toMatchObject({
+      agentId: dev.id,
+      triggerKind: "mention",
+      requestedBy: mia.id,
+      relayDepth: 0,
+      sessionKey: adapter.sessionKeyFor(dev.providerAgentId, conversationId),
+    });
+
+    // 릴레이 — dev ↔ fin 이 서로 멘션한다. 사슬 전체가 처음 시킨 사람 mia 를 지닌다
+    let source = devRun;
+    let [speaker, other] = [dev, fin];
+    for (let turn = 1; turn <= 5; turn++) {
+      const answer = createAgentMessage(app.db, app.bus, {
+        conversationId,
+        agentId: speaker.id,
+        runId: source.id,
+        bodyMd: `@${other.handle} 이어서 ${turn}`,
+        externalId: `dx-relay-${++n}`,
+      });
+      await app.services.router.routeMessage(answer);
+      const next = runsOf(group.id).find((r) => r.triggerKind === "relay" && r.relayDepth === turn);
+      if (turn > 4) {
+        expect(next).toBeUndefined();
+        break;
+      }
+      expect(next).toMatchObject({
+        agentId: other.id,
+        triggerKind: "relay",
+        requestedBy: mia.id,
+        relayDepth: turn,
+      });
+      if (!next) throw new Error("릴레이 런이 없다");
+      source = next;
+      [speaker, other] = [other, speaker];
+    }
+    expect(runsOf(group.id)).toHaveLength(5);
+    expect(systemOf(conversationId)).toHaveLength(1);
+    expect(systemOf(conversationId)[0]?.bodyMd).toContain("릴레이 한도(4턴)");
+
+    // 세션 키는 대화마다 다르다
+    const second = await groupSession(mia, group, `@${dev.handle} 다른 세션`);
+    await vi.waitFor(() =>
+      expect(runsOf(group.id).filter((r) => r.conversationId === second.conversationId)).toHaveLength(1),
+    );
+    const secondRun = runsOf(group.id).find((r) => r.conversationId === second.conversationId);
+    expect(secondRun?.sessionKey).toBe(adapter.sessionKeyFor(dev.providerAgentId, second.conversationId));
+    expect(secondRun?.sessionKey).not.toBe(devRun.sessionKey);
+  });
+
+  it("시킨 사람 관문 — dmAccess 밖의 시킨 사람이면 런 없이 그 자리(스레드면 스레드)에 시스템 메시지 하나, 대화는 계속 쓴다", async () => {
+    const mia = await person("admin");
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    const narrowed = await rest(owner, "PATCH", `/api/v1/agents/${dev.id}`, { dmAccess: "admins" });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    const {
+      socket: junSocket,
+      conversationId,
+      first,
+    } = await groupSession(jun, group, `@${dev.handle} 해 주세요`);
+    await vi.waitFor(() => expect(systemOf(conversationId)).toHaveLength(1));
+    expect(runsOf(group.id)).toEqual([]);
+    expect(systemOf(conversationId)[0]).toMatchObject({
+      bodyMd: blockedBody(dev.handle, "dm"),
+      threadRootId: null,
+      systemMeta: { kind: "info" },
+    });
+    // 스레드 안에서 막히면 그 스레드에
+    await sentOk(junSocket, {
+      channelId: group.id,
+      conversationId,
+      threadRootId: first.id,
+      bodyMd: `@${dev.handle} 스레드에서도`,
+    });
+    await vi.waitFor(() => expect(systemOf(conversationId)).toHaveLength(2));
+    expect(systemOf(conversationId).find((m) => m.threadRootId === first.id)?.bodyMd).toBe(
+      blockedBody(dev.handle, "dm"),
+    );
+    // 대화는 계속 — 사람의 글은 그대로 저장되고, 허용 범위 안의 mia(admin)가 시키면 런이 된다
+    await sentOk(junSocket, { channelId: group.id, conversationId, bodyMd: "그래도 씁니다" });
+    const miaSocket = await wire(mia);
+    await sentOk(miaSocket, { channelId: group.id, conversationId, bodyMd: `@${dev.handle} 제가 시킵니다` });
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    expect(runsOf(group.id)[0]).toMatchObject({ agentId: dev.id, requestedBy: mia.id });
+    expect(systemOf(conversationId)).toHaveLength(2);
+  });
+
+  it("줄 선 런의 시킨 사람이 강등되면 차례가 왔을 때 보내지 않고 aborted — 시스템 메시지 없음, 이미 간 런은 그대로", async () => {
+    const mia = await person("admin");
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    await rest(owner, "PATCH", `/api/v1/agents/${dev.id}`, { dmAccess: "admins" });
+    const { socket, conversationId } = await groupSession(mia, group, `@${dev.handle} 첫째`);
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    const running = runsOf(group.id)[0];
+    if (!running) throw new Error("런이 없다");
+    await vi.waitFor(() => expect(adapter.calls.send.some((c) => c.runId === running.id)).toBe(true));
+    await sentOk(socket, { channelId: group.id, conversationId, bodyMd: `@${dev.handle} 둘째` });
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(2));
+    const queued = runsOf(group.id).find((r) => r.id !== running.id);
+    if (!queued) throw new Error("줄 선 런이 없다");
+    expect(queued.status).toBe("queued");
+    try {
+      setRole(mia, "member");
+      const statusOf = (id: string) => runsOf(group.id).find((r) => r.id === id)?.status;
+      expect(statusOf(running.id)).toBe("queued");
+      adapter.emit({ kind: "run_signal", runId: running.id, signal: { kind: "gateway_aborted" } });
+      await vi.waitFor(() => expect(statusOf(queued.id)).toBe("aborted"));
+      expect(adapter.calls.send.some((c) => c.runId === queued.id)).toBe(false);
+      expect(systemOf(conversationId)).toEqual([]);
+    } finally {
+      setRole(mia, "admin");
+    }
+  });
+
+  it("시킨 사람이 없는 릴레이(앞 런이 끝난 뒤 저장된 정본) — 런 없이 「시킨 사람이 없습니다」", async () => {
+    const mia = await person();
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const fin = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id, fin.id] });
+    const { conversationId } = await groupSession(mia, group, `@${dev.handle} 해 주세요`);
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    const devRun = runsOf(group.id)[0];
+    if (!devRun) throw new Error("런이 없다");
+    app.db
+      .update(runs)
+      .set({ status: "done", endedAt: new Date(Date.now() - 60_000) })
+      .where(eq(runs.id, devRun.id))
+      .run();
+    const late = createAgentMessage(app.db, app.bus, {
+      conversationId,
+      agentId: dev.id,
+      runId: devRun.id,
+      bodyMd: `@${fin.handle} 늦게 넘깁니다`,
+      externalId: `dx-late-${++n}`,
+    });
+    await app.services.router.routeMessage(late);
+    expect(runsOf(group.id).filter((r) => r.agentId === fin.id)).toEqual([]);
+    expect(systemOf(conversationId).map((m) => m.bodyMd)).toEqual([blockedBody(fin.handle, "none")]);
+  });
+
+  it("카드를 누른 사람이 dmAccess 밖이면 저장·소비 전에 FORBIDDEN — 버튼은 살아 있고 런 없음", async () => {
+    const mia = await person("admin");
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    const { conversationId } = await groupSession(mia, group);
+    const card = createAgentMessage(app.db, app.bus, {
+      conversationId,
+      agentId: dev.id,
+      bodyMd: "골라 주세요",
+      externalId: `dx-card-${++n}`,
+      components: {
+        blocks: [{ type: "actions", id: "row", items: [{ type: "button", id: "go", label: "진행" }] }],
+      },
+    });
+    await rest(owner, "PATCH", `/api/v1/agents/${dev.id}`, { dmAccess: "admins" });
+    const junSocket = await wire(jun);
+    const press = () =>
+      junSocket.emitWithAck("component.interact", {
+        messageId: card.id,
+        componentId: card.components?.id ?? "",
+        itemId: "go",
+        values: {},
+      });
+    expect(await press()).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(runsOf(group.id)).toEqual([]);
+    await rest(owner, "PATCH", `/api/v1/agents/${dev.id}`, { dmAccess: "everyone" });
+    expect(await press()).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    expect(runsOf(group.id)[0]).toMatchObject({ triggerKind: "interaction", requestedBy: jun.id });
+  });
+
+  /** 그룹 DM 에서 jun(member)이 시킨 dev 런의 승인 — 참여한 mia 는 admin, owner 는 참여하지 않는다 */
+  async function groupApproval(kind: "plugin" | "exec" | "dodok_control") {
+    const mia = await person("admin");
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    const { conversationId } = await groupSession(jun, group, `@${dev.handle} 파일을 써 주세요`);
+    await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
+    const run = runsOf(group.id)[0];
+    if (!run) throw new Error("런이 없다");
+    let approval: Approval | undefined;
+    if (kind === "dodok_control") {
+      approval = app.services.approvals.openControl({
+        runId: run.id,
+        channelId: group.id,
+        conversationId,
+        agentId: dev.id,
+        requestedBy: jun.id,
+        toolName: "update_channel",
+        title: "채널 바꾸기",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+    } else {
+      const frame: ProviderApproval = {
+        providerApprovalId: `${kind}:${uuid()}`,
+        kind,
+        sessionKey: adapter.sessionKeyFor(dev.providerAgentId, conversationId),
+        providerAgentId: dev.providerAgentId,
+        conversationId,
+        toolCallId: `toolu_${++n}`,
+        toolName: kind === "exec" ? "exec" : "Write",
+        ...(kind === "plugin" ? { pluginId: "fs" } : {}),
+        title: "실행",
+        severity: "warning",
+        allowedDecisions: ["allow-once", "deny"],
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      };
+      adapter.emitApproval(frame);
+      await vi.waitFor(() =>
+        expect(approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId)?.status).toBe(
+          "pending",
+        ),
+      );
+      approval = approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId);
+    }
+    if (!approval) throw new Error("승인이 저장되지 않았다");
+    return { approval, mia, jun, dev, group, conversationId, run };
+  }
+
+  it.each(["plugin", "exec", "dodok_control"] as const)(
+    "그룹 DM 의 %s 승인은 그 런을 시킨 jun(member)만 — 참여한 admin mia 는 FORBIDDEN(wire·서비스 둘 다), 참여하지 않은 owner 는 NOT_FOUND",
+    async (kind) => {
+      const { approval, mia, jun } = await groupApproval(kind);
+      expect(approval.requestedBy).toBe(jun.id);
+      const resolve = async (who: Person) =>
+        (await wire(who)).emitWithAck("approval.resolve", { approvalId: approval.id, decision: "deny" });
+      const sentBefore = adapter.calls.resolveApproval.length;
+      expect(await resolve(owner)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      expect(await resolve(mia)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+      // wire 앞단을 거치지 않는 호출도 같은 결과(태스크 1 리뷰 L1)
+      await expect(
+        app.services.approvals.resolve({ approvalId: approval.id, decision: "deny", userId: mia.id }),
+      ).rejects.toMatchObject({ body: { code: "FORBIDDEN" } });
+      expect(adapter.calls.resolveApproval.length).toBe(sentBefore);
+      expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+      expect(await resolve(jun)).toMatchObject({ ok: true });
+      expect(approvalStore.getApproval(app.db, approval.id)).toMatchObject({
+        status: "denied",
+        decidedBy: jun.id,
+      });
+      if (kind !== "dodok_control") expect(adapter.calls.resolveApproval.length).toBe(sentBefore + 1);
+    },
+  );
+
+  it("승인 서비스 — 시킨 사람이 비어 있는 direct 승인은 아무도 결정하지 못한다(FORBIDDEN)", async () => {
+    const { approval, jun } = await groupApproval("plugin");
+    app.db.run(sql`UPDATE approvals SET requested_by = NULL WHERE id = ${approval.id}`);
+    await expect(
+      app.services.approvals.resolve({ approvalId: approval.id, decision: "deny", userId: jun.id }),
+    ).rejects.toMatchObject({ body: { code: "FORBIDDEN" } });
+  });
+
+  it("그룹 DM 의 에이전트 정본은 사람 참여자 전원에게, run_error·승인 요청 푸시는 시킨 사람에게만", async () => {
+    const { approval, mia, jun, dev, group, conversationId, run } = await groupApproval("plugin");
+    // 승인 요청 — 승인을 만든 그 자리에서 이미 발송됐다
+    await vi.waitFor(() => expect(sentTo(jun).some((s) => s.payload.kind === "approval")).toBe(true));
+    expect(sentTo(mia).filter((s) => s.payload.kind === "approval")).toEqual([]);
+    expect(sentTo(owner).filter((s) => s.payload.tag === `approval:${approval.id}`)).toEqual([]);
+    sent = [];
+    createSystemMessage(app.db, app.bus, {
+      conversationId,
+      kind: "run_error",
+      bodyMd: "실패",
+      systemMeta: { kind: "run_error", runId: run.id },
+    });
+    await vi.waitFor(() => expect(sentTo(jun)).toHaveLength(1));
+    expect(sentTo(jun)[0]?.payload).toMatchObject({
+      kind: "mention",
+      channelId: group.id,
+      title: `@${dev.handle}${josa(dev.handle, "이", "가")} 답했습니다`,
+      body: "DM",
+      tag: `direct:${conversationId}`,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sentTo(mia)).toEqual([]);
+    sent = [];
+    createAgentMessage(app.db, app.bus, {
+      conversationId,
+      agentId: dev.id,
+      runId: run.id,
+      bodyMd: "답입니다",
+      externalId: `dx-answer-${++n}`,
+    });
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent.map((s) => s.endpoint).sort()).toEqual([endpointOf(mia), endpointOf(jun)].sort());
+    for (const { payload } of sent)
+      expect(payload.title).toBe(`@${dev.handle}${josa(dev.handle, "이", "가")} 답했습니다`);
+  });
+
+  it("에이전트가 받는 것 — groupDm 표시, 참여자는 활성 참여자 전부, 채널 지시 없음", async () => {
+    const mia = await person();
+    const jun = await person();
+    const kai = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id, kai.id], agentIds: [dev.id] });
+    setDeactivated(kai, true);
+    try {
+      const { conversationId } = await groupSession(mia, group, `@${dev.handle} 안녕`);
+      await vi.waitFor(() =>
+        expect(adapter.calls.send.some((c) => c.conversationId === conversationId)).toBe(true),
+      );
+      const deliver = adapter.calls.send.find((c) => c.conversationId === conversationId);
+      expect(deliver?.groupDm).toBe(true);
+      expect(deliver?.dm).toBeUndefined();
+      expect(deliver?.context.channelPrompt).toBeUndefined();
+      expect(deliver?.context.participants.map((p) => p.handle).sort()).toEqual(
+        [mia.handle, jun.handle, dev.handle].sort(),
+      );
+    } finally {
+      setDeactivated(kai, false);
+    }
   });
 });

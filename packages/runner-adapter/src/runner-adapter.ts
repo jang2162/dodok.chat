@@ -1096,6 +1096,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           agentInstructions: definition.instructions,
           channelName,
           ...(input.dm ? { dm: input.dm } : {}),
+          ...(input.groupDm ? { groupDm: true as const } : {}),
           channelPrompt: input.context.channelPrompt,
           promptOverride: input.context.promptOverride,
           relayRules: input.context.relayRules,
@@ -1104,12 +1105,16 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           conversationTitle: input.conversationTitle,
           participants: input.context.participants,
           ...(input.dm ? { dm: input.dm } : {}),
+          ...(input.groupDm ? { groupDm: true as const } : {}),
           thread: input.threadId !== undefined,
           reactions: input.context.reactions,
           reactionsOmitted: input.context.reactionsOmitted,
         }),
-        // DM 채널 행의 이름은 `dm` 이라 그대로 쓰면 「dm · …」 — DM 은 「DM」으로
-        sessionTitle: clip(`${input.dm ? "DM" : channelName} · ${definition.name}`, SESSION_TITLE_MAX),
+        // DM·그룹 DM 채널 행의 이름은 `dm`·`direct` 라 그대로 쓰면 「dm · …」 — 둘 다 「DM」으로
+        sessionTitle: clip(
+          `${input.dm || input.groupDm ? "DM" : channelName} · ${definition.name}`,
+          SESSION_TITLE_MAX,
+        ),
         agent: definition.agent,
       });
       if (!start.success) throw new AdapterError("INTERNAL", `run.start invalid: ${issues(start.error)}`);

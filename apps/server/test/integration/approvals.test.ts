@@ -4,20 +4,22 @@
  * 승인이 **Gateway 프레임 → 어댑터 정규화 → 서버 저장·상관 → wire → `approval.resolve` RPC → 응답 정규화** 전 구간을
  * 처음으로 이어서 도는 자리다. 실제 시계로 돈다 — 기다림은 wire 이벤트(`WireLog.until`)로 하고, 만료만 TTL·감시 타이머를 실제로 기다린다.
  */
-import type { Approval, RunEvent } from "@dodok/shared";
+import type { Approval, Channel, RunEvent } from "@dodok/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createScenario, type Scenario, type ScenarioApproval } from "../fakes/scenario";
+import { userWithRole } from "../helpers/app";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import {
   getRunRest,
   openChannelWire,
   type RelayChannel,
   resolveApproval,
+  rest,
   sendMessage,
   setupRelayChannel,
   type WireLog,
 } from "../helpers/scenario-steps";
-import type { WireClient } from "../helpers/wire";
+import { connectWire, type WireClient } from "../helpers/wire";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 
@@ -483,6 +485,40 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     // 대기에서 aborted 로 한 번만 바뀐다(중간에 tool 로 되돌아가지 않는다)
     const statuses = log.statesOf(run.id).map((s) => s.status);
     expect(statuses[statuses.indexOf("awaiting_approval") + 1]).toBe("aborted");
+    expectNoScenarioErrors(scenario);
+  });
+
+  it("그룹 DM(사람 간 DM 결정 7) — 승인은 그 런을 시킨 사람만 결정한다: 참여한 admin 은 FORBIDDEN, 시킨 사람이 허용하면 런이 이어진다", async () => {
+    await boot();
+    const setup = await setupRelayChannel(live, RELAY_POLICY);
+    const mia = await userWithRole(live.app, "mia", "admin");
+    const opened = await rest<{ channel: Channel }>(live, "POST", "/directs", {
+      userIds: [mia.id],
+      agentIds: [setup.dev.id],
+    });
+    expect(opened.status).toBe(200);
+    const group = opened.body.channel;
+    const log = await openChannelWire(live, group.id, sockets);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: { dev: () => scriptOf({ approval: WRITE_APPROVAL }) },
+    });
+    await sendMessage(log.socket, group.id, "@dev 파일 써줘");
+    const run = await log.until(() => log.states.find((s) => s.agentId === setup.dev.id), "dev 런");
+    const card = await log.until(() => log.approvals.at(0), "approval.requested");
+    expect(card).toMatchObject({ channelId: group.id, runId: run.id, requestedBy: live.app.ownerUserId });
+
+    const miaSocket = await connectWire(live.app, mia.token);
+    sockets.push(miaSocket);
+    expect(
+      await miaSocket.emitWithAck("approval.resolve", { approvalId: card.id, decision: "allow-once" }),
+    ).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+
+    await resolveApproval(log.socket, card.id, "allow-once");
+    const resolved = await log.until(() => log.resolvedApprovals.at(0), "approval.resolved");
+    expect(resolved).toMatchObject({ id: card.id, status: "allowed", decidedBy: live.app.ownerUserId });
+    expect((await log.terminal(run.id)).status).toBe("done");
     expectNoScenarioErrors(scenario);
   });
 });

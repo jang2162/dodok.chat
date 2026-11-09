@@ -382,10 +382,14 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다.
         // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4).
         // DM 의 승인은 종류와 무관하게 주인이 결정한다 — 볼 수 있는 사람이 주인뿐이라 member 주인도(에이전트 DM 계획 판정 PD7). 주인인지는
-        // 위 접근 판정이 이미 봤다(남은 NOT_FOUND). admin 이상이 결정하는 것은 일반 채널의 승인뿐이다 — 모르는 kind(아직 결정자 규칙이
-        // 없는 direct 포함)는 아무도 결정하지 못한다(기본이 닫힘, 사람 간 DM 스펙 4.2)
+        // 위 접근 판정이 이미 봤다(남은 NOT_FOUND). 그룹 DM(direct)의 승인은 종류와 무관하게 그 런을 시킨 사람만 — 역할은 보지 않고, 참여한
+        // admin 이어도 시킨 사람이 아니면 FORBIDDEN(사람 간 DM 결정 7 — 승인 서비스도 같은 판정을 한다). admin 이상이 결정하는 것은 일반
+        // 채널의 승인뿐이다 — 모르는 kind 는 아무도 결정하지 못한다(기본이 닫힘, 사람 간 DM 스펙 4.2)
         const role = roleOf(ctx.db, ctx.workspaceId, userId);
-        if (approval.kind === "dodok_control" || approvalChannel?.kind === "dm") {
+        if (approvalChannel?.kind === "direct") {
+          if (!role || approval.requestedBy !== userId)
+            throw apiError("FORBIDDEN", "이 승인은 그 일을 시킨 사람만 결정할 수 있다");
+        } else if (approval.kind === "dodok_control" || approvalChannel?.kind === "dm") {
           if (!role) throw apiError("FORBIDDEN", "워크스페이스 멤버가 아니다");
         } else if (approvalChannel !== undefined && approvalChannel.kind !== "channel") {
           throw apiError("FORBIDDEN", "이 승인은 결정할 수 없다");

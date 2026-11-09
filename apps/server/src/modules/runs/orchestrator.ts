@@ -25,14 +25,7 @@ import {
   type RunEventBody,
 } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import {
-  agentSessions,
-  agents,
-  channels,
-  componentInteractions,
-  conversations,
-  messages,
-} from "../../db/schema.sqlite";
+import { agentSessions, agents, channels, conversations, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
@@ -40,6 +33,7 @@ import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel, isChannelArchived } from "../channels/service";
 import { isConversationClosed } from "../conversations/store";
+import { directRunBlock } from "../directs/service";
 import { dmReadOnlyReason } from "../dms/service";
 import {
   consumeComponentItem,
@@ -61,7 +55,7 @@ import {
   renewSessionOnPromptChange,
   storeProgramSessionId,
 } from "../sessions/service";
-import { buildInboundDeliver } from "./context";
+import { buildInboundDeliver, requesterOf } from "./context";
 import {
   createMediaLineFilter,
   endMediaLineFilter,
@@ -111,34 +105,6 @@ export type EnqueueTrigger = {
   /** 그 런을 시킨 사람을 부르는 쪽이 안다면(다시 실행 — 원래 런의 값) 여기에. 빠지면 requesterOf 가 트리거로 정한다 */
   requestedBy?: string | null;
 };
-
-/**
- * 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절 표) — 사람 글의 멘션·자동 응답은 작성자, 카드 상호작용·「이어가기」는 누른
- * 사람, 릴레이는 앞 런(트리거 에이전트 글의 런)의 값 — 그 런이 끝난 뒤에 저장된 글이면 null, 자동화 글로 시작한 사슬은 null.
- * 릴레이가 앞 런을 물려받으므로 사슬 전체가 처음 사람(또는 null)을 지닌다 — 에이전트 글을 작성자로 보면 사슬 중간에서 사람이 사라지고, 자동화 글을 사람으로 보면 권한이 생긴다
- */
-function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
-  if (trigger.requestedBy !== undefined) return trigger.requestedBy;
-  if (trigger.interactionId !== undefined) {
-    return (
-      db
-        .select({ userId: componentInteractions.userId })
-        .from(componentInteractions)
-        .where(eq(componentInteractions.id, trigger.interactionId))
-        .get()?.userId ?? null
-    );
-  }
-  const message = trigger.message;
-  if (message?.authorType === "user") return message.authorId ?? null;
-  if (message?.authorType === "agent" && message.runId !== undefined) {
-    // 늦은 정본·옛 runId 를 단 글 — 앞 런이 끝난 뒤에 저장된 글이 낳은 릴레이는 시킨 사람을 물려받지 않는다(스펙 「구현과 맞춘 것」)
-    const parent = store.getRun(db, message.runId);
-    if (parent?.endedAt !== undefined && Date.parse(parent.endedAt) < Date.parse(message.createdAt))
-      return null;
-    return store.getRunRequestedBy(db, message.runId);
-  }
-  return null;
-}
 
 /**
  * 에이전트의 글은 그 세션 키의 대화에만 저장한다(채널 세션 스펙 「에이전트가 받는 것」 절, Review Focus 4) — 런이 있든 없든 정본의
@@ -820,9 +786,19 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * 읽기 전용이 된 DM 의 런 — 주인의 지금 역할로 본 사유(dmAccess 철회·꺼짐)가 있으면 보내지 않는다. 철회 전에 줄 선 런도 그 머신에
    * 일을 시키지 않게(에이전트 DM 스펙 결정 4). 어댑터로 이미 간 런은 보지 않는다 — 일반 채널의 끄기와 같다
    */
-  function dmClosedTarget(run: Pick<Run, "channelId">): boolean {
+  function dmClosedTarget(run: Pick<Run, "id" | "channelId" | "agentId">): boolean {
     const channel = getChannel(db, run.channelId);
-    return channel !== undefined && dmReadOnlyReason(db, channel) !== null;
+    if (channel === undefined) return false;
+    // 그룹 DM 은 줄 선 사이 시킨 사람이 강등·비활성화되거나 dmAccess 가 좁아졌으면 같은 꼴로 닫는다(사람 간 DM 스펙 6.3 — 라우터와 같은 관문)
+    if (channel.kind === "direct")
+      return (
+        directRunBlock(db, {
+          channelId: run.channelId,
+          agentId: run.agentId,
+          requestedBy: store.getRunRequestedBy(db, run.id),
+        }) !== null
+      );
+    return dmReadOnlyReason(db, channel) !== null;
   }
 
   // ── 직렬화·디스패치 ─────────────────────────────────────────

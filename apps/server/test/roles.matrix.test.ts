@@ -2170,8 +2170,9 @@ describe("역할 매트릭스(스펙 2장)", () => {
         },
       );
 
-      it("approval.resolve — 참여자 mia 도 아직 결정하지 못한다(direct 의 결정자 규칙 전까지 기본이 닫힘 — FORBIDDEN, pending 그대로)", async () => {
+      it("approval.resolve — 그 런을 시킨 참여자 mia(member)는 결정한다 — requestedBy 가 mia, Gateway 로 간다(사람 간 DM 결정 7)", async () => {
         const approval = await directApproval();
+        expect(approval.requestedBy).toBe(mia.id);
         const socket = await connectWire(app, mia.token);
         sockets.push(socket);
         const sent = adapter.calls.resolveApproval.length;
@@ -2179,12 +2180,15 @@ describe("역할 매트릭스(스펙 2장)", () => {
           approvalId: approval.id,
           decision: "deny",
         });
-        expect(res).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
-        expect(adapter.calls.resolveApproval.length).toBe(sent);
-        expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+        expect(res).toMatchObject({ ok: true });
+        expect(adapter.calls.resolveApproval.length).toBe(sent + 1);
+        expect(approvalStore.getApproval(app.db, approval.id)).toMatchObject({
+          status: "denied",
+          decidedBy: mia.id,
+        });
       });
 
-      it("approval.resolve — 참여한 admin 도 일반 채널 갈래(「admin 이상이면 결정」)로 새지 않는다 — FORBIDDEN, pending 그대로", async () => {
+      it("approval.resolve — 시키지 않은 참여 admin 은 일반 채널 갈래(「admin 이상이면 결정」)로 새지 않는다 — FORBIDDEN, pending 그대로", async () => {
         const approval = await directApproval([ids.admin]);
         const socket = await connectWire(app, tokens.admin);
         sockets.push(socket);

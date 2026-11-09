@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BridgeHello,
   formatDmLine,
+  formatGroupDmLine,
   formatSessionLine,
   INBOUND_REACTIONS_MAX,
   InboundContext,
@@ -156,6 +157,12 @@ describe("formatDmLine — 헤더의 DM 줄", () => {
   });
 });
 
+describe("formatGroupDmLine — 헤더의 그룹 DM 줄", () => {
+  it("참여자만 보는 대화임을 밝힌다", () => {
+    expect(formatGroupDmLine()).toBe("그룹 DM: 참여자만 보는 대화");
+  });
+});
+
 describe("InboundDeliver.dm — 선택 필드", () => {
   const base = {
     deliveryId: ID(1),
@@ -180,6 +187,12 @@ describe("InboundDeliver.dm — 선택 필드", () => {
     expect(InboundDeliver.parse(base).dm).toBeUndefined();
     expect(InboundDeliver.parse({ ...base, dm: { ownerHandle: "mia" } }).dm).toEqual({ ownerHandle: "mia" });
     expect(InboundDeliver.safeParse({ ...base, dm: {} }).success).toBe(false);
+  });
+
+  it("groupDm 도 선택 필드 — 없어도 받고, 있으면 true 만", () => {
+    expect(InboundDeliver.parse(base).groupDm).toBeUndefined();
+    expect(InboundDeliver.parse({ ...base, groupDm: true }).groupDm).toBe(true);
+    expect(InboundDeliver.safeParse({ ...base, groupDm: false }).success).toBe(false);
   });
 });
 

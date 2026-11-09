@@ -6,11 +6,18 @@ import {
   canReadChannel,
   membersOnly,
   readableChannelSql,
+  readableChannelSqlFor,
 } from "../src/auth/channel-access";
 import type { DbOrTx } from "../src/db/client";
 import { channels, users } from "../src/db/schema.sqlite";
+import { insertRun } from "../src/modules/runs/store";
 import { newTestDb } from "./helpers/db";
-import { createDirectChannelForTest, createDmChannelForTest, seedChannelWithAgent } from "./helpers/seed";
+import {
+  createDirectChannelForTest,
+  createDmChannelForTest,
+  seedChannelWithAgent,
+  seedConversation,
+} from "./helpers/seed";
 
 const A = uuid();
 const B = uuid();
@@ -157,5 +164,64 @@ describe("readableChannelSql", () => {
     // 참여 에이전트의 id 로는 direct 가 열리지 않는다(사람 참여자 행만 센다)
     expect(visible(s.agentId)).toEqual([s.channelId]);
     expect(visible("")).toEqual([s.channelId]);
+  });
+});
+
+describe("readableChannelSqlFor — 제어 도구 주체의 읽기 범위(사람 간 DM 스펙 4.4)", () => {
+  it("direct 런의 에이전트는 일반 채널 + 그 direct 하나(시킨 사람이 참여자일 때), 바깥 MCP 는 참여한 direct 전부", () => {
+    const db = newTestDb();
+    const s = seedChannelWithAgent(db);
+    const mia = addUser(db, s.workspaceId, "mia");
+    const jun = addUser(db, s.workspaceId, "jun");
+    const kai = addUser(db, s.workspaceId, "kai");
+    const dm = createDmChannelForTest(db, { workspaceId: s.workspaceId, ownerId: mia, agentId: s.agentId });
+    const group = createDirectChannelForTest(db, {
+      workspaceId: s.workspaceId,
+      createdBy: mia,
+      userIds: [jun],
+      agentIds: [s.agentId],
+    });
+    const otherDirect = createDirectChannelForTest(db, {
+      workspaceId: s.workspaceId,
+      createdBy: mia,
+      userIds: [kai],
+    });
+    const runIn = (channelId: string, requestedBy: string | null) => {
+      const conversationId = seedConversation(db, channelId);
+      return insertRun(db, {
+        channelId,
+        conversationId,
+        agentId: s.agentId,
+        triggerKind: "mention",
+        rootMessageId: uuid(),
+        relayDepth: 0,
+        sessionKey: `agent:dev:dodok:channel:${conversationId}`,
+        connectionId: null,
+        requestedBy,
+        createdAt: new Date(),
+      }).id;
+    };
+    const visible = (principal: Parameters<typeof readableChannelSqlFor>[0]) =>
+      db
+        .select({ id: channels.id })
+        .from(channels)
+        .where(and(eq(channels.workspaceId, s.workspaceId), readableChannelSqlFor(principal)))
+        .all()
+        .map((r) => r.id)
+        .sort();
+    const groupRun = runIn(group.id, mia);
+    expect(visible({ userId: mia, via: "agent", runId: groupRun })).toEqual([s.channelId, group.id].sort());
+    // 시킨 사람이 그 direct 의 참여자가 아니거나 없으면 일반 채널만
+    expect(visible({ userId: kai, via: "agent", runId: groupRun })).toEqual([s.channelId]);
+    expect(visible({ userId: null, via: "agent", runId: groupRun })).toEqual([s.channelId]);
+    // 일반 채널 런의 에이전트 — direct 없음(시킨 사람이 참여한 direct·DM 도)
+    expect(visible({ userId: mia, via: "agent", runId: runIn(s.channelId, mia) })).toEqual([s.channelId]);
+    // 런 없는 에이전트 주체 — 일반 채널만
+    expect(visible({ userId: mia, via: "agent" })).toEqual([s.channelId]);
+    // 바깥 MCP(개인 토큰) — 사람과 같다: 일반 채널 + 내 DM + 내가 참여한 direct 전부
+    expect(visible({ userId: mia, via: "pat" })).toEqual(
+      [s.channelId, dm.id, group.id, otherDirect.id].sort(),
+    );
+    expect(visible({ userId: jun, via: "pat" })).toEqual([s.channelId, group.id].sort());
   });
 });

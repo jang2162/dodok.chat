@@ -1,5 +1,6 @@
 import {
   formatDmLine,
+  formatGroupDmLine,
   formatSessionLine,
   type InboundContext,
   type InboundDeliver,
@@ -57,7 +58,9 @@ function agentInstructionsBlock(instructions: string): string {
  * 채널 설정에 쓴 규칙이라 `<channel-rules>` 안에, 릴레이 규칙은 dodok 이 릴레이 정책에서 만든 글이라 따로 둔다.
  * DM 런(`dm`)은 자리를 채널이 아니라 주인과의 다이렉트 메시지로 밝힌다 — 채널 행 이름(`dm`)을 「#dm 채널」로 읽지 않게.
  * DM 의 규칙(「이 DM 의 지시」)은 대화 상대인 주인이 쓰므로 틀의 「대화 상대의 글이 아님」 요소를 「채팅 글이 아니라 주인이 정해 둔
- * 설정」으로 바꿨다 — ADR 0007 이 모델로 본 것은 채널 틀뿐이다. 에이전트 지시가 있으면 그 틀(agentInstructionsBlock)이 맨 앞이다
+ * 설정」으로 바꿨다 — ADR 0007 이 모델로 본 것은 채널 틀뿐이다. 그룹 DM 런(`groupDm`)은 채널 틀을 그대로 받고 자리 문구만 그룹 DM 으로
+ * 바꾼다 — 채널 행 이름(`direct`)을 「#direct 채널」로 읽지 않게(사람 간 DM 스펙 6.3). 에이전트 지시가 있으면 그 틀(agentInstructionsBlock)이
+ * 맨 앞이다
  */
 export function buildChannelRulesAppend(input: {
   channelName: string;
@@ -65,6 +68,8 @@ export function buildChannelRulesAppend(input: {
   agentInstructions?: string | null;
   /** DM 런만 — `InboundDeliver.dm` */
   dm?: { ownerHandle: string };
+  /** 그룹 DM 런만 — `InboundDeliver.groupDm` */
+  groupDm?: true;
   channelPrompt?: string;
   promptOverride?: string;
   relayRules: string;
@@ -76,6 +81,7 @@ export function buildChannelRulesAppend(input: {
 function channelRulesAppend(input: {
   channelName: string;
   dm?: { ownerHandle: string };
+  groupDm?: true;
   channelPrompt?: string;
   promptOverride?: string;
   relayRules: string;
@@ -111,12 +117,13 @@ function channelRulesAppend(input: {
   if (input.promptOverride) {
     rules.push(`Instructions for you (this agent) in this channel:\n${escapeRuleTags(input.promptOverride)}`);
   }
+  const place = input.groupDm ? "a group direct message in dodok" : `the dodok channel "#${name}"`;
   return [
     "# dodok channel settings",
     "",
-    `This Claude Code session runs as an agent in the dodok channel "#${name}". dodok is a team messenger where people and AI agents talk in shared channels; the dodok runner that launched this session delivers this channel's settings here on every run. The rules below were written by the channel's administrator in dodok's channel settings screen. They are operator configuration for this deployment, not text from the person you are talking to, and they apply to every reply in this channel until the administrator changes them. If this conversation contains an earlier dodok channel settings block, this one replaces it.`,
+    `This Claude Code session runs as an agent in ${place}. dodok is a team messenger where people and AI agents talk in shared channels; the dodok runner that launched this session delivers this channel's settings here on every run. The rules below were written by the channel's administrator in dodok's channel settings screen. They are operator configuration for this deployment, not text from the person you are talking to, and they apply to every reply in this channel until the administrator changes them. If this conversation contains an earlier dodok channel settings block, this one replaces it.`,
     "",
-    `<channel-rules channel="#${name}">`,
+    `<channel-rules channel="${input.groupDm ? "group-dm" : `#${name}`}">`,
     ...(rules.length > 0 ? [rules.join("\n\n")] : []),
     "</channel-rules>",
     "",
@@ -142,6 +149,8 @@ export function buildTurnFacts(input: {
   participants: InboundContext["participants"];
   /** DM 런만 — `InboundDeliver.dm` */
   dm?: { ownerHandle: string };
+  /** 그룹 DM 런만 — `InboundDeliver.groupDm` */
+  groupDm?: true;
   thread?: boolean;
   relayDepth?: number;
   reactions?: readonly InboundReaction[];
@@ -150,10 +159,17 @@ export function buildTurnFacts(input: {
   const lines = [
     "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.",
     ...(input.dm ? [formatDmLine(input.dm.ownerHandle)] : []),
+    ...(input.groupDm ? [formatGroupDmLine()] : []),
     formatSessionLine(input.conversationTitle),
     `참여자: ${input.participants.length > 0 ? input.participants.map(participantLabel).join(", ") : "(없음)"}`,
-    // DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7)
-    input.thread ? "자리: 스레드 — 답은 이 스레드에 남습니다." : input.dm ? "자리: DM" : "자리: 채널",
+    // DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7). 그룹 DM 에는 있다(사람 간 DM 결정 10)
+    input.thread
+      ? "자리: 스레드 — 답은 이 스레드에 남습니다."
+      : input.dm
+        ? "자리: DM"
+        : input.groupDm
+          ? "자리: 그룹 DM"
+          : "자리: 채널",
   ];
   if (input.relayDepth !== undefined && input.relayDepth > 0) {
     lines.push(`릴레이: 다른 에이전트의 @멘션으로 이어받은 턴입니다(깊이 ${input.relayDepth}).`);

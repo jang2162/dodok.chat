@@ -22,6 +22,7 @@ import { apiError } from "../../http/errors";
 import { channelParticipants, getChannel } from "../channels/service";
 import { getConversation } from "../conversations/store";
 import type { AgentSessionRow } from "../sessions/service";
+import * as store from "./store";
 
 /** InboundContext.recentMessages 상한(계약 스펙 8.2) — 스레드 최근 메시지도 같은 상한 */
 export const RECENT_MESSAGES_MAX = 20;
@@ -42,6 +43,44 @@ export type InboundTrigger = {
   /** 사용자가 누른 컴포넌트가 달린 메시지 */
   interactionMessageId?: string;
 };
+
+/** requesterOf 가 보는 트리거 몫 — orchestrator EnqueueTrigger 의 일부 */
+export type RequesterTrigger = {
+  message?: Message;
+  /** interaction·continue 런의 component_interactions.id */
+  interactionId?: string;
+  /** 부르는 쪽이 이미 안다면(다시 실행 — 원래 런의 값) 그 값 */
+  requestedBy?: string | null;
+};
+
+/**
+ * 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절 표) — 사람 글의 멘션·자동 응답은 작성자, 카드 상호작용·「이어가기」는 누른
+ * 사람, 릴레이는 앞 런(트리거 에이전트 글의 런)의 값 — 그 런이 끝난 뒤에 저장된 글이면 null, 자동화 글로 시작한 사슬은 null.
+ * 릴레이가 앞 런을 물려받으므로 사슬 전체가 처음 사람(또는 null)을 지닌다 — 에이전트 글을 작성자로 보면 사슬 중간에서 사람이 사라지고, 자동화 글을 사람으로 보면 권한이 생긴다
+ * 오케스트레이터(런을 만들 때)와 라우터(그룹 DM 의 시킨 사람 관문 — 런을 만들기 전에)가 같은 값을 보게 여기 한곳에 둔다
+ */
+export function requesterOf(db: DbOrTx, trigger: RequesterTrigger): string | null {
+  if (trigger.requestedBy !== undefined) return trigger.requestedBy;
+  if (trigger.interactionId !== undefined) {
+    return (
+      db
+        .select({ userId: componentInteractions.userId })
+        .from(componentInteractions)
+        .where(eq(componentInteractions.id, trigger.interactionId))
+        .get()?.userId ?? null
+    );
+  }
+  const message = trigger.message;
+  if (message?.authorType === "user") return message.authorId ?? null;
+  if (message?.authorType === "agent" && message.runId !== undefined) {
+    // 늦은 정본·옛 runId 를 단 글 — 앞 런이 끝난 뒤에 저장된 글이 낳은 릴레이는 시킨 사람을 물려받지 않는다(스펙 「구현과 맞춘 것」)
+    const parent = store.getRun(db, message.runId);
+    if (parent?.endedAt !== undefined && Date.parse(parent.endedAt) < Date.parse(message.createdAt))
+      return null;
+    return store.getRunRequestedBy(db, message.runId);
+  }
+  return null;
+}
 
 export type BuildInboundInput = {
   run: Run;
@@ -166,6 +205,9 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     conversationId: run.conversationId,
     conversationTitle: conversation.title,
     ...(dmOwner ? { dm: { ownerHandle: dmOwner.handle } } : {}),
+    // 그룹 DM 은 헤더에 그 표시를 싣는다 — 채널처럼 보이는 자리가 참여자만 보는 대화임을 에이전트가 알게(사람 간 DM 계획 PH12). 참여자는
+    // channelParticipants(비활성·보관 제외) 그대로, 채널 프롬프트는 늘 없다(direct 의 prompt 는 null)
+    ...(channel.kind === "direct" ? { groupDm: true } : {}),
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
     ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),

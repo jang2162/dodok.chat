@@ -55,8 +55,10 @@ function findDirect(db: DbOrTx, workspaceId: string, key: string): ChannelRecord
 
 /**
  * 그 묶음의 direct 를 찾거나 만든다 — 검사 없이(검사는 openDirect). userIds 는 연 사람을 포함한다. 유일 색인에 걸리면 넣지 않고 다시
- * 읽는다: 동시에 두 번 열어도 행은 하나다(findOrCreateDm 과 같은 꼴). 에이전트 참여자가 없으면(한 줄기) 그 대화 하나를 같은
- * 트랜잭션에 만든다 — 세션이 있는 묶음은 첫 보내기(newConversation)가 만든다
+ * 읽는다: 동시에 두 번 열어도 행은 하나다(findOrCreateDm 과 같은 꼴). 이 갈래는 한 프로세스에서는 방어용이다 — better-sqlite3 의
+ * 트랜잭션은 동기라 앞의 findDirect 와 insert 사이에 다른 요청이 끼지 못하고, 색인에 걸리는 행은 늘 findDirect 가 먼저 찾는다.
+ * DB 를 여럿이 쓰게 되면 그때 쓰인다. 에이전트 참여자가 없으면(한 줄기) 그 대화 하나를 같은 트랜잭션에 만든다 — 세션이 있는 묶음은
+ * 첫 보내기(newConversation)가 만든다
  */
 export function findOrCreateDirect(
   db: Db,
@@ -163,6 +165,30 @@ export function openDirect(
       throw blocked(agent.id);
   }
   return findOrCreateDirect(db, { workspaceId: input.workspaceId, createdBy: input.userId, ...participants });
+}
+
+/** 그룹 DM 런을 막은 사유 — 시킨 사람이 없음(null), 또는 시킨 사람의 지금 역할을 그 에이전트의 dmAccess 가 들이지 않음 */
+export type DirectRunBlock = "no_requester" | "dm_not_allowed";
+
+/**
+ * 그룹 DM 의 런을 시킨 사람이 그 에이전트를 부를 수 있는가(사람 간 DM 스펙 6.3) — 열 때 본 dmAccess 를 런마다 다시 본다. 연 뒤 dmAccess 를
+ * 좁히거나 시킨 사람이 강등·비활성화돼도 그룹 DM 이 dmAccess 를 우회하는 길이 되지 않게. 비활성이면 역할이 없어 dm_not_allowed 다.
+ * direct 가 아니면 늘 null — 일반 채널·에이전트 DM 은 이 관문을 지나지 않는다. 라우터가 런을 만들기 전에, 디스패치가 보내기 직전에 부른다
+ */
+export function directRunBlock(
+  db: DbOrTx,
+  input: { channelId: string; agentId: string; requestedBy: string | null },
+): DirectRunBlock | null {
+  const channel = db
+    .select({ kind: channels.kind, workspaceId: channels.workspaceId })
+    .from(channels)
+    .where(eq(channels.id, input.channelId))
+    .get();
+  if (channel?.kind !== "direct") return null;
+  if (input.requestedBy === null) return "no_requester";
+  const agent = getAgent(db, input.agentId, channel.workspaceId);
+  const role = roleOf(db, channel.workspaceId, input.requestedBy);
+  return agent !== undefined && dmAccessAllows(agent.dmAccess, role) ? null : "dm_not_allowed";
 }
 
 /** 참여자 행 — user·agent 를 갈라 낸다(비활성·보관도 그대로. 거르는 것은 부르는 쪽) */

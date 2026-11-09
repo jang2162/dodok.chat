@@ -25,6 +25,8 @@ export type TriggerLookups = {
   directParticipants?(channelId: string): string[] | null;
   /** 사람의 표시 이름 — direct 사람 글 알림의 제목. 없으면 핸들로 */
   userName?(id: string): string | undefined;
+  /** 런의 에이전트와 시킨 사람 — direct 의 run_error 알림이 「누가」·「누구에게」로 쓴다. 없는 런이면 undefined */
+  runFacts?(runId: string): { agentId: string; requestedBy: string | null } | undefined;
 };
 /**
  * `conversationId` 는 거르기(「그 세션을 보고 있으면 안 보냄」 — 채널 세션 계획 판정 PS7)에만 쓰고 페이로드에는 싣지 않는다 — 같은 채널의
@@ -71,9 +73,7 @@ function targetsForDm(m: Message, l: TriggerLookups, owner: string): PushTarget[
   const reply = m.kind === "normal" && m.authorType === "agent";
   const failed = m.kind === "system" && m.systemMeta?.kind === "run_error";
   if (!reply && !failed) return [];
-  const agentId = reply ? m.authorId : (l.dmAgent(m.channelId) ?? undefined);
-  const handle = agentId === undefined ? undefined : l.agentHandle(agentId);
-  const title = handle ? `@${handle}${josa(handle, "이", "가")} 답했습니다` : "에이전트가 답했습니다";
+  const title = repliedTitle(l, reply ? m.authorId : (l.dmAgent(m.channelId) ?? undefined));
   return [
     {
       userId: owner,
@@ -85,6 +85,36 @@ function targetsForDm(m: Message, l: TriggerLookups, owner: string): PushTarget[
         body: channelLabel(l, m.channelId),
         url: sessionUrl(m.channelId, m.conversationId),
         tag: `dm:${m.conversationId}`,
+      },
+    },
+  ];
+}
+
+/** 에이전트 답 알림의 제목 — 「@<핸들>이 답했습니다」, 핸들을 모르면 「에이전트가 답했습니다」 */
+function repliedTitle(l: TriggerLookups, agentId: string | undefined): string {
+  const handle = agentId === undefined ? undefined : l.agentHandle(agentId);
+  return handle ? `@${handle}${josa(handle, "이", "가")} 답했습니다` : "에이전트가 답했습니다";
+}
+
+/**
+ * direct 의 run_error — 그 런을 시킨 사람에게만(사람 간 DM 스펙 7.1). 꼴은 에이전트 답 알림과 같다(에이전트 DM 의 run_error 와 같은 기대).
+ * 시킨 사람이 없거나 런을 모르면 아무에게도 가지 않는다
+ */
+function targetsForDirectRunError(m: Message, l: TriggerLookups): PushTarget[] {
+  const runId = m.systemMeta?.runId;
+  const facts = runId === undefined ? undefined : l.runFacts?.(runId);
+  if (!facts?.requestedBy) return [];
+  return [
+    {
+      userId: facts.requestedBy,
+      conversationId: m.conversationId,
+      payload: {
+        kind: "mention",
+        channelId: m.channelId,
+        title: repliedTitle(l, facts.agentId),
+        body: "DM",
+        url: placeOf(l, m).url,
+        tag: `direct:${m.conversationId}`,
       },
     },
   ];
@@ -102,8 +132,7 @@ function targetsForDirect(m: Message, l: TriggerLookups, participants: string[])
     const name = l.userName?.(author) ?? l.userHandle(author);
     if (name) title = `${name} 님의 메시지`;
   } else if (author !== undefined && m.authorType === "agent") {
-    const handle = l.agentHandle(author);
-    title = handle ? `@${handle}${josa(handle, "이", "가")} 답했습니다` : "에이전트가 답했습니다";
+    title = repliedTitle(l, author);
   }
   const { url } = placeOf(l, m);
   return receivers.map((userId) => ({
@@ -124,8 +153,10 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
   const dmOwner = l.dmOwner(m.channelId);
   if (dmOwner !== null) return targetsForDm(m, l, dmOwner);
   const direct = directOf(l, m.channelId);
-  // direct 의 시스템 메시지는 아래 일반 갈래(relay_limit 만 사람 멤버에게)를 그대로 지난다 — run_error·승인은 시킨 사람 몫이라 따로 둔다
+  // direct 의 run_error 는 시킨 사람에게만, 그 밖의 시스템 메시지는 아래 일반 갈래(relay_limit 만 사람 멤버에게)를 그대로 지난다
   if (direct !== null && m.kind === "normal") return targetsForDirect(m, l, direct);
+  if (direct !== null && m.kind === "system" && m.systemMeta?.kind === "run_error")
+    return targetsForDirectRunError(m, l);
   if (m.kind === "system") {
     if (m.systemMeta?.kind !== "relay_limit") return [];
     const place = placeOf(l, m);
@@ -170,12 +201,13 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
 export function targetsForApproval(a: Approval, l: TriggerLookups): PushTarget[] {
   const body = `${channelLabel(l, a.channelId)}에 승인 요청이 있습니다`;
   // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인만 결정한다 — 알림도 그 사람에게만(제어 MCP 스펙 「확인 카드」 장).
-  // DM 의 승인은 종류와 무관하게 주인만 결정한다 — owner·admin 은 그 DM 을 볼 수 없다(에이전트 DM 계획 판정 PD7)
+  // DM 의 승인은 종류와 무관하게 주인만 결정한다 — owner·admin 은 그 DM 을 볼 수 없다(에이전트 DM 계획 판정 PD7).
+  // 그룹 DM(direct)의 승인은 종류와 무관하게 그 런을 시킨 사람만 결정한다 — 알림도 그 사람에게만(사람 간 DM 결정 7·스펙 7.1)
   const dmOwner = l.dmOwner(a.channelId);
   const receivers =
     dmOwner !== null
       ? [dmOwner]
-      : a.kind === "dodok_control"
+      : a.kind === "dodok_control" || directOf(l, a.channelId) !== null
         ? a.requestedBy === undefined
           ? []
           : [a.requestedBy]

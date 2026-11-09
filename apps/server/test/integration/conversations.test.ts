@@ -671,6 +671,111 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       );
     expect([othersKey, storedFor("dm-boundary-fin-others-dm-key").length]).toEqual([refused, 0]);
   });
+
+  it("[사람 간 DM 스펙 6.3] 그룹 DM 과 일반 채널·에이전트 DM 사이 — 어느 쪽 런의 정본이 다른 쪽 대화로 오면 FORBIDDEN·저장 0", async () => {
+    live = await bootLiveApp();
+    const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const mia = await userWithRole(live.app, "mia", "admin");
+    const openedDirect = await rest<{ channel: Channel }>(live, "POST", "/directs", {
+      userIds: [mia.id],
+      agentIds: [dev.id],
+    });
+    expect(openedDirect.status).toBe(200);
+    const direct = openedDirect.body.channel;
+    const openedDm = await rest<{ channel: Channel }>(live, "POST", "/dms", { agentId: dev.id });
+    expect(openedDm.status).toBe(200);
+    const dm = openedDm.body.channel;
+    const log = await openChannelWire(live, channel.id, sockets);
+    const directLog = await openChannelWire(live, direct.id, sockets);
+    const dmLog = await openChannelWire(live, dm.id, sockets);
+    const delivered: Array<{ conversationId: string; groupDm?: true }> = [];
+    createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: ({ delivery }) => {
+          delivered.push({
+            conversationId: delivery.conversationId,
+            ...(delivery.groupDm ? { groupDm: delivery.groupDm } : {}),
+          });
+          return { deltas: ["생각 중"], reply: "끝", holdFinal: true };
+        },
+      },
+    });
+    const inDirect = (
+      await sendIn(directLog.socket, direct.id, "@dev 붙잡아 둬", { newConversation: { title: "그룹 세션" } })
+    ).conversation;
+    const inChannel = (
+      await sendIn(log.socket, channel.id, "@dev 붙잡아 둬", { newConversation: { title: "채널 세션" } })
+    ).conversation;
+    const inDm = (await sendIn(dmLog.socket, dm.id, "붙잡아 둬", { newConversation: { title: "DM 세션" } }))
+      .conversation;
+    if (!inDirect || !inChannel || !inDm) throw new Error("세션이 없다");
+    const streaming = (l: typeof log, label: string) =>
+      l.until(() => l.states.find((x) => x.agentId === dev.id && x.status === "streaming"), label);
+    const directRun = await streaming(directLog, "그룹 DM 런 streaming");
+    const channelRun = await streaming(log, "채널 런 streaming");
+    const dmRun = await streaming(dmLog, "DM 런 streaming");
+    // 그룹 DM 런만 groupDm 표시를 받는다
+    expect(delivered).toEqual([
+      { conversationId: inDirect.id, groupDm: true },
+      { conversationId: inChannel.id },
+      { conversationId: inDm.id },
+    ]);
+
+    const keys = {
+      direct: dodokSessionKey("dev", inDirect.id),
+      channel: dodokSessionKey("dev", inChannel.id),
+      dm: dodokSessionKey("dev", inDm.id),
+    };
+    const storedFor = (outboundId: string) =>
+      live.app.db.select().from(messages).where(eq(messages.externalId, outboundId)).all();
+    const outcomes: Array<[string, string, number]> = [];
+    for (const [label, fields] of [
+      ["direct→channel run", { conversationId: inChannel.id, sessionKey: keys.direct, runId: directRun.id }],
+      ["direct→channel no-run", { conversationId: inChannel.id, sessionKey: keys.direct }],
+      ["channel→direct run", { conversationId: inDirect.id, sessionKey: keys.channel, runId: channelRun.id }],
+      ["channel→direct no-run", { conversationId: inDirect.id, sessionKey: keys.channel }],
+      ["direct→dm run", { conversationId: inDm.id, sessionKey: keys.direct, runId: directRun.id }],
+      ["direct→dm no-run", { conversationId: inDm.id, sessionKey: keys.direct }],
+      ["dm→direct run", { conversationId: inDirect.id, sessionKey: keys.dm, runId: dmRun.id }],
+      ["dm→direct no-run", { conversationId: inDirect.id, sessionKey: keys.dm }],
+    ] as const) {
+      const outboundId = `direct-boundary-${label}`;
+      const outcome = await live.plugin
+        .sendOutbound({ outboundId, agentId: "dev", ...fields, text: "경계를 넘습니다", attachmentIds: [] })
+        .then(
+          () => "stored",
+          (err: Error) => err.message,
+        );
+      outcomes.push([label, outcome, storedFor(outboundId).length]);
+    }
+    const refused = "FORBIDDEN: 이 대화에만 보낼 수 있습니다";
+    expect(outcomes).toEqual([
+      ["direct→channel run", refused, 0],
+      ["direct→channel no-run", refused, 0],
+      ["channel→direct run", refused, 0],
+      ["channel→direct no-run", refused, 0],
+      ["direct→dm run", refused, 0],
+      ["direct→dm no-run", refused, 0],
+      ["dm→direct run", refused, 0],
+      ["dm→direct no-run", refused, 0],
+    ]);
+    for (const run of [directRun, channelRun, dmRun])
+      expect(getRun(live.app.db, run.id)?.status).toBe("streaming");
+    // 자기 그룹 DM 세션으로 온 정본은 그 런에 붙는다
+    await live.plugin.sendOutbound({
+      outboundId: "direct-own",
+      conversationId: inDirect.id,
+      agentId: "dev",
+      sessionKey: keys.direct,
+      text: "그룹 DM 에",
+      attachmentIds: [],
+    });
+    expect(storedFor("direct-own")).toEqual([
+      expect.objectContaining({ conversationId: inDirect.id, channelId: direct.id, runId: directRun.id }),
+    ]);
+  });
 });
 
 /** 사람 하나의 REST(세션 토큰) — `rest` 는 owner 만 */
