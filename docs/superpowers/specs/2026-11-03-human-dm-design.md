@@ -275,3 +275,45 @@ readableChannelSql(userId)    = kind = 'channel'
 ## 12. 빌더에게 맡긴 것
 
 `direct_key` 의 꼴, 한 줄기 여부를 열로 둘지, `canReadChannel` 에 참여 여부를 넘기는 꼴, `POST /directs` 의 경로·본문 이름, 한 줄기 대화의 URL(`s/<id>` 를 쓰나), 그룹 이름 나열의 말줄임, 시스템 메시지·푸시 제목 문구, `InboundDeliver` 의 그룹 DM 필드 이름, `dev:fake` 씨앗의 꼴, 「새 메시지」 대화상자의 검색·정렬.
+
+## 13. 구현과 맞춘 것
+
+12장 「빌더에게 맡긴 것」과 구현 중 이 스펙과 달라진 것. 본문(0~12장)은 사람이 승인한 판 그대로 두고, 지금 코드는 이 장이 말한다. 계획(`docs/superpowers/plans/2026-11-03-human-dm.md`)의 「계획 판정」 PH1~PH14 를 옮기고, 태스크마다 계획과 달라진 것을 그 아래에 적는다.
+
+### 13.1 계획 판정(PH1~PH14)
+
+- **PH1 — 읽기 판정은 db 를 받는다.** `canReadChannel(db, viewer, channel)`·`assertChannelReadable(db, channel, userId)`(`apps/server/src/auth/channel-access.ts`) — `direct` 면 `channel_members` 의 (채널, user, viewer) 행을 읽는다. 부르는 자리(채널·카드·소켓·반응·첨부)를 모두 이 꼴로 바꿨다.
+- **PH2 — `membersOnly(channel)` 은 `kind === "direct"` 하나.** `readableChannelSql(userId)` 은 「`kind = 'channel'` ∨ 에이전트 DM 주인 ∨ (`kind = 'direct'` ∧ 사람 참여자 행)」. 비공개 채널(K)은 `membersOnly` 와 이 EXISTS 갈래에 `visibility = 'private'` 를 더하면 된다.
+- **PH3 — 한 줄기인지는 저장하지 않는다.** 서버 `directHasAgents(db, channelId)`(`apps/server/src/modules/directs/service.ts` — 에이전트 참여자 행 존재). 웹이 가르는 값은 아래 태스크 5 줄.
+- **PH4 — 한 줄기 `direct` 의 대화 규칙.** `message.send { newConversation }`·`PATCH /conversations/:id`(제목·닫기) → `VALIDATION`. 웹 URL 은 `/c/<채널 id>` 하나 — 채널 레이아웃이 그 대화를 바로 그리고 `s/<id>` 로 와도 그린다.
+- **PH5 — 세션 `direct` 의 세션 권한은 참여자 누구나**(`conversations/service.ts`·웹 `features/conversations/permissions.ts`). 세션 관리자·세션 정책은 쓰지 않는다.
+- **PH6 — 멘션.** `direct` 의 사람 글은 `channelParticipants` 로만 토큰을 만들고, 사람·에이전트 글 모두 그 뒤 참여자가 아닌 id 의 토큰 꼴을 `directMentions(text, participants)` 로 중화한다. `joinChannelIfAbsent` 는 부르지 않는다.
+- **PH7 — 그룹 DM 의 승인 결정자는 `approvals.requested_by`.** 채널이 `direct` 면 모든 승인 종류에 그 런의 `runs.requested_by` 를 채운다. `approval.resolve`·`approvals/service.ts`·웹 `canDecideApproval` 은 `direct` 면 `userId === approval.requestedBy`(null 이면 `FORBIDDEN`) — 역할은 보지 않는다.
+- **PH8 — 시킨 사람 관문 `directRunBlock(db, { channelId, agentId, requestedBy })`** → `"no_requester" | "dm_not_allowed" | null`(`direct` 가 아니면 늘 null, 시킨 사람의 지금 역할로 `dmAccessAllows`). 라우터는 런을 만들기 전에 불러 막히면 런 없이 그 대화(스레드면 그 스레드)에 `system` 글(`systemMeta.kind: "info"`) 「@<핸들> 는 이 요청에 답하지 않았습니다 — 시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다」(시킨 사람이 없으면 「— 시킨 사람이 없습니다」)를 남긴다. 디스패치도 같은 함수로 막아 `abort_requested`(시스템 글 없음).
+- **PH9 — REST.** `POST /api/v1/directs { userIds, agentIds }`(나 제외) → `{ channel, created }`, `GET /api/v1/directs` → `{ directs: DirectSummary[] }`. `users` 는 나를 뺀 사람 참여자(비활성 포함), `agents` 는 `agentForRole` 을 지난 참여 에이전트(보관 제외). 403 의 `details.agentId` 는 막은 에이전트 하나.
+- **PH10 — `DmReadOnlyReason` 에 `"peer_deactivated"`.** `directReadOnlyReason(db, channel)` — 1:1(사람 둘, 에이전트 없음)이고 상대가 비활성이면 그 값. 쓰기 경로(메시지·카드·반응·첨부)의 `assertDmWritable` 이 본다.
+- **PH11 — 실시간 대상 `channelAudience(db, channel)`**(`realtime/events.ts`) — `channel` 은 워크스페이스 룸, `dm` 은 주인의 user 룸, `direct` 는 사람 참여자(비활성 제외) 각자의 user 룸, 그 밖은 없음. `direct` 의 normal 글이면 `channel.activity` 의 `mentionedUserIds` 가 작성자를 뺀 사람 참여자 전원. 글·런 이벤트는 그 채널을 구독한 소켓에만 간다(user 룸으로 가는 것은 `channel.created`·`channel.activity`·승인).
+- **PH12 — 에이전트가 받는 것.** `InboundDeliver.groupDm?: true`. 플러그인 헤더·러너 턴 사실은 `[dodok context]` 다음 줄에 `formatGroupDmLine()`(「그룹 DM: 참여자만 보는 대화」), 참여자는 `channelParticipants`. 러너는 채널 틀을 받되 자리 문구가 「a group direct message in dodok」. 그룹 DM 은 채널 프롬프트가 늘 없다. 옛 플러그인은 `groupDm` 을 버리고 받는다.
+- **PH13 — 푸시.** `direct` 의 사람 normal 최상위·스레드 글과 에이전트 normal 정본은 작성자를 뺀 사람 참여자 전원에게(payload `kind: "mention"`, tag `direct:<conversationId>`, 본문 「DM」), `run_error`·승인 요청은 그 런의 `requestedBy` 에게만. 발송 직전 거름이 `directParticipants` 로 참여자가 아닌 사람을 걷는다.
+- **PH14 — 읽지 않음.** `reads/store.ts` 의 멘션 셈에 「`kind = 'direct'` ∧ normal 글」(작성자 본인은 지금 조건이 뺀다).
+
+### 13.2 태스크마다 계획·스펙과 달라진 것
+
+- **접근 판정(태스크 1).** `readableChannelSql` 의 에이전트 DM 갈래를 「`kind = 'dm'` ∧ `dm_owner_id` = 나」로 좁혔다(`dm_owner_id` 만 보면 다른 kind 의 행이 그 열로 열릴 수 있다). `loadReadableChannel` 이 SQL 로 먼저 걸러, 모르는 kind 의 채널은 500 이 아니라 404 다.
+- **열기·목록(태스크 3).** 시험 도우미 `createDirectChannelForTest` 는 검사 없는 `findOrCreateDirect` 를 부른다(검사는 `POST /directs` 경로의 시험이 본다). 에이전트 정본의 푸시를 이 태스크에서 냈다. 한 줄기 대화의 제목은 「DM」. `listDirects` 는 DM 마다 참여자를 따로 읽는다(N+1 — `docs/guides/plan.md` 8장 「이월」).
+- **그룹 DM 런(태스크 4).**
+  - `requesterOf` 를 `runs/context.ts` 로 옮겼다(순환 import).
+  - **카드 누름·「다시 실행」·이어가기가 시킨 사람 관문에 막히면 6.3 의 시스템 메시지가 아니라 누른 사람에게 `FORBIDDEN`(`details.agentId`)** 이다 — 저장·소비 전에 판정해 버튼은 살아 있다. 시스템 메시지는 사람 글의 멘션이 막혔을 때만이다.
+  - 러너 틀의 규칙 속성은 `channel="group-dm"`, 턴 사실은 「자리: 그룹 DM」, 러너 세션 제목은 「DM · …」. `runner-adapter` 가 `groupDm` 을 러너에 넘긴다.
+  - `run_error` 푸시는 13.1 PH13 의 꼴(시킨 사람에게만). 승인 결정자 판정은 소켓만이 아니라 서비스 층(`approvals/service.ts`)에도 있다.
+  - 러너 그룹 DM 틀에 채널 틀의 「The rules below were written by the channel's administrator in dodok's channel settings screen」 문장이 남는다(그룹 DM 에는 관리자·설정 화면이 없다). 모델 프롬프트라 ADR `docs/adr/0007-claude-agent-sdk-spike.md` 판단 없이 고치지 않았다 — `docs/guides/plan.md` 8장 「이월」.
+- **웹(태스크 5).**
+  - **PH3 의 「웹은 `agents.length > 0` 으로 가른다」는 틀렸다** — 보관된 에이전트는 `agents` 에서 빠지므로 에이전트가 있던 그룹이 한 줄기로 보였다. `DirectSummary.sessions`(서버 `directHasAgents` — 보관 여부와 무관한 참여자 행)로 가른다.
+  - 승인 알림은 그 채널이 어느 캐시(채널·DM·`direct` 목록)에도 없으면 그리지 않는다(기본이 닫힘). 셸이 채널 목록을 늘 들지만, 부팅 직후 목록 응답 전 몇 백 ms 창은 남는다(`docs/guides/plan.md` 8장 「이월」).
+  - 웹 `DmView.kind` 는 필수다.
+- **dev:fake·통합(태스크 6).** 런을 막은 사유 표 `DIRECT_RUN_BLOCK_REASON` 을 `directs/service.ts` 로 옮겼다(`no_requester` 는 「시킨 사람이 없습니다」).
+- **웹 다듬기.**
+  - 「새 메시지」 403(`FORBIDDEN` + 웹이 아는 `details.agentId`)은 서버 문구 대신 웹 문구 「@<핸들> 와 대화를 열 수 없습니다 — 에이전트가 꺼져 있거나, 참여자 가운데 이 에이전트의 DM 허용 범위 밖인 사람이 있습니다」(조사는 핸들에 맞춰 과·와) — 누구인지는 말하지 않는다. 웹이 모르는 에이전트면 서버 문구 그대로. 5.1 「서버 403 문구를 그대로」에서 벗어난다.
+  - 그룹 DM 카드가 시킨 사람 관문에 막히면(위 태스크 4 줄의 `FORBIDDEN`) 토스트 「@<핸들> 는 이 요청에 답하지 않았습니다 — <서버 사유>」 — 라우터 시스템 메시지와 같은 꼴.
+  - 보관된 에이전트를 빼면 보이는 상대가 한 사람뿐인 그룹은 사이드바·검색·대화 머리 모두 이름 뒤에 「(그룹)」 을 붙여 1:1 과 가른다(검색 줄은 「DM · <이름> (그룹)」). 사람 상대도 없으면 이름 없이 「(그룹)」 만 보인다(`docs/guides/plan.md` 8장 「이월」).
+- **실연(태스크 7).** 런 0회 하네스로 OpenClaw·러너 각 한 세션 — 결과는 `docs/superpowers/reports/2026-11-09-human-dm-live-smoke-report.md`. 스펙과 다른 것은 없었다.
