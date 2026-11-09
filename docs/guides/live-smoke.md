@@ -91,7 +91,7 @@ oc --version                     # OpenClaw 2026.9.5 (ec9c1a1)
 
 zsh 에서 Gateway id 를 셸 변수에 담을 때는 `GID`·`UID`·`EUID` 대신 `GWID` 같은 이름을 쓴다 — 셋은 읽기 전용 특수 변수라 `bad math expression` 으로 명령이 깨진다.
 
-`--ignore-scripts` 로 설치해도 `--dev` 의 `plugins`·`config`·`gateway run` 이 돈다. 설치가 `~/.openclaw`·`~/.openclaw-dev` 를 건드리지 않는지는 두 디렉터리의 `ls -la` 를 설치 전후로 떠서 `diff` 로 본다.
+`--ignore-scripts` 로 설치해도 `--dev` 의 `plugins`·`config`·`gateway run` 이 돈다. 설치·실연이 `~/.openclaw`·`~/.openclaw-dev` 를 건드리지 않는지는 시작 전에 표식 파일을 하나 만들어 두고 끝난 뒤 `find ~/.openclaw ~/.openclaw-dev -maxdepth 2 -newer <표식 파일>` 이 비었는지 본다. 두 디렉터리의 `ls -la` 를 전후로 떠서 해시를 견주면 바뀐 항목이 없어도 해시가 달라질 수 있다(그 디렉터리의 소켓 파일 등) — 그 비교는 판정에 쓰지 않는다.
 아래 절들의 `PATH="$OCBIN:$PATH" openclaw …` 는 이 `OCBIN` 을 그대로 쓴다.
 
 ### (a) 이전 실연·스파이크의 채널 설정 지우기
