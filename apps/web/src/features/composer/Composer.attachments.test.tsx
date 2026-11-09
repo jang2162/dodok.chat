@@ -325,6 +325,35 @@ describe("붙여넣기·끌어 놓기", () => {
     expect(toastInfo).toHaveBeenCalledWith(DROP_FOLDER, expect.anything());
   });
 
+  it("items 는 있는데 webkitGetAsEntry 가 없는 브라우저 — 폴더를 가릴 수 없으니 items 의 파일을 그대로 칩으로", () => {
+    const { box } = renderComposer();
+    const png = pngFile("끈.png");
+    fireEvent.drop(box, {
+      dataTransfer: {
+        files: [],
+        items: [{ kind: "file", getAsFile: () => png }],
+        types: ["Files"],
+        getData: () => "",
+      },
+    });
+    const items = within(chips() as HTMLElement).getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent("끈.png");
+    expect(toastInfo).not.toHaveBeenCalled();
+  });
+
+  it("칩 이름·title·aria-label 에 방향 제어 문자가 없다 — invoice<U+202E>fdp.exe 가 invoiceexe.pdf 로 보이지 않게", () => {
+    const { box } = renderComposer();
+    fireEvent.drop(box, {
+      dataTransfer: { files: [pdfFile("invoice\u202Efdp.exe", 10)], types: ["Files"], getData: () => "" },
+    });
+    const chip = within(chips() as HTMLElement).getByRole("listitem");
+    expect(within(chip).getByText("invoicefdp.exe")).toHaveAttribute("title", "invoicefdp.exe");
+    expect(within(chip).getByRole("button", { name: "invoicefdp.exe 빼기" })).toBeInTheDocument();
+    expect(within(chip).getByRole("progressbar")).toHaveAttribute("aria-label", "invoicefdp.exe 올리는 중");
+    expect(chip.outerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
+  });
+
   it("빈 파일은 서버에 보내지 않고 칩에 웹 문구", () => {
     const { box } = renderComposer();
     fireEvent.drop(box, {

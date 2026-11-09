@@ -6,6 +6,7 @@ import {
   MessageSend,
   OutboundMessage,
   parseArtifactUrl,
+  displayAttachmentName,
   sanitizeAttachmentName,
 } from "../src";
 
@@ -57,6 +58,30 @@ describe("첨부 계약", () => {
     // 방향 제어가 아닌 글자 결합·이음 문자는 그대로 — 이모지 ZWJ 열·아랍어 이름이 깨지지 않게
     expect(sanitizeAttachmentName("👩\u200D💻.png")).toBe("👩\u200D💻.png");
     expect(sanitizeAttachmentName("تقرير.pdf")).toBe("تقرير.pdf");
+  });
+
+  it("표시 이름은 양방향 제어 문자만 뺀다 — 다듬기와 같은 집합, 나머지 글자·공백·점은 그대로", () => {
+    expect(displayAttachmentName("invoice\u202Efdp.exe")).toBe("invoicefdp.exe");
+    for (const c of [
+      "\u202A",
+      "\u202B",
+      "\u202C",
+      "\u202D",
+      "\u202E",
+      "\u2066",
+      "\u2067",
+      "\u2068",
+      "\u2069",
+      "\u200E",
+      "\u200F",
+      "\u061C",
+    ]) {
+      expect(displayAttachmentName(`a${c}b.txt`), c.codePointAt(0)?.toString(16)).toBe("ab.txt");
+      expect(displayAttachmentName(`a${c}b.txt`)).toBe(sanitizeAttachmentName(`a${c}b.txt`));
+    }
+    expect(displayAttachmentName("\u202E\u2066")).toBe("file");
+    expect(displayAttachmentName(" .숨김/a.txt")).toBe(" .숨김/a.txt");
+    expect(displayAttachmentName("👩\u200D💻.png")).toBe("👩\u200D💻.png");
   });
 
   it("artifact URL 왕복", () => {

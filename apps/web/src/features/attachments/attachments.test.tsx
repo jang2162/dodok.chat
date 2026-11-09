@@ -129,12 +129,23 @@ describe("MessageAttachments — 파일", () => {
     expect(link).toHaveTextContent("내려받기");
   });
 
-  it("이름은 <bdi> 로 격리한다 — 이름 속 방향 제어 문자(U+202E)가 둘레의 크기·종류 글자 순서를 뒤집지 못하게", () => {
+  it("이름의 방향 제어 문자(U+202E)는 빼고 그린다 — 다듬기 전에 저장된 옛 이름도 확장자를 속이지 못하게(이름·title·aria-label)", () => {
     const spoof = { ...report, name: "invoice\u202Efdp.exe" };
     const { container } = render(<MessageAttachments attachments={[spoof]} />);
     const card = container.querySelector("[data-slot=file-card]") as HTMLElement;
-    const name = within(card).getByText("invoice\u202Efdp.exe");
+    const name = within(card).getByText("invoicefdp.exe");
     expect(name.tagName).toBe("BDI");
+    expect(name.parentElement).toHaveAttribute("title", "invoicefdp.exe");
+    expect(within(card).getByRole("link")).toHaveAttribute("aria-label", "invoicefdp.exe 내려받기");
+    expect(card.outerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
+  });
+
+  it("이미지 칸의 alt·aria-label 에도 방향 제어 문자가 없다", () => {
+    const spoof = image(ID1, "photo\u202Egnp.exe", 100, 100);
+    const { container } = render(<MessageAttachments attachments={[spoof]} />);
+    expect(screen.getByRole("img")).toHaveAttribute("alt", "photognp.exe");
+    expect(screen.getByRole("button", { name: "photognp.exe 크게 보기" })).toBeInTheDocument();
+    expect(container.innerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
   });
 
   it("종류는 MIME 으로 — 이미지·텍스트, 그 밖은 확장자 대문자", () => {

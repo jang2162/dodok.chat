@@ -1,4 +1,4 @@
-import type { Attachment } from "@dodok/shared";
+import { type Attachment, displayAttachmentName } from "@dodok/shared";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { FileCard } from "./FileCard";
@@ -39,7 +39,8 @@ type ImageProps = {
  * 자기 서버 이미지 한 칸 — 누르면 크게 보기. 못 불러오면(권한·없음·깨짐) 파일 카드 꼴로 물러난다(스펙 6.2·7장).
  * `label` 은 표시 이름(기본은 첨부 이름) — media 블록의 alt 가 여기로 온다
  */
-export function AttachmentImage({ attachment: a, single, label = a.name, onOpen }: ImageProps) {
+export function AttachmentImage({ attachment: a, single, label: rawLabel = a.name, onOpen }: ImageProps) {
+  const label = displayAttachmentName(rawLabel);
   const [failed, setFailed] = useState(false);
   const src = attachmentHref(a);
   if (failed || !src)

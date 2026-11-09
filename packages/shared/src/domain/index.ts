@@ -237,14 +237,28 @@ export function isImageMime(mime: string): boolean {
 }
 
 /**
- * 표시·`artifact://` 해석용 이름. 경로 구분자·제어 문자·양방향 제어 문자를 빼고 앞뒤 공백과 앞쪽 점을 걷는다. 비면 "file", 최대 255자.
- * 양방향 제어(U+202A–202E 내장·덮어쓰기, U+2066–2069 격리, U+200E·200F·061C 방향 표시)는 \p{Cc} 가 아니라 따로 적는다 — 남기면
- * `invoice<U+202E>fdp.exe` 가 화면에 `invoiceexe.pdf` 로 보여 확장자를 속인다. ZWJ(U+200D) 같은 이음 문자는 이모지 열이 깨지므로 둔다
+ * 양방향 제어(U+202A–202E 내장·덮어쓰기, U+2066–2069 격리, U+200E·200F·061C 방향 표시) — \p{Cc} 가 아니라 따로 적는다. 남기면
+ * `invoice<U+202E>fdp.exe` 가 화면에 `invoiceexe.pdf` 로 보여 확장자를 속인다. ZWJ(U+200D) 같은 이음 문자는 이모지 열이 깨지므로 넣지 않는다
+ */
+const BIDI_CONTROLS_RE = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/gu;
+
+/**
+ * 화면에 그릴 첨부 이름 — 양방향 제어 문자만 뺀다. 서버가 저장 때 다듬기 전에 들어온 옛 이름도 위장 없이 보이게 한다.
+ * 비면 "file"(`sanitizeAttachmentName` 과 같은 값)
+ */
+export function displayAttachmentName(name: string): string {
+  return name.replace(BIDI_CONTROLS_RE, "") || "file";
+}
+
+/**
+ * 표시·`artifact://` 해석용 이름. 경로 구분자·제어 문자·양방향 제어 문자(`BIDI_CONTROLS_RE`)를 빼고 앞뒤 공백과 앞쪽 점을 걷는다.
+ * 비면 "file", 최대 255자
  */
 export function sanitizeAttachmentName(raw: string): string {
   const cleaned = Array.from(
     raw
-      .replace(/[\p{Cc}/\\\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/gu, "")
+      .replace(BIDI_CONTROLS_RE, "")
+      .replace(/[\p{Cc}/\\]/gu, "")
       .trim()
       .replace(/^\.+/, "")
       .trim(),

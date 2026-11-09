@@ -1,3 +1,4 @@
+import { displayAttachmentName } from "@dodok/shared";
 import { FileIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -46,16 +47,17 @@ export function FileCard({
   slot = "file-card",
   className,
 }: Props) {
+  const shown = displayAttachmentName(name);
   const sizeText = size === undefined ? undefined : formatSize(size);
-  const kind = kindLabel(mime, name);
+  const kind = kindLabel(mime, shown);
   const line = note ?? (href ? undefined : LINK_BLOCKED);
   return (
     <div data-slot={slot} className={cn("flex items-center gap-2 rounded-md border px-3 py-2", className)}>
       <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 이름은 남이 지은 글자다 — 방향 제어 문자(U+202E 등)가 둘레의 크기·종류 글자 순서를 뒤집지 못하게 격리한다 */}
-        <span className="truncate text-sm" title={name}>
-          <bdi>{name}</bdi>
+        <span className="truncate text-sm" title={shown}>
+          <bdi>{shown}</bdi>
         </span>
         {(sizeText || kind) && (
           <span className="flex gap-1.5 text-xs text-muted-foreground">
@@ -72,7 +74,7 @@ export function FileCard({
       </div>
       {href && (
         <Button asChild variant="outline" size="sm" className="shrink-0">
-          <a href={href} aria-label={`${name} 내려받기`}>
+          <a href={href} aria-label={`${shown} 내려받기`}>
             내려받기
           </a>
         </Button>

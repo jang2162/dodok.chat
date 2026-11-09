@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { useImageViewer, type ViewerImage } from "./ImageViewer";
@@ -118,12 +118,16 @@ describe("ImageViewer — 크게 보기(스펙 6.4)", () => {
     expect(screen.getByRole("img", { name: "바깥 그림" })).toHaveAttribute("referrerpolicy", "no-referrer");
   });
 
-  it("대화상자 제목의 이름은 <bdi> 로 격리한다 — 방향 제어 문자가 「n / 전체」 쪽으로 새지 않게", async () => {
+  it("대화상자 제목·title·alt 에서 방향 제어 문자를 빼고, 이름은 <bdi> 로 격리한다 — 옛 이름도 확장자를 속이지 못하게", async () => {
     const user = userEvent.setup();
     const spoof = [{ ...IMAGES[0], name: "photo\u202Egnp.exe" } as ViewerImage];
     render(<Harness images={spoof} />);
     await user.click(screen.getByRole("button", { name: "photo\u202Egnp.exe 크게 보기" }));
-    expect(screen.getByText("photo\u202Egnp.exe", { selector: "bdi" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "photognp.exe" });
+    const title = screen.getByText("photognp.exe", { selector: "bdi" });
+    expect(title.parentElement).toHaveAttribute("title", "photognp.exe");
+    expect(within(dialog).getByRole("img")).toHaveAttribute("alt", "photognp.exe");
+    expect(dialog.outerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
   });
 
   it("onGoToMessage 가 있으면 「메시지로 가기」 — 누르면 닫고 부른다. 없으면 단추가 없다(메시지 본문의 격자)", async () => {
