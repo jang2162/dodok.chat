@@ -1,0 +1,1 @@
+CREATE INDEX `attachments_channel_message` ON `attachments` (`channel_id`,`message_id`);
