@@ -38,7 +38,9 @@ vi.mock("@dodok/openclaw-adapter", async (importOriginal) => {
 import {
   DEV_FAKE_CHANNEL_NAME,
   DEV_FAKE_DISK_PATH,
+  DEV_FAKE_DIRECT_TEXT,
   DEV_FAKE_DM_TEXT,
+  DEV_FAKE_GROUP_TEXT,
   DEV_FAKE_GATEWAY_BACKOFF,
   DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
@@ -2233,7 +2235,7 @@ describe("startDevFake 고정 member 계정 — mia", () => {
 /** dev:fake 가 DM 씨앗의 답을 기다리는 상한(scripts/dev-fake.ts DM_SEED_TIMEOUT_MS) — 막히면 이만큼 걸린 뒤 던진다 */
 const DM_SEED_WAIT_MS = 10_000;
 
-describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ dev DM 에 세션 하나(에이전트 DM 계획 태스크 6)", () => {
+describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ dev DM 에 세션 하나·owner ↔ mia 1:1·owner·mia·dev 그룹 DM(에이전트 DM·사람 간 DM 계획 태스크 6)", () => {
   let dir: string;
   let dev: DevFake | undefined;
   let socket: WireSocket | undefined;
@@ -2301,6 +2303,60 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
     expect(seeded.map((m) => m.authorType)).toEqual(["user", "agent"]);
     expect(seeded[0]?.bodyMd).toBe(DEV_FAKE_DM_TEXT);
     expect(seeded[1]?.bodyMd).toContain("잘 받았어요");
+
+    // 사람 DM 씨앗 — mia 의 /directs 에 owner 1:1(한 줄기 — owner 글 하나)과 owner·dev 그룹(세션 하나 — owner 의 @dev 글 + 대본 답)
+    type Directs = {
+      directs: Array<{
+        channel: { id: string; kind: string };
+        users: Array<{ handle: string }>;
+        agents: Array<{ handle: string }>;
+        sessions: boolean;
+      }>;
+    };
+    const { directs } = await restAs<Directs>(dev.url, mia.cookie, "GET", "/directs");
+    const shape = (d: Directs["directs"][number]) =>
+      `${d.users.map((u) => u.handle).join(",")}|${d.agents.map((a) => a.handle).join(",")}|${d.sessions}`;
+    expect(directs.map(shape).sort()).toEqual(["owner|dev|true", "owner||false"]);
+    expect(directs.every((d) => d.channel.kind === "direct")).toBe(true);
+    const oneToOne = directs.find((d) => !d.sessions);
+    const group = directs.find((d) => d.sessions);
+    const { conversations: lineConversations } = await restAs<{ conversations: Array<{ id: string }> }>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/channels/${oneToOne?.channel.id}/conversations?status=open`,
+    );
+    expect(lineConversations).toHaveLength(1);
+    const { messages: lineMessages } = await restAs<Listed>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/conversations/${lineConversations[0]?.id}/messages`,
+    );
+    expect(lineMessages.map((m) => [m.authorType, m.bodyMd])).toEqual([["user", DEV_FAKE_DIRECT_TEXT]]);
+    const { conversations: groupSessions } = await restAs<{ conversations: Array<{ id: string }> }>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/channels/${group?.channel.id}/conversations?status=open`,
+    );
+    expect(groupSessions).toHaveLength(1);
+    const { messages: groupMessages } = await restAs<Listed>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/conversations/${groupSessions[0]?.id}/messages`,
+    );
+    expect(groupMessages.map((m) => m.authorType)).toEqual(["user", "agent"]);
+    // 사람 글의 @dev 는 참여자 토큰이 된다(에이전트 id 꼴)
+    expect(groupMessages[0]?.bodyMd).toMatch(/^<@a:[^>]+> /);
+    expect(groupMessages[0]?.bodyMd.replace(/^<@a:[^>]+>/, "@dev")).toBe(DEV_FAKE_GROUP_TEXT);
+    // owner 는 두 direct 의 참여자다 — 같은 둘이 보인다
+    expect(
+      (await restAs<Directs>(dev.url, owner.cookie, "GET", "/directs")).directs
+        .map((d) => d.channel.id)
+        .sort(),
+    ).toEqual(directs.map((d) => d.channel.id).sort());
 
     // owner 는 mia 의 DM 을 목록·REST 어디에서도 못 본다
     expect((await restAs<Dms>(dev.url, owner.cookie, "GET", "/dms")).dms).toEqual([]);

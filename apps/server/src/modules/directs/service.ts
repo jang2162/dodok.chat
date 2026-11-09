@@ -171,6 +171,15 @@ export function openDirect(
 export type DirectRunBlock = "no_requester" | "dm_not_allowed";
 
 /**
+ * 사유의 문구 — 라우터의 시스템 메시지(`… 는 이 요청에 답하지 않았습니다 — <문구>`)와 카드 누름·「다시 실행」의 FORBIDDEN 이 같은 사유를
+ * 같은 말로 한다(사람 간 DM 계획 Global Constraints 의 문구)
+ */
+export const DIRECT_RUN_BLOCK_REASON: Record<DirectRunBlock, string> = {
+  dm_not_allowed: "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다",
+  no_requester: "시킨 사람이 없습니다",
+};
+
+/**
  * 그룹 DM 의 런을 시킨 사람이 그 에이전트를 부를 수 있는가(사람 간 DM 스펙 6.3) — 열 때 본 dmAccess 를 런마다 다시 본다. 연 뒤 dmAccess 를
  * 좁히거나 시킨 사람이 강등·비활성화돼도 그룹 DM 이 dmAccess 를 우회하는 길이 되지 않게. 비활성이면 역할이 없어 dm_not_allowed 다.
  * direct 가 아니면 늘 null — 일반 채널·에이전트 DM 은 이 관문을 지나지 않는다. 라우터가 런을 만들기 전에, 디스패치가 보내기 직전에 부른다

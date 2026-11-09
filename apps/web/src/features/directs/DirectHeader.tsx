@@ -66,12 +66,14 @@ export function DirectHeader({
         </Button>
       )}
       {direct && (peer ? <PeerTitle peer={peer} /> : <GroupTitle direct={direct} />)}
-      {sessions && (
-        <div className="flex min-w-0 shrink items-center gap-1 text-xs">
+      {sessions ? (
+        // 남은 자리만 쓴다(flex-1 의 기준 0) — 같은 줄의 세션 제목이 자기 폭을 쥐면 390px 에서 참여자 이름이 한 글자로 잘린다
+        <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
           <ConversationTitle channelId={channel.id} conversationId={conversationId} />
         </div>
+      ) : (
+        <div className="flex-1" />
       )}
-      <div className="flex-1" />
       {sessions && canCreate && conversationId !== NEW_CONVERSATION && (
         <Button asChild variant="ghost" size="icon-sm">
           <Link

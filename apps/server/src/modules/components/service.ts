@@ -8,7 +8,7 @@ import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
-import { directRunBlock } from "../directs/service";
+import { DIRECT_RUN_BLOCK_REASON, directRunBlock } from "../directs/service";
 import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
@@ -172,11 +172,9 @@ function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput,
  */
 function assertDirectRequester(tx: DbOrTx, channelId: string, target: Target, userId: string): void {
   const requestedBy = target.triggerKind === "retry" ? getRunRequestedBy(tx, target.run.id) : userId;
-  if (directRunBlock(tx, { channelId, agentId: target.agentId, requestedBy }) !== null) {
-    throw apiError("FORBIDDEN", "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다", {
-      agentId: target.agentId,
-    });
-  }
+  const block = directRunBlock(tx, { channelId, agentId: target.agentId, requestedBy });
+  if (block !== null)
+    throw apiError("FORBIDDEN", DIRECT_RUN_BLOCK_REASON[block], { agentId: target.agentId });
 }
 
 /**

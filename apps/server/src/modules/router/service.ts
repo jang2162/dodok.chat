@@ -7,7 +7,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, rowToAgent } from "../agents/service";
 import { type ChannelRecord, getChannel, listMembers } from "../channels/service";
-import { type DirectRunBlock, directRunBlock } from "../directs/service";
+import { DIRECT_RUN_BLOCK_REASON, directRunBlock } from "../directs/service";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { requesterOf } from "../runs/context";
@@ -56,12 +56,6 @@ const SYSTEM_KIND: Record<BlockedReason, SystemKind> = {
 };
 
 const CONTINUE_HINT = "계속하려면 사람이 멘션하거나 이어가기를 누르세요.";
-
-/** 그룹 DM 의 시킨 사람 관문(directRunBlock)에 막힌 런의 알림 — 문구는 사람 간 DM 계획 Global Constraints 그대로 */
-const DIRECT_BLOCK_REASON: Record<DirectRunBlock, string> = {
-  dm_not_allowed: "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다",
-  no_requester: "시킨 사람이 없습니다",
-};
 
 /** 스펙 3.7 — decideRuns 입력 조립 → enqueue / 사유별 시스템 메시지 */
 export function createRouter(deps: RouterDeps): Router {
@@ -181,7 +175,7 @@ export function createRouter(deps: RouterDeps): Router {
               conversationId: message.conversationId,
               ...(message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId }),
               kind: "info",
-              bodyMd: `@${handleOf(byId, plan.agentId)} 는 이 요청에 답하지 않았습니다 — ${DIRECT_BLOCK_REASON[block]}`,
+              bodyMd: `@${handleOf(byId, plan.agentId)} 는 이 요청에 답하지 않았습니다 — ${DIRECT_RUN_BLOCK_REASON[block]}`,
               systemMeta: { kind: "info" },
             });
             continue;

@@ -39,7 +39,10 @@
  * `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 건드리지 않는다 — 실제 서버에서도 0025 뒤 만든 채널에는 「이전 대화」가 없다.
  * 사무실 에이전트 dev 는 처음 등록할 때 dmAccess `everyone`(member mia 도 DM 을 연다), 나머지는 기본(admins). 씨앗 채널을 만든 시작에서만
  * mia ↔ dev DM 에 세션 하나를 둔다 — mia 글 하나(`DEV_FAKE_DM_TEXT`)를 서버 저장·라우터 경로로 보내고 가짜 대본의 답이 올 때까지 기다린다.
- * 인바운드 로그 줄(`dev:fake inbound reactions`)은 DM 런이면 헤더의 DM 줄(`dm`)과 세션 줄(`session`)도 싣는다.
+ * 같은 시작에서 사람 DM 씨앗 둘 — owner ↔ mia 1:1(owner 글 `DEV_FAKE_DIRECT_TEXT`)과 owner·mia·사무실 dev 그룹 DM 의 세션 하나(owner 의
+ * `DEV_FAKE_GROUP_TEXT` + 대본 답).
+ * 인바운드 로그 줄(`dev:fake inbound reactions`)은 DM 런이면 헤더의 DM 줄(`dm`)을, 그룹 DM 런이면 그룹 DM 줄(`groupDm`)을, 늘 세션 줄
+ * (`session`)을 싣는다.
  */
 import {
   type AdapterStatus,
@@ -48,6 +51,7 @@ import {
   BridgeHello,
   type DmAccess,
   formatDmLine,
+  formatGroupDmLine,
   formatSessionLine,
   type GatewayLinkState,
   type InboundDeliver,
@@ -60,6 +64,7 @@ import {
   type RunnerProgramStatus,
   type RunnerProjectRef,
   RunnerRootId,
+  type TeamRole,
 } from "@dodok/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -79,12 +84,14 @@ import {
   channels,
   conversations,
   gateways,
+  messages,
   runnerTokens,
   users,
 } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createConversation } from "../src/modules/conversations/store";
 import { resolveSendConversation } from "../src/modules/conversations/service";
+import { openDirect } from "../src/modules/directs/service";
 import { findOrCreateDm } from "../src/modules/dms/service";
 import { createUserMessage, sendUserMessage } from "../src/modules/messages/service";
 import {
@@ -178,6 +185,9 @@ export const DEV_FAKE_DM_AGENT = "dev";
 export const DEV_FAKE_DM_TEXT = "DM 은 처음이에요 — 이 세션은 나만 보죠?";
 /** 씨앗 DM 의 답을 기다리는 상한 — 대본 답은 델타 넷(150ms 간격)이라 보통 1초 안이다 */
 const DM_SEED_TIMEOUT_MS = 10_000;
+/** 씨앗 사람 DM 의 글 — owner ↔ mia 1:1 의 첫 글, owner·mia·dev 그룹 DM 세션의 첫 글(키워드가 없어 대본은 기본 답을 낸다) */
+export const DEV_FAKE_DIRECT_TEXT = "mia 님, 우리 둘만 보는 DM 입니다";
+export const DEV_FAKE_GROUP_TEXT = "@dev 그룹 DM 에서도 답해 주세요";
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
@@ -927,8 +937,9 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       senderName: d.message.author.displayName,
       reactions: (d.context.reactions ?? []).map((r) => `@${r.by} ${r.emoji} ${r.messageId} "${r.excerpt}"`),
       reactionsOmitted: d.context.reactionsOmitted,
-      // 헤더에 실릴 줄 — 가짜 플러그인·러너는 헤더를 만들지 않으므로 같은 shared 함수로 그 줄을 찍는다(DM 런만 dm)
+      // 헤더에 실릴 줄 — 가짜 플러그인·러너는 헤더를 만들지 않으므로 같은 shared 함수로 그 줄을 찍는다(DM 런만 dm, 그룹 DM 런만 groupDm)
       ...(d.dm ? { dm: formatDmLine(d.dm.ownerHandle) } : {}),
+      ...(d.groupDm ? { groupDm: formatGroupDmLine() } : {}),
       session: formatSessionLine(d.conversationTitle),
       participants: d.context.participants.map((p) => p.handle),
     },
@@ -1498,6 +1509,7 @@ function ensureDevFakeSessions(app: App): boolean {
  * mia ↔ 사무실 dev DM 에 세션 하나 — 웹이 지나는 길 그대로(`POST /dms` 의 findOrCreateDm → message.send newConversation 의
  * sendUserMessage + resolveSendConversation → 라우터)로 mia 글을 보내고 가짜 대본의 답이 저장될 때까지 기다린다. 플러그인이 붙은 뒤에
  * 부른다(앞이면 런이 ADAPTER_UNAVAILABLE 로 끝난다). 이미 세션이 있는 DM 은 건드리지 않는다.
+ * 같은 조건에서 사람 DM 씨앗 둘도 둔다(`seedDevFakeDirects`).
  * `--keep`(채널을 모두 보관한 DB 도 씨앗 조건에 든다)·사무실 플러그인이 못 붙음·dev 가 보관·꺼짐이면 경고만 남기고 건너뛴다 — 사람 손이
  * 닿은 DB 는 그대로 뜬다(플러그인 갈래와 같다). 새 DB 에서 답이 안 오면 던진다 — DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로
  * 오인하지 않게
@@ -1540,20 +1552,78 @@ async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected:
     return;
   }
   const { channel } = findOrCreateDm(db, { workspaceId, ownerId: mia.id, agentId: agent.id });
-  if (
-    db
+  if (!hasConversation(app, channel.id))
+    await sendAndAwaitReply(app, {
+      channelId: channel.id,
+      userId: mia.id,
+      role: "member",
+      bodyMd: DEV_FAKE_DM_TEXT,
+    });
+  await seedDevFakeDirects(app, { miaId: mia.id, agentId: agent.id });
+}
+
+function hasConversation(app: App, channelId: string): boolean {
+  return (
+    app.db
       .select({ id: conversations.id })
       .from(conversations)
-      .where(eq(conversations.channelId, channel.id))
-      .get()
-  )
-    return;
+      .where(eq(conversations.channelId, channelId))
+      .get() !== undefined
+  );
+}
+
+/**
+ * 사람 DM 씨앗 둘 — owner ↔ mia 1:1(한 줄기 — 채널을 만들 때 생긴 대화에 owner 글 하나, 멘션이 없어 런은 없다)과 owner·mia·사무실 dev
+ * 그룹 DM(세션 하나 — owner 의 `@dev` 글과 대본 답). 여는 길은 `POST /directs` 의 openDirect 그대로라 dev 의 dmAccess(`everyone`)를 참여자
+ * 전원으로 본다. 그룹에 글이 이미 있으면(같은 DB 의 두 번째 부름) 더하지 않는다
+ */
+async function seedDevFakeDirects(app: App, ids: { miaId: string; agentId: string }): Promise<void> {
+  const { db, workspaceId, ownerUserId } = app;
+  const open = (agentIds: string[]) => {
+    const result = openDirect(db, { workspaceId, userId: ownerUserId, userIds: [ids.miaId], agentIds });
+    if (result.created) app.bus.emit("channel.created", { channel: result.channel });
+    return result.channel;
+  };
+  const line = open([]);
+  const lineConversation = db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.channelId, line.id))
+    .get();
+  const lineHasMessage =
+    db.select({ id: messages.id }).from(messages).where(eq(messages.channelId, line.id)).get() !== undefined;
+  if (lineConversation && !lineHasMessage)
+    createUserMessage(db, app.bus, {
+      conversationId: lineConversation.id,
+      authorId: ownerUserId,
+      bodyMd: DEV_FAKE_DIRECT_TEXT,
+      clientMsgId: uuidv7(),
+    });
+  const group = open([ids.agentId]);
+  if (!hasConversation(app, group.id))
+    await sendAndAwaitReply(app, {
+      channelId: group.id,
+      userId: ownerUserId,
+      role: "owner",
+      bodyMd: DEV_FAKE_GROUP_TEXT,
+    });
+}
+
+/**
+ * 새 세션으로 사람 글 하나를 보내고(웹의 message.send newConversation 과 같은 sendUserMessage + resolveSendConversation → 라우터) 그
+ * 채널에 에이전트 답이 저장될 때까지 기다린다. `DM_SEED_TIMEOUT_MS` 안에 답이 없으면 던진다
+ */
+async function sendAndAwaitReply(
+  app: App,
+  input: { channelId: string; userId: string; role: TeamRole; bodyMd: string },
+): Promise<void> {
+  const { db } = app;
   let off: (() => void) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const replied = new Promise<void>((resolve, reject) => {
       off = app.bus.on("message.created", ({ message }) => {
-        if (message.channelId === channel.id && message.authorType === "agent") resolve();
+        if (message.channelId === input.channelId && message.authorType === "agent") resolve();
       });
       timer = setTimeout(
         () =>
@@ -1571,16 +1641,16 @@ async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected:
         resolveSendConversation(
           tx,
           {
-            channelId: channel.id,
-            userId: mia.id,
-            role: "member",
-            bodyMd: DEV_FAKE_DM_TEXT,
+            channelId: input.channelId,
+            userId: input.userId,
+            role: input.role,
+            bodyMd: input.bodyMd,
             newConversation: {},
           },
           now,
         ),
-      authorId: mia.id,
-      bodyMd: DEV_FAKE_DM_TEXT,
+      authorId: input.userId,
+      bodyMd: input.bodyMd,
       clientMsgId: uuidv7(),
     }).message;
     await app.services.router.routeMessage(sent);

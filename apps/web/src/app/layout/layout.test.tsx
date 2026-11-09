@@ -401,8 +401,13 @@ describe("AppShell", () => {
         },
       });
       try {
-        // 셸이 든 목록이 도착한 뒤의 새 승인 — 부팅 직후 목록 응답 전의 짧은 창은 이 시험이 재지 않는다
-        await waitFor(() => expect(queryClient.getQueryData(qk.channels)).toHaveLength(2));
+        // 셸이 든 목록이 도착한 뒤의 새 승인 — 부팅 직후 목록 응답 전의 짧은 창은 이 시험이 재지 않는다. 채널 목록이 아니라 셸의 다른
+        // 목록(DM·사람 DM)을 기다린 뒤 짧게 흘린다: 채널 목록을 기다리면 셸이 그 목록을 빼먹었을 때 알림 단언이 아니라 여기서 시간이 다 된다
+        await waitFor(() => {
+          expect(queryClient.getQueryData(qk.dms)).toBeDefined();
+          expect(queryClient.getQueryData(qk.directs)).toBeDefined();
+        });
+        await new Promise((r) => setTimeout(r, 20));
         fake.serverEmit("approval.requested", { approval: approval({ channelId: CH2 }) });
         expect(notification.made).toHaveLength(1);
         expect(notification.made[0]?.options?.body).toBe("random 채널");
