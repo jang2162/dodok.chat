@@ -140,6 +140,13 @@ export const qk = {
   conversation: (conversationId: string) => ["conversation", conversationId] as const,
   /** 모든 세션 하나 쿼리(무효화용 앞머리) */
   conversationAll: ["conversation"] as const,
+  /**
+   * 파일함(파일함 스펙 「데이터·실시간」) — 패널 「파일」 탭은 그 채널 키, 전체 화면은 `filesAll`. 거름은 그 뒤 원소로 붙인다. 채널 id 를
+   * 키에 두는 까닭은 탭을 연 채 채널을 옮겼을 때 옛 채널의 줄이 한 틱도 보이지 않게(Review Focus 5) — 그리고 새 글이 오면 그 채널 키만
+   * 낡게 한다. 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
+   */
+  files: (channelId: string) => ["files", channelId] as const,
+  filesAll: ["files", "all"] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */

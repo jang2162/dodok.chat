@@ -1,4 +1,5 @@
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react";
+import { displayAttachmentName } from "@dodok/shared";
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, MessageSquareIcon, XIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { Button } from "@/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/ui/dialog";
@@ -8,6 +9,8 @@ export type ViewerImage = {
   name: string;
   /** 원본 내려받기(`?download=1`) — 자기 서버 첨부만. https 이미지는 없다 */
   downloadHref?: string;
+  /** 있으면 「메시지로 가기」 단추 — 파일함 격자만 준다(메시지 본문의 격자는 이미 그 메시지 곁이다) */
+  onGoToMessage?: () => void;
 };
 
 type Props = {
@@ -28,6 +31,7 @@ type Props = {
 export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: Props) {
   const image = images[index];
   if (!image) return null;
+  const name = displayAttachmentName(image.name);
   const many = images.length > 1;
   const go = (next: number) => {
     if (next >= 0 && next < images.length && next !== index) onIndexChange(next);
@@ -51,8 +55,9 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
       >
         <div className="flex items-center gap-2">
           <div className="flex min-w-0 flex-1 items-baseline gap-2">
-            <DialogTitle className="truncate text-base" title={image.name}>
-              {image.name}
+            <DialogTitle className="truncate text-base" title={name}>
+              {/* 남이 지은 이름 — 방향 제어 문자가 옆의 「n / 전체」 순서를 뒤집지 못하게 격리한다 */}
+              <bdi>{name}</bdi>
             </DialogTitle>
             <DialogDescription className={many ? "shrink-0 text-white/70 tabular-nums" : "sr-only"}>
               {index + 1} / {images.length}
@@ -71,6 +76,21 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
               </a>
             </Button>
           )}
+          {image.onGoToMessage && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-white hover:bg-white/10 hover:text-white"
+              onClick={() => {
+                const go = image.onGoToMessage;
+                onClose();
+                go?.();
+              }}
+            >
+              <MessageSquareIcon aria-hidden />
+              메시지로 가기
+            </Button>
+          )}
           <DialogClose asChild>
             <Button variant="ghost" size="icon-sm" className="text-white hover:bg-white/10 hover:text-white">
               <XIcon aria-hidden />
@@ -82,7 +102,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
           <img
             key={image.src}
             src={image.src}
-            alt={image.name}
+            alt={name}
             referrerPolicy="no-referrer"
             className="max-h-full max-w-full object-contain"
           />

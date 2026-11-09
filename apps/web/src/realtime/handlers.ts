@@ -419,6 +419,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         bumpDm(qc, activity.channelId);
         bumpDirect(qc, activity.channelId);
       }
+      // 그 채널의 파일 탭 — 열려 있을 때만 다시 받는다(활성 쿼리). 전체 화면 키는 건드리지 않는다(파일함 계획 판정 PF5).
+      // 메시지 삭제가 들어오면 그 이벤트도 여기서 낡게 한다(파일함 스펙 「A 가 들어올 때」)
+      void qc.invalidateQueries({ queryKey: qk.files(activity.channelId) });
       useUnread.getState().applyActivity(activity, {
         me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
         viewing: subscriptions.active(),
@@ -464,6 +467,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.conversationListAll });
       // DM 목록은 이벤트로만 고친다(`dmsQuery` 는 저절로 낡지 않는다) — 끊긴 사이의 새 DM·읽기 전용 사유를 메운다(direct 목록도 함께)
       void invalidateDms(qc);
+      // 파일함은 channel.activity 로만 낡는다 — 끊긴 사이 올라온 첨부를 메운다(채널 탭 키·전체 화면 키 모두)
+      void qc.invalidateQueries({ queryKey: ["files"] });
     }
     connectedOnce = true;
   };

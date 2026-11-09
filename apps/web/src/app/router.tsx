@@ -177,6 +177,12 @@ export const channelActivityRoute = createRoute({
   path: "activity",
   component: lazyPage(() => import("@/features/activity/ActivityPanel"), "ActivityPanel"),
 });
+/** 파일 탭(파일함 스펙 「어디서 여나」) — 그 대화의 사진·파일. 세 종류(채널·에이전트 DM·사람 DM) 모두 이 채널 경로로 연다 */
+export const channelFilesRoute = createRoute({
+  getParentRoute: () => conversationRoute,
+  path: "files",
+  component: lazyPage(() => import("@/features/files/FilesPanel"), "FilesPanel"),
+});
 /**
  * 스레드 패널(스레드·검색 스펙 4.2) — 설정·활동과 같은 오른쪽 패널 자리의 탭 하나. 새로고침·푸시 링크로 바로 열린다.
  * `rootId` 는 그 세션의 루트 메시지 id — 답글 id·다른 세션의 루트면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」)
@@ -235,6 +241,12 @@ export const legacyChannelThreadRoute = createRoute({
       replace: true,
     });
   },
+});
+/** 파일 전체 화면(파일함 스펙 「어디서 여나」) — 내가 읽을 수 있는 모든 대화의 사진·파일. 사이드바 「파일」이 연다 */
+export const filesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/files",
+  component: lazyPage(() => import("@/features/files/FilesPage"), "FilesPage"),
 });
 /**
  * 설정(설정 통합 스펙 「설정 통합」 장, 계획 판정 PS5) — 레이아웃 라우트 하나 아래 탭 라우트. 넓은 화면의 탭 목록은 레이아웃이
@@ -367,6 +379,7 @@ const routeTree = rootRoute.addChildren([
       conversationRoute.addChildren([
         channelSettingsRoute,
         channelActivityRoute,
+        channelFilesRoute,
         channelThreadRoute,
         channelProfileRoute,
       ]),
@@ -375,6 +388,7 @@ const routeTree = rootRoute.addChildren([
       legacyChannelThreadRoute,
     ]),
     dmRoute,
+    filesRoute,
     settingsRoute.addChildren([
       settingsIndexRoute,
       accountRoute,

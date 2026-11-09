@@ -420,6 +420,37 @@ describe("AppShell", () => {
     }
   });
 
+  it("사이드바 「파일」은 /files 로 — 좁은 화면이면 시트가 닫힌다", async () => {
+    stubMedia(true);
+    stubChannels();
+    const { router } = renderRoute("/c/a");
+    const header = await screen.findByTestId("channel-header");
+    await userEvent.click(within(header).getByRole("button", { name: "채널 목록 열기" }));
+    const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
+    await userEvent.click(within(sheet).getByRole("link", { name: "파일" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/files"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByTestId("page-files")).toBeInTheDocument();
+  });
+
+  it("패널 탭 머리 — 「파일」은 설정·활동 뒤, 머리의 「파일」 단추가 탭을 여닫는다", async () => {
+    stubChannels();
+    const { router } = renderRoute("/c/a/s/a/files");
+    const panel = await screen.findByTestId("page-channel-panel");
+    expect(panel).toHaveAttribute("data-panel-tab", "files");
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(
+      within(tabs)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["설정", "활동", "파일"]);
+    const toggle = within(screen.getByTestId("channel-header")).getByRole("link", { name: "파일" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(toggle);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/a/s/a"));
+    expect(screen.queryByTestId("page-channel-panel")).toBeNull();
+  });
+
   it("시트가 링크로 닫히면 초점은 연 메뉴 버튼으로 돌아간다(Esc 로 닫아도)", async () => {
     stubMedia(true);
     stubChannels();

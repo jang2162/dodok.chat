@@ -1304,7 +1304,11 @@ it("좁은 화면에서 시트를 열면 초점이 탭 머리에서 시작한다
   const activityTab = within(sheet).getByRole("link", { name: "활동" });
   await waitFor(() => expect(activityTab).toHaveFocus());
   // 링크 차례는 그대로다 — 초점만 옮긴다
-  expect([...sheet.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual(["설정", "활동"]);
+  expect([...sheet.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual([
+    "설정",
+    "활동",
+    "파일",
+  ]);
 });
 
 it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 그대로다(D14)", async () => {
@@ -1316,7 +1320,11 @@ it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 �
 
   // 대화상자가 아니다 — 주소로 들어온 사용자의 초점을 빼앗지 않는다
   expect(document.activeElement).toBe(document.body);
-  expect([...aside.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual(["설정", "활동"]);
+  expect([...aside.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual([
+    "설정",
+    "활동",
+    "파일",
+  ]);
 });
 
 it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정」 링크로 돌아간다(D14)", async () => {

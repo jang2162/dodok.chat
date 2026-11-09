@@ -452,7 +452,7 @@ describe("DM 화면", () => {
     expect(server.bodies("PATCH", `/channels/${DM}`)).toHaveLength(1);
   });
 
-  it("설정·스레드 주소로 와도 패널을 그리지 않고, 활동 패널에는 활동 탭만 있다", async () => {
+  it("설정·스레드 주소로 와도 패널을 그리지 않고, 활동 패널의 탭은 활동·파일뿐이다", async () => {
     stubServer();
     const { router } = renderRoute(`/c/${DM}/s/${A}/settings`);
     await screen.findByTestId("dm-header");
@@ -464,7 +464,21 @@ describe("DM 화면", () => {
       within(tabs)
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["활동"]);
+    ).toEqual(["활동", "파일"]);
+  });
+
+  it("파일 주소로 오면 패널을 그린다 — 탭은 활동·파일, 머리에 「파일」 단추", async () => {
+    stubServer();
+    renderRoute(`/c/${DM}/s/${A}/files`);
+    const panel = await screen.findByTestId("page-channel-panel");
+    expect(panel).toHaveAttribute("data-panel-tab", "files");
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(
+      within(tabs)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["활동", "파일"]);
+    expect(within(screen.getByTestId("dm-header")).getByRole("link", { name: "파일" })).toBeInTheDocument();
   });
 
   it("세션 목록은 날짜 묶음 — 오늘·어제·이번 주·이전 순(브라우저 시간대)", async () => {

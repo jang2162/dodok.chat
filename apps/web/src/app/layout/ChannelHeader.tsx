@@ -11,6 +11,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
+import { FilesTabLink } from "./PanelTabs";
 import { OpenSidebarButton } from "./sidebarSheet";
 
 /** 헤더에 보이는 에이전트 아바타 수 — 넘치면 「+N」 */
@@ -131,6 +132,7 @@ export function ChannelHeader({
         </Button>
       )}
       <CloseConversationButton channelId={channelId} conversationId={conversationId} />
+      <FilesTabLink channelId={channelId} conversationId={conversationId} />
       <Button asChild variant="ghost" size="icon-sm">
         <Link
           ref={settingsRef}

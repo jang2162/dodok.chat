@@ -1,4 +1,6 @@
+import { displayAttachmentName } from "@dodok/shared";
 import { FileIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { LINK_BLOCKED } from "@/features/components/blocks/artifact";
 import { Button } from "@/ui/button";
@@ -24,22 +26,38 @@ type Props = {
   href?: string;
   /** 이름 아래 한 줄(「이미지를 불러오지 못했습니다」 등) */
   note?: string;
+  /** 크기·종류 아래 한 줄 더 — 파일함의 올린 사람·대화·날짜 */
+  meta?: ReactNode;
+  /** 「내려받기」 옆에 둘 단추 — 파일함의 「메시지로 가기」 */
+  actions?: ReactNode;
   /** 바깥에서 부를 이름 — components 의 file 블록은 `file` 로 부른다 */
   slot?: string;
   className?: string;
 };
 
-/** 파일 카드 — 아이콘·이름·크기·종류와 「내려받기」. 메시지 첨부·이미지 물러남·components 가 같이 쓴다 */
-export function FileCard({ name, size, mime, href, note, slot = "file-card", className }: Props) {
+/** 파일 카드 — 아이콘·이름·크기·종류와 「내려받기」. 메시지 첨부·이미지 물러남·components·파일함이 같이 쓴다 */
+export function FileCard({
+  name,
+  size,
+  mime,
+  href,
+  note,
+  meta,
+  actions,
+  slot = "file-card",
+  className,
+}: Props) {
+  const shown = displayAttachmentName(name);
   const sizeText = size === undefined ? undefined : formatSize(size);
-  const kind = kindLabel(mime, name);
+  const kind = kindLabel(mime, shown);
   const line = note ?? (href ? undefined : LINK_BLOCKED);
   return (
     <div data-slot={slot} className={cn("flex items-center gap-2 rounded-md border px-3 py-2", className)}>
       <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm" title={name}>
-          {name}
+        {/* 이름은 남이 지은 글자다 — 방향 제어 문자(U+202E 등)가 둘레의 크기·종류 글자 순서를 뒤집지 못하게 격리한다 */}
+        <span className="truncate text-sm" title={shown}>
+          <bdi>{shown}</bdi>
         </span>
         {(sizeText || kind) && (
           <span className="flex gap-1.5 text-xs text-muted-foreground">
@@ -51,15 +69,17 @@ export function FileCard({ name, size, mime, href, note, slot = "file-card", cla
             {kind && <span data-slot="file-kind">{kind}</span>}
           </span>
         )}
+        {meta}
         {line && <span className="text-xs text-muted-foreground">{line}</span>}
       </div>
       {href && (
         <Button asChild variant="outline" size="sm" className="shrink-0">
-          <a href={href} aria-label={`${name} 내려받기`}>
+          <a href={href} aria-label={`${shown} 내려받기`}>
             내려받기
           </a>
         </Button>
       )}
+      {actions}
     </div>
   );
 }

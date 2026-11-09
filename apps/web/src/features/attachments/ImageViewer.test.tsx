@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useImageViewer, type ViewerImage } from "./ImageViewer";
 
 const IMAGES: ViewerImage[] = [
@@ -116,5 +116,31 @@ describe("ImageViewer — 크게 보기(스펙 6.4)", () => {
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("button", { name: "다음 이미지" })).toBeNull();
     expect(screen.getByRole("img", { name: "바깥 그림" })).toHaveAttribute("referrerpolicy", "no-referrer");
+  });
+
+  it("대화상자 제목·title·alt 에서 방향 제어 문자를 빼고, 이름은 <bdi> 로 격리한다 — 옛 이름도 확장자를 속이지 못하게", async () => {
+    const user = userEvent.setup();
+    const spoof = [{ ...IMAGES[0], name: "photo\u202Egnp.exe" } as ViewerImage];
+    render(<Harness images={spoof} />);
+    await user.click(screen.getByRole("button", { name: "photo\u202Egnp.exe 크게 보기" }));
+    const dialog = screen.getByRole("dialog", { name: "photognp.exe" });
+    const title = screen.getByText("photognp.exe", { selector: "bdi" });
+    expect(title.parentElement).toHaveAttribute("title", "photognp.exe");
+    expect(within(dialog).getByRole("img")).toHaveAttribute("alt", "photognp.exe");
+    expect(dialog.outerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
+  });
+
+  it("onGoToMessage 가 있으면 「메시지로 가기」 — 누르면 닫고 부른다. 없으면 단추가 없다(메시지 본문의 격자)", async () => {
+    const user = userEvent.setup();
+    const go = vi.fn();
+    const { unmount } = render(<Harness images={[{ ...(IMAGES[0] as ViewerImage), onGoToMessage: go }]} />);
+    await user.click(screen.getByRole("button", { name: "하나.png 크게 보기" }));
+    await user.click(screen.getByRole("button", { name: "메시지로 가기" }));
+    expect(go).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    unmount();
+    render(<Harness images={IMAGES} />);
+    await user.click(screen.getByRole("button", { name: "하나.png 크게 보기" }));
+    expect(screen.queryByRole("button", { name: "메시지로 가기" })).toBeNull();
   });
 });

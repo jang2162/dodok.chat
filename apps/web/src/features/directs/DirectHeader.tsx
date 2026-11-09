@@ -2,6 +2,7 @@ import type { Channel, DirectSummary } from "@dodok/shared";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { ActivityIcon, ListIcon, SquarePenIcon } from "lucide-react";
 import { type ReactNode, type RefObject, useState } from "react";
+import { FilesTabLink } from "@/app/layout/PanelTabs";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
 import { useConversationPermissions } from "@/features/conversations/permissions";
@@ -87,6 +88,12 @@ export function DirectHeader({
         </Button>
       )}
       {sessions && <CloseConversationButton channelId={channel.id} conversationId={conversationId} />}
+      {/* 한 줄기에는 활동 단추가 없다 — 패널을 닫으면 초점이 이 단추로 돌아온다 */}
+      <FilesTabLink
+        channelId={channel.id}
+        conversationId={conversationId}
+        ref={sessions ? undefined : activityRef}
+      />
       {sessions && (
         <Button asChild variant="ghost" size="icon-sm">
           <Link
