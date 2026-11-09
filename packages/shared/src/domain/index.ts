@@ -236,11 +236,15 @@ export function isImageMime(mime: string): boolean {
   return (ATTACHMENT_LIMITS.imageMimes as readonly string[]).includes(mime);
 }
 
-/** 표시·`artifact://` 해석용 이름. 경로 구분자·제어 문자를 빼고 앞뒤 공백과 앞쪽 점을 걷는다. 비면 "file", 최대 255자 */
+/**
+ * 표시·`artifact://` 해석용 이름. 경로 구분자·제어 문자·양방향 제어 문자를 빼고 앞뒤 공백과 앞쪽 점을 걷는다. 비면 "file", 최대 255자.
+ * 양방향 제어(U+202A–202E 내장·덮어쓰기, U+2066–2069 격리, U+200E·200F·061C 방향 표시)는 \p{Cc} 가 아니라 따로 적는다 — 남기면
+ * `invoice<U+202E>fdp.exe` 가 화면에 `invoiceexe.pdf` 로 보여 확장자를 속인다. ZWJ(U+200D) 같은 이음 문자는 이모지 열이 깨지므로 둔다
+ */
 export function sanitizeAttachmentName(raw: string): string {
   const cleaned = Array.from(
     raw
-      .replace(/[\p{Cc}/\\]/gu, "")
+      .replace(/[\p{Cc}/\\\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/gu, "")
       .trim()
       .replace(/^\.+/, "")
       .trim(),
