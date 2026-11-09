@@ -9,6 +9,8 @@ import { useWireStatus, WireAckError } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { APPROVAL, APPROVAL2, CH, CH2, USER, approval, iso } from "../../../test/fixtures";
 import { authorsClient, ME_USER, OWNER_PERSON, renderWithClient } from "../../../test/messages";
+import { DmViewContext } from "@/features/dms/context";
+import { channelOf } from "../../../test/shellApi";
 import { ApprovalCard, resolveErrorMessage } from "./ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "./approvalStore";
 
@@ -716,5 +718,36 @@ describe("ApprovalCard — 확인 카드(dodok_control)", () => {
       "시킨 사람만 결정할 수 있습니다",
     );
     expect(resolveErrorMessage(new WireAckError("FORBIDDEN", "x"), "plugin")).toBe("권한이 없습니다");
+  });
+});
+
+describe("ApprovalCard — 그룹 DM(사람 간 DM 계획 판정 PH7)", () => {
+  const direct = channelOf(CH, { kind: "direct", name: "direct", visibility: "private" });
+  function renderInGroup(a: Approval, qc: ReturnType<typeof controlClient>) {
+    act(() => useApprovalStore.getState().apply(a));
+    return renderWithClient(
+      <DmViewContext.Provider value={{ kind: "direct", channel: direct, readOnly: null }}>
+        <ApprovalCard approvalId={a.id} channelId={a.channelId} />
+      </DmViewContext.Provider>,
+      qc,
+    );
+  }
+
+  it("시킨 사람에게만 결정 단추 — member 라도", () => {
+    renderInGroup(approval({ requestedBy: MIA }), controlClient("mia"));
+    expect(screen.getByRole("button", { name: "이번만 허용" })).toBeInTheDocument();
+    expect(screen.queryByText("관리자가 결정합니다")).toBeNull();
+  });
+
+  it("다른 참여자에게는 owner 라도 단추 대신 「@<시킨 사람> 님이 결정합니다」 — 확인 카드도 같다", () => {
+    const { unmount } = renderInGroup(approval({ requestedBy: MIA }), controlClient("owner"));
+    expect(screen.queryByRole("button", { name: "이번만 허용" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "거절" })).toBeNull();
+    expect(screen.getByText("@mia 님이 결정합니다")).toBeInTheDocument();
+    expect(screen.queryByText("관리자가 결정합니다")).toBeNull();
+    unmount();
+    renderInGroup(control({ requestedBy: MIA }), controlClient("owner"));
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("@mia 님이 결정합니다")).toBeInTheDocument();
   });
 });

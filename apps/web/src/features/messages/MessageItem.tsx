@@ -141,8 +141,8 @@ export function MessageItem({
   const closed = useConversationClosed();
   const dm = useDmView();
   const archived = channelArchived || closed || (dm !== null && dm.readOnly !== null);
-  // 스레드 행동이 없는 자리 — 스레드 패널 안, 그리고 DM
-  const noThreads = inThread || dm !== null;
+  // 스레드 행동이 없는 자리 — 스레드 패널 안, 그리고 에이전트 DM(사람 DM·그룹 DM 은 스레드를 연다 — 사람 간 DM 스펙 결정 10)
+  const noThreads = inThread || dm?.kind === "dm";
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
   const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)

@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { MemberRow } from "@dodok/shared";
 import { api } from "@/api/http";
 import { qk, useCanManage, useMe, usePeople } from "@/api/queries";
 import { StatusForm } from "@/features/account/StatusForm";
+import { useOpenDirect } from "@/features/directs/queries";
 import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { isDeactivated } from "@/features/members/deactivated";
 import { PRESENCE_LABEL, SELF_INVISIBLE_LABEL, WithPresence } from "@/features/presence/PresenceDot";
@@ -16,7 +18,8 @@ import { Field, NotFound } from "./ProfileParts";
 
 /**
  * 사람 프로필(프로필 스펙 3.1) — 큰 아바타 + 점, 표시 이름, @핸들, 역할, 상태 줄, 상태 메시지, admin 이상이면 이메일. 비활성 멤버는
- * 「비활성」만(점 없음). 내 패널이면 「상태 바꾸기」
+ * 「비활성」만(점 없음). 내 패널이면 「상태 바꾸기」, 남의 활성 멤버면 「메시지 보내기」(그 사람과 1:1 — 사람 간 DM 스펙 「열기」. 실패하면 서버
+ * 문구를 단추 아래 한 줄로)
  */
 export function PersonProfile({ userId }: { userId: string }) {
   const people = usePeople();
@@ -24,6 +27,8 @@ export function PersonProfile({ userId }: { userId: string }) {
   const canManage = useCanManage();
   const { entry, selfInvisible } = useDot("user", userId);
   const [editing, setEditing] = useState(false);
+  const openDirect = useOpenDirect();
+  const navigate = useNavigate();
   // 이메일은 멤버 표(admin 이상)에만 있다 — 사람 목록(누구나)에는 싣지 않는다
   const members = useQuery({
     queryKey: qk.teamMembers,
@@ -95,12 +100,37 @@ export function PersonProfile({ userId }: { userId: string }) {
             멘션
           </Button>
         )}
+        {!deactivated && !mine && person.role !== undefined && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-disabled={openDirect.isPending || undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            onClick={() => {
+              if (openDirect.isPending) return;
+              openDirect.mutate(
+                { userIds: [person.id], agentIds: [] },
+                {
+                  onSuccess: ({ channel }) =>
+                    void navigate({ to: "/c/$channelId", params: { channelId: channel.id } }),
+                },
+              );
+            }}
+          >
+            메시지 보내기
+          </Button>
+        )}
         {mine && (
           <Button variant="outline" size="sm" aria-expanded={editing} onClick={() => setEditing((v) => !v)}>
             상태 바꾸기
           </Button>
         )}
       </div>
+      {openDirect.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {openDirect.error.message || "대화를 열지 못했습니다"}
+        </p>
+      )}
       {mine && editing && <StatusForm status={me?.status} onSaved={() => setEditing(false)} />}
     </div>
   );

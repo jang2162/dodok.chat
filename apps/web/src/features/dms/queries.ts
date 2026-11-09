@@ -14,6 +14,13 @@ import { isArchived } from "@/features/agents/archived";
 /** DM 채널인가(에이전트 DM 스펙 결정 1) — 옛 오프라인 사본의 채널은 `kind` 가 없다(그때는 채널) */
 export const isDmChannel = (channel: Pick<Channel, "kind"> | undefined): boolean => channel?.kind === "dm";
 
+/**
+ * 채널 목록에 드는 일반 채널인가 — `kind` 가 없으면(옛 오프라인 사본) 채널. 모르는 `kind` 는 일반 채널로 읽지 않는다(사람 간 DM 계획
+ * Global Constraints 「기본이 닫힘」 — `dm` 이 아니라고 일반 채널로 넣으면 `direct` 가 채널 절에 실린다)
+ */
+export const isRegularChannel = (channel: Pick<Channel, "kind">): boolean =>
+  channel.kind === undefined || channel.kind === "channel";
+
 /** 읽기 전용 사유의 문구(에이전트 DM 계획 Global Constraints — 글자 그대로) */
 export const DM_READ_ONLY_TEXT: Record<DmReadOnlyReason, string> = {
   agent_archived: "보관된 에이전트라 읽기만 할 수 있습니다",
@@ -71,8 +78,15 @@ export function bumpDm(qc: QueryClient, channelId: string): void {
   });
 }
 
-/** DM 목록을 다시 받게 낡은 것으로 둔다 — 보고 있는 사이드바만 곧바로 다시 부른다 */
-export const invalidateDms = (qc: QueryClient) => qc.invalidateQueries({ queryKey: qk.dms, exact: true });
+/**
+ * DM 목록을 다시 받게 낡은 것으로 둔다 — 보고 있는 사이드바만 곧바로 다시 부른다. 사람 DM·그룹 DM 목록(`qk.directs`)도 함께: 쓰기의
+ * `DM_READ_ONLY`(1:1 상대 비활성 `peer_deactivated` 포함)·다시 붙기·모르는 채널의 활동은 어느 목록의 것인지 가리지 않고 오기 때문이다
+ */
+export const invalidateDms = (qc: QueryClient) =>
+  Promise.all([
+    qc.invalidateQueries({ queryKey: qk.dms, exact: true }),
+    qc.invalidateQueries({ queryKey: qk.directs, exact: true }),
+  ]).then(() => undefined);
 
 /**
  * 지금 내 역할로 이 에이전트와 새 DM 을 열 수 있는가 — 서버 판정(`modules/dms/service.ts`)을 흉내 낸다(고르기 후보·「DM 보내기」 숨김은

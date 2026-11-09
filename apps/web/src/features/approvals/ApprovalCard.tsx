@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { meQuery, useCachedMe } from "@/api/queries";
-import { useDmView } from "@/features/dms/context";
+import { isDirectView, useDmView } from "@/features/dms/context";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
@@ -136,7 +136,8 @@ export function ApprovalCard({
   const view = useApprovalStore((s) => s.byChannel[channelId]?.[approvalId]);
   const { author } = useAuthors();
   const me = useCachedMe();
-  // DM 의 승인은 주인만 결정한다(에이전트 DM 계획 판정 PD7) — 채널 화면이 DM 이면 내려 준다
+  // 에이전트 DM 의 승인은 주인만, 사람 DM·그룹 DM 의 승인은 시킨 사람만 결정한다(에이전트 DM 계획 판정 PD7·사람 간 DM 계획 판정 PH7) —
+  // 채널 화면이 DM 이면 내려 준다
   const dm = useDmView();
   const pending = view?.approval.status === "pending";
   const { label: remaining, expired } = useRemaining(view?.approval.expiresAt ?? "", pending);
@@ -165,7 +166,7 @@ export function ApprovalCard({
   if (!view) return null;
 
   const { approval, sending } = view;
-  const canDecide = canDecideApproval(approval, me, dm?.channel.dmOwnerId);
+  const canDecide = canDecideApproval(approval, me, dm?.channel);
   const control = approval.kind === "dodok_control";
   const { Icon, label: severityLabel, tone, bar } = LOOK[approval.severity];
   const agent = author({ authorType: "agent", authorId: approval.agentId });
@@ -180,12 +181,17 @@ export function ApprovalCard({
   const handleOf = (userId: string | undefined) =>
     userId === undefined ? undefined : author({ authorType: "user", authorId: userId }).handle;
   const requester = handleOf(approval.requestedBy);
-  const waitingText = control
-    ? // 로마자 핸들과 조사 사이는 띄우고 우리말은 붙인다(notify.ts approvalNotifyTitle 과 같은 규칙)
-      requester
-      ? `@${requester} 의 확인을 기다립니다`
-      : "시킨 사람의 확인을 기다립니다"
-    : "관리자가 결정합니다";
+  // 그룹 DM 은 종류와 상관없이 잠긴 결정 줄(사람 간 DM 계획 Global Constraints — 글자 그대로). 로마자 핸들과 조사 사이는 띄우고
+  // 우리말은 붙인다(notify.ts approvalNotifyTitle 과 같은 규칙)
+  const waitingText = isDirectView(dm)
+    ? requester
+      ? `@${requester} 님이 결정합니다`
+      : "시킨 사람이 결정합니다"
+    : control
+      ? requester
+        ? `@${requester} 의 확인을 기다립니다`
+        : "시킨 사람의 확인을 기다립니다"
+      : "관리자가 결정합니다";
   const decider = control ? handleOf(approval.decidedBy) : undefined;
   // 도구 승인은 제목이 곧 도구 이름이라 부제에 다시 적지 않는다
   const toolLabel =

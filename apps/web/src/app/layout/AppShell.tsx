@@ -1,5 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDirects } from "@/features/directs/queries";
 import { useDms } from "@/features/dms/queries";
 import { isSearchShortcut, OpenSearchContext, otherModalOpen } from "@/features/search/openSearch";
 import { SearchDialog } from "@/features/search/SearchDialog";
@@ -25,7 +26,9 @@ export function AppShell() {
   const narrow = useIsNarrow();
   // DM 목록은 사이드바와 상관없이 늘 들고 있는다 — 좁은 화면은 사이드바를 시트를 열 때만 그리는데, 실시간 처리기가 이 캐시로 DM 의
   // 승인 알림(주인 판정·본문 「DM」)과 읽지 않음 항목을 정한다. 쿼리가 낡지 않아(`staleTime: Infinity`) 관찰자가 늘어도 다시 부르지 않는다
+  // 사람 DM·그룹 DM 목록도 같은 까닭(승인 알림의 시킨 사람 판정·읽지 않음 항목 — 사람 간 DM 스펙 「목록」)
   useDms();
+  useDirects();
   const [sheetOpen, setSheetOpen] = useState(false);
   // 폭이 바뀌면 시트를 닫아 둔다 — 다시 좁아졌을 때 저절로 열려 있지 않게
   const [wasNarrow, setWasNarrow] = useState(narrow);
