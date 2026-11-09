@@ -4,43 +4,49 @@ import { CH } from "../../../test/fixtures";
 import { FakeXhr, makeFakeXhr, pngFile, uploaded } from "../../../test/fakeXhr";
 import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import {
-  checkImageFile,
+  checkAttachmentFile,
   DISK_FULL,
   DM_READ_ONLY_ERROR,
-  ONLY_IMAGES,
   TOO_BIG,
+  TOO_BIG_FILE,
   UPLOAD_FAILED,
-  uploadImage,
+  uploadAttachment,
 } from "./upload";
 
 beforeEach(() => FakeXhr.reset());
 
-describe("checkImageFile", () => {
-  it("SVG·이미지 아닌 것은 「이미지만 올릴 수 있습니다」", () => {
-    expect(ONLY_IMAGES).toBe("이미지만 올릴 수 있습니다");
-    expect(checkImageFile({ type: "image/svg+xml", size: 1 })).toBe(ONLY_IMAGES);
-    expect(checkImageFile({ type: "application/pdf", size: 1 })).toBe(ONLY_IMAGES);
-    expect(checkImageFile({ type: "", size: 1 })).toBe(ONLY_IMAGES);
+describe("checkAttachmentFile", () => {
+  it("이미지가 아닌 것은 20 MiB 까지 — 넘으면 「20 MB 를 넘습니다」", () => {
+    expect(TOO_BIG_FILE).toBe("20 MB 를 넘습니다");
+    expect(ATTACHMENT_LIMITS.userFileMaxBytes).toBe(20971520);
+    expect(checkAttachmentFile({ type: "application/pdf", size: 20971520 })).toBeUndefined();
+    expect(checkAttachmentFile({ type: "application/pdf", size: 20971521 })).toBe(TOO_BIG_FILE);
   });
 
-  it("5 MiB 를 넘으면 「5 MB 를 넘습니다」, 딱 5 MiB 는 된다", () => {
+  it("이미지는 5 MiB 까지 — 넘으면 「5 MB 를 넘습니다」, 딱 5 MiB 는 된다", () => {
     expect(TOO_BIG).toBe("5 MB 를 넘습니다");
     const max = ATTACHMENT_LIMITS.userImageMaxBytes;
-    expect(checkImageFile({ type: "image/png", size: max + 1 })).toBe(TOO_BIG);
-    expect(checkImageFile({ type: "image/png", size: max })).toBeUndefined();
+    expect(checkAttachmentFile({ type: "image/png", size: 5242881 })).toBe(TOO_BIG);
+    expect(checkAttachmentFile({ type: "image/png", size: max })).toBeUndefined();
   });
 
-  it("네 형식은 통과", () => {
+  it("형식을 막지 않는다 — 브라우저가 형식을 모르는 것·SVG 는 파일 상한(SVG 는 이미지가 아니다)", () => {
+    expect(checkAttachmentFile({ type: "", size: 10 })).toBeUndefined();
+    expect(checkAttachmentFile({ type: "image/svg+xml", size: 6 * 1024 * 1024 })).toBeUndefined();
+    expect(checkAttachmentFile({ type: "application/zip", size: 10 })).toBeUndefined();
+  });
+
+  it("네 이미지 형식은 통과", () => {
     for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-      expect(checkImageFile({ type, size: 10 })).toBeUndefined();
+      expect(checkAttachmentFile({ type, size: 10 })).toBeUndefined();
     }
   });
 });
 
-describe("uploadImage", () => {
+describe("uploadAttachment", () => {
   const start = (name = '보고서 "최종" 😀.png', onProgress = vi.fn()) => {
     const file = pngFile(name);
-    const up = uploadImage(file, CH, onProgress, makeFakeXhr);
+    const up = uploadAttachment(file, CH, onProgress, makeFakeXhr);
     const xhr = FakeXhr.all[0] as FakeXhr;
     return { file, up, xhr, onProgress };
   };
@@ -76,10 +82,35 @@ describe("uploadImage", () => {
     expect(UPLOAD_FAILED).toBe("올리지 못했습니다");
   });
 
-  it("413 → 「5 MB 를 넘습니다」", async () => {
-    const { up, xhr } = start();
-    xhr.respond(413, { code: "VALIDATION", message: "너무 큼" });
-    await expect(up.promise).rejects.toThrow(TOO_BIG);
+  it("413(본문 상한) → 「20 MB 를 넘습니다」 — 본문을 못 읽어도", async () => {
+    for (const body of [
+      { code: "VALIDATION", message: "크기 상한을 넘는다", details: { maxBytes: 20971520 } },
+      "",
+    ] as const) {
+      FakeXhr.reset();
+      const { up, xhr } = start();
+      xhr.respond(413, body);
+      await expect(up.promise).rejects.toThrow(TOO_BIG_FILE);
+    }
+  });
+
+  it("400 의 maxBytes 로 상한 문구를 고른다 — 서버가 이미지로 판별하면 5 MB(웹은 형식을 몰라 20 MB 로 보낸 것)", async () => {
+    for (const [maxBytes, text] of [
+      [ATTACHMENT_LIMITS.userImageMaxBytes, TOO_BIG],
+      [ATTACHMENT_LIMITS.userFileMaxBytes, TOO_BIG_FILE],
+    ] as const) {
+      FakeXhr.reset();
+      const { up, xhr } = start();
+      xhr.respond(400, { code: "VALIDATION", message: "크기 상한을 넘는다", details: { maxBytes } });
+      await expect(up.promise).rejects.toThrow(text);
+    }
+  });
+
+  it("content-type — 브라우저가 형식을 모르면(빈 값) application/octet-stream", async () => {
+    const up = uploadAttachment(new File(["x"], "a.bin"), CH, vi.fn(), makeFakeXhr);
+    expect((FakeXhr.all[0] as FakeXhr).headers["content-type"]).toBe("application/octet-stream");
+    up.abort();
+    await expect(up.promise).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("409 CHANNEL_ARCHIVED(보관한 채널) → 「보관된 채널입니다」", async () => {
@@ -107,8 +138,8 @@ describe("uploadImage", () => {
 
   it("400 → 서버 message", async () => {
     const { up, xhr } = start();
-    xhr.respond(400, { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
-    await expect(up.promise).rejects.toThrow("이미지만 올릴 수 있습니다");
+    xhr.respond(400, { code: "VALIDATION", message: "빈 파일은 올릴 수 없다" });
+    await expect(up.promise).rejects.toThrow("빈 파일은 올릴 수 없다");
   });
 
   it("507(서버 디스크 부족)이면 원인을 말한다 — 본문이 없어도(프록시가 바꿔도) 상태로 가른다", async () => {

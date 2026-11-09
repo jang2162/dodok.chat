@@ -2,11 +2,11 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { ONLY_IMAGES, TOO_BIG } from "@/features/attachments/upload";
+import { TOO_BIG } from "@/features/attachments/upload";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { FakeXhr, pngFile, stubObjectUrls, uploaded } from "../../../test/fakeXhr";
+import { FakeXhr, pdfFile, pngFile, stubObjectUrls, uploaded } from "../../../test/fakeXhr";
 import { AGENT, CH, CH2 } from "../../../test/fixtures";
 import {
   confirmed,
@@ -53,12 +53,12 @@ afterEach(async () => {
 
 const sendButton = () => screen.getByRole("button", { name: "보내기" });
 const fileInput = () => document.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement;
-const chips = () => screen.queryByRole("list", { name: "첨부할 이미지" });
+const chips = () => screen.queryByRole("list", { name: "첨부할 파일" });
 const xhrAt = (i: number) => FakeXhr.all[i] as FakeXhr;
 const finish = (i: number, a = uploaded(i + 1)) => act(async () => xhrAt(i).respond(200, a));
 
 async function pick(...files: File[]) {
-  await userEvent.click(screen.getByRole("button", { name: "이미지 첨부" }));
+  await userEvent.click(screen.getByRole("button", { name: "파일 첨부" }));
   await userEvent.upload(fileInput(), files);
 }
 
@@ -66,7 +66,8 @@ it("첨부 버튼으로 PNG → 칩·진행 → 끝나면 보내기가 켜지고
   fake.onAck("message.send", confirmed);
   const { editor } = renderComposer();
   const input = fileInput();
-  expect(input).toHaveAttribute("accept", "image/png,image/jpeg,image/gif,image/webp");
+  // 형식을 막지 않는다 — 고르기 창이 모든 파일을 보여 준다
+  expect(input).not.toHaveAttribute("accept");
   expect(input).toHaveAttribute("multiple");
 
   const clickInput = vi.spyOn(input, "click");
@@ -123,24 +124,24 @@ it("[Review Focus 3] 글 없이 이미지만 — 보내기가 켜지고 bodyMd �
   ]);
 });
 
-it("올리는 중에는 보내기가 꺼지고 「이미지를 올리는 중입니다」, Enter 도 보내지 않는다", async () => {
+it("올리는 중에는 보내기가 꺼지고 「파일을 올리는 중입니다」, Enter 도 보내지 않는다", async () => {
   fake.onAck("message.send", confirmed);
   const { box, editor } = renderComposer();
   setDoc(editor, doc(p(t("같이 보낼 글"))));
   await pick(pngFile());
   expect(sendButton()).toBeDisabled();
-  expect(sendButton()).toHaveAccessibleDescription("이미지를 올리는 중입니다");
+  expect(sendButton()).toHaveAccessibleDescription("파일을 올리는 중입니다");
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toEqual([]);
   expect(editor.getText()).toBe("같이 보낼 글");
 
   await finish(0);
-  expect(screen.queryByText("이미지를 올리는 중입니다")).toBeNull();
+  expect(screen.queryByText("파일을 올리는 중입니다")).toBeNull();
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toHaveLength(1);
 });
 
-it("오류 칩이 있으면 꺼지고 「올리지 못한 이미지를 빼 주세요」, 빼면 켜진다", async () => {
+it("오류 칩이 있으면 꺼지고 「올리지 못한 파일을 빼 주세요」, 빼면 켜진다", async () => {
   fake.onAck("message.send", confirmed);
   const { box, editor } = renderComposer();
   setDoc(editor, doc(p(t("글"))));
@@ -149,7 +150,7 @@ it("오류 칩이 있으면 꺼지고 「올리지 못한 이미지를 빼 주�
   const chip = within(chips() as HTMLElement).getByRole("listitem");
   expect(within(chip).getByText(TOO_BIG)).toHaveClass("text-destructive");
   expect(sendButton()).toBeDisabled();
-  expect(sendButton()).toHaveAccessibleDescription("올리지 못한 이미지를 빼 주세요");
+  expect(sendButton()).toHaveAccessibleDescription("올리지 못한 파일을 빼 주세요");
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toEqual([]);
 
@@ -162,8 +163,8 @@ it("오류 칩이 있으면 꺼지고 「올리지 못한 이미지를 빼 주�
 it("서버 거절도 칩에 이유 — 올리는 중 칩을 빼면 요청을 끊는다", async () => {
   renderComposer();
   await pick(pngFile("a.png"), pngFile("b.png"));
-  await act(async () => xhrAt(0).respond(400, { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" }));
-  expect(screen.getByText(ONLY_IMAGES)).toHaveClass("text-destructive");
+  await act(async () => xhrAt(0).respond(400, { code: "VALIDATION", message: "빈 파일이다" }));
+  expect(screen.getByText("빈 파일이다")).toHaveClass("text-destructive");
   await userEvent.click(screen.getByRole("button", { name: "b.png 빼기" }));
   expect(xhrAt(1).aborted).toBe(true);
 });
@@ -174,19 +175,26 @@ it("끊겼을 때는 끊김 사유가 먼저 — 올리는 중이어도 「연�
   await pick(pngFile());
   expect(sendButton()).toBeDisabled();
   expect(sendButton()).toHaveAccessibleDescription("연결되면 보낼 수 있습니다");
-  expect(screen.queryByText("이미지를 올리는 중입니다")).toBeNull();
+  expect(screen.queryByText("파일을 올리는 중입니다")).toBeNull();
 });
 
 describe("붙여넣기·끌어 놓기", () => {
   const svg = () => new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
 
-  it("SVG 붙여넣기 → 「이미지만 올릴 수 있습니다」 토스트, 칩 없음", () => {
+  it("PDF 붙여넣기 → 파일 칩(파일 아이콘·이름·크기, 미리보기 없음), 올리기 시작, 토스트 없음, 본문 변화 없음", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("그대로"))));
-    fireEvent.paste(box, { clipboardData: { files: [svg()], types: ["Files"], getData: () => "" } });
-    expect(toastInfo).toHaveBeenCalledWith(ONLY_IMAGES, { id: "attach-only-images" });
-    expect(chips()).toBeNull();
-    expect(FakeXhr.all).toHaveLength(0);
+    fireEvent.paste(box, {
+      clipboardData: { files: [pdfFile("report.pdf", 2048)], types: ["Files"], getData: () => "" },
+    });
+    const chip = within(chips() as HTMLElement).getByRole("listitem");
+    expect(within(chip).getByText("report.pdf")).toBeInTheDocument();
+    expect(within(chip).getByText("2 KB")).toBeInTheDocument();
+    expect(chip.querySelector("img")).toBeNull();
+    expect(chip.querySelector('[data-icon="file"]')).not.toBeNull();
+    expect(urls.create).not.toHaveBeenCalled();
+    expect(FakeXhr.all).toHaveLength(1);
+    expect(toastInfo).not.toHaveBeenCalled();
     expect(editor.getJSON()).toEqual(doc(p(t("그대로"))));
   });
 
@@ -223,13 +231,16 @@ describe("붙여넣기·끌어 놓기", () => {
     expect(within(chips() as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
   });
 
-  it("이미지와 SVG 가 섞이면 이미지만 칩, SVG 는 토스트", () => {
+  it("이미지와 SVG 가 섞여도 둘 다 칩 — SVG 는 미리보기 없는 파일 칩(SVG 는 이미지가 아니다)", () => {
     const { box } = renderComposer();
     fireEvent.paste(box, {
       clipboardData: { files: [pngFile(), svg()], types: ["Files"], getData: () => "" },
     });
-    expect(within(chips() as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
-    expect(toastInfo).toHaveBeenCalledWith(ONLY_IMAGES, { id: "attach-only-images" });
+    const [png, file] = within(chips() as HTMLElement).getAllByRole("listitem");
+    expect(png?.querySelector("img")).toHaveAttribute("src", "blob:1");
+    expect(file?.querySelector("img")).toBeNull();
+    expect(FakeXhr.all).toHaveLength(2);
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 
   it("작성기에 이미지를 끌어 놓으면 칩 — 브라우저가 파일을 열지 않게 막는다", () => {
@@ -245,11 +256,52 @@ describe("붙여넣기·끌어 놓기", () => {
     expect(within(chips() as HTMLElement).getByText("끈.png")).toBeInTheDocument();
   });
 
-  it("SVG 를 끌어 놓으면 토스트, 칩 없음", () => {
+  it("사진과 PDF 를 섞어 놓으면 칩 둘 — 보내면 메시지 attachments 둘(넣은 순서)", async () => {
+    fake.onAck("message.send", confirmed);
     const { box } = renderComposer();
-    fireEvent.drop(box, { dataTransfer: { files: [svg()], types: ["Files"], getData: () => "" } });
-    expect(toastInfo).toHaveBeenCalledWith(ONLY_IMAGES, { id: "attach-only-images" });
-    expect(chips()).toBeNull();
+    const dropped = fireEvent.drop(box, {
+      dataTransfer: {
+        files: [pngFile("사진.png"), pdfFile("report.pdf")],
+        types: ["Files"],
+        getData: () => "",
+      },
+    });
+    expect(dropped).toBe(false);
+    expect(within(chips() as HTMLElement).getAllByRole("listitem")).toHaveLength(2);
+    expect(toastInfo).not.toHaveBeenCalled();
+    const photo = uploaded(1, "사진.png");
+    const pdf = { ...uploaded(2, "report.pdf"), kind: "file" as const, mime: "application/pdf" };
+    delete pdf.width;
+    delete pdf.height;
+    await finish(1, pdf);
+    await finish(0, photo);
+    await userEvent.click(sendButton());
+    expect(fake.sentOf("message.send")).toEqual([
+      {
+        channelId: CH,
+        conversationId: CH,
+        clientMsgId: expect.any(String),
+        bodyMd: "",
+        attachments: [photo.id, pdf.id],
+      },
+    ]);
+  });
+
+  it("이미지 상한·파일 상한을 칩마다 따로 — 큰 사진은 「5 MB 를 넘습니다」, 같은 크기의 PDF 는 올린다", () => {
+    const { box } = renderComposer();
+    fireEvent.drop(box, {
+      dataTransfer: {
+        files: [pngFile("큰.png", 5 * 1024 * 1024 + 1), pdfFile("큰.pdf", 5 * 1024 * 1024 + 1)],
+        types: ["Files"],
+        getData: () => "",
+      },
+    });
+    const [png, pdf] = within(chips() as HTMLElement).getAllByRole("listitem");
+    expect(within(png as HTMLElement).getByText(TOO_BIG)).toHaveClass("text-destructive");
+    expect(
+      within(pdf as HTMLElement).getByRole("progressbar", { name: "큰.pdf 올리는 중" }),
+    ).toBeInTheDocument();
+    expect(FakeXhr.all).toHaveLength(1);
   });
 });
 
@@ -277,7 +329,7 @@ it("채널을 옮기면 칩을 비우고 올리던 것을 끊는다(첨부는 �
   act(() => rerender(CH2));
   expect(xhrAt(0).aborted).toBe(true);
   expect(chips()).toBeNull();
-  // 훅 안의 비우기다 — 칩 빼기처럼 초점을 옆 칩·「이미지 첨부」로 옮기지 않는다
+  // 훅 안의 비우기다 — 칩 빼기처럼 초점을 옆 칩·「파일 첨부」로 옮기지 않는다
   expect(document.activeElement).toBe(box);
 });
 
@@ -307,12 +359,12 @@ describe("칩을 빼면 초점을 옮긴다 — body 로 떨어지지 않게", (
     expect(document.activeElement).toBe(removeButton("b.png"));
   });
 
-  it("하나 남은 칩을 빼면 「이미지 첨부」 버튼으로", async () => {
+  it("하나 남은 칩을 빼면 「파일 첨부」 버튼으로", async () => {
     renderComposer();
     await pick(pngFile("a.png"));
     await userEvent.click(removeButton("a.png"));
     expect(chips()).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "이미지 첨부" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "파일 첨부" }));
   });
 
   it("보낸 뒤 칩을 비울 때는 초점을 옮기지 않는다 — 편집기에 남는다", async () => {

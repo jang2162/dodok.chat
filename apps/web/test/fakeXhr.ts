@@ -77,6 +77,13 @@ export const uploaded = (n: number, name = `img${n}.png`): Attachment => {
 export const pngFile = (name = "a.png", size = 3) =>
   new File([new Uint8Array(size)], name, { type: "image/png" });
 
+/** PDF 파일 — `size` 는 본문을 만들지 않고 겉으로만 준다(20 MiB 를 넘는 파일을 시험마다 메모리에 만들지 않게) */
+export const pdfFile = (name = "report.pdf", size = 3) => {
+  const file = new File([new Uint8Array(3)], name, { type: "application/pdf" });
+  Object.defineProperty(file, "size", { value: size });
+  return file;
+};
+
 /**
  * jsdom 에는 `URL.createObjectURL`·`revokeObjectURL` 이 없다 — `blob:1`, `blob:2`… 를 주는 가짜를 넣는다.
  * 돌려주는 함수가 원래대로 되돌린다

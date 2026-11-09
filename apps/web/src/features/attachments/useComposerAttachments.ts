@@ -1,15 +1,17 @@
-import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
+import { ATTACHMENT_LIMITS, type Attachment, isImageMime } from "@dodok/shared";
 import { QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import { toast } from "sonner";
 import { invalidateDms } from "@/features/dms/queries";
-import { checkImageFile, DM_READ_ONLY_ERROR, uploadImage } from "./upload";
+import { checkAttachmentFile, DM_READ_ONLY_ERROR, uploadAttachment } from "./upload";
 
-/** 작성기 칩 하나 — 미리보기는 로컬 object URL, 끝나면 서버가 준 `attachment` */
+/** 작성기 칩 하나 — 사진이면 미리보기 로컬 object URL(그 밖은 없다), 끝나면 서버가 준 `attachment` */
 export type ComposerAttachment = {
   key: string;
   name: string;
-  previewUrl: string;
+  /** 바이트 수 — 파일 칩이 크기를 적는다 */
+  size: number;
+  previewUrl: string | undefined;
   progress: number;
   status: "uploading" | "done" | "error";
   attachment?: Attachment;
@@ -29,7 +31,7 @@ export type ComposerAttachments = {
   ready: Attachment[];
 };
 
-export const TOO_MANY = `이미지는 한 번에 ${ATTACHMENT_LIMITS.perMessage}장까지 보낼 수 있습니다`;
+export const TOO_MANY = `첨부는 한 번에 ${ATTACHMENT_LIMITS.perMessage}개까지 보낼 수 있습니다`;
 
 type Action =
   | { type: "add"; items: ComposerAttachment[] }
@@ -60,11 +62,11 @@ function reducer(items: ComposerAttachment[], a: Action): ComposerAttachment[] {
   }
 }
 
-/** 칩마다 쥐는 것 — 미리보기 URL(놓아야 한다)과 올리는 중이면 끊는 함수 */
-type Held = { url: string; abort?: () => void };
+/** 칩마다 쥐는 것 — 미리보기 URL(있으면 놓아야 한다)과 올리는 중이면 끊는 함수 */
+type Held = { url?: string; abort?: () => void };
 
 /**
- * 작성기 첨부(스펙 6.1): 넣는 즉시 올리고 칩마다 미리보기·진행·이유를 든다. 형식·크기가 틀리면 올리지 않는다.
+ * 작성기 첨부(스펙 6.1·파일함 스펙 6장): 넣는 즉시 올리고 칩마다 미리보기(사진만)·진행·이유를 든다. 크기가 상한을 넘으면 올리지 않는다.
  * 메시지당 상한을 넘는 것은 칩을 만들지 않고 한 번 알린다. 작성 자리(`place` — 채널·세션)를 옮기면 모두 끊고 비운다 —
  * 초안과 달리 첨부는 들고 다니지 않는다(계획 판정). 작성기는 세션을 옮겨도 같은 인스턴스라 세션 A 의 칩이 세션 B 로 나가지 않게 자리를
  * 본다(서버의 첨부는 채널에만 묶여 다른 세션으로 보내도 받는다). 자리는 작성기가 정한다 — 새 세션 창이 만든 세션으로 옮겨 가는 것은 같은
@@ -82,7 +84,7 @@ export function useComposerAttachments(channelId: string, place: string): Compos
       if (!h) return;
       held.delete(key);
       h.abort?.();
-      URL.revokeObjectURL(h.url);
+      if (h.url) URL.revokeObjectURL(h.url);
     },
     [held],
   );
@@ -106,14 +108,17 @@ export function useComposerAttachments(channelId: string, place: string): Compos
       if (files.length > room) toast.info(TOO_MANY, { id: "attach-limit" });
       const added = files.slice(0, room).map((file): ComposerAttachment => {
         const key = crypto.randomUUID();
-        const previewUrl = URL.createObjectURL(file);
+        // 미리보기는 브라우저가 그릴 수 있는 사진만 — 그 밖의 파일로 object URL 을 만들어 쥐고 있지 않는다
+        const previewUrl = isImageMime(file.type) ? URL.createObjectURL(file) : undefined;
         const h: Held = { url: previewUrl };
         held.set(key, h);
-        const base = { key, name: file.name, previewUrl, progress: 0 };
-        const invalid = checkImageFile(file);
+        const base = { key, name: file.name, size: file.size, previewUrl, progress: 0 };
+        const invalid = checkAttachmentFile(file);
         if (invalid) return { ...base, status: "error", error: invalid };
 
-        const up = uploadImage(file, channelId, (progress) => dispatch({ type: "progress", key, progress }));
+        const up = uploadAttachment(file, channelId, (progress) =>
+          dispatch({ type: "progress", key, progress }),
+        );
         h.abort = up.abort;
         up.promise.then(
           (attachment) => {
