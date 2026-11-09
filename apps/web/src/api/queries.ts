@@ -80,6 +80,11 @@ export const qk = {
    * 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
    */
   dms: ["dms"] as const,
+  /**
+   * 내가 참여한 사람 DM·그룹 DM(`GET /directs` — 사람 간 DM 계획 판정 PH9). `dms` 와 같은 까닭으로 채널 목록과 나누고 오프라인 사본에
+   * 담지 않는다
+   */
+  directs: ["directs"] as const,
   channel: (id: string) => ["channel", id] as const,
   members: (id: string) => ["members", id] as const,
   /** 모든 채널의 멤버(무효화용 앞머리) */

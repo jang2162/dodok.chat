@@ -711,6 +711,31 @@ describe("승인 알림", () => {
     expect(stub.made).toHaveLength(1);
   });
 
+  /**
+   * 사람 간 DM 태스크 5 리뷰 L1 — 부팅 직후 승인 되감기가 `GET /directs` 보다 먼저 오면 그 그룹 DM 은 어느 캐시에도 없다. 일반 채널
+   * 규칙(admin 이상)으로 알리면 시킨 사람이 아닌 admin 에게 뜬다 — 종류를 모르면 알리지 않는다. 상세·보관 목록에 있으면 일반 채널 규칙
+   */
+  it("어느 캐시에도 없는 채널의 승인은 owner 에게도 알리지 않는다 — 카드(스토어)에는 들어가고, 상세·보관 목록 캐시에 있으면 알린다", () => {
+    const { fake, queryClient } = armed();
+    screenNow.channelId = CH;
+    const unknown = uid(4_001);
+    const id = (n: number) => uid(4_100 + n);
+    fake.serverEmit("approval.requested", { approval: approval({ id: id(1), channelId: unknown }) });
+    expect(stub.made).toHaveLength(0);
+    expect(useApprovalStore.getState().byChannel[unknown]?.[id(1)]).toBeDefined();
+
+    queryClient.setQueryData(qk.channel(unknown), channel({ id: unknown }));
+    fake.serverEmit("approval.requested", { approval: approval({ id: id(2), channelId: unknown }) });
+    expect(stub.made).toHaveLength(1);
+
+    const archived = uid(4_002);
+    queryClient.setQueryData(qk.archivedChannels, [
+      channel({ id: archived, archivedAt: "2027-01-16T00:00:00.000Z" }),
+    ]);
+    fake.serverEmit("approval.requested", { approval: approval({ id: id(3), channelId: archived }) });
+    expect(stub.made).toHaveLength(2);
+  });
+
   it("이미 확정된 승인이 요구로 와도 알리지 않는다", () => {
     const { fake } = armed();
     screenNow.channelId = CH2;
@@ -756,10 +781,13 @@ describe("승인 알림", () => {
     expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval.status).toBe("pending");
   });
 
-  it("에이전트·채널을 아직 못 받았으면 일반 문구로 띄운다 — 알림 때문에 REST 를 부르지 않는다", () => {
+  // 채널이 어느 캐시에도 없으면 아예 알리지 않는다(위 「어느 캐시에도 없는 채널」) — 여기서는 상세 캐시로 종류만 안다. 목록이 없을 때
+  // 알림이 사라지지 않게 하는 것은 셸이 채널 목록을 늘 드는 쪽(layout.test 「좁은 화면에서도 …」)
+  it("에이전트·채널 목록은 없고 채널 상세만 있으면 일반 문구로 띄운다 — 알림 때문에 REST 를 부르지 않는다", () => {
     stub = stubNotification("granted");
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" });
+    queryClient.setQueryData(qk.channel(CH), channel());
     screenNow.channelId = CH2;
     fake.serverEmit("approval.requested", { approval: approval({ toolName: undefined }) });
     expect(stub.made[0]?.title).toBe("승인 필요 — 에이전트가 도구를 실행하려 합니다");

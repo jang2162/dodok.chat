@@ -17,7 +17,19 @@ import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { applyConversation } from "@/features/conversations/cache";
-import { bumpDm, cachedDmChannel, invalidateDms, isDmChannel } from "@/features/dms/queries";
+import {
+  bumpDirect,
+  cachedDirectChannel,
+  invalidateDirects,
+  isDirectChannel,
+} from "@/features/directs/queries";
+import {
+  bumpDm,
+  cachedDmChannel,
+  invalidateDms,
+  isDmChannel,
+  isRegularChannel,
+} from "@/features/dms/queries";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { usePresenceStore } from "@/features/presence/store";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
@@ -49,6 +61,16 @@ const gatewayNames = (gateways: readonly OpenClawGatewayStatus[]) =>
     .map((g) => `${g.id}:${g.name}`)
     .sort()
     .join("\n");
+
+/** 캐시에 있는 채널(상세·사이드바 목록·보관 목록) — 승인 알림이 채널 종류를 아는지 본다. DM·direct 목록은 부르는 쪽이 따로 본다 */
+function cachedChannel(qc: QueryClient, channelId: string): Channel | undefined {
+  const find = (list: Channel[] | undefined) => list?.find((c) => c.id === channelId);
+  return (
+    qc.getQueryData<Channel>(qk.channel(channelId)) ??
+    find(qc.getQueryData<Channel[]>(qk.channels)) ??
+    find(qc.getQueryData<Channel[]>(qk.archivedChannels))
+  );
+}
 
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
 const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
@@ -150,18 +172,21 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
 
   /**
    * 사이드바 목록(보관하지 않은 채널·내 DM)에 있는가 — 읽지 않음 항목을 새로 만드는 것은 이 채널만. DM 은 채널 목록이 아니라 DM 목록에
-   * 있다(에이전트 DM 계획 판정 PD3) — 보관이 없다
+   * 있다(에이전트 DM 계획 판정 PD3), 사람 DM·그룹 DM 은 direct 목록에(사람 간 DM 계획 판정 PH9) — 둘 다 보관이 없다
    */
   const listed = (channelId: string) =>
     (qc.getQueryData<Channel[]>(qk.channels)?.some((c) => c.id === channelId && !isChannelArchived(c)) ??
       false) ||
-    cachedDmChannel(qc, channelId) !== undefined;
+    cachedDmChannel(qc, channelId) !== undefined ||
+    cachedDirectChannel(qc, channelId) !== undefined;
 
-  /** 캐시가 아는 채널인가 — 채널 목록·보관 목록·DM 목록 가운데 하나에 있다 */
+  /** 캐시가 아는 채널인가 — 채널 목록·보관 목록·DM 목록·direct 목록 가운데 하나에 있다 */
   const knownChannel = (channelId: string) =>
     [qk.channels, qk.archivedChannels].some((key) =>
       qc.getQueryData<Channel[]>(key)?.some((c) => c.id === channelId),
-    ) || cachedDmChannel(qc, channelId) !== undefined;
+    ) ||
+    cachedDmChannel(qc, channelId) !== undefined ||
+    cachedDirectChannel(qc, channelId) !== undefined;
 
   function retryLater(): void {
     clearTimeout(retryTimer);
@@ -213,8 +238,14 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 이미 답한 승인은 알리지 않는다 — 재접속 되감기·늦게 온 프레임이 확정 뒤에 올 수 있다
       if (approval.status !== "pending") return;
       // 결정할 수 있는 사람에게만 — 카드 버튼과 같은 규칙(`canDecideApproval`). 다른 사람은 카드만 본다
-      const dm = cachedDmChannel(qc, approval.channelId);
-      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me), dm?.dmOwnerId)) return;
+      // 에이전트 DM 은 주인, 사람 DM·그룹 DM 은 시킨 사람만(계획 판정 PH7)
+      const dm = cachedDmChannel(qc, approval.channelId) ?? cachedDirectChannel(qc, approval.channelId);
+      // 어느 캐시에도 없는 채널은 종류를 모른다 — 일반 채널 규칙(admin 이상)으로 알리면 부팅 직후 `GET /directs` 보다 먼저 온 그룹 DM
+      // 승인이 시킨 사람이 아닌 admin 에게 뜬다. 모르면 알리지 않는다(기본이 닫힘). 카드(스토어)에는 위에서 이미 들어갔다.
+      // 셸(`AppShell`)이 채널·DM 목록을 늘 들어 두므로 모르는 창은 부팅 직후 목록 응답 전뿐이다
+      const known = dm ?? cachedChannel(qc, approval.channelId);
+      if (known === undefined) return;
+      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me), known)) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
         currentConversationId: notify.currentConversationId(),
@@ -236,13 +267,19 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      * 새 채널 — 사이드바가 보는 목록 캐시에 덧붙인다(만든 사람은 useCreateChannel 이 먼저 넣는다).
      * 같은 id 가 이미 있으면 그대로 둔다 — 늦게 온 created 가 그새 바뀐 값(channel.updated)을 되돌리지 않게.
      * 목록을 아직 안 받았으면 만들지 않는다 — 한 채널짜리 목록을 완전한 것처럼 두지 않는다(useCreateChannel 과 같은 규칙).
-     * DM 은 채널 목록에 넣지 않고 DM 목록을 다시 받는다(에이전트 DM 계획 판정 PD3 — 서버는 DM 의 것을 주인에게만 보낸다)
+     * DM 은 채널 목록에 넣지 않고 DM 목록을 다시 받는다(에이전트 DM 계획 판정 PD3 — 서버는 DM 의 것을 주인에게만 보낸다). 사람 DM·그룹
+     * DM 은 direct 목록을(사람 간 DM 계획 판정 PH11 — 참여자에게만 온다). 모르는 종류는 어느 목록에도 넣지 않는다(기본이 닫힘)
      */
     "channel.created": ({ channel }) => {
       if (isDmChannel(channel)) {
         void invalidateDms(qc);
         return;
       }
+      if (isDirectChannel(channel)) {
+        void invalidateDirects(qc);
+        return;
+      }
+      if (!isRegularChannel(channel)) return;
       qc.setQueryData<Channel[]>(qk.channels, (list) =>
         list && !list.some((c) => c.id === channel.id) ? [...list, channel] : list,
       );
@@ -259,6 +296,13 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         void invalidateDms(qc);
         return;
       }
+      // 사람 DM·그룹 DM 도 상세만 바꾸고 direct 목록을 다시 받는다 — 채널 관리가 없어 보관도 없다
+      if (isDirectChannel(channel)) {
+        qc.setQueryData<Channel>(qk.channel(channel.id), channel);
+        void invalidateDirects(qc);
+        return;
+      }
+      if (!isRegularChannel(channel)) return;
       applyChannel(qc, channel);
       // 보관하면 현황에서 빠지고, 보관 해제하면 그동안의 읽음 위치 그대로 돌아와야 한다 — 스냅숏이 그렇게 싣는다
       if (needsResync(channel)) void loadUnread();
@@ -300,6 +344,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.team });
       const me = qc.getQueryData<MeResponse>(qk.me);
       const mine = me && people.find((p) => p.id === me.user.id);
+      // 사람 DM·그룹 DM 의 참여자 이름·아바타·비활성(1:1 상대면 `peer_deactivated`)은 사람을 따른다 — 역할과 상관없이 다시 받는다
+      // (계획 Review Focus 4)
+      void invalidateDirects(qc);
       if (mine?.role !== undefined && mine.role !== me?.role) {
         void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
         // DM 허용은 역할을 본다 — 강등되면 `admins` 에이전트와의 DM 이 읽기 전용이 된다(에이전트 DM 계획 Review Focus 3)
@@ -368,7 +415,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "channel.activity": (activity) => {
       // DM 이면 사이드바 DM 줄을 최근 활동순 맨 위로(모르는 채널이면 DM 목록을 다시 받는다 — 다른 기기에서 처음 쓴 DM)
       if (!knownChannel(activity.channelId)) void invalidateDms(qc);
-      else bumpDm(qc, activity.channelId);
+      else {
+        bumpDm(qc, activity.channelId);
+        bumpDirect(qc, activity.channelId);
+      }
       useUnread.getState().applyActivity(activity, {
         me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
         viewing: subscriptions.active(),
@@ -412,7 +462,7 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 낡은 채 남는다(태스크 6 리뷰 M1). 머리·작성기 자리의 세션 하나와 목록 칸
       void qc.invalidateQueries({ queryKey: qk.conversationAll });
       void qc.invalidateQueries({ queryKey: qk.conversationListAll });
-      // DM 목록은 이벤트로만 고친다(`dmsQuery` 는 저절로 낡지 않는다) — 끊긴 사이의 새 DM·읽기 전용 사유를 메운다
+      // DM 목록은 이벤트로만 고친다(`dmsQuery` 는 저절로 낡지 않는다) — 끊긴 사이의 새 DM·읽기 전용 사유를 메운다(direct 목록도 함께)
       void invalidateDms(qc);
     }
     connectedOnce = true;

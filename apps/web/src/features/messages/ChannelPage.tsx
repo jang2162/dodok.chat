@@ -20,6 +20,8 @@ import {
 import { ConversationList } from "@/features/conversations/ConversationList";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
+import { DirectHeader } from "@/features/directs/DirectHeader";
+import { GROUP_DM_FIRST_NOTICE, isDirectChannel, isOneStream, useDirect } from "@/features/directs/queries";
 import { type DmView, DmViewContext } from "@/features/dms/context";
 import { DmHeader } from "@/features/dms/DmHeader";
 import { DM_FIRST_NOTICE, DmReadOnlyNotice } from "@/features/dms/DmNotices";
@@ -49,7 +51,10 @@ import { useTimelineState } from "./useTimeline";
  * 전역 토스트가 화면 안 문구와 겹치지 않게. 불러오지 못하면(없는 채널·없는 세션 등) 화면 안에 알린다(`useChannel` 은 silent).
  * DM 채널(`kind === "dm"`)이면 같은 자리를 DM 꼴로 그린다(에이전트 DM 계획 판정 PD2) — 머리는 `DmHeader`, 오른쪽 패널은 활동 탭만(설정·스레드
  * 없음), 작성기 자리는 읽기 전용 사유가 있으면 그 줄, 세션 목록은 날짜 묶음, 빈 DM 은 첫 안내. 아래(메시지·카드·작성기·활동)는
- * `DmViewContext` 로 안다
+ * `DmViewContext` 로 안다.
+ * 사람 DM·그룹 DM(`kind === "direct"` — 사람 간 DM 스펙 「화면」)도 같은 자리에 그린다 — 머리는 `DirectHeader`, 설정 탭 없음, 스레드는 연다.
+ * 에이전트가 있는 그룹은 채널처럼 세션 목록·활동 탭이 있고 세션이 하나도 없으면 그룹 DM 첫 안내, 한 줄기(에이전트 없음)는 세션 목록·활동이
+ * 없다(채널 주소는 그 하나뿐인 대화로 넘겨진다 — 계획 판정 PH4). 읽기 전용(1:1 상대 비활성)은 에이전트 DM 과 같은 사유 줄
  */
 export function ChannelPage() {
   // 라우트 id 문자열에 기대지 않는다(레이아웃 id 가 바뀌어도 안전)
@@ -77,20 +82,37 @@ export function ChannelPage() {
   const dmChannel = isDmChannel(channel.data) ? channel.data : undefined;
   // DM 의 읽기 전용 사유·첫 안내는 DM 목록에서(채널이 아니면 부르지 않는다)
   const dm = useDm(channelId, dmChannel !== undefined);
-  const readOnly = dm?.readOnlyReason ?? null;
+  const directChannel = isDirectChannel(channel.data) ? channel.data : undefined;
+  const direct = useDirect(channelId, directChannel !== undefined);
+  const summary = dm ?? direct;
+  const readOnly = summary?.readOnlyReason ?? null;
+  // 세션으로 나뉘는가 — 채널·에이전트 DM·에이전트가 있는 그룹 DM. 그룹 DM 은 요약을 받기 전에는 나누지 않는다(세션 목록이 번쩍이지 않게)
+  const sessions = directChannel === undefined || (direct !== undefined && !isOneStream(direct));
   const dmView = useMemo<DmView | null>(
-    () => (dmChannel ? { channel: dmChannel, readOnly } : null),
-    [dmChannel, readOnly],
+    () =>
+      dmChannel
+        ? { kind: "dm", channel: dmChannel, readOnly }
+        : directChannel
+          ? { kind: "direct", channel: directChannel, readOnly }
+          : null,
+    [dmChannel, directChannel, readOnly],
   );
-  // DM 에는 채널 설정·스레드가 없다(계획 판정 PD2·스펙 결정 7) — 그 주소로 와도 패널을 그리지 않는다. 활동 탭만 연다
-  const tab = dmChannel && routeTab !== "activity" ? undefined : routeTab;
+  // 에이전트 DM 에는 채널 설정·스레드가 없다(계획 판정 PD2·스펙 결정 7) — 그 주소로 와도 패널을 그리지 않는다. 활동 탭만 연다.
+  // 사람 DM·그룹 DM 에는 설정 탭이 없고, 활동 탭은 세션이 있을 때만(런은 에이전트가 있는 그룹에만 있다)
+  const tab = dmChannel
+    ? routeTab === "activity"
+      ? routeTab
+      : undefined
+    : directChannel && (routeTab === "settings" || (routeTab === "activity" && !sessions))
+      ? undefined
+      : routeTab;
   // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다).
   // 왼쪽 사이드바 시트도 같다(AppShell 이 연 채로 둔다)
   const sidebarSheetOpen = useSidebarSheetOpen();
   const covered = (useIsNarrow() && tab !== undefined) || sidebarSheetOpen;
   // 읽기 전용 사유 줄이 초점을 받는 것은 이 화면에서 쓸 수 있던 DM 이 읽기 전용이 됐을 때만(`DmReadOnlyNotice` 의 focusOnMount)
   const [seenWritable, setSeenWritable] = useState<string>();
-  if (dm && readOnly === null && seenWritable !== channelId) setSeenWritable(channelId);
+  if (summary && readOnly === null && seenWritable !== channelId) setSeenWritable(channelId);
   const session = useTimelineState(channelId, conversationId);
   const known = channel.data !== undefined;
   // 주소의 채널과 세션의 채널이 다르면 그 세션의 채널로 바꿔 간다(태스크 5 리뷰 L1) — 확인되기 전에는 최근 본 세션으로 남기지 않는다.
@@ -194,7 +216,7 @@ export function ChannelPage() {
   // 작성기 자리의 안내 — 보관 → DM 읽기 전용 → 닫힘 → 만들 수 없음 순. 안내가 있으면 작성기는 숨긴다(초안을 잃지 않게 — 위 주석)
   const notice = archived ? (
     <ArchivedNotice channelId={channelId} unarchive />
-  ) : dmChannel && readOnly !== null ? (
+  ) : dmView && readOnly !== null ? (
     <DmReadOnlyNotice key={channelId} reason={readOnly} focusOnMount={seenWritable === channelId} />
   ) : closed && conversation.data ? (
     <ClosedNotice
@@ -212,7 +234,7 @@ export function ChannelPage() {
   return (
     <div
       data-testid="page-channel"
-      data-kind={dmChannel ? "dm" : undefined}
+      data-kind={dmView?.kind}
       className="flex min-h-0 flex-1"
       onFocusCapture={onFocusZone}
     >
@@ -223,7 +245,17 @@ export function ChannelPage() {
               <PendingActionsContext.Provider value={pendingActions}>
                 <ThreadOpenerContext.Provider value={threadOpenerRef}>
                   <section className="flex min-w-0 flex-1 flex-col">
-                    {dmChannel ? (
+                    {directChannel ? (
+                      <DirectHeader
+                        channel={directChannel}
+                        direct={direct}
+                        conversationId={conversationId}
+                        activityRef={settingsRef}
+                        listOpen={narrow ? listSheet : listWide}
+                        onToggleList={toggleList}
+                        listRef={listRef}
+                      />
+                    ) : dmChannel ? (
                       <DmHeader
                         channel={dmChannel}
                         conversationId={conversationId}
@@ -243,7 +275,7 @@ export function ChannelPage() {
                       />
                     )}
                     <div className="flex min-h-0 flex-1">
-                      {!narrow && listWide && (
+                      {!narrow && listWide && sessions && (
                         <div data-testid="conversation-pane" className="flex w-60 shrink-0 flex-col border-r">
                           {list()}
                         </div>
@@ -264,15 +296,23 @@ export function ChannelPage() {
                               entryReadSeq={entryReadSeq}
                               bubbleRunIds={bubbleRunIds}
                               bubbles={(runId) => <StreamingBubble runId={runId} />}
-                              {...(dmChannel
+                              {...(directChannel
                                 ? {
-                                    // 빈 DM(세션이 하나도 없다 — 빈 세션은 만들지 않으니 글이 없다)은 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
+                                    // 세션이 하나도 없는 에이전트 그룹은 그룹 DM 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
                                     emptyText:
-                                      dm?.lastMessageAt === null
-                                        ? DM_FIRST_NOTICE
+                                      sessions && direct?.lastMessageAt === null
+                                        ? GROUP_DM_FIRST_NOTICE
                                         : "아직 메시지가 없습니다.",
                                   }
-                                : {})}
+                                : dmChannel
+                                  ? {
+                                      // 빈 DM(세션이 하나도 없다 — 빈 세션은 만들지 않으니 글이 없다)은 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
+                                      emptyText:
+                                        dm?.lastMessageAt === null
+                                          ? DM_FIRST_NOTICE
+                                          : "아직 메시지가 없습니다.",
+                                    }
+                                  : {})}
                             />
                             <div data-slot="composer" ref={composerSlot}>
                               {notice}
@@ -315,7 +355,15 @@ export function ChannelPage() {
                   active={tab}
                   openerRef={settingsRef}
                   threadOpenerRef={threadOpenerRef}
-                  only={dmChannel ? ["activity", "profile"] : undefined}
+                  only={
+                    dmChannel
+                      ? ["activity", "profile"]
+                      : directChannel
+                        ? sessions
+                          ? ["activity", "thread", "profile"]
+                          : ["thread", "profile"]
+                        : undefined
+                  }
                 >
                   <Outlet />
                 </PanelTabs>

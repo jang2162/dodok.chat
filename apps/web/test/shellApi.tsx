@@ -115,6 +115,8 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/connections") return json(404, { code: "NOT_FOUND", message: "no connections route" });
   // 사이드바 「다이렉트 메시지」 절 — 기본은 DM 없음
   if (url === "/api/v1/dms") return json(200, { dms: [] });
+  // 같은 절의 사람 DM·그룹 DM — 기본은 없음
+  if (url === "/api/v1/directs") return json(200, { directs: [] });
   // 「내 계정」의 MCP 토큰 목록 — 기본은 하나도 없음
   if (url === "/api/v1/me/tokens") return json(200, { tokens: [] });
   // 사람 목록(작성자·@ 후보) — 기본은 로그인한 owner 한 명

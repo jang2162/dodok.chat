@@ -230,7 +230,7 @@ describe("useInteract — 읽기 전용 DM 사유", () => {
       ({ children }: { children: ReactNode }) =>
         createElement(
           DmViewContext.Provider,
-          { value: { channel: channelOf(CH, { kind: "dm" }), readOnly } },
+          { value: { kind: "dm", channel: channelOf(CH, { kind: "dm" }), readOnly } },
           children,
         );
     expect(

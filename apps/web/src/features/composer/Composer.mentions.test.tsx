@@ -5,7 +5,9 @@ import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { dmChannelOf } from "../../../test/dms";
-import { AGENT, CH, USER } from "../../../test/fixtures";
+import { AGENT, CH, USER, uid } from "../../../test/fixtures";
+import { channelOf } from "../../../test/shellApi";
+import { qk } from "@/api/queries";
 import { confirmed, flushEditorFrames, renderComposer } from "../../../test/composerHarness";
 import { MentionList, mentionSuggestion } from "./MentionList";
 import { type MentionCandidate, mentionCandidates } from "./mentions";
@@ -176,7 +178,7 @@ it("DM 작성기에서는 @ 를 쳐도 후보 목록이 없다 — 같은 채널
   cleanup();
 
   const dm = renderComposer(CH, ME, (children) => (
-    <DmViewContext.Provider value={{ channel: dmChannelOf(CH, USER, AGENT), readOnly: null }}>
+    <DmViewContext.Provider value={{ kind: "dm", channel: dmChannelOf(CH, USER, AGENT), readOnly: null }}>
       {children}
     </DmViewContext.Provider>
   ));
@@ -185,4 +187,43 @@ it("DM 작성기에서는 @ 를 쳐도 후보 목록이 없다 — 같은 채널
   await flushEditorFrames();
   expect(dm.editor.getText()).toBe("@");
   expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+it("사람 DM·그룹 DM 작성기의 @ 후보는 참여자만 — 참여하지 않은 사람·에이전트는 없다(사람 간 DM 계획 판정 PH6)", async () => {
+  const MIA = uid(6_001);
+  const JUN = uid(6_002);
+  const direct = channelOf(CH, { kind: "direct", name: "direct", visibility: "private" });
+  const view = renderComposer(CH, ME, (children) => (
+    <DmViewContext.Provider value={{ kind: "direct", channel: direct, readOnly: null }}>
+      {children}
+    </DmViewContext.Provider>
+  ));
+  await act(async () => {
+    view.qc.setQueryData(qk.people, [
+      { id: USER, handle: "owner", displayName: "주인", role: "owner" },
+      { id: MIA, handle: "mia", displayName: "미아", role: "member" },
+      { id: JUN, handle: "jun", displayName: "준", role: "member" },
+    ]);
+    // 참여자: 나·mia·dev — fin·jun 은 참여자가 아니다
+    view.qc.setQueryData(qk.members(CH), [
+      memberOf(DEV.id),
+      { ...memberOf(USER), memberType: "user" },
+      { ...memberOf(MIA), memberType: "user" },
+    ]);
+    // Query 는 관찰자에게 다음 틱에 알린다
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  act(() => {
+    view.editor.commands.focus();
+    view.editor.commands.insertContent("@");
+  });
+  await flushEditorFrames();
+  const list = await screen.findByRole("listbox", { name: "멘션 후보" });
+  const labels = within(list)
+    .getAllByRole("option")
+    .map((o) => o.textContent ?? "");
+  expect(labels.some((l) => l.includes("@dev"))).toBe(true);
+  expect(labels.some((l) => l.includes("@mia"))).toBe(true);
+  expect(labels.some((l) => l.includes("@fin"))).toBe(false);
+  expect(labels.some((l) => l.includes("@jun"))).toBe(false);
 });

@@ -377,6 +377,35 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
     expect(((await rest(lee, "GET", "/api/v1/directs")).json() as DirectList).directs).toEqual([]);
   });
 
+  it("GET /directs 의 sessions — 에이전트가 든 그룹은 참, 그 에이전트를 보관해 agents 가 비어도 참이고 새 세션도 된다, 사람만이면 거짓", async () => {
+    const mia = await person();
+    const jun = await person();
+    const kai = await person();
+    const dev = await agentWith("everyone");
+    const one = await open(mia, { userIds: [jun.id] });
+    const people = await open(mia, { userIds: [jun.id, kai.id] });
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    const listed = async () =>
+      new Map(
+        ((await rest(mia, "GET", "/api/v1/directs")).json() as DirectList).directs.map((d) => [
+          d.channel.id,
+          d,
+        ]),
+      );
+    const before = await listed();
+    expect(before.get(group.id)?.sessions).toBe(true);
+    expect(before.get(one.id)?.sessions).toBe(false);
+    expect(before.get(people.id)?.sessions).toBe(false);
+
+    expect((await rest(owner, "DELETE", `/api/v1/agents/${dev.id}`)).statusCode).toBe(200);
+    const after = await listed();
+    // 보관한 에이전트는 agents 에서 빠져 1:1 줄과 users·agents 가 같아진다 — sessions 만이 둘을 가른다
+    expect(after.get(group.id)).toMatchObject({ agents: [], sessions: true });
+    expect(after.get(group.id)?.users.map((u) => u.id)).toEqual([jun.id]);
+    expect(after.get(one.id)).toMatchObject({ agents: [], sessions: false });
+    expect((await send(await wire(mia), { channelId: group.id, newConversation: {} })).ok).toBe(true);
+  });
+
   // ── 한 줄기·세션 권한(Step 5·6 — PH4·PH5) ─────────────────────────
 
   it("한 줄기(1:1·사람 그룹) — newConversation·PATCH /conversations 는 VALIDATION, 대화 id 로 보내기·스레드 답글은 된다", async () => {

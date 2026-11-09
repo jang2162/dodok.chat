@@ -239,7 +239,7 @@ describe("사이드바 「다이렉트 메시지」", () => {
     expect(link.querySelector("[data-mention-badge]")).toHaveTextContent("3");
   });
 
-  it("「+」 는 「DM 할 에이전트」 — 후보는 내 역할로 열 수 있고 보관·꺼짐이 아닌 에이전트, 고르면 DM 을 열어 그 채널로 간다", async () => {
+  it("「+」 는 「새 메시지」 — 에이전트 후보는 내 역할로 열 수 있고 보관·꺼짐이 아닌 것, 하나만 골라 「열기」 면 DM 을 열어 그 채널로 간다", async () => {
     const open = agentOf(uid(14), "open", { name: "Open 봇", dmAccess: "everyone" });
     const admins = agentOf(uid(15), "boss", { name: "Boss 봇", dmAccess: "admins" });
     const off = agentOf(uid(16), "quiet", { name: "Quiet 봇", dmAccess: "off" });
@@ -251,8 +251,8 @@ describe("사이드바 「다이렉트 메시지」", () => {
     });
     const server = stubServer({ role: "member", dms: [], agents: [open, admins, off, disabled, archived] });
     const { router } = renderRoute(`/c/${CH}/s/new`);
-    await userEvent.click(await screen.findByRole("button", { name: "DM 할 에이전트 고르기" }));
-    const dialog = await screen.findByRole("dialog", { name: "DM 할 에이전트" });
+    await userEvent.click(await screen.findByRole("button", { name: "새 메시지" }));
+    const dialog = await screen.findByRole("dialog", { name: "새 메시지" });
     await within(dialog).findByText("Open 봇");
     expect(
       within(dialog)
@@ -262,6 +262,7 @@ describe("사이드바 「다이렉트 메시지」", () => {
     ).toEqual(["OOpen 봇@open"]);
 
     await userEvent.click(within(dialog).getByRole("button", { name: /Open 봇/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "열기" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${DM2}/s/new`));
     expect(server.bodies("POST", "/dms")).toEqual([{ agentId: open.id }]);
   });
@@ -515,7 +516,7 @@ describe("DM 의 메시지 줄 — 스레드 없음", () => {
     ...msg(1, { bodyMd: "루트", channelId: DM, conversationId: A }),
     threadSummary: { count: 2, lastAt: "2027-01-15T08:01:00.000Z", agentIds: [AGENT] },
   };
-  const view: DmView = { channel: dmChannelOf(DM, ME.user.id, AGENT), readOnly: null };
+  const view: DmView = { kind: "dm", channel: dmChannelOf(DM, ME.user.id, AGENT), readOnly: null };
 
   it("채널이면 칩·「스레드에서 답하기」가 있고, DM 이면 둘 다 없다", () => {
     const { unmount } = renderWithClient(<MessageItem message={ROOT} head />);
@@ -656,8 +657,8 @@ describe("판정 함수", () => {
     const member = { role: "member", user: { id: "mia" } };
     const owner = { role: "owner", user: { id: "boss" } };
     const tool = { kind: "tool" as const, requestedBy: undefined };
-    expect(canDecideApproval(tool, member, "mia")).toBe(true);
-    expect(canDecideApproval(tool, owner, "mia")).toBe(false);
+    expect(canDecideApproval(tool, member, { kind: "dm", dmOwnerId: "mia" })).toBe(true);
+    expect(canDecideApproval(tool, owner, { kind: "dm", dmOwnerId: "mia" })).toBe(false);
     expect(canDecideApproval(tool, member)).toBe(false);
     expect(canDecideApproval(tool, owner)).toBe(true);
   });

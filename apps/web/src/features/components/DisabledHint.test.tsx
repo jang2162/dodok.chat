@@ -217,7 +217,9 @@ describe("비활성 사유는 보이는 글이다 — 여덟 사유 × 버튼·�
       const inChannel = (m: Message, { archived = false, closed = false, dm = null }: Flags = {}) => (
         <ChannelArchivedContext.Provider value={archived}>
           <ConversationClosedContext.Provider value={closed}>
-            <DmViewContext.Provider value={{ channel: channelOf(CH, { kind: "dm" }), readOnly: dm }}>
+            <DmViewContext.Provider
+              value={{ kind: "dm", channel: channelOf(CH, { kind: "dm" }), readOnly: dm }}
+            >
               <Components message={m} />
             </DmViewContext.Provider>
           </ConversationClosedContext.Provider>

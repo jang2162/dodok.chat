@@ -73,11 +73,12 @@ const USAGE: Column[] = [
 
 /**
  * 채널 이름은 그 채널로 가는 링크, 에이전트는 이름과 핸들·Gateway — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절).
- * 「DM」 묶음 줄은 모든 DM 을 합친 것이라 갈 채널이 없다(에이전트 DM 계획 판정 PD5)
+ * 「DM」 묶음 줄은 모든 DM(에이전트 DM·사람 DM·그룹 DM)을 합친 것이라 갈 채널이 없다(에이전트 DM 계획 판정 PD5). 링크는 `kind` 가 없는
+ * 채널 줄에만 — 모르는 묶음 줄을 채널로 읽지 않는다(사람 간 DM 계획 Global Constraints 「기본이 닫힘」)
  */
 function Name({ row, channel }: { row: OpsRunsRow; channel: boolean }) {
   if (!channel) return <AgentName row={row} />;
-  if (row.kind === "dm") return <>{row.name}</>;
+  if (row.kind !== undefined) return <>{row.name}</>;
   return (
     <Link to="/c/$channelId" params={{ channelId: row.id }} className="underline-offset-4 hover:underline">
       {row.name}

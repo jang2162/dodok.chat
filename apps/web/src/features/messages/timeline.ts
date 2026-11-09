@@ -21,7 +21,8 @@ export type PendingMessage = {
 /**
  * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지
  * 않는다(채널 세션 계획 Review Focus 2). `forbidden` 은 서버가 403 으로 거절한 것(「세션 관리자만」 채널에서 새 세션) — 역시 다시 보내도 같다.
- * DM 읽기 전용 사유 셋(`agent_archived` 등)은 읽기 전용 DM 에 보낸 것(409 `DM_READ_ONLY` 의 `details.reason`, 에이전트 DM 계획 Review Focus 4) —
+ * DM 읽기 전용 사유(`agent_archived` 등, 사람 1:1 의 `peer_deactivated`)는 읽기 전용 DM 에 보낸 것(409 `DM_READ_ONLY` 의 `details.reason`,
+ * 에이전트 DM 계획·사람 간 DM 계획 Review Focus 4) —
  * 되돌려지기 전에는 다시 보내도 같다
  */
 export type PendingFailReason =
@@ -39,6 +40,7 @@ export const FINAL_FAIL_REASONS: ReadonlySet<PendingFailReason> = new Set([
   "agent_archived",
   "agent_disabled",
   "dm_not_allowed",
+  "peer_deactivated",
 ]);
 /**
  * 세션 하나(또는 스레드 하나)의 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).

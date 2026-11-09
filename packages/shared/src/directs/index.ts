@@ -24,13 +24,16 @@ export type OpenDirectResult = z.infer<typeof OpenDirectResult>;
 
 /**
  * GET /api/v1/directs 한 줄 — 내가 참여한 direct 하나. users 는 나를 뺀 사람 참여자(비활성도 deactivatedAt 과 함께 — 웹이 흐리게
- * 그린다), agents 는 보관하지 않은 참여 에이전트. agents 가 비면 세션 없는 한 줄기다. lastMessageAt 은 가장 최근 글 시각(없으면 null).
- * readOnlyReason 이 있으면 쓰기가 409 DM_READ_ONLY(details.reason 이 같은 값)
+ * 그린다), agents 는 보관하지 않은 참여 에이전트. sessions 는 세션으로 나누는 direct 인가 — 에이전트 참여자가 있으면(보관한 에이전트도
+ * 센다) 참, 없으면 세션 없는 한 줄기(사람 간 DM 스펙 결정 4). agents 로 가르지 않는다: 보관한 에이전트는 agents 에서 빠지므로 그 그룹이
+ * 1:1·한 줄기로 읽힌다. lastMessageAt 은 가장 최근 글 시각(없으면 null). readOnlyReason 이 있으면 쓰기가 409 DM_READ_ONLY(details.reason
+ * 이 같은 값)
  */
 export const DirectSummary = z.object({
   channel: Channel,
   users: z.array(Person),
   agents: z.array(Agent),
+  sessions: z.boolean(),
   lastMessageAt: IsoDateTime.nullable(),
   readOnlyReason: DmReadOnlyReason.nullable(),
 });
