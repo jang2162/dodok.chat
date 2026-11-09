@@ -112,17 +112,18 @@ export function runsSummary(
   }
 
   // DM 은 채널 이름(내부용)·주인 없이 「DM」 한 줄로 합친다 — 운영 화면을 보는 owner·admin 에게 누구의 DM 이 몇 개 있는지 드러내지
-  // 않는다(에이전트 DM 스펙 4장, 계획 판정 PD5). 에이전트별 행은 DM 런도 그 에이전트에 그대로 센다(내용·주인이 없다)
+  // 않는다(에이전트 DM 스펙 4장, 계획 판정 PD5). 사람 DM·그룹 DM(direct)도 같은 줄이다(사람 간 DM 스펙 7.5). 모르는 kind 는 채널별
+  // 줄에 싣지 않는다(기본이 닫힘). 에이전트별 행은 이 런들도 그 에이전트에 그대로 센다(내용·주인이 없다)
   const dmRow = channelRows
-    .filter((r) => r.kind === "dm")
+    .filter((r) => r.kind === "dm" || r.kind === "direct")
     .reduce<(Tally & { blocked: number }) | undefined>((sum, r) => {
       const blockedCount = blocked.get(r.id) ?? 0;
-      if (!sum) return { ...r, id: OPS_DM_ROW_ID, name: "DM", blocked: blockedCount };
+      if (!sum) return { ...r, id: OPS_DM_ROW_ID, name: "DM", kind: "dm", blocked: blockedCount };
       for (const k of Object.keys(tally) as (keyof typeof tally)[]) sum[k] += r[k];
       sum.blocked += blockedCount;
       return sum;
     }, undefined);
-  const plainRows = channelRows.filter((r) => r.kind !== "dm");
+  const plainRows = channelRows.filter((r) => r.kind === "channel");
 
   const toRow = (r: Tally, blockedCount: number): OpsRunsRow => ({
     id: r.id,

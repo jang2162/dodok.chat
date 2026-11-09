@@ -1,17 +1,24 @@
 /**
  * DM 의 푸시는 주인에게만(에이전트 DM 계획 판정 PD7) — 승인 알림은 지금 「owner·admin 전원」 갈래를 DM 에서 주인 하나로 바꾸고,
  * 어느 트리거 갈래든 DM 을 겨눈 알림은 발송 직전 거름(attachPushTriggers)이 주인 말고는 걷는다. 본문의 자리는 내부용 이름 대신 「DM」.
+ * direct 를 겨눈 알림은 같은 거름이 사람 참여자 말고 모두 걷는다(사람 간 DM 스펙 7.1 — 트리거 갈래는 계획 태스크 3·4).
  */
 import type { Approval, Message } from "@dodok/shared";
 import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it } from "vitest";
+import { eq, sql } from "drizzle-orm";
 import { memberships, users } from "../src/db/schema.sqlite";
 import { attachPushTriggers, createTriggerLookups } from "../src/modules/push/service";
 import { type PushTarget, targetsForApproval } from "../src/modules/push/triggers";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { createDmChannelForTest, seedChannelWithAgent, seedConversation } from "./helpers/seed";
+import {
+  createDirectChannelForTest,
+  createDmChannelForTest,
+  seedChannelWithAgent,
+  seedConversation,
+} from "./helpers/seed";
 
 function setup() {
   const db = newTestDb();
@@ -42,7 +49,7 @@ function setup() {
   const bus = new ServerBus();
   const got: PushTarget[][] = [];
   attachPushTriggers(bus, { dispatch: async (x) => void got.push(x) }, lookups, pino({ level: "silent" }));
-  return { ...s, admin, mia, dm, dmConversation, lookups, bus, got };
+  return { ...s, db, admin, mia, dm, dmConversation, lookups, bus, got };
 }
 
 const approvalOf = (over: Partial<Approval>): Approval =>
@@ -169,5 +176,64 @@ describe("DM 푸시 — 주인에게만", () => {
     expect(t.lookups.dmOwner(uuid())).toBeNull();
     expect(t.lookups.dmAgent(t.dm.id)).toBe(t.agentId);
     expect(t.lookups.dmAgent(t.channelId)).toBeNull();
+  });
+
+  it("발송 직전 거름 — 트리거가 direct 를 일반 채널로 잘못 보고 owner·admin 을 골라도 사람 참여자 말고는 가지 않는다(사람 간 DM 스펙 7.1)", () => {
+    const db = setup();
+    // mia 와 adm(참여한 admin)의 그룹 direct — owner(db.userId)는 참여하지 않았다
+    const direct = createDirectChannelForTest(db.db, {
+      workspaceId: db.workspaceId,
+      createdBy: db.mia,
+      userIds: [db.admin],
+      agentIds: [db.agentId],
+    });
+    const conversationId = seedConversation(db.db, direct.id, { createdBy: db.mia });
+    // 트리거는 지금 direct 를 일반 채널 갈래로 계산한다 — 멘션에 owner 를 넣어 그 갈래가 owner 를 고르게 한다
+    db.bus.emit("message.created", {
+      message: agentMessage({
+        channelId: direct.id,
+        conversationId,
+        authorId: db.agentId,
+        mentions: { users: [db.userId, db.admin, db.mia], agents: [] },
+      }),
+    });
+    // 승인(tool)은 일반 채널 갈래가 owner·admin 전원을 고른다 — owner 는 걷히고 참여한 admin 만 남는다
+    db.bus.emit("approval.requested", {
+      approval: approvalOf({ channelId: direct.id, conversationId }),
+    });
+    const receivers = db.got.map((batch) => batch.map((x) => x.userId).sort());
+    expect(receivers.flat()).not.toContain(db.userId);
+    expect(receivers).toEqual([[db.admin, db.mia].sort(), [db.admin]]);
+  });
+
+  it("발송 직전 거름 — 비활성화된 참여자에게도, 모르는 kind 의 채널을 겨눈 알림은 누구에게도 가지 않는다", () => {
+    const db = setup();
+    const direct = createDirectChannelForTest(db.db, {
+      workspaceId: db.workspaceId,
+      createdBy: db.mia,
+      userIds: [db.admin],
+      agentIds: [db.agentId],
+    });
+    const conversationId = seedConversation(db.db, direct.id, { createdBy: db.mia });
+    db.db
+      .update(memberships)
+      .set({ deactivatedAt: new Date() })
+      .where(eq(memberships.userId, db.admin))
+      .run();
+    db.bus.emit("message.created", {
+      message: agentMessage({
+        channelId: direct.id,
+        conversationId,
+        authorId: db.agentId,
+        mentions: { users: [db.admin, db.mia], agents: [] },
+      }),
+    });
+    expect(db.got.map((batch) => batch.map((x) => x.userId))).toEqual([[db.mia]]);
+    expect(db.lookups.directParticipants(direct.id)).toEqual([db.mia]);
+    expect(db.lookups.directParticipants(db.channelId)).toBeNull();
+    expect(db.lookups.directParticipants(db.dm.id)).toBeNull();
+    expect(db.lookups.directParticipants(uuid())).toBeNull();
+    db.db.run(sql`UPDATE channels SET kind = 'zzz' WHERE id = ${db.channelId}`);
+    expect(db.lookups.directParticipants(db.channelId)).toEqual([]);
   });
 });

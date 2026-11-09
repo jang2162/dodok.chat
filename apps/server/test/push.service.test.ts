@@ -1006,6 +1006,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     channelArchived: () => false,
     dmOwner: () => null,
     dmAgent: () => null,
+    directParticipants: () => null,
   };
   const message = {
     id: uuid(),

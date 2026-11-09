@@ -2,11 +2,14 @@
  * DM 의 채널 사실은 주인에게만(에이전트 DM 계획 판정 PD4) — 채널 룸 밖으로 내던 이벤트(channel.created·updated·channel.activity·
  * approval.requested·resolved·system.notice)가 DM 이면 주인의 user 룸으로만 가고, 일반 채널이면 지금처럼 모두에게 간다. 실제 서버를
  * 띄우고 owner·admin·다른 member·DM 주인 mia 의 소켓 넷을 붙여(채널 구독 없이) 받은 것을 본다.
+ * 사람 DM·그룹 DM(direct)은 사람 참여자(mia·member)의 user 룸으로만, 모르는 kind 는 아무에게도(사람 간 DM 스펙 7.3, 계획 판정 PH11).
  */
 import type { Approval, ServerToClientEvents } from "@dodok/shared";
+import { and, eq, sql } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
+import { memberships } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { syncChannelPrompt } from "../src/modules/channels/prompt-sync";
@@ -14,7 +17,7 @@ import { createUserMessage } from "../src/modules/messages/service";
 import { insertRun, updateRun } from "../src/modules/runs/store";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { createDmChannelForTest, seedConversation } from "./helpers/seed";
+import { createDirectChannelForTest, createDmChannelForTest, seedConversation } from "./helpers/seed";
 import { connectWire, recordEvents, waitFor, type WireClient } from "./helpers/wire";
 
 type Who = "owner" | "admin" | "member" | "mia";
@@ -356,6 +359,259 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
     await call;
     // 같은 연결의 ack 왕복 — 그 앞에 서버가 이 소켓에 보낸 이벤트는 모두 와 있다
     for (const who of ["owner", "admin", "member"] as const) {
+      await sockets[who].emitWithAck("channel.unsubscribe", { channelId: uuid() });
+      expect(seen[who].filter((e) => e.event.startsWith("approval."))).toEqual([]);
+    }
+  });
+
+  // ── 사람 DM·그룹 DM(direct) — 사람 참여자 mia·member 의 user 룸으로만, 모르는 kind 는 아무에게도(사람 간 DM 스펙 7.3, 계획 PH11) ──
+
+  /** mia·member 와 에이전트 하나의 그룹 direct — 에이전트가 있어야 프롬프트 동기화(Gateway)가 생긴다 */
+  const direct = () => {
+    const agent = newAgent();
+    const channel = createDirectChannelForTest(app.db, {
+      workspaceId: app.workspaceId,
+      createdBy: ids.mia,
+      userIds: [ids.member],
+      agentIds: [agent.id],
+    });
+    return { agent, channel, conversationId: seedConversation(app.db, channel.id, { createdBy: ids.mia }) };
+  };
+  /** 서비스로는 못 만드는 kind = 'zzz' 채널 — 일반 채널로 만들고 kind 만 바꾼다(Review Focus 2 의 밀어 내는 쪽) */
+  const unknownKind = () => {
+    const made = plain();
+    app.db.run(sql`UPDATE channels SET kind = 'zzz' WHERE id = ${made.id}`);
+    const channel = { ...made, kind: "zzz" } as unknown as typeof made;
+    return { channel, conversationId: seedConversation(app.db, made.id) };
+  };
+  type Target = { channel: ReturnType<typeof plain>; conversationId: string };
+  /** direct·zzz 쪽을 먼저 내고 일반 채널을 뒤에 낸다 — both 와 같은 까닭으로 뒤의 것이 모두에게 닿으면 앞의 것도 닿아 있다 */
+  const trio = async (event: keyof ServerToClientEvents, emit: (target: Target) => void) => {
+    const d = direct();
+    const z = unknownKind();
+    const made = plain();
+    const p = { channel: made, conversationId: seedConversation(app.db, made.id) };
+    const arrived = WHO.map((who) =>
+      waitFor(sockets[who], event, (payload) => JSON.stringify(payload).includes(made.id)),
+    );
+    emit(d);
+    emit(z);
+    emit(p);
+    await Promise.all(arrived);
+    return {
+      d,
+      direct: receivers(event, d.channel.id),
+      unknown: receivers(event, z.channel.id),
+      plain: receivers(event, made.id),
+    };
+  };
+  const PARTICIPANTS: Who[] = ["member", "mia"];
+  const message = (t: Target, authorType: "agent" | "user", authorId: string) =>
+    ({
+      id: uuid(),
+      channelId: t.channel.id,
+      conversationId: t.conversationId,
+      seq: ++n,
+      kind: "normal",
+      authorType,
+      authorId,
+      bodyMd: "x",
+      mentions: { users: [], agents: [] },
+      reactions: [],
+    }) as never;
+
+  it.each(["channel.created", "channel.updated"] as const)(
+    "%s — direct 는 사람 참여자만, 모르는 kind 는 아무도, 일반 채널은 모두",
+    async (event) => {
+      await connectAll();
+      const got = await trio(event, (t) => app.bus.emit(event, { channel: t.channel }));
+      expect(got.direct).toEqual(PARTICIPANTS);
+      expect(got.unknown).toEqual([]);
+      expect(got.plain).toEqual(WHO);
+    },
+  );
+
+  it("channel.activity — direct 의 새 글 신호는 사람 참여자만, mentionedUserIds 는 작성자를 뺀 사람 참여자 전원", async () => {
+    await connectAll();
+    const got = await trio("channel.activity", (t) =>
+      app.bus.emit("message.created", { message: message(t, "user", ids.mia) }),
+    );
+    expect(got.direct).toEqual(PARTICIPANTS);
+    expect(got.unknown).toEqual([]);
+    expect(got.plain).toEqual(WHO);
+    const mentioned = (seen.member.find(
+      (e) => e.event === "channel.activity" && JSON.stringify(e.payload).includes(got.d.channel.id),
+    )?.payload ?? {}) as { mentionedUserIds?: string[] };
+    expect(mentioned.mentionedUserIds).toEqual([ids.member]);
+    // 에이전트 글은 사람 참여자 전원
+    const seq = n + 1;
+    const both = PARTICIPANTS.map((who) =>
+      waitFor(sockets[who], "channel.activity", (payload) => payload.seq === seq),
+    );
+    app.bus.emit("message.created", { message: message(got.d, "agent", got.d.agent.id) });
+    for (const payload of await Promise.all(both))
+      expect([...payload.mentionedUserIds].sort()).toEqual([ids.member, ids.mia].sort());
+  });
+
+  it.each(["approval.requested", "approval.resolved"] as const)(
+    "%s — direct 의 승인은 사람 참여자만, 모르는 kind 는 아무도",
+    async (event) => {
+      await connectAll();
+      const got = await trio(event, (t) =>
+        app.bus.emit(event, {
+          approval: {
+            id: uuid(),
+            channelId: t.channel.id,
+            conversationId: t.conversationId,
+            kind: "tool",
+            status: event === "approval.requested" ? "pending" : "approved",
+            title: "도구",
+          } as unknown as Approval,
+        }),
+      );
+      expect(got.direct).toEqual(PARTICIPANTS);
+      expect(got.unknown).toEqual([]);
+      expect(got.plain).toEqual(WHO);
+    },
+  );
+
+  it("비활성화된 참여자의 user 룸에는 direct 의 채널 사실이 가지 않는다(소켓이 붙어 있어도)", async () => {
+    await connectAll();
+    const d = direct();
+    const p = plain();
+    const deactivated = () =>
+      app.db
+        .update(memberships)
+        .set({ deactivatedAt: new Date() })
+        .where(and(eq(memberships.userId, ids.member), eq(memberships.workspaceId, app.workspaceId)))
+        .run();
+    deactivated();
+    try {
+      // 일반 채널은 비활성화와 무관하게 workspace 룸 — 붙어 있는 소켓 넷이 다 받으면 앞의 direct 쪽도 닿아 있다
+      const arrived = WHO.map((who) =>
+        waitFor(sockets[who], "channel.updated", (payload) => payload.channel.id === p.id),
+      );
+      app.bus.emit("channel.updated", { channel: d.channel });
+      app.bus.emit("channel.updated", { channel: p });
+      await Promise.all(arrived);
+      expect(receivers("channel.updated", d.channel.id)).toEqual(["mia"]);
+    } finally {
+      app.db
+        .update(memberships)
+        .set({ deactivatedAt: null })
+        .where(and(eq(memberships.userId, ids.member), eq(memberships.workspaceId, app.workspaceId)))
+        .run();
+    }
+  });
+
+  it("system.notice — direct 의 Gateway 반영 실패는 사람 참여자에게만 「DM」 으로, 모르는 kind 는 아무에게도", async () => {
+    await connectAll();
+    const d = direct();
+    const z = unknownKind();
+    addMember(app.db, z.channel.id, { memberType: "agent", memberId: newAgent().id }, app.logger);
+    const p = plain();
+    addMember(app.db, p.id, { memberType: "agent", memberId: newAgent().id }, app.logger);
+    const failing = {
+      db: app.db,
+      bus: app.bus,
+      logger: { warn: () => undefined } as never,
+      registry: {
+        forProvider: () => ({ syncChannelConfig: () => Promise.reject(new Error("gateway down")) }) as never,
+      },
+    };
+    const notices = (who: Who) =>
+      seen[who]
+        .filter((e) => e.event === "system.notice")
+        .map((e) => (e.payload as { message: string }).message);
+    const plainArrived = WHO.map((who) =>
+      waitFor(sockets[who], "system.notice", (payload) => payload.message.includes(p.name)),
+    );
+    syncChannelPrompt(failing, d.channel);
+    syncChannelPrompt(failing, z.channel);
+    syncChannelPrompt(failing, p);
+    await Promise.all(plainArrived);
+    const plainNotice = `#${p.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: gateway down`;
+    for (const who of PARTICIPANTS)
+      expect(notices(who)).toEqual(["DM 의 설정을 Gateway 에 반영하지 못했다: gateway down", plainNotice]);
+    for (const who of ["owner", "admin"] as const) expect(notices(who)).toEqual([plainNotice]);
+    // 모르는 kind 의 이름(#zzz 가 아닌 원래 이름)이 아무에게도 가지 않는다
+    for (const who of WHO) expect(notices(who).some((m) => m.includes(z.channel.name))).toBe(false);
+  });
+
+  it("ops.event control_change — direct 의 제어 쓰기는 VALIDATION 이고 운영 사건이 생기지 않는다", async () => {
+    await connectAll();
+    const d = direct();
+    const p = plain();
+    expect(
+      await app.control.call({ userId: ids.mia, via: "pat" }, "update_channel", {
+        channelId: d.channel.id,
+        topic: "주제",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    // 일반 채널 쪽 사건이 닿은 뒤에는 앞의 direct 쪽 사건도 (있었다면) 닿아 있다
+    const theirs = (["owner", "admin"] as const).map((who) =>
+      waitFor(
+        sockets[who],
+        "ops.event",
+        (e) => e.event.kind === "control_change" && JSON.stringify(e.event.detail).includes(p.id),
+      ),
+    );
+    expect(
+      await app.control.call({ userId: ids.owner, via: "pat" }, "update_channel", {
+        channelId: p.id,
+        topic: "주제",
+      }),
+    ).toMatchObject({ ok: true });
+    await Promise.all(theirs);
+    for (const who of ["owner", "admin"] as const) {
+      const events = seen[who].filter((e) => e.event === "ops.event").map((e) => JSON.stringify(e.payload));
+      expect(events.filter((e) => e.includes(`control:update_channel:${ids.mia}`))).toEqual([]);
+      expect(events.filter((e) => e.includes(d.channel.id))).toEqual([]);
+    }
+  });
+
+  it("확인 카드 — direct 런의 제어 쓰기 카드는 사람 참여자만 받고, 출처 줄은 #direct 가 아니라 「DM」", async () => {
+    await connectAll();
+    const d = direct();
+    const root = createUserMessage(app.db, app.bus, {
+      conversationId: d.conversationId,
+      authorId: ids.mia,
+      bodyMd: "채널 하나 만들어 줘",
+      clientMsgId: `fan-direct-root-${++n}`,
+    });
+    const queued = insertRun(app.db, {
+      channelId: d.channel.id,
+      conversationId: d.conversationId,
+      agentId: d.agent.id,
+      triggerKind: "mention",
+      triggerMessageId: root.id,
+      rootMessageId: root.id,
+      relayDepth: 0,
+      sessionKey: `agent:${d.agent.providerAgentId}:dodok:channel:${d.conversationId}`,
+      connectionId: FAKE_GATEWAY_ID,
+      requestedBy: ids.mia,
+      createdAt: new Date(),
+    });
+    const run = updateRun(app.db, queued.id, { status: "tool", startedAt: new Date() });
+    const requested = PARTICIPANTS.map((who) =>
+      waitFor(sockets[who], "approval.requested", (p) => p.approval.runId === run.id),
+    );
+    const call = app.control.call(
+      { userId: ids.mia, via: "agent", agentId: d.agent.id, runId: run.id },
+      "create_channel",
+      { name: `fan-direct-new-${++n}` },
+    );
+    const [{ approval }] = (await Promise.all(requested)) as [{ approval: Approval }];
+    expect(approval.detail).toContain(" · DM · ");
+    expect(approval.detail).not.toContain("#direct");
+    expect(approval.title).not.toContain("#direct");
+    const resolved = waitFor(sockets.mia, "approval.resolved", (p) => p.approval.id === approval.id);
+    expect(
+      await sockets.mia.emitWithAck("approval.resolve", { approvalId: approval.id, decision: "deny" }),
+    ).toMatchObject({ ok: true });
+    await resolved;
+    await call;
+    for (const who of ["owner", "admin"] as const) {
       await sockets[who].emitWithAck("channel.unsubscribe", { channelId: uuid() });
       expect(seen[who].filter((e) => e.event.startsWith("approval."))).toEqual([]);
     }

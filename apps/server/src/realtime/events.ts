@@ -1,8 +1,9 @@
 import type { Message, RunEvent, RunState, TeamRole } from "@dodok/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import type { Db } from "../db/client";
+import type { Db, DbOrTx } from "../db/client";
 import { channels, memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
+import { channelParticipants } from "../modules/channels/service";
 import { connectionOwners, readableConnections } from "../modules/connections/owner";
 import { hydrateForClient, withAutomationNames, withInteractions } from "../modules/messages/service";
 import { setupStatusFor } from "../modules/setup/status";
@@ -26,7 +27,7 @@ export type WireFanoutOptions = {
 
 /**
  * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·channel.activity 는 channelAudience(일반 채널은
- * workspace:<id> 룸, DM 은 주인의 user 룸), people.changed·agents.changed 는 workspace 룸, conversation.read 는 그 사용자의 user 룸,
+ * workspace:<id> 룸, DM 은 주인의 user 룸, direct 는 사람 참여자들의 user 룸), people.changed·agents.changed 는 workspace 룸, conversation.read 는 그 사용자의 user 룸,
  * adapter.status 는 전체, system.notice 는 userId 가 있으면 그 사람의 user 룸·없으면 전체, setup.status 는 owner·admin 에게 전체·member
  * 에게는 그 사람의 연결만(연결 탭 통합 스펙 5.3), connections.changed 는 workspace 룸, ops.event 는 owner·admin 사용자 룸에만(설정 마법사
  * 결정 6·팀 스펙 「역할과 권한」 표).
@@ -109,14 +110,21 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   // 채널 사실(존재·이름·활동·승인)을 실을 룸 — 페이로드에 채널 행이 없는 이벤트는 매번 읽는다. 없는 채널이면 아무에게도 안 보낸다
   const audienceRow = (channelId: string) =>
     opts.db
-      .select({ workspaceId: channels.workspaceId, kind: channels.kind, dmOwnerId: channels.dmOwnerId })
+      .select({
+        id: channels.id,
+        workspaceId: channels.workspaceId,
+        kind: channels.kind,
+        dmOwnerId: channels.dmOwnerId,
+      })
       .from(channels)
       .where(eq(channels.id, channelId))
       .get();
-  const audienceOf = (channelId: string): string | undefined => {
+  const audienceOf = (channelId: string): string[] => {
     const row = audienceRow(channelId);
-    return row ? channelAudience(row) : undefined;
+    return row ? channelAudience(opts.db, row) : [];
   };
+  // 룸이 비면 io.to([]) 는 전체로 내보낸다 — 받을 사람이 없으면 아예 내지 않는다
+  const toAudience = (rooms: string[]) => (rooms.length > 0 ? io.to(rooms) : undefined);
 
   // 자동화 이름도 붙인다 — 안 붙이면 member 화면의 새 자동화 글이 다시 불러오기 전까지 「⚙ 자동화」로만 보인다
   const hydrate = (message: Message): Message =>
@@ -153,12 +161,15 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       const row = audienceRow(message.channelId);
       if (row === undefined) return;
       // DM 의 mentions 는 늘 비지만 에이전트의 보통 메시지는 주인을 부른 것으로 센다 — 스냅숏(reads/store.ts unreadFor)과 같은
-      // 규칙이라야 배지가 새로고침 전후로 같다(에이전트 DM 계획 판정 PD10). DM 에는 스레드가 없어 답글 갈래는 따로 두지 않는다
+      // 규칙이라야 배지가 새로고침 전후로 같다(에이전트 DM 계획 판정 PD10). DM 에는 스레드가 없어 답글 갈래는 따로 두지 않는다.
+      // direct 는 남이 쓴 보통 글 모두가 「나를 부른 글」이다 — 작성자를 뺀 사람 참여자 전원(사람 간 DM 스펙 7.2)
       const mentionedUserIds =
         row.kind === "dm" && authorType === "agent" && row.dmOwnerId !== null
           ? [row.dmOwnerId]
-          : message.mentions.users;
-      io.to(channelAudience(row)).emit("channel.activity", {
+          : row.kind === "direct"
+            ? humanParticipantIds(opts.db, row.id).filter((id) => id !== message.authorId)
+            : message.mentions.users;
+      toAudience(channelAudience(opts.db, row))?.emit("channel.activity", {
         channelId: message.channelId,
         conversationId: message.conversationId,
         seq: message.seq,
@@ -188,19 +199,17 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("run.event", ({ event, channelId }) => fanoutRunEvent(event, channelId)),
     // 승인은 채널 룸이 아니다 — 웹은 한 번에 한 채널만 구독하므로 채널 룸이면 다른 채널을 보고 있을 때 승인 카드도 알림도 아예
     // 닿지 않는다(브라우저 검증 D1·판정 7). 일반 채널은 워크스페이스 룸이어도 노출이 늘지 않는다: 누구나 그 채널을 구독해 같은
-    // 페이로드를 받을 수 있다. DM 은 주인만 구독할 수 있으므로 주인에게만(channelAudience)
-    on("approval.requested", (p) => {
-      const room = audienceOf(p.approval.channelId);
-      if (room !== undefined) io.to(room).emit("approval.requested", p);
-    }),
-    on("approval.resolved", (p) => {
-      const room = audienceOf(p.approval.channelId);
-      if (room !== undefined) io.to(room).emit("approval.resolved", p);
-    }),
-    on("channel.created", (p) => io.to(channelAudience(p.channel)).emit("channel.created", p)),
+    // 페이로드를 받을 수 있다. DM 은 주인만, direct 는 참여자만 구독할 수 있으므로 그들에게만(channelAudience)
+    on("approval.requested", (p) =>
+      toAudience(audienceOf(p.approval.channelId))?.emit("approval.requested", p),
+    ),
+    on("approval.resolved", (p) =>
+      toAudience(audienceOf(p.approval.channelId))?.emit("approval.resolved", p),
+    ),
+    on("channel.created", (p) => toAudience(channelAudience(opts.db, p.channel))?.emit("channel.created", p)),
     // 구독하지 않은 탭의 사이드바에도 닿게(채널 보관 스펙 「채널 보관」 절의 API). 일반 채널은 channel.created 와 목록 REST 가 이미
     // 워크스페이스의 모든 채널을 주므로 노출이 늘지 않는다
-    on("channel.updated", (p) => io.to(channelAudience(p.channel)).emit("channel.updated", p)),
+    on("channel.updated", (p) => toAudience(channelAudience(opts.db, p.channel))?.emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),
     on("conversation.created", (p) =>
       io.to(channelRoom(p.conversation.channelId)).emit("conversation.created", p),
@@ -248,16 +257,25 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
 
 /**
  * 채널 사실을 workspace 룸으로 내던 이벤트가 갈 룸 — 일반 채널은 워크스페이스 전원, DM 은 주인 한 사람(에이전트 DM 스펙 4장, 계획 판정
- * PD4). DM 이 있는지·이름·활동·승인을 남에게 보내지 않는다. 채널 사실을 workspace 룸으로 내는 새 이벤트는 이 함수를 거친다
+ * PD4), direct 는 비활성이 아닌 사람 참여자 각자(사람 간 DM 스펙 7.3), 모르는 kind 는 아무도(빈 목록). DM 이 있는지·이름·활동·승인을
+ * 남에게 보내지 않는다. 채널 사실을 workspace 룸으로 내는 새 이벤트는 이 함수를 거친다 — 빈 목록이면 내보내지 않는다(io.to([]) 는 전체다)
  */
-export function channelAudience(channel: {
-  workspaceId: string;
-  kind: string;
-  dmOwnerId: string | null;
-}): string {
-  if (channel.kind !== "dm") return workspaceRoom(channel.workspaceId);
-  // 주인이 없는 DM 은 없다(스키마 판정). 그래도 비면 아무도 없는 룸으로 — workspace 룸으로 새지 않게
-  return userRoom(channel.dmOwnerId ?? "");
+export function channelAudience(
+  db: DbOrTx,
+  channel: { id: string; workspaceId: string; kind: string; dmOwnerId: string | null },
+): string[] {
+  if (channel.kind === "channel") return [workspaceRoom(channel.workspaceId)];
+  // 주인이 없는 DM 은 없다(스키마 판정). 그래도 비면 아무에게도 — workspace 룸으로 새지 않게
+  if (channel.kind === "dm") return channel.dmOwnerId === null ? [] : [userRoom(channel.dmOwnerId)];
+  if (channel.kind === "direct") return humanParticipantIds(db, channel.id).map(userRoom);
+  return [];
+}
+
+/** 비활성이 아닌 사람 참여자 id — 비활성 멤버는 어떤 대화도 못 읽는다(사람 간 DM 스펙 4.1) */
+function humanParticipantIds(db: DbOrTx, channelId: string): string[] {
+  return channelParticipants(db, channelId)
+    .filter((p) => p.type === "user")
+    .map((p) => p.id);
 }
 
 /**
