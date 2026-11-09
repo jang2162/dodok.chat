@@ -33,6 +33,7 @@ import * as approvalStore from "../src/modules/approvals/store";
 import { channelParticipants, listMembers } from "../src/modules/channels/service";
 import { directKey } from "../src/modules/directs/service";
 import { createAgentMessage, createSystemMessage } from "../src/modules/messages/service";
+import { insertRun, updateRun } from "../src/modules/runs/store";
 import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
@@ -905,12 +906,59 @@ describe("사람 DM·그룹 DM — 열기·목록·쓰기(서버)", () => {
         itemId: "go",
         values: {},
       });
-    expect(await press()).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(await press()).toMatchObject({
+      ok: false,
+      error: { code: "FORBIDDEN", message: "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다" },
+    });
     expect(runsOf(group.id)).toEqual([]);
     await rest(owner, "PATCH", `/api/v1/agents/${dev.id}`, { dmAccess: "everyone" });
     expect(await press()).toMatchObject({ ok: true });
     await vi.waitFor(() => expect(runsOf(group.id)).toHaveLength(1));
     expect(runsOf(group.id)[0]).toMatchObject({ triggerKind: "interaction", requestedBy: jun.id });
+  });
+
+  it("시킨 사람이 없는 그룹 DM 런의 「다시 실행」은 FORBIDDEN 이고 문구는 라우터 시스템 메시지와 같은 사유(시킨 사람이 없습니다) — 런 없음", async () => {
+    const mia = await person();
+    const jun = await person();
+    const dev = await agentWith("everyone");
+    const group = await open(mia, { userIds: [jun.id], agentIds: [dev.id] });
+    const { conversationId, first } = await groupSession(mia, group);
+    // 시킨 사람이 비어 있는 런 — 지금은 닿는 길이 없다(그룹 DM 에는 자동화가 없다). 관문의 사유 갈래만 본다
+    const run = insertRun(app.db, {
+      channelId: group.id,
+      conversationId,
+      agentId: dev.id,
+      triggerKind: "mention",
+      triggerMessageId: first.id,
+      rootMessageId: first.id,
+      relayDepth: 0,
+      sessionKey: `agent:${dev.providerAgentId}:dodok:channel:${conversationId}`,
+      connectionId: FAKE_GATEWAY_ID,
+      requestedBy: null,
+      createdAt: new Date(),
+    });
+    updateRun(app.db, run.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
+    const notice = createSystemMessage(app.db, app.bus, {
+      conversationId,
+      kind: "run_error",
+      bodyMd: `@${dev.handle} 실행이 실패했습니다: TIMEOUT`,
+      systemMeta: { kind: "run_error", runId: run.id },
+      components: {
+        blocks: [{ type: "actions", items: [{ type: "button", id: "retry_run", label: "다시 실행" }] }],
+      },
+    });
+    const socket = await wire(mia);
+    const res = await socket.emitWithAck("component.interact", {
+      messageId: notice.id,
+      componentId: notice.components?.id ?? "",
+      itemId: "retry_run",
+      values: {},
+    });
+    expect(res).toMatchObject({
+      ok: false,
+      error: { code: "FORBIDDEN", message: "시킨 사람이 없습니다", details: { agentId: dev.id } },
+    });
+    expect(runsOf(group.id).map((r) => r.id)).toEqual([run.id]);
   });
 
   /** 그룹 DM 에서 jun(member)이 시킨 dev 런의 승인 — 참여한 mia 는 admin, owner 는 참여하지 않는다 */
