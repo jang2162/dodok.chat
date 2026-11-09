@@ -6,6 +6,7 @@ import { ApiRequestError, NetworkError } from "@/api/http";
 import { useAgents, useCachedMe, usePeople, useRole } from "@/api/queries";
 import { canOpenDm } from "@/features/dms/queries";
 import { isDeactivated } from "@/features/members/deactivated";
+import { josa } from "@/lib/josa";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -22,8 +23,18 @@ import { DIRECT_PICK_MAX, personName, useOpenDirect } from "./queries";
 type Pick = { users: string[]; agents: string[] };
 const EMPTY: Pick = { users: [], agents: [] };
 
-/** 열기 실패의 문구 — 403(누군가 그 에이전트의 DM 허용 밖·꺼짐)·404 는 서버 문구 그대로(남의 역할이 드러나지 않게 서버가 고른다) */
-function openErrorText(e: unknown): string {
+/**
+ * 열기 실패의 문구. 403 이 막은 에이전트(`details.agentId`)를 알면 그 핸들과 두 까닭을 함께 말한다 — 누가 막혔는지는 말하지 않는다(남의 역할이
+ * 드러나지 않게, 사람 간 DM 스펙 5.1). 에이전트를 모르거나 그 밖의 실패는 서버 문구 그대로
+ */
+function openErrorText(e: unknown, agents: readonly Agent[]): string {
+  if (e instanceof ApiRequestError && e.code === "FORBIDDEN") {
+    const agent = agents.find((a) => a.id === e.details?.agentId);
+    if (agent) {
+      const handle = `@${agent.handle}`;
+      return `${handle} ${josa(agent.handle, "과", "와")} 대화를 열 수 없습니다 — 에이전트가 꺼져 있거나, 참여자 가운데 이 에이전트의 DM 허용 범위 밖인 사람이 있습니다`;
+    }
+  }
   if (e instanceof ApiRequestError || e instanceof NetworkError) return e.message;
   return "대화를 열지 못했습니다";
 }
@@ -31,7 +42,7 @@ function openErrorText(e: unknown): string {
 /**
  * 사이드바 「다이렉트 메시지」 의 「+」 → 「새 메시지」(사람 간 DM 스펙 「열기」). 사람(활성 멤버, 나 제외)과 에이전트(지금 내 역할로 DM 할 수
  * 있는 것 — `canOpenDm`)를 한 목록에서 여럿(나를 빼고 최대 8) 고른다. 에이전트 하나만 고르면 에이전트 DM(`/dm/<에이전트>` — 그 화면이 찾거나
- * 만든다), 그 밖은 `POST /directs` 뒤 `/c/<채널>`. 다른 참여자의 역할은 웹이 모를 수 있어 서버 403 문구를 대화상자 안에 그대로 보인다.
+ * 만든다), 그 밖은 `POST /directs` 뒤 `/c/<채널>`. 다른 참여자의 역할은 웹이 모를 수 있어 403 은 대화상자 안에 보인다(`openErrorText`).
  * `onNavigate` 는 이동할 때마다(좁은 화면 시트 닫기)
  */
 export function NewMessageDialog({ onNavigate }: { onNavigate?: () => void }) {
@@ -140,7 +151,7 @@ export function NewMessageDialog({ onNavigate }: { onNavigate?: () => void }) {
         )}
         {openDirect.isError && (
           <p role="alert" className="text-sm text-destructive">
-            {openErrorText(openDirect.error)}
+            {openErrorText(openDirect.error, agents.data ?? [])}
           </p>
         )}
         <DialogFooter>
