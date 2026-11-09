@@ -8,7 +8,12 @@ import { createUserMessage } from "../src/modules/messages/service";
 import { SEARCH_PAGE_SIZE, searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { createDmChannelForTest, seedConversation, seedWorkspace } from "./helpers/seed";
+import {
+  createDirectChannelForTest,
+  createDmChannelForTest,
+  seedConversation,
+  seedWorkspace,
+} from "./helpers/seed";
 
 // 검색이 남의 DM 을 SQL 단계에서 거르는가(에이전트 DM 계획 Review Focus 2) — 결과를 뽑은 뒤 거르면 남의 DM 에 걸린 행이 페이지
 // 자리를 먹어 빈 페이지·짧은 페이지가 나오고, 커서가 그 행을 가리켜 다음 페이지가 어긋난다
@@ -118,5 +123,55 @@ describe("검색 — 남의 DM 은 SQL 에서 거른다", () => {
       ]);
     expect(hits(other)).toEqual([]);
     expect(hits(mia)).toEqual([[mention.id, channel.id]]);
+  });
+
+  it("그룹 direct 에 120개·채널에 30개 → 참여하지 않은 사람은 채널 30개를 꽉 찬 페이지로, 참여자는 150개", () => {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const { workspaceId, userId: other } = seedWorkspace(db, { userHandle: "jang" });
+    const person = (handle: string) => {
+      const id = uuid();
+      db.insert(users)
+        .values({ id, workspaceId, handle, displayName: handle, authProvider: "email", createdAt: NOW })
+        .run();
+      return id;
+    };
+    const mia = person("mia");
+    const jun = person("jun");
+    const agent = createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
+    const direct = createDirectChannelForTest(db, {
+      workspaceId,
+      createdBy: mia,
+      userIds: [jun],
+      agentIds: [agent.id],
+    });
+    const channel = createChannel(db, { workspaceId, createdBy: other, name: "general" });
+    const directConversation = seedConversation(db, direct.id, { createdBy: mia });
+    const channelConversation = seedConversation(db, channel.id);
+    let n = 0;
+    const say = (conversationId: string, authorId: string, count: number) => {
+      for (let i = 0; i < count; i++)
+        createUserMessage(db, bus, {
+          conversationId,
+          authorId,
+          bodyMd: `${WORD} ${i}`,
+          clientMsgId: `d${n++}`,
+        });
+    };
+    // 위 DM 사례와 같은 까닭으로 번갈아 넣는다
+    for (let round = 0; round < 30; round++) {
+      say(directConversation, mia, 4);
+      say(channelConversation, other, 1);
+    }
+
+    const theirs = allPages(db, workspaceId, other);
+    expect(theirs.ids).toHaveLength(30);
+    expect([...theirs.channels]).toEqual([channel.id]);
+    expect(theirs.pages.map((p) => p.length)).toEqual([20, 10]);
+
+    const participant = allPages(db, workspaceId, jun);
+    expect(participant.ids).toHaveLength(150);
+    expect(new Set(participant.ids).size).toBe(150);
+    expect([...participant.channels].sort()).toEqual([direct.id, channel.id].sort());
   });
 });

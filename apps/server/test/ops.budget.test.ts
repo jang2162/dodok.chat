@@ -5,7 +5,7 @@ import { v7 as uuid } from "uuid";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { z } from "zod";
 import type { Db } from "../src/db/client";
-import { opsEvents, runs } from "../src/db/schema.sqlite";
+import { channels, opsEvents, runs, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
@@ -16,7 +16,12 @@ import type { Orchestrator } from "../src/modules/runs/orchestrator";
 import { countRunsTodayInWorkspace, insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedConversation, seedWorkspace } from "./helpers/seed";
+import {
+  channelConversation,
+  createDirectChannelForTest,
+  seedConversation,
+  seedWorkspace,
+} from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정이다 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const ROOT = uuid();
@@ -46,6 +51,22 @@ beforeEach(() => {
     insertRun(db, { ...plan, sessionKey: `k:${plan.agentId}`, createdAt: clock });
   gate = createRunGate({ db, bus, ops, workspaceId, enqueue, now: () => clock });
 });
+
+/** 같은 워크스페이스의 사람 하나 더 — direct 의 상대 */
+function seedWorkspaceUser(): string {
+  const id = uuid();
+  db.insert(users)
+    .values({
+      id,
+      workspaceId,
+      handle: `p${Math.random()}`,
+      displayName: "p",
+      authProvider: "local",
+      createdAt: clock,
+    })
+    .run();
+  return id;
+}
 
 function channel(relayPolicy?: z.input<typeof RelayPolicy>) {
   return createChannel(db, { workspaceId, createdBy: userId, name: `c${Math.random()}`, relayPolicy });
@@ -170,6 +191,18 @@ describe("RunGate", () => {
     expect(gate.check(channelConversation(db, a.id))).toEqual({ scope: "channel", limit: 1 });
     expect(gate.check(channelConversation(db, b.id))).toBeNull();
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id]);
+  });
+
+  it("채널 한도는 일반 채널에만 — relay_policy 에 한도가 남은 direct 라도 채널 한도로 막히지 않는다", () => {
+    const peer = seedWorkspaceUser();
+    const direct = createDirectChannelForTest(db, { workspaceId, createdBy: userId, userIds: [peer] });
+    // direct 는 한도를 바꿀 길이 없다(채널 관리 VALIDATION) — 행을 직접 고쳐 일반 채널 갈래로 새지 않는지 본다
+    db.update(channels)
+      .set({ relayPolicy: { maxRelayTurns: 4, allowPairs: "all", dailyRunLimit: 1 } })
+      .where(eq(channels.id, direct.id))
+      .run();
+    fill(direct.id, 3);
+    expect(gate.check(channelConversation(db, direct.id))).toBeNull();
   });
 
   it("채널마다 오늘 메시지를 따로 남긴다(워크스페이스 한도)", () => {

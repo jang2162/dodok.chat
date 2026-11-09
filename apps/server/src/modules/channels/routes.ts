@@ -122,12 +122,13 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
 
   /**
    * DM 은 prompt(「이 DM 의 지시」)만, 주인이면 역할과 무관하게(접근 판정이 주인만 들인다 — 에이전트 DM 계획 판정 PD9). 읽기 전용 DM 이면
-   * 409 DM_READ_ONLY
+   * 409 DM_READ_ONLY. 일반 채널도 DM 도 아니면(direct 포함) 바꿀 것이 없다 — VALIDATION(사람 간 DM 스펙 4.3)
    */
   fastify.patch("/api/v1/channels/:id", authed, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
     const channel = loadWritable(request, id);
     if (channel.kind === "dm") assertDmPatchBody(request.body);
+    else assertNotDm(channel);
     const patch = parseBody(UpdateChannelBody, request.body);
     if (channel.kind === "dm") assertDmWritable(ctx.db, channel, sessionUser(request).role);
     else authorizeBody(request, authorizeChannelPatch);

@@ -1782,3 +1782,51 @@ describe("연결 주인·Gateway 승인 마이그레이션(0034)", () => {
     }
   });
 });
+
+describe("사람 간 DM 마이그레이션(0035)", () => {
+  it("기존 채널의 direct_key 는 null 이고, 같은 워크스페이스에서 같은 direct_key 의 direct 는 하나뿐이며 dm·channel 은 null 여럿을 둔다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_connection_owner");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const at = Date.UTC(2026, 10, 1);
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, at);
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES ('u-1', ?, 'mia', 'mia', 'local', ?)",
+          )
+          .run(ws, at);
+        const insertChannel = sqlite.prepare(
+          "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at, kind) VALUES (?, ?, ?, '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', 'u-1', ?, ?)",
+        );
+        insertChannel.run("c-old", ws, "general", at, "channel");
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(sqlite.prepare("SELECT direct_key AS k FROM channels WHERE id = 'c-old'").get()).toEqual({
+          k: null,
+        });
+        insertChannel.run("c-2", ws, "second", at, "channel");
+        insertChannel.run("d-1", ws, "dm", at, "dm");
+        insertChannel.run("d-2", ws, "dm", at, "dm");
+        const insertDirect = sqlite.prepare(
+          "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at, kind, direct_key) VALUES (?, ?, 'direct', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'private', 'u-1', ?, 'direct', ?)",
+        );
+        insertDirect.run("x-1", ws, at, "u:u-1,u:u-2");
+        expect(() => insertDirect.run("x-2", ws, at, "u:u-1,u:u-2")).toThrow(/UNIQUE/);
+        insertDirect.run("x-3", ws, at, "u:u-1,u:u-3");
+        expect(sqlite.prepare("SELECT count(*) AS n FROM channels WHERE direct_key IS NULL").get()).toEqual({
+          n: 4,
+        });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

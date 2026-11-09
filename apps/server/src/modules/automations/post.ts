@@ -50,8 +50,9 @@ function ownSession(automation: AutomationRow): PickConversation {
         .from(automations)
         .where(eq(automations.id, automation.id))
         .get() ?? automation;
-    // DM 은 게시하지 않는다 — 만들기·바꾸기가 막으므로 여기는 방어선이다(에이전트 DM 계획 판정 PD5). 아무것도 남기지 않고 던진다
-    if (assertChannelWritable(tx, current.channelId).kind === "dm")
+    // 일반 채널에만 게시한다(DM·direct 는 아니다) — 만들기·바꾸기가 막으므로 여기는 방어선이다(에이전트 DM 계획 판정 PD5). 아무것도
+    // 남기지 않고 던진다
+    if (assertChannelWritable(tx, current.channelId).kind !== "channel")
       throw apiError("VALIDATION", "자동화는 DM 에 게시할 수 없다");
     const own = current.conversationId === null ? undefined : getConversation(tx, current.conversationId);
     if (own && own.channelId === current.channelId && own.closedAt === undefined) {

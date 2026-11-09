@@ -46,6 +46,7 @@ export function setReaction(
   const row = db
     .select({
       message: messages,
+      id: channels.id,
       workspaceId: channels.workspaceId,
       kind: channels.kind,
       dmOwnerId: channels.dmOwnerId,
@@ -56,7 +57,7 @@ export function setReaction(
     .where(eq(messages.id, messageId))
     .get();
   // 다른 워크스페이스·남의 DM 의 메시지는 존재 자체를 알리지 않는다(auth/channel-access.ts)
-  if (!row || row.workspaceId !== workspaceId || !canReadChannel({ userId }, row))
+  if (!row || row.workspaceId !== workspaceId || !canReadChannel(db, { userId }, row))
     throw apiError("NOT_FOUND", "message not found");
   if (row.message.kind !== "normal") throw apiError("VALIDATION", "system messages cannot be reacted to");
   assertConversationWritable(db, row.message.conversationId, workspaceId);
