@@ -2,9 +2,11 @@
  * 서버 코어 스펙 9.2 시나리오 1~5 — 실제 서버(실제 OpenClawAdapter) + 가짜 Gateway + 가짜 플러그인 + wire 클라이언트.
  * 실제 시계. 기다림은 전부 wire 이벤트(WireLog.until)로 한다.
  */
-import type { Message, RunState } from "@dodok/shared";
+import type { Channel, Message, RunState } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getRunRequestedBy } from "../../src/modules/runs/store";
 import { createScenario, type Scenario } from "../fakes/scenario";
+import { userWithRole } from "../helpers/app";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import {
   getRunRest,
@@ -16,7 +18,7 @@ import {
   setupRelayChannel,
   type WireLog,
 } from "../helpers/scenario-steps";
-import type { WireClient } from "../helpers/wire";
+import { connectWire, type WireClient } from "../helpers/wire";
 import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
@@ -385,6 +387,65 @@ describe("통합 시나리오 1~5 — 릴레이·상한·이어가기·차단", 
       ].sort(),
     );
     expect(live.plugin.received.map((d) => d.agentId)).toEqual(["dev", "fin"]);
+    expectNoScenarioErrors(scenario);
+  });
+
+  it("그룹 DM(사람 간 DM 스펙 6.3) — @dev 만 런, dev 정본의 @fin 은 fin 릴레이 런(시킨 사람 물려받음), dmAccess 밖의 시킨 사람은 런 없이 시스템 메시지", async () => {
+    const { dev, fin } = await setupRelayChannel(live, RELAY_POLICY);
+    const kai = await userWithRole(live.app, "kai", "member");
+    // 열 때는 참여자 전원이 dmAccess 를 지나야 한다 — 열고 나서 좁힌다
+    for (const agent of [dev, fin])
+      expect((await rest(live, "PATCH", `/agents/${agent.id}`, { dmAccess: "everyone" })).status).toBe(200);
+    const opened = await rest<{ channel: Channel }>(live, "POST", "/directs", {
+      userIds: [kai.id],
+      agentIds: [dev.id, fin.id],
+    });
+    expect(opened.status).toBe(200);
+    const group = opened.body.channel;
+    expect((await rest(live, "PATCH", `/agents/${dev.id}`, { dmAccess: "admins" })).status).toBe(200);
+    const log = await openChannelWire(live, group.id, sockets);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: { dev: () => ({ reply: "@fin 부탁해" }), fin: () => ({ reply: "확인했습니다" }) },
+    });
+
+    const quiet = await sendMessage(log.socket, group.id, "멘션 없는 글");
+    const human = await sendMessage(log.socket, group.id, "@dev 시작", {
+      conversationId: quiet.conversationId,
+    });
+    const devRun = await log.until(
+      () => log.states.find((s) => s.agentId === dev.id && s.relayDepth === 0),
+      "dev 런",
+    );
+    const finRun = await log.until(
+      () => log.states.find((s) => s.agentId === fin.id && s.relayDepth === 1),
+      "fin 릴레이 런",
+    );
+    for (const run of [devRun, finRun]) expect((await log.terminal(run.id)).status).toBe("done");
+    expect(getRunRequestedBy(live.app.db, devRun.id)).toBe(live.app.ownerUserId);
+    expect(getRunRequestedBy(live.app.db, finRun.id)).toBe(live.app.ownerUserId);
+    expect(live.plugin.received.map((d) => [d.agentId, d.groupDm])).toEqual([
+      ["dev", true],
+      ["fin", true],
+    ]);
+
+    // member kai 가 시키면 dev(dmAccess admins)는 런 없이 시스템 메시지, 같은 대화는 계속 쓴다
+    const kaiSocket = await connectWire(live.app, kai.token);
+    sockets.push(kaiSocket);
+    await sendMessage(kaiSocket, group.id, "@dev 저도요", { conversationId: human.conversationId });
+    const blocked = await log.until(
+      () => log.created.find((m) => m.kind === "system"),
+      "시킨 사람 관문 시스템 메시지",
+    );
+    expect(blocked).toMatchObject({
+      conversationId: human.conversationId,
+      bodyMd: "@dev 는 이 요청에 답하지 않았습니다 — 시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다",
+      systemMeta: { kind: "info" },
+    });
+    expect((await listRunsRest(live, group.id)).map((r) => r.agentId).sort()).toEqual(
+      [dev.id, fin.id].sort(),
+    );
     expectNoScenarioErrors(scenario);
   });
 });

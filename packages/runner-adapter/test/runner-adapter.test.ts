@@ -614,6 +614,21 @@ describe("send", () => {
     ]);
   });
 
+  it("그룹 DM 런은 groupDm 을 러너 틀에 넘긴다 — 턴 사실의 그룹 DM 줄·틀의 자리 문구, 세션 제목은 「DM」(채널 행 이름 `direct` 를 쓰지 않는다)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    h.setChannelName(CH, "direct");
+    const input = await startRun(h, r, { groupDm: true });
+    const start = r.runStarts[0];
+    expect(start?.turnFacts?.split("\n").slice(1, 3)).toEqual([
+      "그룹 DM: 참여자만 보는 대화",
+      `세션: ${input.conversationTitle}`,
+    ]);
+    expect(start?.channelRulesAppend).toContain("in a group direct message in dodok");
+    expect(start?.channelRulesAppend).not.toContain("#direct");
+    expect(start?.sessionTitle).toBe("DM · Coder");
+  });
+
   it("DM 런은 자리를 DM 으로 — 채널 행 이름 `dm` 을 채널 이름·세션 제목에 쓰지 않는다(일반 채널은 그대로)", async () => {
     const h = await setup();
     const r = await readyRunner(h);

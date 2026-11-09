@@ -8,6 +8,7 @@ import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
+import { directRunBlock } from "../directs/service";
 import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
@@ -159,7 +160,23 @@ function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput,
     now,
   });
   if (!checked.ok) throw apiError(checked.error.code, checked.error.message, checked.error.details);
-  return { message, checked, target: targetOf(tx, message, input.itemId) };
+  const target = targetOf(tx, message, input.itemId);
+  assertDirectRequester(tx, message.channelId, target, input.userId);
+  return { message, checked, target };
+}
+
+/**
+ * 그룹 DM 의 카드 런도 시킨 사람 관문을 지난다(사람 간 DM 스펙 6.3) — 시킨 사람은 누른 사람, 다시 실행은 원래 런의 값이다
+ * (orchestrator 가 저장할 값과 같다). 라우터를 거치지 않는 길이라 여기서 저장·소비 전에 FORBIDDEN 으로 막는다 — 버튼이 살아 있어
+ * 허용 범위가 돌아오면 다시 누른다. 디스패치도 같은 관문을 다시 본다
+ */
+function assertDirectRequester(tx: DbOrTx, channelId: string, target: Target, userId: string): void {
+  const requestedBy = target.triggerKind === "retry" ? getRunRequestedBy(tx, target.run.id) : userId;
+  if (directRunBlock(tx, { channelId, agentId: target.agentId, requestedBy }) !== null) {
+    throw apiError("FORBIDDEN", "시킨 사람이 이 에이전트의 DM 허용 범위 밖입니다", {
+      agentId: target.agentId,
+    });
+  }
 }
 
 /**

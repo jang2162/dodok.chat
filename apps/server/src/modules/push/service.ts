@@ -5,7 +5,15 @@ import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { session } from "../../db/auth-schema";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, automations, channels, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
+import {
+  agents,
+  automations,
+  channels,
+  memberships,
+  pushSubscriptions,
+  runs,
+  users,
+} from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { channelParticipants, getChannel, isChannelArchived } from "../channels/service";
@@ -253,11 +261,11 @@ function shortReason(err: unknown): string {
   return text.length > REASON_MAX ? `${text.slice(0, REASON_MAX - 1)}…` : text;
 }
 
-/** 서버의 풀기 — 트리거가 쓰는 것을 모두 채운다. directParticipants 는 발송 직전 거름(attachPushTriggers, 사람 간 DM 스펙 7.1)도 쓴다 */
-export type PushLookups = Required<TriggerLookups>;
+/** 발송 직전 거름(attachPushTriggers, 사람 간 DM 스펙 7.1)이 쓰는 풀기 — directParticipants 는 빠지면 안 된다 */
+export type PushLookups = TriggerLookups & Required<Pick<TriggerLookups, "directParticipants" | "userName">>;
 
-/** 트리거가 부르는 이름 풀기 — DB 에서 매번 읽는다(이벤트마다 몇 줄) */
-export function createTriggerLookups(db: DbOrTx, workspaceId: string): PushLookups {
+/** 트리거가 부르는 이름 풀기 — 서버의 풀기라 트리거가 쓰는 것을 모두 채운다. DB 에서 매번 읽는다(이벤트마다 몇 줄) */
+export function createTriggerLookups(db: DbOrTx, workspaceId: string): Required<TriggerLookups> {
   return {
     channelName: (id) => getChannel(db, id, workspaceId)?.name,
     userHandle: (id) => db.select({ handle: users.handle }).from(users).where(eq(users.id, id)).get()?.handle,
@@ -296,6 +304,12 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): PushLooku
       const channel = getChannel(db, id, workspaceId);
       return channel?.kind === "dm" ? channel.dmAgentId : null;
     },
+    runFacts: (runId) =>
+      db
+        .select({ agentId: runs.agentId, requestedBy: runs.requestedBy })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .get(),
     directParticipants: (id) => {
       // kind 는 행에서 바로 읽는다 — getChannel 은 모르는 kind 의 행에서 던진다
       const row = db

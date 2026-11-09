@@ -197,13 +197,16 @@ describe("DM 푸시 — 주인에게만", () => {
         mentions: { users: [db.userId, db.admin, db.mia], agents: [] },
       }),
     });
-    // 승인(tool)은 일반 채널 갈래가 owner·admin 전원을 고른다 — owner 는 걷히고 참여한 admin 만 남는다
+    // 승인은 그 런을 시킨 사람에게 간다 — 시킨 사람 자리에 참여하지 않은 owner 가 잘못 실려 와도 걷히고, 참여한 admin 이면 남는다
     db.bus.emit("approval.requested", {
-      approval: approvalOf({ channelId: direct.id, conversationId }),
+      approval: approvalOf({ channelId: direct.id, conversationId, requestedBy: db.userId }),
+    });
+    db.bus.emit("approval.requested", {
+      approval: approvalOf({ id: uuid(), channelId: direct.id, conversationId, requestedBy: db.admin }),
     });
     const receivers = db.got.map((batch) => batch.map((x) => x.userId).sort());
     expect(receivers.flat()).not.toContain(db.userId);
-    expect(receivers).toEqual([[db.admin, db.mia].sort(), [db.admin]]);
+    expect(receivers).toEqual([[db.admin, db.mia].sort(), [], [db.admin]]);
   });
 
   it("direct 의 보통 글은 멘션과 무관하게 작성자 뺀 사람 참여자 전원에게 — 승인 본문의 자리도 「DM」", () => {
@@ -234,9 +237,14 @@ describe("DM 푸시 — 주인에게만", () => {
     );
     expect(agent.map((x) => x.userId).sort()).toEqual([t.admin, t.mia].sort());
     expect(agent[0]?.payload.title).toBe("@dev가 답했습니다");
-    expect(
-      targetsForApproval(approvalOf({ channelId: direct.id, conversationId }), t.lookups)[0]?.payload.body,
-    ).toBe("DM에 승인 요청이 있습니다");
+    // 승인 요청은 그 런을 시킨 사람에게만 — 시킨 사람이 비었으면 아무에게도(사람 간 DM 스펙 7.1)
+    const approval = targetsForApproval(
+      approvalOf({ channelId: direct.id, conversationId, requestedBy: t.mia }),
+      t.lookups,
+    );
+    expect(approval.map((x) => x.userId)).toEqual([t.mia]);
+    expect(approval[0]?.payload.body).toBe("DM에 승인 요청이 있습니다");
+    expect(targetsForApproval(approvalOf({ channelId: direct.id, conversationId }), t.lookups)).toEqual([]);
   });
 
   it("발송 직전 거름 — 비활성화된 참여자에게도, 모르는 kind 의 채널을 겨눈 알림은 누구에게도 가지 않는다", () => {

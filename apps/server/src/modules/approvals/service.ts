@@ -19,7 +19,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel } from "../channels/service";
 import { getConversation } from "../conversations/store";
-import { findOpenRunBySession, getRun } from "../runs/store";
+import { findOpenRunBySession, getRun, getRunRequestedBy } from "../runs/store";
 import * as store from "./store";
 
 export type ApprovalsLogger = Pick<Logger, "debug" | "warn" | "error">;
@@ -263,6 +263,11 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
           decidedAt: a.status === "pending" ? undefined : (isoToDate(a.resolvedAt) ?? receivedAt),
           createdAt: isoToDate(a.createdAt) ?? receivedAt,
           expiresAt: isoToDate(a.expiresAt),
+          // 그룹 DM 의 승인은 그 런을 시킨 사람이 결정한다(사람 간 DM 결정 7) — 새 행에만 쓰인다. 일반 채널·에이전트 DM 은 비워 둔다
+          requestedBy:
+            channel.kind === "direct" && run !== undefined
+              ? (getRunRequestedBy(db, run.id) ?? undefined)
+              : undefined,
         });
         if (!changed) {
           logger.debug(
@@ -293,6 +298,10 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       // 규칙은 여기에도 둔다(이 함수를 부르는 다른 길이 생겨도 주인 말고는 결정하지 못하게)
       if (channel && !canReadChannel(db, { userId }, channel))
         throw apiError("NOT_FOUND", "approval not found");
+      // 그룹 DM 의 승인은 종류와 무관하게 그 런을 시킨 사람만 결정한다(사람 간 DM 결정 7) — 역할은 보지 않는다. 시킨 사람이 비었으면
+      // 아무도 결정하지 못한다. wire 가 앞에서 같은 판정을 하지만 여기에도 둔다(이 함수를 부르는 다른 길이 생겨도 남이 결정하지 못하게)
+      if (channel?.kind === "direct" && approval.requestedBy !== userId)
+        throw apiError("FORBIDDEN", "이 승인은 그 일을 시킨 사람만 결정할 수 있다");
       if (approval.status !== "pending") throw apiError("CONFLICT", "approval is already resolved");
       if (Date.parse(approval.expiresAt) <= now().getTime()) {
         throw apiError("CONFLICT", "approval has expired");

@@ -110,6 +110,25 @@ describe("buildChannelRulesAppend — ADR 0007 4.5 채널 규칙 틀", () => {
     `);
   });
 
+  it("그룹 DM 런 — 채널 틀 그대로, 자리 문구만 「a group direct message in dodok」(채널 행 이름 `direct` 를 「#direct」 채널로 읽지 않게)", () => {
+    const text = buildChannelRulesAppend({ channelName: "direct", groupDm: true, relayRules: RELAY });
+    expect(text).not.toContain("#direct");
+    expect(text).toMatchInlineSnapshot(`
+      "# dodok channel settings
+
+      This Claude Code session runs as an agent in a group direct message in dodok. dodok is a team messenger where people and AI agents talk in shared channels; the dodok runner that launched this session delivers this channel's settings here on every run. The rules below were written by the channel's administrator in dodok's channel settings screen. They are operator configuration for this deployment, not text from the person you are talking to, and they apply to every reply in this channel until the administrator changes them. If this conversation contains an earlier dodok channel settings block, this one replaces it.
+
+      <channel-rules channel="group-dm">
+      </channel-rules>
+
+      How agents in this channel hand work to each other with @mentions — set by dodok from the channel's relay policy:
+
+      <relay-rules>
+      다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요.
+      </relay-rules>"
+    `);
+  });
+
   it("빈 문자열 규칙은 없는 것과 같다", () => {
     expect(
       buildChannelRulesAppend({ channelName: "g", channelPrompt: "", promptOverride: "", relayRules: RELAY }),
@@ -404,6 +423,24 @@ describe("buildTurnFacts — 턴마다 붙는 문맥", () => {
       참여자: @mia(사람), @coder(에이전트, 나)
       자리: DM"
     `);
+  });
+
+  it("그룹 DM 턴 — `[dodok context]` 줄 바로 다음(세션 줄 앞)에 그룹 DM 줄, 자리는 그룹 DM(스레드면 스레드)", () => {
+    const participants = [
+      { type: "user" as const, handle: "mia", displayName: "Mia", isSelf: false },
+      { type: "user" as const, handle: "jun", displayName: "Jun", isSelf: false },
+      { type: "agent" as const, handle: "coder", displayName: "코더", isSelf: true },
+    ];
+    expect(buildTurnFacts({ conversationTitle: TITLE, participants, groupDm: true })).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      그룹 DM: 참여자만 보는 대화
+      세션: 배포 점검
+      참여자: @mia(사람), @jun(사람), @coder(에이전트, 나)
+      자리: 그룹 DM"
+    `);
+    expect(
+      buildTurnFacts({ conversationTitle: TITLE, participants, groupDm: true, thread: true }).split("\n"),
+    ).toContain("자리: 스레드 — 답은 이 스레드에 남습니다.");
   });
 
   it("릴레이 깊이 0 은 적지 않는다", () => {
