@@ -123,6 +123,36 @@ describe("formatInboundContext DM", () => {
   });
 });
 
+describe("formatInboundContext 그룹 DM", () => {
+  const group: InboundDeliver = {
+    ...deliver,
+    groupDm: true,
+    context: {
+      ...deliver.context,
+      participants: [
+        { type: "user", handle: "jang", displayName: "장병현", isSelf: false },
+        { type: "user", handle: "mia", displayName: "Mia", isSelf: false },
+        { type: "agent", handle: "researcher", displayName: "Researcher", isSelf: true },
+        { type: "agent", handle: "planner", displayName: "Planner", isSelf: false },
+      ],
+    },
+  };
+
+  it("`[dodok context]` 줄 바로 다음이 그룹 DM 줄, 그다음 세션 줄 — 참여자는 그룹의 참여자 전부", () => {
+    const lines = formatInboundContext(group, { timeZone: "Asia/Seoul" }).split("\n");
+    expect(lines.slice(0, 4)).toEqual([
+      `[dodok context] channel=${CH} you=@researcher`,
+      "그룹 DM: 참여자만 보는 대화",
+      "세션: 배포 점검",
+      "참여자: @jang(사람), @mia(사람), @researcher(에이전트, 나), @planner(에이전트)",
+    ]);
+  });
+
+  it("groupDm 이 없으면 그룹 DM 줄이 없다", () => {
+    expect(formatInboundContext(deliver)).not.toContain("그룹 DM");
+  });
+});
+
 describe("formatInboundContext 리액션", () => {
   const REACTIONS: InboundReaction[] = [
     {
