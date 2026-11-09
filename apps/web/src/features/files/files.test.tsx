@@ -418,6 +418,35 @@ describe("이동", () => {
     await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).toBeNull());
   });
 
+  it("좁은 화면 — 시트가 열린 동안은 초점 목표를 걸지 않고, 시트가 닫힌 뒤 그 메시지를 초점 목표로 다시 건다", async () => {
+    stubMedia(true);
+    stubServer();
+    const report = { ...REPORT, conversationId: SESSION };
+    files = () => list([report]);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/files`);
+    const sheet = await panel();
+    // 시트가 열린 동안에는 초점 목표를 걸지 않는다 — 시트의 초점 가둠이 행에 간 초점을 되돌려 목록이 초점을 포기한다
+    const seen: Array<{ focus: boolean; sheetOpen: boolean }> = [];
+    const stop = useJumpStore.subscribe((st) => {
+      const t = st.targets[`${SESSION}:`];
+      if (t)
+        seen.push({ focus: t.focus === true, sheetOpen: document.querySelector('[role="dialog"]') !== null });
+    });
+    await userEvent.click(await within(sheet).findByRole("button", { name: "메시지로 가기" }));
+    await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).toBeNull());
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${SESSION}`));
+    await waitFor(() =>
+      expect(useJumpStore.getState().targets[`${SESSION}:`]).toEqual({
+        messageId: report.messageId,
+        seq: report.seq,
+        focus: true,
+      }),
+    );
+    stop();
+    expect(seen.filter((x) => x.focus).every((x) => !x.sheetOpen)).toBe(true);
+    expect(seen[0]).toEqual({ focus: false, sheetOpen: true });
+  });
+
   it("사진을 누르면 크게 보기 — 그 안의 「메시지로 가기」로 간다", async () => {
     stubServer();
     const { router } = renderRoute(`/c/${CH}/s/${CH}/files`);
