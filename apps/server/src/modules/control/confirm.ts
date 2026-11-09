@@ -187,8 +187,9 @@ function originText(db: DbOrTx, workspaceId: string, runId: string, requestedBy:
 
 function messageRef(db: DbOrTx, handleOf: (kind: "a" | "u", id: string) => string | undefined, m: Message) {
   const found = getChannel(db, m.channelId);
-  // DM 은 이름(내부용 「dm」) 대신 「DM」 — 카드를 보는 것은 주인뿐이지만 일반 채널처럼 #이름을 쓰면 뜻이 없다(계획 판정 PD4)
-  const place = found === undefined ? "#?" : found.kind === "dm" ? "DM" : `#${found.name}`;
+  // 일반 채널만 #이름 — DM·direct 는 내부용 이름(「dm」·「direct」) 대신 「DM」. 카드를 보는 것은 그 대화의 사람뿐이지만 #이름을 쓰면
+  // 뜻이 없다(에이전트 DM 계획 판정 PD4)
+  const place = found === undefined ? "#?" : found.kind === "channel" ? `#${found.name}` : "DM";
   const author =
     m.authorType === "user" && m.authorId !== undefined
       ? `@${handleOf("u", m.authorId) ?? "알 수 없음"}`

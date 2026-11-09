@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { session } from "../../db/auth-schema";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, automations, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
+import { agents, automations, channels, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { channelParticipants, getChannel, isChannelArchived } from "../channels/service";
@@ -253,8 +253,17 @@ function shortReason(err: unknown): string {
   return text.length > REASON_MAX ? `${text.slice(0, REASON_MAX - 1)}…` : text;
 }
 
+/** 트리거가 부르는 풀기 + 발송 직전 거름(attachPushTriggers)만 쓰는 풀기 */
+export type PushLookups = TriggerLookups & {
+  /**
+   * 참여자만 읽는 채널(direct)이면 비활성이 아닌 사람 참여자 id, 모르는 kind 면 [](아무도), 일반 채널·DM·없는 채널이면 null(그 판정은 다른
+   * 거름이 한다) — 사람 간 DM 스펙 7.1 의 「발송 직전 거름」
+   */
+  directParticipants(channelId: string): string[] | null;
+};
+
 /** 트리거가 부르는 이름 풀기 — DB 에서 매번 읽는다(이벤트마다 몇 줄) */
-export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLookups {
+export function createTriggerLookups(db: DbOrTx, workspaceId: string): PushLookups {
   return {
     channelName: (id) => getChannel(db, id, workspaceId)?.name,
     userHandle: (id) => db.select({ handle: users.handle }).from(users).where(eq(users.id, id)).get()?.handle,
@@ -292,6 +301,19 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
       const channel = getChannel(db, id, workspaceId);
       return channel?.kind === "dm" ? channel.dmAgentId : null;
     },
+    directParticipants: (id) => {
+      // kind 는 행에서 바로 읽는다 — getChannel 은 모르는 kind 의 행에서 던진다
+      const row = db
+        .select({ kind: channels.kind })
+        .from(channels)
+        .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId)))
+        .get();
+      if (row === undefined || row.kind === "channel" || row.kind === "dm") return null;
+      if (row.kind !== "direct") return [];
+      return channelParticipants(db, id)
+        .filter((p) => p.type === "user")
+        .map((p) => p.id);
+    },
   };
 }
 
@@ -305,15 +327,18 @@ const SEEN_APPROVALS_MAX = 1000;
 export function attachPushTriggers(
   bus: ServerBus,
   dispatcher: Pick<PushDispatcher, "dispatch">,
-  lookups: TriggerLookups,
+  lookups: PushLookups,
   logger: Pick<Logger, "error">,
 ): { close(): void } {
   const seenApprovals = new Set<string>();
   // 보관한 채널을 겨눈 알림은 트리거마다 따로 보지 않고 여기서 한 번 거른다 — 정본·승인이 보관과 엇갈려 와도 사람을 부르지 않게.
-  // DM 을 겨눈 알림도 여기서 주인 말고는 모두 걷는다 — 어느 트리거 갈래가 받을 사람을 잘못 골라도 남에게 DM 이 드러나지 않게(PD7)
+  // DM 을 겨눈 알림도 여기서 주인 말고는 모두 걷는다 — 어느 트리거 갈래가 받을 사람을 잘못 골라도 남에게 DM 이 드러나지 않게(PD7).
+  // direct 는 사람 참여자 말고 모두, 모르는 kind 는 모두 걷는다(사람 간 DM 스펙 7.1)
   const reachable = (t: PushTarget) => {
     const owner = lookups.dmOwner(t.payload.channelId);
-    return owner === null || owner === t.userId;
+    if (owner !== null) return owner === t.userId;
+    const participants = lookups.directParticipants(t.payload.channelId);
+    return participants === null || participants.includes(t.userId);
   };
   const guard = (event: string, targets: () => PushTarget[]) => {
     try {

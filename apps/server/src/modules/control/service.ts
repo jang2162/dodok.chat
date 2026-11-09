@@ -222,8 +222,9 @@ export function createControlService(deps: ControlDeps): ControlService {
         via: p.via,
         tool: toolName,
         agentId: p.agentId ?? null,
-        // DM 이면 채널 id 를 싣지 않는다 — 운영 사건은 owner·admin 이 보므로 「이 사람의 DM 이 있다」가 드러난다(에이전트 DM 계획 판정 PD5)
-        channelId: channelId === undefined || getChannel(db, channelId)?.kind === "dm" ? null : channelId,
+        // 일반 채널이 아니면(DM·direct·모르는 kind) 채널 id 를 싣지 않는다 — 운영 사건은 owner·admin 이 보므로 「이 사람의 DM 이 있다」가
+        // 드러난다(에이전트 DM 계획 판정 PD5·사람 간 DM 스펙 7.5). 없는 채널(지운 뒤)은 드러낼 것이 없어 그대로 싣는다
+        channelId: channelId === undefined || !plainOrGone(db, channelId) ? null : channelId,
         targetAgentId: targetAgentId ?? null,
       };
       // 행위 단위로 묶는다 — 같은 사람·같은 도구만 한 줄이 된다(다른 사람의 변경이 앞사람 줄을 덮지 않게)
@@ -305,4 +306,10 @@ function createdChannelId(data: unknown): string | undefined {
 function createdAgentId(data: unknown): string | undefined {
   const id = (data as { agent?: { id?: unknown } } | undefined)?.agent?.id;
   return typeof id === "string" ? id : undefined;
+}
+
+/** 일반 채널이거나 없는 채널인가 — 운영 사건에 채널 id 를 실어도 되는가 */
+function plainOrGone(db: Db, channelId: string): boolean {
+  const kind = getChannel(db, channelId)?.kind;
+  return kind === undefined || kind === "channel";
 }

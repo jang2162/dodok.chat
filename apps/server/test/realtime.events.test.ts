@@ -18,7 +18,7 @@ vi.mock("../src/modules/reactions/service", async (importOriginal) => {
   return { ...real, withReactions: vi.fn(real.withReactions) };
 });
 
-type Emitted = { room: string; event: string; payload: unknown };
+type Emitted = { room: string | string[]; event: string; payload: unknown };
 
 function setup() {
   const db = newTestDb();
@@ -26,7 +26,7 @@ function setup() {
   const ids = seedChannelWithAgent(db);
   const emitted: Emitted[] = [];
   const io = {
-    to: (room: string) => ({
+    to: (room: string | string[]) => ({
       emit: (event: string, payload: unknown) => void emitted.push({ room, event, payload }),
     }),
   } as unknown as WireServer;
@@ -57,7 +57,8 @@ describe("attachWireFanout — message.created", () => {
     const message = t.say();
     expect(t.emitted.map((e) => [e.event, e.room])).toEqual([
       ["message.created", channelRoom(t.ids.channelId)],
-      ["channel.activity", workspaceRoom(t.ids.workspaceId)],
+      // channelAudience 는 룸 목록을 낸다(direct 는 참여자마다 user 룸) — 일반 채널은 workspace 룸 하나
+      ["channel.activity", [workspaceRoom(t.ids.workspaceId)]],
     ]);
     expect(t.emitted[0]?.payload).toMatchObject({ message: { id: message.id } });
     t.fanout.close();

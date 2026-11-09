@@ -5,7 +5,7 @@ import {
   type RunStatus,
   type RunUsage,
 } from "@dodok/shared";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import {
   channelConversation,
+  createDirectChannelForTest,
   createDmChannelForTest,
   createRunnerAgentForTest,
   seedWorkspace,
@@ -233,6 +234,57 @@ describe("runsSummary DM", () => {
   it("DM 런이 없으면 「DM」 줄도 없다", () => {
     run(general, dev, DAY(25, 9));
     expect(summary(1).byChannel.some((r) => r.kind === "dm")).toBe(false);
+  });
+
+  // 사람 DM·그룹 DM(direct)도 같은 「DM」 한 줄에(사람 간 DM 스펙 7.5) — 이름(「direct」)·참여자가 응답에 없다
+  const mia = () => {
+    const id = uuid();
+    db.insert(users)
+      .values({ id, workspaceId, handle: "mia", displayName: "mia", authProvider: "local", createdAt: NOW })
+      .run();
+    return id;
+  };
+
+  it("direct 런과 dm 런은 같은 「DM」 한 줄에 합쳐진다 — 채널 id·이름·참여자 id 가 응답에 없다", () => {
+    const other = mia();
+    const group = createDirectChannelForTest(db, {
+      workspaceId,
+      createdBy: userId,
+      userIds: [other],
+      agentIds: [dev],
+    });
+    const dm = createDmChannelForTest(db, { workspaceId, ownerId: other, agentId: fin });
+    run(general, dev, DAY(25, 9));
+    run(group.id, dev, DAY(25, 9), "error");
+    run(dm.id, fin, DAY(25, 10));
+    const s = summary(1);
+    expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(s.byChannel.filter((r) => r.id !== general)).toEqual([
+      { id: OPS_DM_ROW_ID, name: "DM", kind: "dm", runs: 2, failed: 1, aborted: 0, blocked: 0 },
+    ]);
+    const text = JSON.stringify(s);
+    for (const secret of [group.id, dm.id, other]) expect(text).not.toContain(secret);
+    expect(text).not.toContain('"name":"direct"');
+  });
+
+  it("direct 런만 있어도 그 줄은 kind 가 dm 인 「DM」 줄이다", () => {
+    const group = createDirectChannelForTest(db, { workspaceId, createdBy: userId, userIds: [mia()] });
+    run(group.id, dev, DAY(25, 9));
+    expect(summary(1).byChannel).toEqual([
+      { id: OPS_DM_ROW_ID, name: "DM", kind: "dm", runs: 1, failed: 0, aborted: 0, blocked: 0 },
+    ]);
+  });
+
+  it("모르는 kind 채널의 런은 채널별 줄에 이름으로 실리지 않는다", () => {
+    const strange = createChannel(db, { workspaceId, createdBy: userId, name: "secret-zzz" }).id;
+    db.run(sql`UPDATE channels SET kind = 'zzz' WHERE id = ${strange}`);
+    run(general, dev, DAY(25, 9));
+    run(strange, dev, DAY(25, 9));
+    const s = summary(1);
+    expect(s.byChannel.map((r) => r.id)).toEqual([general]);
+    expect(JSON.stringify(s)).not.toContain("secret-zzz");
+    // 에이전트별 행은 그 런도 그 에이전트에 센다(채널 사실이 없다)
+    expect(row(s.byAgent, dev)?.runs).toBe(2);
   });
 });
 
