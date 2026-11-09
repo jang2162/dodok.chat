@@ -63,6 +63,16 @@ const gatewayNames = (gateways: readonly OpenClawGatewayStatus[]) =>
     .join("\n");
 
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
+/** 캐시에 있는 채널(상세·사이드바 목록·보관 목록) — 승인 알림이 채널 종류를 아는지 본다. DM·direct 목록은 부르는 쪽이 따로 본다 */
+function cachedChannel(qc: QueryClient, channelId: string): Channel | undefined {
+  const find = (list: Channel[] | undefined) => list?.find((c) => c.id === channelId);
+  return (
+    qc.getQueryData<Channel>(qk.channel(channelId)) ??
+    find(qc.getQueryData<Channel[]>(qk.channels)) ??
+    find(qc.getQueryData<Channel[]>(qk.archivedChannels))
+  );
+}
+
 const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
 
 /**
@@ -230,7 +240,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 결정할 수 있는 사람에게만 — 카드 버튼과 같은 규칙(`canDecideApproval`). 다른 사람은 카드만 본다
       // 에이전트 DM 은 주인, 사람 DM·그룹 DM 은 시킨 사람만(계획 판정 PH7)
       const dm = cachedDmChannel(qc, approval.channelId) ?? cachedDirectChannel(qc, approval.channelId);
-      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me), dm)) return;
+      // 어느 캐시에도 없는 채널은 종류를 모른다 — 일반 채널 규칙(admin 이상)으로 알리면 부팅 직후 `GET /directs` 보다 먼저 온 그룹 DM
+      // 승인이 시킨 사람이 아닌 admin 에게 뜬다. 모르면 알리지 않는다(기본이 닫힘). 카드(스토어)에는 위에서 이미 들어갔다
+      const known = dm ?? cachedChannel(qc, approval.channelId);
+      if (known === undefined) return;
+      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me), known)) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
         currentConversationId: notify.currentConversationId(),

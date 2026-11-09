@@ -45,12 +45,15 @@ export function useDirect(channelId: string, enabled = true): DirectSummary | un
   }).data;
 }
 
-/** 세션 없이 한 줄기인가 — 에이전트 참여자가 없으면(계획 판정 PH3) */
-export const isOneStream = (direct: Pick<DirectSummary, "agents">): boolean => direct.agents.length === 0;
+/**
+ * 세션 없이 한 줄기인가 — 서버가 실은 `sessions` 로 가른다(에이전트 참여자가 없으면 한 줄기). `agents.length` 로 가르지 않는다: 보관한
+ * 에이전트는 `agents` 에서 빠지므로 그 그룹이 한 줄기로 읽혀 이미 있는 세션이 갈 곳을 잃는다
+ */
+export const isOneStream = (direct: Pick<DirectSummary, "sessions">): boolean => !direct.sessions;
 
-/** 사람 1:1 이면 그 상대 — 사람 참여자 둘(나 포함)에 에이전트 없음 */
-export const directPeer = (direct: Pick<DirectSummary, "users" | "agents">): Person | undefined =>
-  direct.agents.length === 0 && direct.users.length === 1 ? direct.users[0] : undefined;
+/** 사람 1:1 이면 그 상대 — 사람 참여자 둘(나 포함)에 에이전트 없음(보관한 에이전트가 든 그룹은 1:1 이 아니다) */
+export const directPeer = (direct: Pick<DirectSummary, "users" | "sessions">): Person | undefined =>
+  !direct.sessions && direct.users.length === 1 ? direct.users[0] : undefined;
 
 /** 사람의 보이는 이름 — 표시 이름이 비었으면 핸들 */
 export const personName = (p: Pick<Person, "displayName" | "handle">): string => p.displayName || p.handle;
@@ -67,7 +70,7 @@ export function directNames(direct: Pick<DirectSummary, "users" | "agents">): st
 }
 
 /** 머리·검색 결과에 쓰는 이름 — 1:1 이면 상대 이름, 그룹이면 이름 나열 */
-export function directTitle(direct: Pick<DirectSummary, "users" | "agents">): string {
+export function directTitle(direct: Pick<DirectSummary, "users" | "agents" | "sessions">): string {
   const peer = directPeer(direct);
   return peer ? personName(peer) : directNames(direct);
 }

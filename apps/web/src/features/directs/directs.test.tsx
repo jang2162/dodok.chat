@@ -494,6 +494,35 @@ describe("대화 화면", () => {
   });
 });
 
+/**
+ * 태스크 5 리뷰 M1 — 에이전트를 보관하면 서버가 그 에이전트를 agents 에서 빼므로 [jun, @dev] 그룹이 1:1 [jun] 줄과 users·agents 가
+ * 같아진다. 서버가 실은 sessions 로 가른다
+ */
+describe("보관한 에이전트가 든 그룹(sessions 참, agents 빔)", () => {
+  const ARCH = uid(35);
+  const JUN_ONE = uid(36);
+  const ARCH_D = directOf(ARCH, [JUN_P], [], { sessions: true, lastMessageAt: "2026-11-09T02:00:00.000Z" });
+  const JUN_D = directOf(JUN_ONE, [JUN_P], [], { lastMessageAt: "2026-11-09T03:00:00.000Z" });
+
+  it("사이드바 — 1:1 줄은 이름, 그룹 줄은 그룹 꼴(「(그룹)」)이라 둘이 갈린다", async () => {
+    stubServer({ directs: [ARCH_D, JUN_D] });
+    renderRoute(`/c/${CH}/s/new`);
+    const nav = await dmNav();
+    await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "준준(그룹)"]));
+  });
+
+  it("세션 화면 — 세션 목록·「새 세션」·활동이 있고 머리는 참여자 목록 단추", async () => {
+    stubServer({ directs: [ARCH_D], conversations: { [ARCH]: [conv(ARCH, S1)] } });
+    renderRoute(`/c/${ARCH}/s/${S1}`);
+    const header = await screen.findByTestId("direct-header");
+    expect(await within(header).findByRole("button", { name: "세션 목록" })).toBeInTheDocument();
+    expect(within(header).getByRole("link", { name: "새 세션" })).toBeInTheDocument();
+    expect(within(header).getByRole("link", { name: "활동" })).toBeInTheDocument();
+    expect(within(header).getByRole("button", { name: "참여자 — 준" })).toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "준 프로필" })).toBeNull();
+  });
+});
+
 describe("읽기 전용·승인(Review Focus 4)", () => {
   it("peer_deactivated — 작성기 자리에 사유 줄, 작성기는 숨는다", async () => {
     stubServer({
