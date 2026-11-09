@@ -1,5 +1,5 @@
 import { ComponentsV1, type Message } from "@dodok/shared";
-import type { DmSummary } from "@dodok/shared";
+import type { Agent, DmSummary } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
@@ -9,6 +9,7 @@ import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { qk } from "@/api/queries";
 import { CH, msg, uid } from "../../../test/fixtures";
+import { agentOf } from "../../../test/settingsServer";
 import { DmViewContext } from "@/features/dms/context";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { channelOf } from "../../../test/shellApi";
@@ -219,6 +220,36 @@ describe("useInteract — 읽기 전용 DM(409 DM_READ_ONLY)", () => {
     const r = await sendWith(hook, "ok", {});
     expect(r).toMatchObject({ ok: false, code: "DM_READ_ONLY" });
     expect(qc.getQueryState(qk.dms)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("useInteract — 그룹 DM 관문(FORBIDDEN + details.agentId)", () => {
+  const blocked = (agentId: string) => () => ({
+    ok: false as const,
+    error: { code: "FORBIDDEN" as const, message: "시킨 사람이 없습니다", details: { agentId } },
+  });
+  const withAgents = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    qc.setQueryData<Agent[]>(qk.agents, [agentOf(uid(70), "dev")]);
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+    return renderHook(() => useInteract(MESSAGE), { wrapper }).result;
+  };
+
+  it("막은 에이전트를 알면 라우터 시스템 메시지와 같은 꼴 — 「@dev 는 이 요청에 답하지 않았습니다 — <서버 사유>」", async () => {
+    const error = vi.spyOn(toast, "error");
+    fake?.onAck("component.interact", blocked(uid(70)));
+    const text = "@dev 는 이 요청에 답하지 않았습니다 — 시킨 사람이 없습니다";
+    expect(await sendWith(withAgents(), "ok", {})).toMatchObject({ ok: false, code: "FORBIDDEN", text });
+    expect(error).toHaveBeenCalledWith(text);
+  });
+
+  it("모르는 에이전트·details 없는 FORBIDDEN 은 지금 그대로 「이 항목을 쓸 권한이 없습니다」", async () => {
+    vi.spyOn(toast, "error");
+    fake?.onAck("component.interact", blocked(uid(71)));
+    expect(await sendWith(withAgents(), "ok", {})).toMatchObject({ text: "이 항목을 쓸 권한이 없습니다" });
+    fake?.onAck("component.interact", () => ({ ok: false, error: { code: "FORBIDDEN", message: "x" } }));
+    expect(await sendWith(withAgents(), "ok", {})).toMatchObject({ text: "이 항목을 쓸 권한이 없습니다" });
   });
 });
 

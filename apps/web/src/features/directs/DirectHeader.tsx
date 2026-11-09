@@ -18,7 +18,7 @@ import {
   DialogTrigger,
 } from "@/ui/dialog";
 import { DmAgentAvatar, GroupAvatars, PersonPresenceAvatar } from "./DirectRow";
-import { directNames, directPeer, isOneStream, personName } from "./queries";
+import { directNames, directPeer, isLoneGroup, isOneStream, personName } from "./queries";
 
 /**
  * 사람 DM·그룹 DM 머리(사람 간 DM 스펙 「화면」). 1:1 은 상대 아바타·접속 점·이름·상태 메시지 — 누르면 상대 프로필. 그룹은 겹친 아바타와 이름
@@ -68,7 +68,7 @@ export function DirectHeader({
       {direct && (peer ? <PeerTitle peer={peer} /> : <GroupTitle direct={direct} />)}
       {sessions ? (
         // 남은 자리만 쓴다(flex-1 의 기준 0) — 같은 줄의 세션 제목이 자기 폭을 쥐면 390px 에서 참여자 이름이 한 글자로 잘린다
-        <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
+        <div data-testid="direct-session-title" className="flex min-w-0 flex-1 items-center gap-1 text-xs">
           <ConversationTitle channelId={channel.id} conversationId={conversationId} />
         </div>
       ) : (
@@ -182,7 +182,12 @@ function GroupTitle({ direct }: { direct: DirectSummary }) {
             className="flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <GroupAvatars direct={direct} />
-            <span className="truncate text-base font-semibold">{names}</span>
+            <span className="truncate text-base font-semibold">
+              {names}
+              {isLoneGroup(direct) && (
+                <span className="ml-1 text-xs font-normal text-muted-foreground">(그룹)</span>
+              )}
+            </span>
           </button>
         </DialogTrigger>
       </h1>

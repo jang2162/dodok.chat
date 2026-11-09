@@ -389,13 +389,13 @@ describe("「새 메시지」", () => {
     expect(server.count("POST", "/dms")).toBe(0);
   });
 
-  it("403 이면 서버 문구를 대화상자 안에 — 넘기지 않는다", async () => {
+  const refuse = async (details: Record<string, unknown> | undefined) => {
     stubServer({
       open: () =>
         json(403, {
           code: "FORBIDDEN",
-          message: "이 에이전트와의 DM 이 허용되지 않습니다",
-          details: { agentId: DEV.id },
+          message: "이 에이전트와 DM 을 열 수 없다",
+          ...(details ? { details } : {}),
         }),
     });
     const { router } = renderRoute(`/c/${CH}/s/new`);
@@ -403,10 +403,24 @@ describe("「새 메시지」", () => {
     await userEvent.click(await within(dialog).findByRole("button", { name: /미아/ }));
     await userEvent.click(within(dialog).getByRole("button", { name: /Dev 봇/ }));
     await userEvent.click(within(dialog).getByRole("button", { name: "열기" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "이 에이전트와의 DM 이 허용되지 않습니다",
+    return { alert: await within(dialog).findByRole("alert"), router };
+  };
+
+  it("403 에 막은 에이전트가 실리면 그 핸들과 두 까닭을 대화상자 안에(누구인지는 말하지 않는다) — 넘기지 않는다", async () => {
+    const { alert, router } = await refuse({ agentId: DEV.id });
+    expect(alert).toHaveTextContent(
+      "@dev 와 대화를 열 수 없습니다 — 에이전트가 꺼져 있거나, 참여자 가운데 이 에이전트의 DM 허용 범위 밖인 사람이 있습니다",
     );
+    expect(alert).not.toHaveTextContent("미아");
     expect(router.state.location.pathname).toBe(`/c/${CH}/s/new`);
+  });
+
+  it("403 에 에이전트가 없으면 서버 문구 그대로", async () => {
+    expect((await refuse(undefined)).alert).toHaveTextContent("이 에이전트와 DM 을 열 수 없다");
+  });
+
+  it("403 의 에이전트를 모르면 서버 문구 그대로", async () => {
+    expect((await refuse({ agentId: uid(77) })).alert).toHaveTextContent("이 에이전트와 DM 을 열 수 없다");
   });
 });
 
@@ -490,6 +504,8 @@ describe("대화 화면", () => {
     expect(await screen.findByText(GROUP_DM_FIRST_NOTICE)).toBeInTheDocument();
     expect(screen.getByTestId("conversation-pane")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "채널 설정" })).toBeNull();
+    // 세션 제목 칸은 남은 자리만 쓴다 — jsdom 은 폭을 못 재 클래스로 본다(태스크 6 리뷰 L-b, 390px 에서 참여자 이름이 잘리던 것)
+    expect(within(header).getByTestId("direct-session-title")).toHaveClass("min-w-0", "flex-1");
   });
 
   it("에이전트가 있는 그룹의 세션 화면 — member 참여자에게 「새 세션」, 설정 주소로 와도 설정 패널은 없다", async () => {
@@ -564,6 +580,8 @@ describe("보관한 에이전트가 든 그룹(sessions 참, agents 빔)", () =>
     expect(within(header).getByRole("link", { name: "활동" })).toBeInTheDocument();
     expect(within(header).getByRole("button", { name: "참여자 — 준" })).toBeInTheDocument();
     expect(within(header).queryByRole("button", { name: "준 프로필" })).toBeNull();
+    // 사이드바·검색처럼 「(그룹)」 — 1:1 머리와 갈린다
+    expect(header).toHaveTextContent("준(그룹)");
   });
 });
 

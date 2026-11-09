@@ -1,5 +1,5 @@
-import type { DmReadOnlyReason, ErrorCode, Message } from "@dodok/shared";
-import { QueryClientContext } from "@tanstack/react-query";
+import type { Agent, DmReadOnlyReason, ErrorCode, Message } from "@dodok/shared";
+import { type QueryClient, QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
@@ -88,12 +88,22 @@ export type Interact = {
   focusDone(): void;
 };
 
-function failureOf(e: unknown): SendFailure {
+/**
+ * 그룹 DM 관문(사람 간 DM 스펙 6.3)이 막은 누름 — FORBIDDEN 에 막은 에이전트(`details.agentId`)가 실리고 message 는 서버의 사유 문구다.
+ * 라우터의 시스템 메시지와 같은 꼴로 말한다. 에이전트를 캐시에서 못 찾으면 null(일반 FORBIDDEN 문구)
+ */
+function blockedText(e: WireAckError, qc: QueryClient | undefined): string | null {
+  if (e.code !== "FORBIDDEN" || typeof e.details?.agentId !== "string") return null;
+  const agent = qc?.getQueryData<Agent[]>(qk.agents)?.find((a) => a.id === e.details?.agentId);
+  return agent ? `@${agent.handle} 는 이 요청에 답하지 않았습니다 — ${e.message}` : null;
+}
+
+function failureOf(e: unknown, qc: QueryClient | undefined): SendFailure {
   if (!(e instanceof WireAckError)) return { ok: false, code: "INTERNAL", text: UNKNOWN_TEXT };
   return {
     ok: false,
     code: e.code,
-    text: interactErrorText(e.code, e.message),
+    text: blockedText(e, qc) ?? interactErrorText(e.code, e.message),
     ...(e.details ? { details: e.details } : {}),
   };
 }
@@ -158,7 +168,7 @@ export function useInteract(message: Message): Interact {
       if (opts.focus !== false) setFocusId(interactionId);
       return { ok: true, interactionId };
     } catch (e: unknown) {
-      return fail(failureOf(e));
+      return fail(failureOf(e, qc));
     } finally {
       setBusy((s) => {
         const next = new Set(s);

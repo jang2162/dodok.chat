@@ -77,7 +77,7 @@ export function directTitle(direct: Pick<DirectSummary, "users" | "agents" | "se
 
 /**
  * 보관한 에이전트가 빠져 보이는 상대가 하나뿐인 그룹인가 — 이름만으로는 그 사람과의 1:1 과 같아 보이므로 이름을 쓰는 자리(사이드바 줄·
- * 검색 결과)가 「(그룹)」 을 덧붙인다
+ * 검색 결과·대화 머리)가 「(그룹)」 을 덧붙인다
  */
 export const isLoneGroup = (direct: Pick<DirectSummary, "users" | "agents" | "sessions">): boolean =>
   directPeer(direct) === undefined && direct.users.length + direct.agents.length <= 1;
