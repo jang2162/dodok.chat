@@ -13,7 +13,12 @@ import { touchConversation } from "../src/modules/conversations/store";
 import { allocateSeq } from "../src/modules/messages/seq";
 import { listedChannelIds, markRead, unreadFor } from "../src/modules/reads/store";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedChannelWithAgent, seedConversation } from "./helpers/seed";
+import {
+  channelConversation,
+  createDirectChannelForTest,
+  seedChannelWithAgent,
+  seedConversation,
+} from "./helpers/seed";
 
 const NOW = new Date("2026-10-06T00:00:00.000Z");
 
@@ -311,6 +316,25 @@ describe("unreadFor", () => {
 
     expect(unreadOf(db, workspaceId, a, conv)).toMatchObject({ unread: true, mentions: 0 });
     expect(unreadOf(db, workspaceId, b, conv)).toMatchObject({ unread: true, mentions: 1 });
+  });
+
+  it("direct 는 남이 쓴 보통 메시지(사람·에이전트, 스레드 답글 포함)를 모두 배지로 센다 — 자기 글·시스템 메시지는 아니다(사람 간 DM 스펙 7.2)", () => {
+    const { db, workspaceId, a, b, agentId } = setup();
+    const direct = createDirectChannelForTest(db, {
+      workspaceId,
+      createdBy: a,
+      userIds: [b],
+      agentIds: [agentId],
+    });
+    const conv = seedConversation(db, direct.id, { createdBy: a });
+    const root = post(db, conv, { authorType: "user", authorId: b });
+    post(db, conv, { authorType: "agent", authorId: agentId });
+    post(db, conv, { authorType: "user", authorId: b, threadRootId: root.id });
+    post(db, conv, { authorType: "user", authorId: a });
+    post(db, conv, { authorType: "system", mentionUsers: [a] });
+
+    expect(unreadOf(db, workspaceId, a, conv)).toMatchObject({ unread: true, mentions: 3 });
+    expect(unreadOf(db, workspaceId, b, conv)).toMatchObject({ mentions: 2 });
   });
 
   it("멘션 120개는 99 에서 자른다", () => {

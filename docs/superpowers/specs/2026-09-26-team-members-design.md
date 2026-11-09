@@ -50,7 +50,7 @@
 
 역할은 `MembershipRole` 의 **owner·admin·member** 셋을 쓴다(guest 는 쓰지 않는다). owner 는 한 명 — 로컬 토큰 계정(`OWNER_EMAIL`)이다. 순서는 owner > admin > member 이고, 「admin 이상」은 owner 를 포함한다.
 
-**채널 접근(`apps/server/src/auth/channel-access.ts`)이 이 표의 역할 판정보다 먼저다 — 남의 DM 은 어느 행이든 404 다**(에이전트 DM 스펙 `docs/superpowers/specs/2026-10-25-agent-dm-design.md` 4장). DM 에서는 아래 DM 줄이 채널 줄보다 앞선다.
+**채널 접근(`apps/server/src/auth/channel-access.ts`)이 이 표의 역할 판정보다 먼저다 — 남의 DM·참여하지 않은 사람 DM·그룹 DM(`direct`)은 어느 행이든 404 다**(에이전트 DM 스펙 `docs/superpowers/specs/2026-10-25-agent-dm-design.md` 4장, 사람 간 DM 스펙 4장). DM·`direct` 에서는 아래 DM·`direct` 줄이 채널 줄보다 앞선다.
 
 | 할 일 | member | admin | owner |
 | --- | --- | --- | --- |
@@ -76,6 +76,7 @@
 | 연결 페이지(`/api/v1/setup/*` — 브리지 토큰, 러너 토큰 발급·다시 발급·폐기 `/api/v1/setup/runner-tokens`·`/:id/reissue`) | — | — | ✅ |
 | DM 열기(`POST /api/v1/dms { agentId }` — 찾거나 만든다)·내 DM 목록(`GET /api/v1/dms`) — 자기 것만. 새로 여는 것은 그 에이전트의 `dmAccess` 가 지금 역할을 들일 때(`off` 아무도·`admins` admin 이상·`everyone` 모두)와 에이전트가 보관·꺼짐이 아닐 때만, 아니면 403 | `everyone` 만 | `admins`·`everyone` | `admins`·`everyone` |
 | 「이 DM 의 지시」(DM 의 `PATCH /channels/:id { prompt }` — 다른 키는 400 `VALIDATION`), DM 의 도구 승인·exec 승인·확인 카드 결정(wire `approval.resolve`) — **DM 주인 본인만**, 역할과 무관. 채널 관리(이름·주제·멤버·보관·세션 관리자·세션 정책·한도·제어 쓰기 도구)는 DM 에 400 `VALIDATION`. 읽기 전용 DM(에이전트 보관·꺼짐·`dmAccess` 가 주인의 지금 역할을 들이지 않음)의 쓰기는 409 `DM_READ_ONLY` | 주인 | 주인 | 주인 |
+| 사람 DM·그룹 DM 열기(`POST /api/v1/directs { userIds, agentIds }` — 같은 참여자 묶음이면 찾고 없으면 만든다)·내 목록(`GET /api/v1/directs`) — 내가 참여한 것만(사람 간 DM 스펙 `docs/superpowers/specs/2026-11-03-human-dm-design.md` 5장). 활성 멤버끼리는 역할과 무관하게 연다. 에이전트를 넣어 새로 열 때는 그 에이전트가 켜져 있고 **사람 참여자 전원**의 지금 역할을 `dmAccess` 가 들여야 한다, 아니면 403(`details.agentId`). 세션(에이전트가 있는 그룹)의 새 세션·제목·닫기는 **참여자 누구나**, 한 줄기(에이전트 없음)에는 세션이 없어 400 `VALIDATION`. 채널 관리(이름·주제·지시·멤버·보관·세션 관리자·세션 정책·한도·`autoRespond`)는 `direct` 에 400 `VALIDATION`. 1:1 상대가 비활성이면 쓰기가 409 `DM_READ_ONLY`(`peer_deactivated`) | 참여자 | 참여자 | 참여자 |
 | 에이전트의 DM 허용 범위 바꾸기(`PATCH /agents/:id { dmAccess }`) — 제어 도구 `update_agent` 로는 바꾸지 않는다 | — | ✅ | ✅ |
 
 - **제어 도구는 이 표를 따로 갖지 않는다.** 바깥 MCP 클라이언트(개인 토큰의 주인)와 채널 안 에이전트(그 런을 시킨 사람)의 도구 호출은 같은 REST 경로의 정책 함수(`apps/server/src/auth/policies.ts`)로 판정한다 — 시킨 사람이 없는 런(자동화 글이 시작한 런)은 읽기만. 역할과 상관없이 **러너 구성은 제어 도구로 바꾸지 못한다** — `discover_agents`·`register_agent` 는 OpenClaw 만, `update_agent` 는 러너 에이전트의 `name`·`avatarUrl` 만(그 밖은 `VALIDATION`), 러너 프로젝트·둘러보기 도구는 없다(러너 일반화 스펙 6장).

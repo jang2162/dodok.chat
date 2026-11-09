@@ -731,6 +731,37 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
     },
+    // 사람 DM·그룹 DM(사람 간 DM 스펙 5장) — 활성 멤버 누구나 연다. 묶음마다 direct 는 하나라 요청마다 새 상대(활성 member)
+    {
+      name: "GET /directs",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/directs" }),
+    },
+    {
+      name: "POST /directs",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const peer = uuid();
+        app.db
+          .insert(users)
+          .values({
+            id: peer,
+            workspaceId: app.workspaceId,
+            handle: `dpeer${++n}`,
+            displayName: `dpeer${n}`,
+            authProvider: "local",
+            createdAt: new Date(),
+          })
+          .run();
+        app.db
+          .insert(memberships)
+          .values({ id: uuid(), workspaceId: app.workspaceId, userId: peer, role: "member" })
+          .run();
+        return { method: "POST", url: "/api/v1/directs", payload: { userIds: [peer] } };
+      },
+    },
     // 상태·아바타(프로필 스펙 3.2·3.6) — 누구나, 자기 것만. 내려받기는 로그인한 누구나
     {
       name: "PUT /me/avatar",

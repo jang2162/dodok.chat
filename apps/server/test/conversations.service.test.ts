@@ -28,7 +28,7 @@ import { setReaction } from "../src/modules/reactions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { makePng } from "./helpers/png";
-import { seedWorkspace } from "./helpers/seed";
+import { createDirectChannelForTest, seedWorkspace } from "./helpers/seed";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -272,6 +272,53 @@ describe("세션 서비스", () => {
     expect(
       code(() => t.send({ threadRootId: root.message.id, conversationId: b.message.conversationId })),
     ).toBe("VALIDATION");
+  });
+
+  it("direct — 한 줄기는 새 세션·제목·닫기가 VALIDATION, 세션 그룹은 세션 관리자가 아닌 member 참여자도 만들고 남의 세션을 다룬다(PH4·PH5)", async () => {
+    const t = setup();
+    const line = createDirectChannelForTest(t.db, {
+      workspaceId: t.workspaceId,
+      createdBy: t.mia,
+      userIds: [t.noah],
+    });
+    const group = createDirectChannelForTest(t.db, {
+      workspaceId: t.workspaceId,
+      createdBy: t.mia,
+      userIds: [t.noah],
+      agentIds: [t.dev.id],
+    });
+    const lineConversation = latestOpenConversation(t.db, line.id);
+    if (!lineConversation) throw new Error("한 줄기의 대화가 없다");
+    const pick = (
+      channelId: string,
+      userId: string,
+      more: { conversationId?: string; newConversation?: object },
+    ) =>
+      resolveSendConversation(t.db, { channelId, userId, role: "member", bodyMd: "x", ...more }, new Date());
+    expect(code(() => pick(line.id, t.noah, { newConversation: {} }))).toBe("VALIDATION");
+    expect(pick(line.id, t.noah, { conversationId: lineConversation }).conversationId).toBe(lineConversation);
+    expect(code(() => renameConversation(t.db, t.bus, lineConversation, "제목"))).toBe("VALIDATION");
+    expect(await codeAsync(() => t.close(lineConversation, true))).toBe("VALIDATION");
+
+    // 세션 정책이 managers 여도(행을 직접 바꾼다 — direct 에는 정책을 바꿀 길이 없다) 참여자는 만든다
+    t.db
+      .update(channels)
+      .set({ sessionPolicy: { create: "managers" } })
+      .where(eq(channels.id, group.id))
+      .run();
+    const made = pick(group.id, t.noah, { newConversation: {} });
+    expect(made.created?.channelId).toBe(group.id);
+    const mine = pick(group.id, t.mia, { newConversation: {} }).created;
+    if (!mine) throw new Error("세션이 없다");
+    const actor = conversationActor(t.db, mine, t.noah);
+    expect(actor).toEqual({ isCreator: false, isManager: true });
+    expect(() => authorizeConversationManage("member", actor)).not.toThrow();
+    expect(renameConversation(t.db, t.bus, mine.id, "noah 가 바꿈").title).toBe("noah 가 바꿈");
+    expect((await t.close(mine.id, true, t.noah)).closedAt).not.toBeNull();
+    // 일반 채널의 member 는 지금 규칙 그대로 — 남이 만든 세션은 관리자가 아니다
+    const plain = t.send({ newConversation: {}, userId: t.owner }).conversation;
+    if (!plain) throw new Error("세션이 없다");
+    expect(conversationActor(t.db, plain, t.noah)).toEqual({ isCreator: false, isManager: false });
   });
 
   it("다른 채널의 세션으로 보내면 VALIDATION, 다른 워크스페이스·없는 세션이면 NOT_FOUND", () => {
