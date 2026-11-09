@@ -254,6 +254,9 @@ src/
 │  │                      에이전트 DM(0029 — 생성기 출력 그대로): channels.kind(`channel`·`dm`, NOT NULL 기본 `channel`)·dm_owner_id(users)·dm_agent_id(agents — 둘 다 nullable FK, cascade 없음 —
 │  │                      「DM 이면 둘 다 있다」는 modules/dms/service.ts findOrCreateDm 이 지킨다), 유일 channels_dm_pair (dm_owner_id, dm_agent_id) WHERE kind = 'dm', agents.dm_access(`off`·`admins`·
 │  │                      `everyone`, 기본 `admins`). DM 행은 name `dm`·visibility private·session_policy { create: members }, channel_members 는 주인 사람 행 + 에이전트 행(autoRespond) 둘뿐.
+│  │                      사람 간 DM(0035 — 생성기 출력 그대로): channels.direct_key(text, nullable — 참여자 `u:<id>`·`a:<id>` 를 사전순으로 `,` 로 이은 꼴, modules/directs/service.ts directKey 하나가 만든다)·
+│  │                      유일 channels_direct_key (workspace_id, direct_key) WHERE kind = 'direct'. direct 행은 name `direct`·visibility private·dm_owner_id·dm_agent_id null, channel_members 는
+│  │                      참여자마다 한 행(사람 role member, 에이전트 autoRespond false) — 만든 뒤 더하거나 빼지 않는다. 한 줄기(에이전트 참여자 없음)인지는 저장하지 않는다(directHasAgents).
 │  │                      멤버 비활성화(0016): memberships.deactivated_at(비활성화한 시각, null 이면 활성)·users.left_handle 삭제. 채널 보관(0017): channels.archived_at(보관한 시각, null 이면 살아 있음).
 │  │                      두 열 모두 FK·인덱스 없음 — 행·핸들·이메일·채널 참여·메시지는 남고 읽는 자리가 거른다(채널 멤버는 channels/service.ts memberNotDeactivated, 쓰기는 assertChannelWritable).
 │  │                      읽지 않음(0028): conversation_reads — user_id·conversation_id(기본 키 (user_id, conversation_id), 둘 다 FK ON DELETE CASCADE)·last_read_seq(커지기만 한다 —
@@ -361,6 +364,11 @@ src/
 │  │                      쓰기 검사는 assertChannelWritable 한 함수(없으면 404, 보관이면 409 CHANNEL_ARCHIVED — PATCH·멤버 넣기·빼기·설정·세션 만들기·이름·닫기·wire message.send·카드 checkInteraction·사람 첨부 올리기 — 그다음 세션 쪽은 conversations/ 의 assertConversationWritable),
 │  │                      던지지 않는 판정은 isChannelArchived(런 관문·늦은 정본·푸시). 사람 멤버의 비활성 거름은 SQL 조건 memberNotDeactivated 한 곳 — listMembers·channelParticipants
 │  │                      (includeInactive 면 옛 글의 멘션 풀기용으로 비활성 멤버·보관한 에이전트도 싣는다)·userMessageParticipants 가 쓴다
+│  ├─ directs/            사람 1:1·그룹 DM(`kind = 'direct'`). service.ts(directKey·findOrCreateDirect(유일 인덱스 + onConflictDoNothing 뒤 다시 읽기, 한 줄기면 대화 하나를 같은 트랜잭션에)·
+│  │                      openDirect(꼴 VALIDATION → 이미 있는 묶음은 허용 검사 없이 → 새로 만들 때만 404·403 details.agentId)·directRunBlock(시킨 사람 관문 — no_requester·dm_not_allowed,
+│  │                      사유 문구 DIRECT_RUN_BLOCK_REASON)·directHasAgents·directMentions(참여자가 아닌 토큰 중화)·directReadOnlyReason(1:1 상대 비활성이면 peer_deactivated)·listDirects(최근 활동순)),
+│  │                      routes.ts(`GET`·`POST /api/v1/directs` — 사람 버킷). 읽기 판정은 auth/channel-access.ts(membersOnly·canReadChannel — 사람 참여자 행), 실시간 대상은
+│  │                      realtime/events.ts channelAudience(사람 참여자 각자의 user 룸), 그 밖의 갈래(라우터 관문·승인 결정자 requested_by·푸시·읽지 않음)는 각 모듈 자리에 있다
 │  ├─ dms/                에이전트 DM. service.ts(findOrCreateDm — 유일 인덱스 + onConflictDoNothing 뒤 다시 읽기, 대화는 만들지 않는다·openDm(이미 있는 DM 은 허용 검사 없이,
 │  │                      새로 만들 때만 403)·canStartDm·dmAccessAllows(off 아무도·admins admin 이상·everyone 모든 활성 멤버)·dmReadOnlyReason(agent_archived·agent_disabled·dm_not_allowed)·
 │  │                      assertDmWritable(409 DM_READ_ONLY)·assertNotDm(채널 관리 경로의 VALIDATION)·assertDmPatchBody(DM 의 PATCH 는 prompt 만)·listDms(최근 활동순, 글 없는 DM 도)·isDmChannel),
@@ -1041,8 +1049,11 @@ src/
 │  │                       같은 메시지를 그리는 행이 둘이거나 다시 마운트돼도 한 줄로 센다. 마지막 요청만 실패를 되돌리고, 되돌리는 값은 「반대로」가 아니라 이 탭이 서버에게서 마지막으로 들은 내 표
 │  │                       (첫 요청 직전 캐시 → 성공한 ack → 그동안 받은 message.updated). 채널 캐시는 있을 때만, 루트면 스레드 캐시도 고친다. CHANNEL_ARCHIVED 면 보관 토스트·채널 다시 받기,
 │  │                       그 밖은 「반응을 저장하지 못했습니다」). 테스트의 Radix 메뉴 열기는 키보드로 — 까닭은 reactions.test.tsx 의 openPicker 주석
+│  ├─ directs/             사람 1:1·그룹 DM. queries.ts(useDirects — `GET /directs`, 에이전트 DM 목록과 같은 무효화·DIRECT_PICK_MAX)·NewMessageDialog.tsx(사이드바 「+」 「새 메시지」 —
+│  │                       사람·에이전트를 여럿, 에이전트 하나만이면 `/dm/<id>`, 그 밖은 `POST /directs` 뒤 `/c/<id>`)·DirectRow.tsx(사이드바 줄 — 1:1·그룹 꼴)·DirectHeader.tsx(머리 — 참여자 대화상자).
+│  │                       채널 화면이 `channel.kind === "direct"` 면 DM 꼴(한 줄기면 세션 목록 없이 그 대화, `DirectSummary.sessions` 로 가른다)
 │  ├─ dms/                 에이전트 DM. queries.ts(useDms — `GET /dms`, `staleTime: Infinity` + 이벤트 무효화 invalidateDms·bumpDm, useDm·canOpenDm(서버 판정 흉내 — 숨기기는 편의)·
-│  │                       DM_READ_ONLY_TEXT(사유 셋의 문구))·DmSection.tsx(사이드바 「다이렉트 메시지」 절 — 글 있는 DM + 지금 연 DM, 「+」 「DM 할 에이전트」 고르기)·DmRedirect.tsx(`/dm/<에이전트 id>`
+│  │                       DM_READ_ONLY_TEXT(사유 셋의 문구))·DmSection.tsx(사이드바 「다이렉트 메시지」 절 — 에이전트 DM·사람 DM 을 합친 한 목록(directs/queries.ts mergeDmEntries), 글 있는 것 + 지금 연 것, 「+」 는 directs 의 「새 메시지」)·DmRedirect.tsx(`/dm/<에이전트 id>`
 │  │                       → `POST /dms` → 그 채널 주소로, 403·404 안내)·DmHeader.tsx(에이전트 이름·제공자·러너 라벨, 세션 제목·닫기, 「이 DM 의 지시」 대화상자, 「새 세션」, 「활동」)·
 │  │                       DmNotices.tsx(첫 안내·작성기 자리의 읽기 전용 사유 줄 — 초점 규칙은 ClosedNotice 와 같다)·context.ts. 채널 화면이 `channel.kind === "dm"` 이면 DM 꼴(세션 목록 날짜 묶음
 │  │                       `conversations/dateGroups.ts` — 브라우저 시간대, 스레드·설정 패널·@ 후보 없음)

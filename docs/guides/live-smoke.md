@@ -19,6 +19,7 @@
 | OpenClaw 모델 런의 툴·첨부·승인·프롬프트를 모델 없이 | 「런 0회 하네스 — 모델 없이 모델 런의 툴 경로를 두드리기」 |
 | Gateway 를 둘 이상 띄우기(사람의 dev 상태를 건드리지 않고) | 「Gateway 를 여럿 띄울 때」 |
 | 러너(dodok-runner)를 모델 없이, 또는 모델 런으로 | 「Claude 러너 런 0회 하네스 — 번들 CLI + 가짜 Messages API」 |
+| 사람이 여럿인 그룹 DM 을 하네스로 | 「그룹 DM 실연」 |
 | 웹 푸시·PWA | 「PWA·푸시(Phase 2 ④) — 푸시 확인 절차·VAPID 키 옮기기·사람이 볼 것」 |
 | 브리지 토큰 교체 | 「브리지 토큰 교체 — 사람이 따라 할 절차」 |
 | 바깥 MCP 클라이언트(`claude mcp`) | 「바깥 MCP 클라이언트 손 확인 — `claude mcp`」 |
@@ -49,6 +50,7 @@
 | 채널 세션(대화 id 키·「이전 대화」 이어짐·대화 밖 전송 거절) | `docs/superpowers/reports/2026-10-26-channel-sessions-live-smoke-report.md` |
 | 에이전트 DM(DM 줄·「이 DM 의 지시」·DM 밖 전송 거절) | `docs/superpowers/reports/2026-10-27-agent-dm-live-smoke-report.md` |
 | 러너 일반화(CLI `cwd`·`<agent-instructions>`·`RUNNER_CEILING`·절대 경로 0) | `docs/superpowers/reports/2026-10-30-runner-generalization-live-smoke-report.md` |
+| 그룹 DM(그룹 DM 줄·러너 틀 자리 문구·세션 밖 전송 거절·시킨 사람 관문) | `docs/superpowers/reports/2026-11-09-human-dm-live-smoke-report.md` |
 
 ## 2. 전제
 
@@ -959,6 +961,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - 실제 모델이 반응 블록을 요청이 아니라 사실로 읽는지 — `docs/guides/plan.md` 8장 리액션 줄 「실제 모델이 그 블록을 요청이 아니라 사실로 읽는지는 모른다」.
 - 실제 모델이 읽은 글 속 지시를 따르지 않는지, 「결과를 모릅니다」를 받고 같은 요청을 되풀이하지 않는지 — `docs/superpowers/reports/2026-10-13-control-mcp-live-smoke-report.md` 「25.5 사람이 볼 것」.
 - 러너 DM 틀(「주인이 설정 화면에서 정해 둔 설정」)을 모델이 주입으로 읽지 않고 따르는지 — `docs/guides/plan.md` 8장 이월 「러너 DM 틀을 모델이 따르는지 모른다」.
+- 러너 그룹 DM 틀(채널 틀 + 「a group direct message in dodok」 자리, 관리자 문장이 남은 채)을 모델이 어떻게 읽는지, OpenClaw 모델이 그룹 DM 줄을 받고 멘션에만 답하는지 — `docs/guides/plan.md` 8장 이월 「사람 간 DM」 묶음.
 - 실제 모델이 `<agent-instructions>` 틀을 따르는지 — `docs/guides/plan.md` 8장 이월 「실물로 못 본 것」(러너 일반화 줄).
 - 진짜 claude 세션 전사로 `--resume` 이 이어지는지(같은 스레드 둘째 턴·두 세션이 섞이지 않는지) — `docs/guides/plan.md` 8장 이월 「같은 스레드 둘째 턴의 `--resume` …」·「실물로 못 본 것」(채널 세션 줄).
 
@@ -1173,3 +1176,25 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
 | `push skipped — transport off` | 그 플랫폼 통로가 꺼져 있다 | 부팅 로그의 `push transport` 줄 |
 
 **이 절차가 못 하는 것** — 알림 동작 버튼(승인 허용·거절·빠른 답장), 앱 아이콘 배지 수, 앱이 서버에 토큰을 등록하는 흐름(앱 하위 프로젝트), 중앙 푸시 중계. 결과 표는 `docs/guides/docker-deploy.md` 「사람이 한 번 따라 한 결과」 절의 「네이티브 푸시」 줄에 적는다.
+
+---
+
+## 17. 그룹 DM 실연
+
+그룹 DM(사람 여럿 + 에이전트, `kind: direct`)을 하네스로 볼 때 「런 0회 하네스」·「Claude 러너 런 0회 하네스」 두 절에 더하는 것이다. 사람이 둘 이상이라 「재는 것별 메모」 「사람이 여럿인 채널」의 드라이버가 함께 든다.
+
+**준비**
+- **둘째 사람** — owner 로 `POST /api/v1/invites {"role":"member"}` → 응답의 `token` 으로 `POST /api/v1/invites/accept {token, handle, displayName, email, password}` → 응답의 `sessionToken` 을 0600 파일로. 초대 토큰·비밀번호는 0600 파일에서 `jq --rawfile` 로 본문을 만든다(출력하지 않는다).
+- **에이전트의 DM 허용 범위를 먼저 넓힌다.** 그룹 DM 은 참여자 모두가 에이전트의 `dmAccess` 안이어야 열린다 — 기본 `admins` 인 에이전트를 member 와 함께 넣으면 `POST /api/v1/directs` 가 403 `FORBIDDEN`(`details.agentId`)이다. `PATCH /api/v1/agents/<id> {"dmAccess":"everyone"}` 뒤에 연다.
+- **열기** — `POST /api/v1/directs {"userIds":[<둘째 사람>],"agentIds":[<에이전트>]}`(나는 빼고 적는다) → `channel.id`. 사람만이면 한 줄기라 대화가 하나 생긴다(`GET /channels/<id>/conversations`). 에이전트가 들면 세션 채널이라 `wire-cli send <채널 id> "@<핸들> …" --new-session` 이 세션을 만든다.
+
+**재는 것**
+- 헤더(가짜 CLI `prompt`)의 둘째 줄 `그룹 DM: 참여자만 보는 대화`·`참여자:` 줄, 러너 요청의 `<channel-rules channel="group-dm">`·틀 머리 「a group direct message in dodok」·턴 사실의 `자리: 그룹 DM` — 요청 본문은 「Claude 러너 런 0회 하네스」 절처럼 `jq -r` 로 글을 꺼낸 뒤 센다.
+- 세션 밖 전송 거절 — `calls.json` 에 자기 세션·일반 채널 세션·일반 채널 id·사람 1:1 의 대화·그룹 DM 채널 id 를 대상으로 `message` 를 하나씩. 자기 세션만 성공이고 나머지는 「이 대화에만 보낼 수 있습니다」다.
+- 시킨 사람 관문 — 에이전트의 `dmAccess` 를 `admins` 로 되돌리고 member 가 그 에이전트를 멘션하면 런 없이 `system` 글(`systemMeta.kind: "info"`) 하나가 그 대화에 생긴다. 끝나면 되돌린다.
+
+**걸리는 곳**
+- **`direct` 의 글·런 이벤트는 그 채널을 `channel.subscribe` 한 소켓에만 온다.** 참여자의 user 룸으로 오는 것은 `channel.created`·`channel.activity`·승인뿐이다 — 둘째 사람의 드라이버가 구독을 빠뜨리면 「글이 안 온다」로 오판한다.
+- **멤버 비활성화는 그 사람의 세션을 끊는다**(소켓 `io server disconnect`, 그 토큰은 401). 되살려도 옛 세션은 돌아오지 않는다 — 비활성화 뒤 그 사람으로 더 재려면 `POST /api/v1/auth/local {email, password}` 로 다시 로그인한다. 1:1 의 상대를 비활성화하면 1:1 만 읽기 전용(`DM_READ_ONLY` `peer_deactivated`)이고 같은 사람이 든 그룹은 그대로 쓴다.
+- `dev:fake` 의 그룹 DM 씨앗(새 DB)은 인바운드 로그 줄 `dev:fake inbound reactions` 에 `groupDm`(헤더 그룹 DM 줄)을 싣는다 — 실물 없이 헤더 줄만 볼 때는 이것으로 된다.
+
