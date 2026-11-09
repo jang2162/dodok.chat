@@ -268,6 +268,25 @@ describe("file", () => {
     );
     expect(rows).toEqual(["0 B", "512 B", "1 KB", "10.3 MB", "3 GB", null]);
   });
+
+  it("첨부로 풀리지 않는 이름도 방향 제어 문자를 걷고 <bdi> 로 격리한다 — 줄·title·「열기」 라벨 어디에도 U+202E 가 없다", () => {
+    const name = "invoice\u202Efdp.exe";
+    const { container } = show([
+      { type: "file", url: "https://example.com/x", name, size: 2048 },
+      { type: "file", url: ART, name },
+    ]);
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-slot=file]"));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const bdi = row.querySelector("bdi");
+      expect(bdi).toHaveTextContent("invoicefdp.exe");
+      expect(row.textContent).not.toContain("\u202E");
+      expect(row.querySelector("[title]")).toHaveAttribute("title", "invoicefdp.exe");
+    }
+    expect(
+      within(rows[0] as HTMLElement).getByRole("link", { name: "invoicefdp.exe 열기" }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("media·file — 계약 밖 주소", () => {

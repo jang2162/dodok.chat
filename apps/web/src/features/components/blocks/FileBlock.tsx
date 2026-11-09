@@ -1,4 +1,4 @@
-import type { Attachment, Block } from "@dodok/shared";
+import { type Attachment, type Block, displayAttachmentName } from "@dodok/shared";
 import { FileIcon } from "lucide-react";
 import { FileCard } from "@/features/attachments/FileCard";
 import { formatSize } from "@/features/attachments/format";
@@ -27,11 +27,13 @@ export function FileBlock({ block, attachments }: Props) {
       />
     );
   const size = block.size === undefined ? undefined : formatSize(block.size);
+  const shown = displayAttachmentName(block.name);
   return (
     <div data-slot="file" className="flex items-center gap-2 rounded-md border px-3 py-2">
       <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm" title={block.name}>
-        {block.name}
+      {/* 이름은 에이전트가 지은 글자다 — 방향 제어 문자가 둘레의 크기·「열기」 순서를 뒤집지 못하게 걷고 격리한다(FileCard 와 같다) */}
+      <span className="min-w-0 flex-1 truncate text-sm" title={shown}>
+        <bdi>{shown}</bdi>
       </span>
       {size && (
         <span data-slot="file-size" className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -40,7 +42,7 @@ export function FileBlock({ block, attachments }: Props) {
       )}
       {r.kind === "https" ? (
         <Button asChild variant="outline" size="sm" className="shrink-0">
-          <a href={r.url} target="_blank" rel="noopener noreferrer" aria-label={`${block.name} 열기`}>
+          <a href={r.url} target="_blank" rel="noopener noreferrer" aria-label={`${shown} 열기`}>
             열기
           </a>
         </Button>
