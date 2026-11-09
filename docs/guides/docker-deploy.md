@@ -218,7 +218,7 @@ docker compose exec app node dist/backup.js
 - **HTTPS** — 인증서·TLS 는 프록시가 끝낸다. 앱까지는 HTTP 다. 세션 쿠키의 `Secure`·wire 핸드셰이크 `Origin` 검사·HSTS·초대·웹훅 링크는 모두 `APP_ORIGIN`·`BRIDGE_PUBLIC_URL` 로 정해지므로 프록시 → 앱 구간이 HTTP 여도 쿠키는 `Secure` 로 나가고 wire 가 붙는다.
 - **모든 경로를 앱 포트 하나로** — 대상은 `http://127.0.0.1:<DODOK_HTTP_PORT>`(호스트에 깐 프록시) 또는 `http://dodok-app:3000`(공유 네트워크의 별칭 — 컨테이너 프록시). 경로를 골라 넘기는 프록시면 웹 화면(`/`·`/assets/*`·`/sw.js` …)과 함께 `/api`·`/socket.io`·`/bridge`·`/runner`·`/hooks`·`/mcp`·`/healthz`·`/llms.txt` 를 모두 넘긴다 — 하나가 빠지면 그 기능만 조용히 404 다.
 - **WebSocket** — `/socket.io/` 의 업그레이드를 넘긴다(nginx 는 `proxy_http_version 1.1` 과 `Upgrade`·`Connection` 머리). 웹·플러그인·러너의 연결은 늘 열려 있고 Socket.IO 가 25초마다 핑을 보낸다 — 유휴 상한이 그보다 길어야 한다(넉넉히 몇 분 — 아래 예시는 1시간).
-- **본문 크기** — 32 MB 이상(에이전트 파일 20 MiB + 여유). 작으면(nginx 기본 `client_max_body_size 1m`) 첨부가 프록시의 413 으로 끊긴다.
+- **본문 크기** — 32 MB 이상(사람·에이전트 파일 20 MiB + 여유). 작으면(nginx 기본 `client_max_body_size 1m`) 첨부가 프록시의 413 으로 끊긴다.
 - **`X-Forwarded-For`** — 받은 값 뒤에 연결 주소를 덧붙이거나(nginx `$proxy_add_x_forwarded_for`) 연결 주소로 덮는다. 둘 다 된다 — 앱이 `TRUST_PROXY` 의 주소만 믿고 오른쪽부터 그 주소를 건너뛴 첫 주소를 클라이언트로 삼는다(아래 「신뢰 주소 — `TRUST_PROXY`」).
 - **Host** — 앱은 Host 로 가르지 않는다(어느 Host 든 같은 사이트). 프록시의 다른 사이트와 섞이지 않게 프록시 쪽 사이트 이름만 맞춘다.
 - **HSTS** — 앱이 `APP_ORIGIN` 이 `https:` 면 붙여 보낸다. 프록시도 붙이면 머리가 두 줄이 되니 한쪽만 둔다.
@@ -600,7 +600,7 @@ docker compose logs app | grep '"event":"ops.'
 
 **`/healthz`** — 인증 없이 열려 있고 본문은 `{"ok":true,"db":"ok"}`(DB 를 못 읽으면 503 `{"ok":false,"db":"error"}`)뿐이다. 워크스페이스 id·어댑터 상세는 admin 이상만 읽는 `GET /api/v1/ops/status`(운영 화면이 읽는 것)에만 있다.
 
-**디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람 이미지·에이전트 파일 둘 다)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패, 또는 한 번의 측정이 5초를 넘김 — 네트워크 파일 시스템이 멈췄을 때, 로그 `disk check failed` 의 `code: "timeout"`) 「알 수 없음」이고 업로드는 막지 않는다. 멈춘 측정이 끝날 때까지는 다시 재지 않는다.
+**디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람·에이전트 업로드 모두)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패, 또는 한 번의 측정이 5초를 넘김 — 네트워크 파일 시스템이 멈췄을 때, 로그 `disk check failed` 의 `code: "timeout"`) 「알 수 없음」이고 업로드는 막지 않는다. 멈춘 측정이 끝날 때까지는 다시 재지 않는다.
 
 **레이트리밋** — 숫자의 정본은 `apps/server/src/modules/ops/limits.ts` 의 `LIMITS` 하나다(`grep -nE 'PerMin|perMin|socketsPerUser|bridgeFail' apps/server/src/modules/ops/limits.ts`). 상태는 서버 메모리에 있어 재시작하면 풀린다. 걸릴 때마다 사건 「요청 제한 발동」(정보 — 배지에는 안 잡힌다)이 남고, 주소는 IPv4 /24·IPv6 /48 로 줄여 적힌다. 「IP 당」·「주소」는 `TRUST_PROXY` 판정의 클라이언트 주소다(위 「신뢰 주소 — `TRUST_PROXY`」).
 
@@ -811,7 +811,7 @@ docker compose ps     # app (healthy)
 | 운영 화면 「자동화 예약을 놓쳐 건너뜀」 | 예약 시각에 서버가 꺼져 있었고 켜졌을 때 가장 이른 놓친 회차가 10분을 넘었다 — 그 회차는 올리지 않고 다음 회차부터 돈다 | 할 일 없음. 놓친 글이 필요하면 「지금 실행」 |
 | 웹훅이 413 / 415 / 429 | 본문 64 KiB 초과 / `Content-Type` 머리의 꼴이 틀림 / 그 토큰이 분당 30번을 넘었거나(토큰 상한) 그 주소가 모르는 토큰을 되풀이해 막혔다 | 본문을 줄인다 / 머리를 고친다 / 보내는 쪽의 재시도 간격을 늘린다. 켜진 웹훅의 토큰은 주소 막힘과 무관하게 통과한다 |
 | 플러그인이 안 붙고 로그 `bridge connection rejected … blocked after repeated failures`, 운영 화면 「브리지 인증 실패가 반복돼 주소를 막음」 | 한 주소에서 틀린 토큰이 되풀이됐다(옛 토큰으로 재접속하는 플러그인 등) — `TRUST_PROXY` 가 프록시와 맞지 않으면 모든 플러그인이 프록시 주소 하나로 묶여 함께 막힌다 | 틀린 토큰을 쓰는 쪽을 고친 뒤 막힘이 풀리기를 기다린다(`LIMITS.bridgeFail.blockMs`) — 재시작해도 풀린다 |
-| 에이전트 파일 업로드 413 | 프록시의 본문 상한(nginx 기본 1 MB 등)이면 프록시의 413, 20 MiB~프록시 상한이면 서버의 413 JSON `{"code":"VALIDATION","message":"Request body is too large"}` — 첨부 전용 고정 문구가 아니다(`docs/guides/plan.md` 8장 이월). 웹과 플러그인은 올리기 전에 크기를 걸러 자기 문구를 낸다 | 파일을 줄이거나 프록시 상한을 32 MB 이상으로(「프록시가 갖출 것」) |
+| 첨부 업로드 413 | 프록시의 본문 상한(nginx 기본 1 MB 등)이면 프록시의 413, 20 MiB~프록시 상한이면 서버의 413 JSON `{"code":"VALIDATION","message":"크기 상한을 넘는다","details":{"maxBytes":20971520}}`(사람·에이전트 같은 꼴). 웹과 플러그인은 올리기 전에 크기를 걸러 자기 문구를 낸다 | 파일을 줄이거나 프록시 상한을 32 MB 이상으로(「프록시가 갖출 것」) |
 | 러너가 `dodok-runner: 설정 파일 오류 — roots[0].path: 디렉터리가 없습니다(라벨 …)` 처럼 한 줄 찍고 끝남 | 설정 파일(`~/.dodok-runner/config.json`)이 틀렸다 — 어느 키가 왜 틀렸는지가 그 줄에 있다. 연결은 시도하지 않는다 | 그 키를 고치고 다시 띄운다(「러너 설치」 4) |
 | 러너가 `dodok-runner: 에이전트는 이제 앱에서 만듭니다 — 설정에서 agents 를 지우고 roots 를 적으세요` 로 끝남 | 에이전트를 러너 설정에 적던 옛 판의 설정 파일이다 | `agents` 를 지우고 `roots`·`programs` 를 적은 뒤(「러너 설치」 4) 앱에서 프로젝트·에이전트를 만든다(같은 절 6·7) |
 | 러너가 `서버가 러너 토큰을 거절했습니다(UNAUTHORIZED) — 토큰이 틀렸거나 폐기됐습니다 …` 로 끝남(종료 코드 2) | 토큰 파일의 값이 활성 러너 토큰이 아니다 | 새 러너 토큰 발급 → 토큰 파일 교체 → 다시 띄우기 |
