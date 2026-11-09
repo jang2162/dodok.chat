@@ -215,13 +215,14 @@ describe("목록 꼴", () => {
     expect(fileRows()).not.toBeNull();
   });
 
-  it("보관한 채널의 줄에는 「보관됨」, 이름은 <bdi> 로 격리", async () => {
+  it("보관한 채널의 줄에는 「보관됨」, 이름은 방향 제어 문자를 빼고 <bdi> 로 격리", async () => {
     stubServer();
-    files = () => list([item(att(3, "file", "invoice‮fdp.exe"), { channelArchived: true })]);
+    files = () => list([item(att(3, "file", "invoice\u202Efdp.exe"), { channelArchived: true })]);
     renderRoute(`/c/${CH}/s/${CH}/files`);
     const row = await within(await panel()).findByRole("listitem");
     expect(row).toHaveTextContent("보관됨");
-    expect(within(row).getByText("invoice‮fdp.exe").tagName).toBe("BDI");
+    expect(within(row).getByText("invoicefdp.exe").tagName).toBe("BDI");
+    expect(row.outerHTML).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
   });
 
   it("한 줄기 direct 의 패널에는 세션 제목이 없다", async () => {
@@ -381,6 +382,9 @@ describe("거름", () => {
 describe("이동", () => {
   it("「메시지로 가기」 — requestJump 뒤 /c/<ch>/s/<conv>, 「내려받기」는 ?download=1", async () => {
     stubServer();
+    // 세션 id 를 채널 id 와 다르게 — 둘을 바꿔 써도 통과하지 않게
+    const report = { ...REPORT, conversationId: SESSION };
+    files = () => list([report]);
     const { router } = renderRoute(`/c/${CH}/s/${CH}/files`);
     const row = await within(await panel()).findByRole("listitem");
     expect(within(row).getByRole("link", { name: "report.pdf 내려받기" })).toHaveAttribute(
@@ -388,10 +392,10 @@ describe("이동", () => {
       `/api/v1/attachments/${REPORT.attachment.id}?download=1`,
     );
     await userEvent.click(within(row).getByRole("button", { name: "메시지로 가기" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
-    expect(useJumpStore.getState().targets[`${CH}:`]).toEqual({
-      messageId: REPORT.messageId,
-      seq: REPORT.seq,
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${SESSION}`));
+    expect(useJumpStore.getState().targets[`${SESSION}:`]).toEqual({
+      messageId: report.messageId,
+      seq: report.seq,
       focus: true,
     });
   });

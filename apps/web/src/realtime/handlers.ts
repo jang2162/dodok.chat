@@ -467,6 +467,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.conversationListAll });
       // DM 목록은 이벤트로만 고친다(`dmsQuery` 는 저절로 낡지 않는다) — 끊긴 사이의 새 DM·읽기 전용 사유를 메운다(direct 목록도 함께)
       void invalidateDms(qc);
+      // 파일함은 channel.activity 로만 낡는다 — 끊긴 사이 올라온 첨부를 메운다(채널 탭 키·전체 화면 키 모두)
+      void qc.invalidateQueries({ queryKey: ["files"] });
     }
     connectedOnce = true;
   };

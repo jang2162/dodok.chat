@@ -129,6 +129,18 @@ describe("파일함", () => {
     const stale = keys.map((key) => queryClient.getQueryState([...key, {}])?.isInvalidated);
     expect(stale).toEqual([true, false, false]);
   });
+
+  it("다시 붙으면 파일 탭·전체 화면 키를 모두 무효화한다 — 끊긴 사이 온 첨부를 메운다. 처음 붙을 때는 아니다", () => {
+    const { fake, queryClient } = setup();
+    const keys = [qk.files(CH), qk.files(CH2), qk.filesAll];
+    const stale = () => keys.map((key) => queryClient.getQueryState([...key, {}])?.isInvalidated);
+    for (const key of keys) queryClient.setQueryData([...key, {}], { pages: [], pageParams: [] });
+    fake.serverEmit("connect");
+    expect(stale()).toEqual([false, false, false]);
+    fake.serverEmit("disconnect", "transport close");
+    fake.serverEmit("connect");
+    expect(stale()).toEqual([true, true, true]);
+  });
 });
 
 describe("타임라인 이벤트", () => {
