@@ -1,8 +1,16 @@
 /**
- * 첨부 스펙 8.1 — 통합 시나리오 11a~11i(가짜 Gateway·플러그인, 실제 시계).
+ * 첨부 스펙 8.1 — 통합 시나리오 11a~11i(가짜 Gateway·플러그인, 실제 시계). 11j·11k 는 파일함 스펙 10장(사람의 일반 파일·파일 목록).
  * 사람 업로드는 REST(`POST /api/v1/attachments`), 에이전트 업로드·받기는 가짜 플러그인의 브리지 HTTP 로 한다.
  */
-import { ATTACHMENT_LIMITS, type Attachment, type Channel, type Message } from "@dodok/shared";
+import {
+  ATTACHMENT_LIMITS,
+  type Attachment,
+  BRIDGE_ATTACHMENT_HEADERS,
+  type Channel,
+  type FileList,
+  type Message,
+} from "@dodok/shared";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -16,7 +24,9 @@ import {
 } from "../../src/modules/attachments/service";
 import { blobPath, sha256Of } from "../../src/modules/attachments/store";
 import { createAgentMessage } from "../../src/modules/messages/service";
+import { prepareInboundMedia } from "../../../../packages/openclaw-plugin/src/inbound-media";
 import { createScenario } from "../fakes/scenario";
+import { userWithRole } from "../helpers/app";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import { HTML_BYTES, makePng, PDF_BYTES, SVG_BYTES } from "../helpers/png";
 import {
@@ -26,7 +36,7 @@ import {
   setupRelayChannel,
   uploadImage,
 } from "../helpers/scenario-steps";
-import type { WireClient } from "../helpers/wire";
+import { connectWire, type WireClient } from "../helpers/wire";
 import { channelConversation, seedConversation, sendTarget } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
@@ -449,5 +459,130 @@ describe("통합 시나리오 11 — 첨부", () => {
     expect(texts).not.toContain(att.id);
     expect(texts).not.toContain(l.dir);
     await log.until(() => log.created.find((m) => m.authorType === "agent"), "에이전트 답");
+  });
+
+  /** 그 사람(Bearer)으로 첨부를 날것으로 올린다 — 이름은 헤더, 형식 힌트는 content-type */
+  const uploadAs = async (
+    l: LiveApp,
+    headers: Record<string, string>,
+    channelId: string,
+    payload: Buffer,
+    name: string,
+    contentType: string,
+  ): Promise<Attachment> => {
+    const res = await l.app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/attachments?channelId=${channelId}`,
+      headers: {
+        ...headers,
+        "content-type": contentType,
+        [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent(name),
+      },
+      payload,
+    });
+    if (res.statusCode !== 200) throw new Error(`upload → ${res.statusCode} ${res.body}`);
+    return res.json() as Attachment;
+  };
+
+  const filesAs = (l: LiveApp, headers: Record<string, string>, query = "") =>
+    l.app.fastify.inject({ method: "GET", url: `/api/v1/attachments${query}`, headers });
+
+  it("11j 파일함 — mia 의 채널 PDF 는 owner 의 채널 목록·내려받기·에이전트 이름 줄까지, mia 의 에이전트 DM 사진은 owner 어디에도 없다", async () => {
+    const l = await boot();
+    const setup = await setupRelayChannel(l, RELAY_POLICY);
+    expect((await rest(l, "PATCH", `/agents/${setup.dev.id}`, { dmAccess: "everyone" })).status).toBe(200);
+    createScenario({ gateway: l.gateway, plugin: l.plugin, agents: { dev: () => ({ reply: "받았어요" }) } });
+    const mia = await userWithRole(l.app, "mia", "member");
+    const miaHeaders = { authorization: `Bearer ${mia.token}` };
+    const socket = await connectWire(l.app, mia.token);
+    sockets.push(socket);
+
+    // mia 가 일반 채널에 PDF 를 올려 dev 에게 보낸다
+    const pdf = await uploadAs(l, miaHeaders, setup.channel.id, PDF_BYTES, "보고서.pdf", "application/pdf");
+    expect(pdf).toMatchObject({ kind: "file", mime: "application/pdf", name: "보고서.pdf" });
+    const sent = await sendMessage(socket, setup.channel.id, "@dev 보고서 봐 주세요", {
+      attachments: [pdf.id],
+    });
+
+    // 에이전트 쪽 — deliver 에 그 첨부, 플러그인은 받기 없이 이름 한 줄로 알린다
+    const delivered = await inbound(l, (d) => d.message.id === sent.id);
+    expect(delivered.message.attachments).toEqual([pdf]);
+    const download = vi.fn(async () => ({ bytes: Buffer.alloc(0), mime: "application/pdf" }));
+    const save = vi.fn(async () => ({ path: "/nowhere" }));
+    const media = await prepareInboundMedia(delivered.message.attachments, { download, save });
+    expect(media.notes).toEqual(["[첨부 파일: 보고서.pdf]"]);
+    expect(media.facts).toEqual([]);
+    expect(download).not.toHaveBeenCalled();
+
+    // owner 의 채널 파일함 — 그 항목, 내려받기 바이트가 같다
+    const listed = await filesAs(l, l.auth.headers, `?channelId=${setup.channel.id}`);
+    expect(listed.statusCode).toBe(200);
+    const items = (listed.json() as FileList).items;
+    expect(items.map((i) => [i.attachment.id, i.messageId, i.authorType, i.authorId])).toEqual([
+      [pdf.id, sent.id, "user", mia.id],
+    ]);
+    const got = await l.app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${pdf.id}?download=1`,
+      headers: l.auth.headers,
+    });
+    expect(got.statusCode).toBe(200);
+    expect(got.headers["content-disposition"]).toMatch(/^attachment/);
+    expect(got.rawPayload.equals(PDF_BYTES)).toBe(true);
+
+    // mia 의 에이전트 DM 에 사진 — mia 에게는 보이고 owner 에게는 전체 목록·채널 거름 어디에도 없다
+    const miaDm = await l.app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/dms",
+      headers: miaHeaders,
+      payload: { agentId: setup.dev.id },
+    });
+    expect(miaDm.statusCode).toBe(200);
+    const dmId = (miaDm.json() as { channel: Channel }).channel.id;
+    const photo = await uploadAs(l, miaHeaders, dmId, makePng(5, 5), "DM 사진.png", "image/png");
+    const dmSent = await socket.emitWithAck("message.send", {
+      channelId: dmId,
+      newConversation: {},
+      clientMsgId: randomUUID(),
+      bodyMd: "이건 나만",
+      attachments: [photo.id],
+    });
+    expect(dmSent.ok).toBe(true);
+    const miaAll = (await filesAs(l, miaHeaders)).json() as FileList;
+    expect(miaAll.items.map((i) => i.attachment.id)).toEqual([photo.id, pdf.id]);
+    const ownerAll = await filesAs(l, l.auth.headers);
+    expect(ownerAll.statusCode).toBe(200);
+    expect((ownerAll.json() as FileList).items.map((i) => i.attachment.id)).toEqual([pdf.id]);
+    const ownerDm = await filesAs(l, l.auth.headers, `?channelId=${dmId}`);
+    expect(ownerDm.statusCode).toBe(404);
+    expect(ownerDm.json()).toMatchObject({ code: "NOT_FOUND" });
+    expect((await humanGet(l, photo.id)).statusCode).toBe(404);
+  });
+
+  it("11k 사람이 힌트 image/svg+xml·text/html 로 올린 SVG·HTML — GET 은 ?download=1 있음·없음 모두 octet-stream·attachment·sandbox CSP·nosniff", async () => {
+    const l = await boot();
+    const setup = await setupRelayChannel(l, RELAY_POLICY);
+    const cases = [
+      { bytes: SVG_BYTES, name: "logo.svg", hint: "image/svg+xml" },
+      { bytes: HTML_BYTES, name: "page.html", hint: "text/html" },
+    ];
+    for (const c of cases) {
+      const att = await uploadAs(l, l.auth.headers, setup.channel.id, c.bytes, c.name, c.hint);
+      expect(att, c.name).toMatchObject({ kind: "file", mime: "application/octet-stream" });
+      for (const query of ["", "?download=1"]) {
+        const res = await l.app.fastify.inject({
+          method: "GET",
+          url: `/api/v1/attachments/${att.id}${query}`,
+          headers: l.auth.headers,
+        });
+        const label = `${c.name}${query}`;
+        expect(res.statusCode, label).toBe(200);
+        expect(res.headers["content-type"], label).toBe("application/octet-stream");
+        expect(res.headers["content-disposition"], label).toMatch(/^attachment/);
+        expect(res.headers["content-security-policy"], label).toBe("default-src 'none'; sandbox");
+        expect(res.headers["x-content-type-options"], label).toBe("nosniff");
+        expect(res.rawPayload.equals(c.bytes), label).toBe(true);
+      }
+    }
   });
 });
