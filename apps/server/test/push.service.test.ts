@@ -1007,6 +1007,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     dmOwner: () => null,
     dmAgent: () => null,
     directParticipants: () => null,
+    userName: () => "alice",
   };
   const message = {
     id: uuid(),

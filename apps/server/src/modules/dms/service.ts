@@ -15,6 +15,7 @@ import { agents, channelMembers, channels, conversations } from "../../db/schema
 import { apiError } from "../../http/errors";
 import { agentForRole, apiAgent, getAgent, isAgentActive } from "../agents/service";
 import { type ChannelRecord, rowToChannel } from "../channels/service";
+import { directReadOnlyReason } from "../directs/service";
 
 // 에이전트 DM(에이전트 DM 스펙) — DM 은 kind = 'dm' 인 채널이라 메시지·세션·런은 채널의 것을 그대로 쓰고, 여기는 DM 만의 것만 둔다:
 // 찾거나 만들기(계획 판정 PD1), 내 DM 목록(PD3), 누가 DM 을 여나(dmAccess), 읽기 전용 사유, DM 에 맞지 않는 채널 관리(PD9)
@@ -56,15 +57,20 @@ export function dmReadOnlyReason(
 
 /**
  * 사람의 쓰기(보내기·카드·리액션·첨부 올리기·DM 지시)가 assertChannelWritable 다음에 부른다 — 읽기 전용 DM 이면 409 DM_READ_ONLY
- * (details.reason). 일반 채널은 그대로 지난다
+ * (details.reason). 에이전트 DM 은 dmReadOnlyReason(ownerRole 은 주인의 역할), direct 는 directReadOnlyReason(1:1 상대 비활성 — 사람 간
+ * DM 스펙 4.3). 일반 채널은 그대로 지난다
  */
 export function assertDmWritable(
   db: DbOrTx,
-  channel: Pick<Channel, "kind" | "workspaceId" | "dmOwnerId" | "dmAgentId">,
+  channel: Pick<Channel, "id" | "kind" | "workspaceId" | "dmOwnerId" | "dmAgentId">,
   ownerRole?: TeamRole,
 ): void {
   const reason =
-    ownerRole === undefined ? dmReadOnlyReason(db, channel) : dmReadOnlyReason(db, channel, ownerRole);
+    channel.kind === "direct"
+      ? directReadOnlyReason(db, channel)
+      : ownerRole === undefined
+        ? dmReadOnlyReason(db, channel)
+        : dmReadOnlyReason(db, channel, ownerRole);
   if (reason !== null) throw apiError("DM_READ_ONLY", READ_ONLY_TEXT[reason], { reason });
 }
 

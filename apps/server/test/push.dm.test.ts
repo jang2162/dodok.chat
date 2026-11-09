@@ -1,7 +1,7 @@
 /**
  * DM 의 푸시는 주인에게만(에이전트 DM 계획 판정 PD7) — 승인 알림은 지금 「owner·admin 전원」 갈래를 DM 에서 주인 하나로 바꾸고,
  * 어느 트리거 갈래든 DM 을 겨눈 알림은 발송 직전 거름(attachPushTriggers)이 주인 말고는 걷는다. 본문의 자리는 내부용 이름 대신 「DM」.
- * direct 를 겨눈 알림은 같은 거름이 사람 참여자 말고 모두 걷는다(사람 간 DM 스펙 7.1 — 트리거 갈래는 계획 태스크 3·4).
+ * direct 의 보통 글은 작성자를 뺀 사람 참여자 전원에게 가고(사람 간 DM 스펙 7.1), 같은 거름이 사람 참여자 말고 모두 걷는다.
  */
 import type { Approval, Message } from "@dodok/shared";
 import pino from "pino";
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { memberships, users } from "../src/db/schema.sqlite";
 import { attachPushTriggers, createTriggerLookups } from "../src/modules/push/service";
-import { type PushTarget, targetsForApproval } from "../src/modules/push/triggers";
+import { type PushTarget, targetsForApproval, targetsForMessage } from "../src/modules/push/triggers";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import {
@@ -188,7 +188,7 @@ describe("DM 푸시 — 주인에게만", () => {
       agentIds: [db.agentId],
     });
     const conversationId = seedConversation(db.db, direct.id, { createdBy: db.mia });
-    // 트리거는 지금 direct 를 일반 채널 갈래로 계산한다 — 멘션에 owner 를 넣어 그 갈래가 owner 를 고르게 한다
+    // 멘션에 owner 를 넣는다 — 트리거가 direct 를 일반 채널의 멘션 갈래로 읽으면 owner 를 고른다
     db.bus.emit("message.created", {
       message: agentMessage({
         channelId: direct.id,
@@ -204,6 +204,39 @@ describe("DM 푸시 — 주인에게만", () => {
     const receivers = db.got.map((batch) => batch.map((x) => x.userId).sort());
     expect(receivers.flat()).not.toContain(db.userId);
     expect(receivers).toEqual([[db.admin, db.mia].sort(), [db.admin]]);
+  });
+
+  it("direct 의 보통 글은 멘션과 무관하게 작성자 뺀 사람 참여자 전원에게 — 승인 본문의 자리도 「DM」", () => {
+    const t = setup();
+    const direct = createDirectChannelForTest(t.db, {
+      workspaceId: t.workspaceId,
+      createdBy: t.mia,
+      userIds: [t.admin],
+      agentIds: [t.agentId],
+    });
+    const conversationId = seedConversation(t.db, direct.id, { createdBy: t.mia });
+    const human = targetsForMessage(
+      agentMessage({ channelId: direct.id, conversationId, authorType: "user", authorId: t.mia }),
+      t.lookups,
+    );
+    expect(human.map((x) => x.userId)).toEqual([t.admin]);
+    expect(human[0]?.payload).toEqual({
+      kind: "mention",
+      channelId: direct.id,
+      title: "mia 님의 메시지",
+      body: "DM",
+      url: `/c/${direct.id}/s/${conversationId}`,
+      tag: `direct:${conversationId}`,
+    });
+    const agent = targetsForMessage(
+      agentMessage({ channelId: direct.id, conversationId, authorId: t.agentId }),
+      t.lookups,
+    );
+    expect(agent.map((x) => x.userId).sort()).toEqual([t.admin, t.mia].sort());
+    expect(agent[0]?.payload.title).toBe("@dev가 답했습니다");
+    expect(
+      targetsForApproval(approvalOf({ channelId: direct.id, conversationId }), t.lookups)[0]?.payload.body,
+    ).toBe("DM에 승인 요청이 있습니다");
   });
 
   it("발송 직전 거름 — 비활성화된 참여자에게도, 모르는 kind 의 채널을 겨눈 알림은 누구에게도 가지 않는다", () => {

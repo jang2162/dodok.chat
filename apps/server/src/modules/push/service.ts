@@ -253,20 +253,15 @@ function shortReason(err: unknown): string {
   return text.length > REASON_MAX ? `${text.slice(0, REASON_MAX - 1)}…` : text;
 }
 
-/** 트리거가 부르는 풀기 + 발송 직전 거름(attachPushTriggers)만 쓰는 풀기 */
-export type PushLookups = TriggerLookups & {
-  /**
-   * 참여자만 읽는 채널(direct)이면 비활성이 아닌 사람 참여자 id, 모르는 kind 면 [](아무도), 일반 채널·DM·없는 채널이면 null(그 판정은 다른
-   * 거름이 한다) — 사람 간 DM 스펙 7.1 의 「발송 직전 거름」
-   */
-  directParticipants(channelId: string): string[] | null;
-};
+/** 서버의 풀기 — 트리거가 쓰는 것을 모두 채운다. directParticipants 는 발송 직전 거름(attachPushTriggers, 사람 간 DM 스펙 7.1)도 쓴다 */
+export type PushLookups = Required<TriggerLookups>;
 
 /** 트리거가 부르는 이름 풀기 — DB 에서 매번 읽는다(이벤트마다 몇 줄) */
 export function createTriggerLookups(db: DbOrTx, workspaceId: string): PushLookups {
   return {
     channelName: (id) => getChannel(db, id, workspaceId)?.name,
     userHandle: (id) => db.select({ handle: users.handle }).from(users).where(eq(users.id, id)).get()?.handle,
+    userName: (id) => db.select({ name: users.displayName }).from(users).where(eq(users.id, id)).get()?.name,
     agentHandle: (id) =>
       db.select({ handle: agents.handle }).from(agents).where(eq(agents.id, id)).get()?.handle,
     automationName: (id) =>

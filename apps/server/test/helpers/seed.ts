@@ -19,7 +19,8 @@ import { createProject, listProjects } from "../../src/modules/runners/projects"
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
 import { ensureSession } from "../../src/modules/sessions/service";
-import { type ChannelRecord, rowToChannel } from "../../src/modules/channels/service";
+import type { ChannelRecord } from "../../src/modules/channels/service";
+import { findOrCreateDirect } from "../../src/modules/directs/service";
 import { findOrCreateDm } from "../../src/modules/dms/service";
 
 /** workspace·user 만 삽입한다 — 채널·에이전트는 서비스로 만드는 테스트용 */
@@ -135,56 +136,20 @@ export function createDmChannelForTest(
 }
 
 /**
- * 사람 DM·그룹 DM(kind = 'direct') 채널을 행으로 넣는다 — 계획 Global Constraints 의 행 값·direct_key 그대로, 참여자는 createdBy·userIds
- * (사람 role member)·agentIds(autoRespond false)의 channel_members 행. 에이전트가 없으면(한 줄기) 대화 하나를 같이 만든다. 아직 서비스
- * (modules/directs/service.ts)가 없어 직접 넣는다
+ * 사람 DM·그룹 DM(kind = 'direct') 채널 — 서비스의 찾거나 만들기(findOrCreateDirect)를 검사 없이 부른다. 참여자는 createdBy·userIds·
+ * agentIds, 에이전트가 없으면(한 줄기) 대화 하나도 같이 생긴다. 검사(활성 멤버·dmAccess)를 건너뛰는 것은 createDmChannelForTest 와 같은
+ * 까닭이다 — membership 없는 사람·꺼진 에이전트로 판정만 보는 픽스처가 있다. 검사까지 보는 시험은 POST /directs 를 부른다
  */
 export function createDirectChannelForTest(
-  db: DbOrTx,
+  db: Db,
   opts: { workspaceId: string; createdBy: string; userIds: string[]; agentIds?: string[] },
 ): ChannelRecord {
-  const now = new Date();
-  const userIds = [...new Set([opts.createdBy, ...opts.userIds])];
-  const agentIds = opts.agentIds ?? [];
-  const directKey = [...userIds.map((id) => `u:${id}`), ...agentIds.map((id) => `a:${id}`)].sort().join(",");
-  const row = db
-    .insert(channels)
-    .values({
-      id: uuid(),
-      workspaceId: opts.workspaceId,
-      name: "direct",
-      relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
-      visibility: "private",
-      createdBy: opts.createdBy,
-      createdAt: now,
-      sessionPolicy: { create: "members" },
-      kind: "direct",
-      directKey,
-    })
-    .returning()
-    .get();
-  db.insert(channelMembers)
-    .values([
-      ...userIds.map((memberId) => ({
-        id: uuid(),
-        channelId: row.id,
-        memberType: "user",
-        memberId,
-        role: "member",
-        joinedAt: now,
-      })),
-      ...agentIds.map((memberId) => ({
-        id: uuid(),
-        channelId: row.id,
-        memberType: "agent",
-        memberId,
-        autoRespond: false,
-        joinedAt: now,
-      })),
-    ])
-    .run();
-  if (agentIds.length === 0) seedConversation(db, row.id, { createdBy: opts.createdBy, createdAt: now });
-  return rowToChannel(row);
+  return findOrCreateDirect(db, {
+    workspaceId: opts.workspaceId,
+    createdBy: opts.createdBy,
+    userIds: [...new Set([opts.createdBy, ...opts.userIds])],
+    agentIds: opts.agentIds ?? [],
+  }).channel;
 }
 
 /**

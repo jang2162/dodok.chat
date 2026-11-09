@@ -7,6 +7,7 @@ import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { assertChannelWritable, getChannel, isSessionManager } from "../channels/service";
+import { directHasAgents } from "../directs/service";
 import { createSystemMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 import { mentionHandleOf } from "../search/service";
@@ -68,10 +69,12 @@ export function resolveSendConversation(
   }
   if (input.threadRootId !== undefined)
     throw apiError("VALIDATION", "threadRootId 는 이 대화의 루트 메시지여야 한다");
+  assertHasSessions(tx, channel);
+  // direct 에는 세션 관리자가 없고 참여자 누구나 세션을 다룬다(사람 간 DM 계획 판정 PH5) — 접근 판정을 지난 사람을 관리자처럼 친다
   authorizeConversationCreate(
     input.role,
     channel.sessionPolicy,
-    isSessionManager(tx, channel.id, input.userId),
+    channel.kind === "direct" || isSessionManager(tx, channel.id, input.userId),
   );
   const title = input.newConversation?.title;
   const created = createConversation(tx, {
@@ -84,7 +87,19 @@ export function resolveSendConversation(
   return { conversationId: created.id, created };
 }
 
-/** PATCH 판정의 재료 — 그 사람이 이 대화를 만들었나·이 채널의 세션 관리자인가 */
+/**
+ * 세션 없는 한 줄기 direct(에이전트 참여자 없음)면 VALIDATION — 새 세션·제목·닫기가 없다(사람 간 DM 계획 판정 PH4). 그 밖의 채널은 그대로
+ * 지난다
+ */
+function assertHasSessions(db: DbOrTx, channel: { id: string; kind: string }): void {
+  if (channel.kind === "direct" && !directHasAgents(db, channel.id))
+    throw apiError("VALIDATION", "이 대화에는 세션이 없다");
+}
+
+/**
+ * PATCH 판정의 재료 — 그 사람이 이 대화를 만들었나·이 채널의 세션 관리자인가. direct 는 세션 관리자가 없고 참여자 누구나 다루므로
+ * (계획 판정 PH5) 관리자로 친다 — 부르는 쪽이 이미 접근 판정으로 참여자만 들였다
+ */
 export function conversationActor(
   db: DbOrTx,
   conversation: Conversation,
@@ -92,7 +107,9 @@ export function conversationActor(
 ): { isCreator: boolean; isManager: boolean } {
   return {
     isCreator: conversation.createdBy.type === "user" && conversation.createdBy.id === userId,
-    isManager: isSessionManager(db, conversation.channelId, userId),
+    isManager:
+      getChannel(db, conversation.channelId)?.kind === "direct" ||
+      isSessionManager(db, conversation.channelId, userId),
   };
 }
 
@@ -108,7 +125,7 @@ export function renameConversation(
 ): Conversation {
   const current = getConversation(db, conversationId);
   if (!current) throw apiError("NOT_FOUND", "conversation not found");
-  assertChannelWritable(db, current.channelId);
+  assertHasSessions(db, assertChannelWritable(db, current.channelId));
   if (current.title === title && current.titleSource === "user") return current;
   const row = db
     .update(conversations)
@@ -141,7 +158,7 @@ export async function setConversationClosed(
   const { db, bus } = deps;
   const current = getConversation(db, input.conversationId);
   if (!current) throw apiError("NOT_FOUND", "conversation not found");
-  assertChannelWritable(db, current.channelId);
+  assertHasSessions(db, assertChannelWritable(db, current.channelId));
   const changed = db
     .update(conversations)
     .set(

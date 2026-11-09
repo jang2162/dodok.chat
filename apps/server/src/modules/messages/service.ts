@@ -40,6 +40,7 @@ import {
   userMessageParticipants,
 } from "../channels/service";
 import { assertConversationWritable, getConversation, touchConversation } from "../conversations/store";
+import { directMentions } from "../directs/service";
 import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
 
@@ -65,8 +66,8 @@ function channelKind(tx: DbOrTx, channelId: string): string | undefined {
 /**
  * DM 의 본문 — 멘션을 토큰으로 바꾸지 않는다(에이전트 DM 스펙 2장). 토큰이 되면 멘션된 사람이 자동 참여(joinChannelIfAbsent)로 DM 멤버가
  * 되고 멘션 푸시·배지를 받는다. 본문에 토큰 꼴을 그대로 적어 와도 멘션으로 읽히지 않게 막는다(neutralizeMentionTokens) — 그래서 DM 메시지의
- * mentions 는 늘 비고, 라우터는 DM 의 autoRespond 에이전트 하나만 고른다(계획 판정 PD6). 일반 채널이 아닌 kind 는 모두 이 꼴이다 — 멘션이
- * 토큰이 되는 것은 일반 채널뿐(기본이 닫힘)
+ * mentions 는 늘 비고, 라우터는 DM 의 autoRespond 에이전트 하나만 고른다(계획 판정 PD6). 일반 채널·direct 가 아닌 kind 는 모두 이 꼴이다
+ * — 멘션이 토큰이 되는 것은 일반 채널과 direct 의 참여자뿐(기본이 닫힘, direct 는 directs/service.ts directMentions)
  */
 function plainInDm(text: string): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
   return { bodyMd: neutralizeMentionTokens(text), mentions: { users: [], agents: [] } };
@@ -386,11 +387,14 @@ export function sendUserMessage(
       channelId,
       userId: input.authorId,
     });
+    const kind = channelKind(tx, channelId);
     const message = storeMessage(tx, conversation, input.threadRootId, () => {
       const { bodyMd, mentions } =
-        channelKind(tx, channelId) === "channel"
+        kind === "channel"
           ? tokenize(input.bodyMd, userMessageParticipants(tx, channelId))
-          : plainInDm(input.bodyMd);
+          : kind === "direct"
+            ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
+            : plainInDm(input.bodyMd);
       return {
         kind: "normal",
         authorType: "user",
@@ -409,10 +413,13 @@ export function sendUserMessage(
       message.id,
     );
     const now = new Date();
-    // 모두 부른다 — some 이면 앞에서 true 가 나올 때 뒤 사람을 건너뛴다
-    const joined = [input.authorId, ...message.mentions.users]
-      .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
-      .includes(true);
+    // 모두 부른다 — some 이면 앞에서 true 가 나올 때 뒤 사람을 건너뛴다. 자동 참여는 일반 채널만 — direct 의 참여자는 고정이고
+    // (보낸 사람도 이미 참여자) DM 은 주인 하나다
+    const joined =
+      kind === "channel" &&
+      [input.authorId, ...message.mentions.users]
+        .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
+        .includes(true);
     // 새 대화는 첫 메시지를 담은 뒤의 행(last_seq·last_message_at)으로 알린다
     const newConversation = picked.created && getConversation(tx, picked.created.id);
     return { message, created: true, root: updatedRoot(tx, message), joined, newConversation };
@@ -454,10 +461,13 @@ export function createAgentMessage(
     });
     const message = storeMessage(tx, conversation, input.threadRootId, () => {
       const now = new Date();
+      const kind = channelKind(tx, channelId);
       const { bodyMd, mentions } =
-        channelKind(tx, channelId) === "channel"
+        kind === "channel"
           ? agentMentions(input.bodyMd, channelParticipants(tx, channelId))
-          : plainInDm(input.bodyMd);
+          : kind === "direct"
+            ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
+            : plainInDm(input.bodyMd);
       return {
         kind: "normal",
         authorType: "agent",

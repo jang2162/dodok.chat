@@ -18,6 +18,13 @@ export type TriggerLookups = {
   dmOwner(channelId: string): string | null;
   /** DM 이면 그 에이전트 id, 일반 채널·없는 채널이면 null — run_error 알림의 「누가」 */
   dmAgent(channelId: string): string | null;
+  /**
+   * direct 면 비활성이 아닌 사람 참여자 id, 모르는 kind 면 [](아무도), 일반 채널·DM·없는 채널이면 null. 손으로 짠 풀기(시험)가 빼면
+   * direct 가 없는 것으로 읽는다 — 서버의 풀기(push/service.ts createTriggerLookups)는 늘 채운다
+   */
+  directParticipants?(channelId: string): string[] | null;
+  /** 사람의 표시 이름 — direct 사람 글 알림의 제목. 없으면 핸들로 */
+  userName?(id: string): string | undefined;
 };
 /**
  * `conversationId` 는 거르기(「그 세션을 보고 있으면 안 보냄」 — 채널 세션 계획 판정 PS7)에만 쓰고 페이로드에는 싣지 않는다 — 같은 채널의
@@ -26,9 +33,10 @@ export type TriggerLookups = {
 export type PushTarget = { userId: string; conversationId: string; payload: PushPayload };
 
 const TITLE = "dodok";
-/** 알림 본문의 자리 — 일반 채널은 「#이름」, DM 은 「DM」(이름은 내부용이다) */
+const directOf = (l: TriggerLookups, id: string) => l.directParticipants?.(id) ?? null;
+/** 알림 본문의 자리 — 일반 채널은 「#이름」, 에이전트 DM·direct 는 「DM」(이름은 내부용이다) */
 const channelLabel = (l: TriggerLookups, id: string) =>
-  l.dmOwner(id) === null ? `#${l.channelName(id) ?? "채널"}` : "DM";
+  l.dmOwner(id) === null && directOf(l, id) === null ? `#${l.channelName(id) ?? "채널"}` : "DM";
 /** 누르면 그 세션(웹 /c/<채널>/s/<세션>) — 꼴을 바꾸면 서비스 워커의 허용 꼴(apps/web/src/pwa/sw-logic.ts SAFE_URL)도 함께 바꾼다 */
 const sessionUrl = (channelId: string, conversationId: string) => `/c/${channelId}/s/${conversationId}`;
 /** 스레드 안 메시지면 「#채널 스레드」, 누르면 그 세션의 그 스레드(…/t/<rootId>) */
@@ -82,9 +90,42 @@ function targetsForDm(m: Message, l: TriggerLookups, owner: string): PushTarget[
   ];
 }
 
+/**
+ * direct 의 보통 글(최상위·스레드, 사람·에이전트) — 멘션과 무관하게 작성자를 뺀 사람 참여자 전원에게(사람 간 DM 스펙 7.1). 제목이 「누가」
+ * (사람은 `<이름> 님의 메시지`, 에이전트는 `@<핸들>이 답했습니다`), 본문은 「DM」 — 본문은 싣지 않는다. tag 는 세션마다
+ */
+function targetsForDirect(m: Message, l: TriggerLookups, participants: string[]): PushTarget[] {
+  const receivers = participants.filter((userId) => !(m.authorType === "user" && userId === m.authorId));
+  const author = m.authorId;
+  let title = TITLE;
+  if (author !== undefined && m.authorType === "user") {
+    const name = l.userName?.(author) ?? l.userHandle(author);
+    if (name) title = `${name} 님의 메시지`;
+  } else if (author !== undefined && m.authorType === "agent") {
+    const handle = l.agentHandle(author);
+    title = handle ? `@${handle}${josa(handle, "이", "가")} 답했습니다` : "에이전트가 답했습니다";
+  }
+  const { url } = placeOf(l, m);
+  return receivers.map((userId) => ({
+    userId,
+    conversationId: m.conversationId,
+    payload: {
+      kind: "mention",
+      channelId: m.channelId,
+      title,
+      body: "DM",
+      url,
+      tag: `direct:${m.conversationId}`,
+    },
+  }));
+}
+
 export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
   const dmOwner = l.dmOwner(m.channelId);
   if (dmOwner !== null) return targetsForDm(m, l, dmOwner);
+  const direct = directOf(l, m.channelId);
+  // direct 의 시스템 메시지는 아래 일반 갈래(relay_limit 만 사람 멤버에게)를 그대로 지난다 — run_error·승인은 시킨 사람 몫이라 따로 둔다
+  if (direct !== null && m.kind === "normal") return targetsForDirect(m, l, direct);
   if (m.kind === "system") {
     if (m.systemMeta?.kind !== "relay_limit") return [];
     const place = placeOf(l, m);

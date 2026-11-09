@@ -27,7 +27,12 @@ import {
 } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import {
+  channelConversation,
+  createDirectChannelForTest,
+  seedConversation,
+  seedWorkspace,
+} from "./helpers/seed";
 
 function setup() {
   const db = newTestDb();
@@ -742,5 +747,76 @@ describe("createAutomationMessage", () => {
     );
     expect(created).toHaveLength(0);
     expect(listMessages(db, channelId, { limit: 10 }).messages).toEqual([]);
+  });
+});
+
+describe("direct 의 멘션(사람 간 DM 계획 판정 PH6)", () => {
+  function person(db: Db, workspaceId: string, handle: string): string {
+    const id = uuid();
+    db.insert(users)
+      .values({ id, workspaceId, handle, displayName: handle, authProvider: "local", createdAt: new Date() })
+      .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: id, role: "member" }).run();
+    return id;
+  }
+  function directSetup() {
+    const t = setup();
+    const jun = person(t.db, t.workspaceId, "jun");
+    const kai = person(t.db, t.workspaceId, "kai");
+    const fin = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "fin",
+      handle: "fin",
+      name: "Fin",
+    });
+    const direct = createDirectChannelForTest(t.db, {
+      workspaceId: t.workspaceId,
+      createdBy: t.userId,
+      userIds: [jun],
+      agentIds: [t.devId],
+    });
+    const conversationId = seedConversation(t.db, direct.id, { createdBy: t.userId });
+    const members = () =>
+      t.db
+        .select({ id: channelMembers.memberId })
+        .from(channelMembers)
+        .where(eq(channelMembers.channelId, direct.id))
+        .all()
+        .map((m) => m.id)
+        .sort();
+    return { ...t, jun, kai, fin, direct, conversationId, members };
+  }
+
+  it("사람 글은 참여자만 토큰 — 비참여 사람·에이전트·손으로 쓴 토큰은 글자로, 자동 참여 없음", () => {
+    const t = directSetup();
+    const before = t.members();
+    const changes: string[] = [];
+    t.bus.on("channel.member.changed", (p) => changes.push(p.channelId));
+    const message = createUserMessage(t.db, t.bus, {
+      conversationId: t.conversationId,
+      authorId: t.userId,
+      bodyMd: `@jun @dev @kai @fin <@u:${t.kai}> <@a:${t.fin.id}> <@u:${t.jun}>`,
+      clientMsgId: "d1",
+    });
+    expect(message.mentions).toEqual({ users: [t.jun], agents: [t.devId] });
+    expect(message.bodyMd.startsWith(`<@u:${t.jun}> <@a:${t.devId}> @kai @fin `)).toBe(true);
+    expect(message.bodyMd).not.toContain(`<@u:${t.kai}>`);
+    expect(message.bodyMd).not.toContain(`<@a:${t.fin.id}>`);
+    expect(message.bodyMd.endsWith(`<@u:${t.jun}>`)).toBe(true);
+    expect(t.members()).toEqual(before);
+    expect(changes).toEqual([]);
+  });
+
+  it("에이전트 정본도 같다 — 비참여 사람·에이전트의 토큰은 중화", () => {
+    const t = directSetup();
+    const message = createAgentMessage(t.db, t.bus, {
+      conversationId: t.conversationId,
+      agentId: t.devId,
+      bodyMd: `@jun @kai @fin <@u:${t.kai}> <@a:${t.fin.id}>`,
+      externalId: "d-agent-1",
+    });
+    expect(message.mentions).toEqual({ users: [t.jun], agents: [] });
+    expect(message.bodyMd).not.toContain(`<@u:${t.kai}>`);
+    expect(message.bodyMd).not.toContain(`<@a:${t.fin.id}>`);
   });
 });
