@@ -7,7 +7,8 @@ import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
 
-// 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다
+// 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다. Claude Code 판은 SDK 번들 CLI 의 것 — 설치본을 쓰면
+// 드라이버가 연결마다 그 실행 파일의 판을 읽어 로그 한 줄과 hello 에 싣는다(drivers/claude/index.ts)
 declare const __DODOK_RUNNER_VERSION__: string;
 declare const __CLAUDE_AGENT_SDK_VERSION__: string;
 declare const __CLAUDE_CODE_VERSION__: string;
@@ -46,7 +47,7 @@ function main(): void {
   }
   if (args.version) {
     console.log(
-      `dodok-runner ${RUNNER_VERSION} (Claude Agent SDK ${SDK_VERSION}, Claude Code ${CLAUDE_CODE_VERSION})`,
+      `dodok-runner ${RUNNER_VERSION} (Claude Agent SDK ${SDK_VERSION}, 내장 Claude Code ${CLAUDE_CODE_VERSION})`,
     );
     return;
   }
@@ -74,7 +75,7 @@ function main(): void {
 
   // 루트는 라벨만 찍는다 — 로그를 남에게 보여 줄 수 있다
   logger.info(
-    `dodok-runner ${RUNNER_VERSION} · Claude Agent SDK ${SDK_VERSION} · Claude Code ${CLAUDE_CODE_VERSION} · ` +
+    `dodok-runner ${RUNNER_VERSION} · Claude Agent SDK ${SDK_VERSION} · 내장 Claude Code ${CLAUDE_CODE_VERSION} · ` +
       `루트 ${config.roots.map((r) => `${r.id}(${r.label})`).join(", ")} · ` +
       `프로그램 ${Object.keys(config.programs).join(", ") || "없음"} · 동시 ${config.maxConcurrentRuns}`,
   );

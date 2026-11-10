@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -202,6 +202,7 @@ async function setup(
           claudeCodeVersion: "2.1.283",
           baseEnv: opts.baseEnv ?? { PATH: "/usr/bin" },
           closeGraceMs: 30,
+          logger: { info: (m) => logs.push(m) },
         }),
       ),
     ],
@@ -249,6 +250,8 @@ describe("startRunnerConnection", () => {
           // 로그인 디렉터리(/home/u/…)가 이 머신에 없다
           auth: "missing",
           login: "dedicated",
+          // PATH(/usr/bin)에 claude 가 없다 — SDK 번들 CLI
+          cli: "bundled",
           reason: expect.any(String),
           capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
           ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
@@ -285,6 +288,7 @@ describe("startRunnerConnection", () => {
         version: "2.1.283",
         auth: "unknown",
         login: "dedicated",
+        cli: "bundled",
         capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
         ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
       },
@@ -373,6 +377,59 @@ describe("startRunnerConnection", () => {
     });
     // 작업 디렉터리는 루트 + relPath 의 realpath
     expect(fake.calls[0]!.options.cwd).toBe(dirs.workdir);
+  });
+
+  /** PATH 에 둘 가짜 claude — --version 에 그 판을 답한다 */
+  function fakeClaudeBin(version: string) {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dodok-bin-")));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "claude"), `#!/bin/sh\necho "${version} (Claude Code)"\n`);
+    chmodSync(join(dir, "claude"), 0o755);
+    return dir;
+  }
+
+  it("러너 PATH 에 claude 가 있으면 hello 는 installed 와 그 판, 런은 그 실행 파일로 — 경로 원문은 hello 에 없다", async () => {
+    const bin = fakeClaudeBin("2.1.322");
+    const { server, fake, logs } = await setup({ baseEnv: { PATH: `${bin}:/usr/bin:/bin` } });
+    await waitFor(() => server.sockets.length === 1 && server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).toMatchObject({
+      available: true,
+      version: "2.1.322",
+      cli: "installed",
+    });
+    expect(JSON.stringify(server.hellos[0])).not.toContain(bin);
+    expect(logs).toContain("dodok-runner: Claude Code 설치본 2.1.322");
+    expect(logs.join("\n")).not.toContain(bin);
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect(fake.calls[0]!.options.pathToClaudeCodeExecutable).toBe(join(bin, "claude"));
+  });
+
+  it("번들이면 런에 pathToClaudeCodeExecutable 을 넘기지 않는다", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.sockets.length === 1 && server.hellos.length === 1);
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect("pathToClaudeCodeExecutable" in fake.calls[0]!.options).toBe(false);
+  });
+
+  it("설정 executable 이 없으면 PATH 의 claude 로 돌아가지 않는다 — 못 씀, 런은 RUNNER_CEILING(program)", async () => {
+    const bin = fakeClaudeBin("2.1.322");
+    const { server, fake } = await setup({
+      programs: { claude: { ...CLAUDE_CEILING, executable: join(bin, "none") } },
+      baseEnv: { PATH: `${bin}:/usr/bin:/bin` },
+    });
+    await waitFor(() => server.sockets.length === 1 && server.hellos.length === 1);
+    const claude = server.hellos[0]!.programs[0]!;
+    expect(claude).toMatchObject({ available: false, reason: expect.stringContaining("executable") });
+    expect(claude.cli).toBeUndefined();
+    expect(JSON.stringify(server.hellos[0])).not.toContain(bin);
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toMatchObject({ code: "RUNNER_CEILING", message: "program" });
+    expect(fake.calls).toHaveLength(0);
   });
 
   it("hello 거절(PROTOCOL_MISMATCH) → 사유를 남기고 종료 코드 2, 다시 붙지 않는다", async () => {

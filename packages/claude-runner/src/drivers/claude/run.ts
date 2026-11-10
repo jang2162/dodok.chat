@@ -75,6 +75,8 @@ export function buildQueryOptions(
     mcpServer: unknown;
     canUseTool?: CanUseTool;
     resume: boolean;
+    /** 머신에 설치된 claude 의 경로 — 없으면 SDK 번들 CLI */
+    executable?: string;
   },
 ): SdkOptions {
   const env: Record<string, string> = {};
@@ -131,6 +133,7 @@ export function buildQueryOptions(
     settingSources: [],
     includePartialMessages: true,
     env,
+    ...(deps.executable === undefined ? {} : { pathToClaudeCodeExecutable: deps.executable }),
     ...(deps.canUseTool ? { canUseTool: deps.canUseTool } : {}),
   };
 }
@@ -146,6 +149,8 @@ export type RunContext = {
   /** 결과·도구·승인이 나가는 한 자리 — 경로 가림도 sink 가 맡는다 */
   sink: RunSink;
   baseEnv: NodeJS.ProcessEnv;
+  /** 머신에 설치된 claude 의 경로(드라이버가 고른다) — 없으면 SDK 번들 CLI */
+  executable?: string;
   /** 세션별 마지막 total_cost_usd(세션 누적값 — ADR 0007 5.9). 러너 프로세스 메모리에만 있다 */
   costs: Map<string, number>;
   signal: AbortSignal;
@@ -241,6 +246,7 @@ async function attempt(
       prompt: prompt(),
       options: buildQueryOptions(spec, {
         baseEnv: ctx.baseEnv,
+        ...(ctx.executable === undefined ? {} : { executable: ctx.executable }),
         mcpServer: createDodokMcpServer({
           sdk: ctx.sdk,
           post: createPoster({
