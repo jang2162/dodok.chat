@@ -2287,6 +2287,28 @@ describe("orchestrator", () => {
     );
   });
 
+  it("보관한 에이전트의 런이 실패로 닫힌 뒤 정본이 늦게 와도(보관 갈래) 저장만 하고 「다시 실행」 카드를 닫는다", async () => {
+    const t = setup();
+    const run = await t.enqueue();
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "gateway_started" });
+    await t.orch.signal(run.id, { kind: "gateway_error", code: "unknown", message: "" });
+    const [card] = systemMessages(t.db);
+    expect(card?.componentState?.consumed).toEqual([]);
+    t.db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, t.agentId)).run();
+
+    const ack = await t.orch.onCanonical(
+      t.outbound({ runId: run.id, text: "늦은 답" }),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+
+    expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ runId: run.id, bodyMd: "늦은 답" });
+    expect(t.onAgentMessage).not.toHaveBeenCalled();
+    expect(getMessage(t.db, card?.id ?? "")?.componentState?.consumed).toEqual(["retry_run"]);
+    t.orch.stop();
+  });
+
   it("러너 로그인 실패(PROVIDER_AUTH)는 사유 있는 run_error 카드 — 코드가 아니라 할 일을 보이고, 다시 로그인한 뒤 「다시 실행」", async () => {
     const t = setup();
     const run = await t.enqueue();
