@@ -240,7 +240,8 @@ describe("openCheckedFile·readCheckedFile — 검사한 그 파일에서만 읽
 
   it("같은 크기의 다른 파일로 바뀌면(ino 다름) changed", () => {
     const check = passed("a.txt");
-    rmSync(join(workdir, "a.txt"));
+    // 지우지 않고 옮겨 둔다 — ext4 는 지운 파일의 inode 번호를 곧바로 다시 써서 새 파일이 같은 ino 를 받을 수 있다
+    renameSync(join(workdir, "a.txt"), join(workdir, "a-old.txt"));
     writeFileSync(join(workdir, "a.txt"), "HELLO");
     expect(openCheckedFile(check)).toEqual({ ok: false, rel: "a.txt", reason: "changed" });
   });
