@@ -295,7 +295,9 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
 
   it("러너 3번 — 평소 로그인을 claude auth status 로 보고, 전용 로그인은 사람이 원한다고 할 때만", () => {
     const step = runner.slice(runner.indexOf("\n3. "), runner.indexOf("\n4. "));
-    expect(step).toContain("러너는 이 머신에 설치된 claude 로 실행하고(없으면 번들 CLI) 평소 Claude Code 로그인을 쓴다");
+    expect(step).toContain(
+      "러너는 이 머신에 설치된 claude 로 실행하고(없으면 번들 CLI) 평소 Claude Code 로그인을 쓴다",
+    );
     expect(blockWith(bashBlocks(step), "auth status")).toMatch(/^claude auth status\n/);
     const dedicated = step.indexOf("전용 로그인을 원한다고 하면");
     expect(dedicated).toBeGreaterThan(-1);
