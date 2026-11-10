@@ -5,8 +5,9 @@ import { ipPrefix } from "./modules/ops/ip";
 // x-*-token 꼴 요청 헤더는 지금 쓰는 곳이 없다(브리지 토큰은 Authorization·핸드셰이크 auth 로 온다) — 토큰을 싣는
 // 헤더를 새로 만들면 이름을 여기에 적는다. pino redact 는 헤더 이름 와일드카드를 받지 못한다.
 // 토큰을 URL 경로에 싣는 라우트를 새로 만들면 redactUrl 에 그 경로를 더한다 — Fastify 의 `incoming request` 줄이 req.url 을
-// info 로 남긴다(지금은 웹훅 /hooks/<token>). 앞단 리버스 프록시도 접근·오류 로그에 URI 를 원문으로 남긴다 — 앱이 막을 수
-// 없으니 docs/guides/docker-deploy.md 「프록시 접근 로그」의 Caddy 필터 조각에도 같은 경로를 더한다. 토큰 접두(whk_·dpt_)는
+// info 로 남긴다(지금은 웹훅 /hooks/<token>). 서버가 함께 내는 웹 SPA 경로(초대 /join/<dit_…>·재설정 /reset/<drt_…>)도 같은 요청
+// 줄을 지나므로 웹 라우트에 토큰을 싣는 경로를 새로 만들어도 여기에 더한다. 앞단 리버스 프록시도 접근·오류 로그에 URI 를 원문으로 남긴다 — 앱이 막을 수
+// 없으니 docs/guides/docker-deploy.md 「프록시 접근 로그」의 Caddy 필터 조각에도 같은 경로를 더한다. 토큰 접두(whk_·dpt_·dit_·drt_)는
 // 쿼리 등에 잘못 실려 와도 두 자리가 모두 가린다 — 접두가 붙은 토큰을 새로 만들면 그 접두도 두 자리에 더한다
 const SECRET_KEYS = new Set([
   "token",
@@ -61,14 +62,19 @@ function serializeErr(err: Error): unknown {
   return out;
 }
 
+/** 앞 8자(dit_·drt_ + 4자) — 초대·재설정 목록의 prefix(원문 앞 8자, modules/members/tokens.ts)만큼만 보인다 */
+const LINK_TOKEN = /(d(?:it|rt)_[\w-]{4})[\w-]+/g;
+
 /** whk_ 와 그 뒤 6자 — 자동화 목록의 tokenPrefix(whk_ 뒤 6자, modules/automations/tokens.ts)만큼만 보인다 */
 const HOOK_SHOWN = "whk_".length + 6;
 
 /**
- * 로그에 싣는 요청 URL — 웹훅 토큰을 앞부분만 남기고 「…」로 가린다. 대상은 셋: /hooks/ 다음 경로 조각(대소문자 무관, 퍼센트
+ * 로그에 싣는 요청 URL — 웹훅 토큰을 앞부분만 남기고 「…」로 가린다. 대상은 넷: /hooks/ 다음 경로 조각(대소문자 무관, 퍼센트
  * 인코딩한 조각도 앞 10자만)과 그 밖 어디든 whk_ 토큰 꼴(/hooks%2F…·쿼리 — 라우트에 안 맞아 404 여도 요청 줄은 남는다), 그리고
  * 개인 토큰 dpt_ 꼴(/mcp 는 Authorization 머리로만 받지만 URL 만 받는 MCP 클라이언트에 ?token= 으로 넣어 보는 오설정이 있다 —
- * 401 이어도 토큰은 유효한 채다. dpt_ 뒤 6자는 토큰 목록의 prefix). 넷째로 쿼리 relPath 의 값(러너 디렉터리 둘러보기 — 사람
+ * 401 이어도 토큰은 유효한 채다. dpt_ 뒤 6자는 토큰 목록의 prefix), 초대·재설정 링크 토큰 dit_·drt_ 꼴(웹 SPA 경로
+ * /join/<토큰>·/reset/<토큰> — 서버가 웹도 내므로 그 페이지를 여는 요청이 이 줄에 남는다. 쿼리에 실려 와도 같다. 앞 8자는 목록의
+ * prefix). 다섯째로 쿼리 relPath 의 값(러너 디렉터리 둘러보기 — 사람
  * 머신의 디렉터리 구조라 운영 로그에 남기지 않는다, 러너 일반화 스펙 6장)은 통째로 「…」. 다른 경로·쿼리는 그대로다
  */
 export function redactUrl(url: string): string {
@@ -78,6 +84,7 @@ export function redactUrl(url: string): string {
     )
     .replace(/whk_([\w-]{6})[\w-]+/g, "whk_$1…")
     .replace(/dpt_([\w-]{6})[\w-]+/g, "dpt_$1…")
+    .replace(LINK_TOKEN, "$1…")
     .replace(/\?[^#]*/, redactRelPath);
 }
 
