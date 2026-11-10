@@ -676,6 +676,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (run.status !== "error" || code === undefined) return;
     if (!NOTIFY_CODES.has(code) && !code.startsWith("DROPPED:") && !code.startsWith("ADAPTER_ERROR:")) return;
     try {
+      // 답(정본·스냅샷)이 이미 채널에 있으면 다시 실행하지 않는다 — 누르면 같은 일이 두 번 돈다(정본 뒤 런 상한으로 닫힌 런 등)
+      const answered = store.listRunMessageIds(db, run.id).length > 0;
       const agent = getAgent(db, run.agentId);
       createSystemMessage(db, bus, {
         conversationId: run.conversationId,
@@ -687,7 +689,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           message: run.error?.message ?? "",
         }),
         systemMeta: { kind: "run_error", runId: run.id },
-        ...(run.triggerMessageId === undefined || NO_RETRY_CODES.has(code)
+        ...(run.triggerMessageId === undefined || NO_RETRY_CODES.has(code) || answered
           ? {}
           : { components: RETRY_COMPONENTS }),
       });
@@ -1449,10 +1451,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           { runId: run.id, messageId: message.id, outboundId: msg.outboundId, agentId: run.agentId },
           "late canonical from archived agent or channel or closed session — stored without relay",
         );
+        if (run.status === "error") closeRetryCards(run);
         await api.signal(run.id, { kind: "canonical_received" });
         return { messageId: message.id };
       }
       const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId);
+      // 실패로 닫힌 뒤(TIMEOUT·unknown·ADAPTER_UNAVAILABLE 등) 답이 늦게 왔다 — 저장·릴레이는 그대로 하되 「다시 실행」은 닫는다
+      if (run.status === "error") closeRetryCards(run);
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만
       return { messageId: message.id };

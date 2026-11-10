@@ -2225,6 +2225,68 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  describe("답이 이미 채널에 있는 런의 「다시 실행」", () => {
+    const itemIds = (card: Message | undefined): string[] =>
+      (card?.components?.blocks ?? []).flatMap((block) =>
+        block.type === "actions" ? block.items.map((item) => item.id) : [],
+      );
+
+    it("정본이 저장된 뒤 런 상한(TIMEOUT)으로 닫히면 run_error 카드에 「다시 실행」을 싣지 않는다", async () => {
+      const t = setup({ timeouts: { runMs: 50 } });
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "답" }), "openclaw", FAKE_GATEWAY_ID);
+      expect(t.runOf(run.id)).toMatchObject({ status: "streaming", hasCanonical: true });
+
+      await vi.advanceTimersByTimeAsync(51);
+
+      expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+      const [card] = systemMessages(t.db);
+      expect(card).toMatchObject({
+        bodyMd: "@dev 실행이 실패했습니다: TIMEOUT",
+        systemMeta: { kind: "run_error", runId: run.id },
+      });
+      expect(card?.components).toBeUndefined();
+      t.orch.stop();
+    });
+
+    it.each([
+      ["TIMEOUT", { kind: "run_timeout" } as const],
+      ["unknown", { kind: "gateway_error", code: "unknown", message: "" } as const],
+      ["ADAPTER_UNAVAILABLE", { kind: "gateway_error", code: "ADAPTER_UNAVAILABLE", message: "x" } as const],
+    ])(
+      "%s 로 닫힌 뒤 정본이 늦게 오면 저장·릴레이는 하고 그 런의 「다시 실행」 카드를 닫는다",
+      async (_code, signal) => {
+        const t = setup();
+        const run = await t.enqueue();
+        await t.flush();
+        await t.orch.signal(run.id, { kind: "gateway_started" });
+        await t.orch.signal(run.id, signal);
+        const [card] = systemMessages(t.db);
+        expect(itemIds(card)).toEqual(["retry_run"]);
+        expect(card?.componentState?.consumed).toEqual([]);
+        const updated: Message[] = [];
+        t.bus.on("message.updated", (p) => updated.push(p.message));
+
+        const ack = await t.orch.onCanonical(
+          t.outbound({ runId: run.id, text: "늦은 답" }),
+          "openclaw",
+          FAKE_GATEWAY_ID,
+        );
+
+        expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ runId: run.id, bodyMd: "늦은 답" });
+        expect(t.onAgentMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ id: ack.messageId }),
+          expect.objectContaining({ id: run.id }),
+        );
+        expect(getMessage(t.db, card?.id ?? "")?.componentState?.consumed).toEqual(["retry_run"]);
+        expect(updated.map((m) => m.id)).toEqual([card?.id]);
+        t.orch.stop();
+      },
+    );
+  });
+
   it("러너 로그인 실패(PROVIDER_AUTH)는 사유 있는 run_error 카드 — 코드가 아니라 할 일을 보이고, 다시 로그인한 뒤 「다시 실행」", async () => {
     const t = setup();
     const run = await t.enqueue();
