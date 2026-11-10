@@ -267,6 +267,39 @@ describe("attachBridge (실제 Socket.IO)", () => {
     expect(res).toMatchObject({ ok: false, error: { code: "PROTOCOL_MISMATCH" } });
   });
 
+  // 콜백 없이 emit 하면 socket.io 는 ack 인자를 붙이지 않는다 — 핸들러가 그대로 부르면 TypeError 가 uncaughtException(저장 뒤 ack 는
+  // unhandledRejection)으로 나가 서버 프로세스가 내려간다. 프레임 처리(hello 등록·outbound 저장)는 ack 유무와 상관없이 같다
+  it("콜백 없는 hello·outbound.message 도 던지지 않고 처리하며, 다음 정상 프레임도 받는다", async () => {
+    const escaped: unknown[] = [];
+    const onEscape = (error: unknown) => escaped.push(error);
+    process.on("uncaughtException", onEscape);
+    process.on("unhandledRejection", onEscape);
+    try {
+      const socket = client(TOKEN);
+      await waitFor(socket, "connect");
+      // 모양이 틀린 hello·hello 전 outbound — 거절 ack 자리
+      socket.emit("hello", {});
+      socket.emit("outbound.message", outbound("o-noack-early"));
+      // 정상 hello — 등록·성공 ack 자리
+      socket.emit("hello", hello);
+      // 정상 outbound — 저장 뒤 프라미스 안의 ack 자리
+      socket.emit("outbound.message", outbound("o-noack"));
+
+      // 같은 소켓의 프레임은 차례로 처리된다 — 이 ack 가 오면 위 넷은 지났다
+      const next = await socket.emitWithAck("outbound.message", outbound("o-after"));
+      expect(next.ok).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(escaped).toEqual([]);
+      expect(socket.connected).toBe(true);
+      expect(bridge.forGateway(GATEWAY).current()?.hello?.pluginId).toBe("dodok");
+      expect(received.map((m) => m.outboundId)).toEqual(["o-noack", "o-after"]);
+    } finally {
+      process.off("uncaughtException", onEscape);
+      process.off("unhandledRejection", onEscape);
+    }
+  });
+
   it("저장이 계약 오류 코드를 실어 던지면 그 코드로, 아니면 INTERNAL 로 거절하고 기록하지 않는다 — 재전송이 다시 저장을 부른다", async () => {
     await stop();
     let calls = 0;

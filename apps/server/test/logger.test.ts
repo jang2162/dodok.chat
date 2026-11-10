@@ -179,6 +179,33 @@ describe("요청 로그의 URL — 웹훅 토큰 가림", () => {
     expect(redactUrl(url)).not.toContain(pat.slice(10));
   });
 
+  // 초대·재설정 링크(dit_·drt_ + base64url 43자)는 웹 SPA 경로 /join/·/reset/ 에 실린다 — 서버가 웹도 내므로 그 페이지를 여는 요청이
+  // 요청 줄에 남는다. 목록의 prefix(원문 앞 8자)만 보인다. 꼬리에 - 가 든 꼴로 [\w-] 가 \w 로 줄어든 변이를 잡는다
+  const invite = "dit_Qx7k-_jJFOfn5u-EVJpO8zLEnAIEkj7oxYm5mdFpTl";
+  const reset = "drt_Zp2m-_jJFOfn5u-EVJpO8zLEnAIEkj7oxYm5mdFpTl";
+  it.each([
+    ["/join/<초대>", `/join/${invite}`, "/join/dit_Qx7k…", invite],
+    ["/reset/<재설정>", `/reset/${reset}`, "/reset/drt_Zp2m…", reset],
+    ["쿼리가 붙은 경로", `/join/${invite}?from=mail`, "/join/dit_Qx7k…?from=mail", invite],
+    [
+      "쿼리에 실린 초대",
+      `/api/v1/invites/accept?token=${invite}`,
+      "/api/v1/invites/accept?token=dit_Qx7k…",
+      invite,
+    ],
+    ["쿼리에 실린 재설정", `/x?a=1&t=${reset}&b=2`, "/x?a=1&t=drt_Zp2m…&b=2", reset],
+  ])("초대·재설정 링크 토큰은 앞 8자만 — %s", (_label, url, expected, raw) => {
+    expect(redactUrl(url)).toBe(expected);
+    expect(redactUrl(url)).not.toContain(raw.slice(8));
+  });
+
+  it.each([
+    ["8자 이하(가릴 꼬리 없음)", "/join/dit_abcd", "/join/dit_abcd"],
+    ["9자 — 꼬리 한 글자도 가린다", "/reset/drt_abcde", "/reset/drt_abcd…"],
+  ])("짧은 링크 토큰 — %s", (_label, url, expected) => {
+    expect(redactUrl(url)).toBe(expected);
+  });
+
   it.each([
     "/api/v1/channels?limit=50&after=12",
     "/bridge/attachments/01999999-0000-7000-8000-000000000001",
