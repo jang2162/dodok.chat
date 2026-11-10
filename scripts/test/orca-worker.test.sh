@@ -644,6 +644,80 @@ STUB_ORCA_WS_NO_HANDLE=1 STUB_ORCA_TERMINALS_FIXTURE="$P/terms.json" \
   cmd_spawn probe chore --base main >/dev/null 2>&1
 assert_eq "$(grep 'terminal rename' "$STUB_ORCA_LOG" | grep -c 'term_reap_1')" "1" \
   "되짚은 핸들로 이어서 작업한다"
+
+echo "구조화 워커(Orca 1.4.254, structworker_…)"
+# 1.4.254 의 기본 워커는 `mode: "structured"` 다 — TUI 화면이 없고 `terminal list` 에 나오지
+# 않는다. 감싸개가 stub-orca.sh 로 인자 검증·기록을 그대로 맡기고, worker-start·worker-show 의
+# 응답과 구조화 워커에 대한 terminal 동사의 거부만 실물 꼴로 바꾼다.
+#   STRUCT_RECEIPT  short(관측된 짧은 영수증) | nohandle(핸들·mode 없이 Dispatch id 만) | none(Dispatch id 도 없음)
+#   STRUCT_STAGE    worker-show 가 낼 stage(기본 input_accepted)
+cat > "$P/struct-orca.sh" <<'WRAP'
+#!/bin/bash
+out="$("$STRUCT_BASE_ORCA" "$@")"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out"; exit "$rc"; }
+case "$*" in
+  *"orchestration worker-start"*)
+    case "${STRUCT_RECEIPT:-short}" in
+      short)    printf '{"ok":true,"result":{"dispatchId":"ctx_struct","taskId":"task_stub","runId":"run_stub","state":"ready","agent":"claude","model":"opus","mode":"structured","terminal":"structworker_s1","workspace":"repo1::/w","next":"wait"}}\n' ;;
+      nohandle) printf '{"ok":true,"result":{"dispatch":{"id":"ctx_struct"},"worker":{"state":"ready"}}}\n' ;;
+      none)     printf '{"ok":true,"result":{"worker":{"state":"ready"}}}\n' ;;
+    esac ;;
+  *"orchestration worker-show"*)
+    printf '{"ok":true,"result":{"dispatchId":"ctx_struct","state":"ready","stage":"%s","terminal":"structworker_s1"}}\n' \
+      "${STRUCT_STAGE:-input_accepted}" ;;
+  *"terminal wait"*structworker_*|*"terminal rename"*structworker_*)
+    printf '{"ok":false,"error":{"code":"terminal_unsupported_for_agent_session"}}\n'; exit 1 ;;
+  *) printf '%s\n' "$out" ;;
+esac
+WRAP
+chmod +x "$P/struct-orca.sh"
+STRUCT_BASE_ORCA="$ORCA_CLI_COMMAND"; export STRUCT_BASE_ORCA
+
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" cmd_spawn probe implement --base main 2>&1)"; rc=$?
+assert_eq "$rc" "0" "구조화 워커: 짧은 영수증(mode structured)으로 spawn 이 0 으로 끝난다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_s1$')" "1" \
+  "구조화 워커: 영수증의 핸들을 끝 출력에 싣는다"
+assert_eq "$(printf '%s' "$out" | grep -c '다음: scripts/orca-worker.sh wait')" "1" \
+  "구조화 워커: 끝 출력의 「다음: wait」는 그대로다"
+assert_eq "$(grep 'orchestration worker-show' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_struct')" "1" \
+  "구조화 워커: 제출은 worker-show 의 stage 로 확인한다"
+assert_eq "$(grep -cE 'terminal (read|wait|rename|send)' "$STUB_ORCA_LOG")" "0" \
+  "구조화 워커: 화면 전제의 terminal read·wait·rename·send 를 부르지 않는다"
+assert_eq "$(printf '%s' "$out" | grep -cE '제출을 확인하지 못했다|상태줄|stage:')" "0" \
+  "구조화 워커: input_accepted 면 제출 경고를 내지 않는다"
+
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_STAGE=starting ORCA_WORKER_SUBMIT_TRIES=2 \
+       cmd_spawn probe implement --base main 2>&1)"; rc=$?
+assert_eq "$rc" "0" "구조화 워커: stage 가 input_accepted 가 아니어도 붙이기는 끝낸다(TUI 경로와 같다)"
+assert_eq "$(grep -c 'orchestration worker-show' "$STUB_ORCA_LOG")" "2" \
+  "구조화 워커: input_accepted 가 아니면 정해진 횟수만큼 다시 본다"
+assert_eq "$(printf '%s' "$out" | grep -c '경고: 2회 시도 후에도 제출을 확인하지 못했다')" "1" \
+  "구조화 워커: 끝내 확인하지 못하면 경고한다"
+
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=nohandle \
+       cmd_spawn probe implement --base main 2>&1)"; rc=$?
+assert_eq "$rc" "0" "구조화 워커: 영수증에 핸들이 없으면 Dispatch id 로 worker-show 를 읽어 이어간다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_s1$')" "1" \
+  "구조화 워커: worker-show 로 되짚은 핸들을 쓴다"
+assert_eq "$(grep -cE 'terminal (read|wait|rename|send)' "$STUB_ORCA_LOG")" "0" \
+  "구조화 워커: 되짚은 핸들(structworker_)로도 화면 동사를 부르지 않는다"
+
+# Dispatch id 조차 없으면 이 워크트리의 진행 중 Dispatch 를 worker-list 로 찾는다.
+jq --arg wt "repo1::$P/.worktrees/$PB/probe" \
+   '.result.workers = [{dispatchId:"ctx_struct",taskId:"task_stub",runId:"run_stub",workerState:"ready",dispatchStatus:"dispatched",agentTerminalHandle:"structworker_s1",terminalState:"active",resource:{worktreeId:$wt,terminalHandle:"structworker_s1"}}]' \
+   "$HERE/fixtures/worker-list.json" > "$P/structworkers.json"
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=none STUB_ORCA_WORKERS_FIXTURE="$P/structworkers.json" \
+       cmd_spawn probe implement --base main 2>&1)"; rc=$?
+assert_eq "$rc" "0" "구조화 워커: Dispatch id 도 없으면 worker-list 의 이 워크트리 Dispatch 로 핸들을 찾는다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_s1$')" "1" \
+  "구조화 워커: worker-list 로 되짚은 핸들을 쓴다"
+assert_status 1 "구조화 워커: 어디서도 핸들을 못 찾으면 여전히 멈춘다" \
+  env ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=none \
+  bash -c '. "$0"; cmd_spawn probe implement --base main' "$SUT"
 unset ORCA_WORKER_RETRY_SLEEP
 
 # F6 — require_orca. Orca 런타임에 닿지 못하면 워크트리조차 만들지 않는다.
@@ -758,6 +832,33 @@ assert_status 0 "attach review --force: 확인하고도 띄울 수 있다" \
   bash -c '. "$0"; cmd_attach probe review --force' "$SUT"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0" \
   "attach review --force: 구현자 터미널에 붙지 않고 새로 띄운다"
+
+# 구조화 워커(1.4.254)는 terminal list 에 나오지 않는다 — 터미널로는 진행 중인 구현자를 못 본다.
+# 핸들을 받지 않은 attach 는 worker-list 의 resource.worktreeId 로도 진행 중 Dispatch 를 잡는다.
+jq --arg wt "repo1::$P/.worktrees/$PB/probe" \
+   '.result.workers = [{dispatchId:"ctx_struct_live",taskId:"task_live",runId:"run_a",workerState:"ready",dispatchStatus:"dispatched",agentTerminalHandle:"structworker_impl",terminalState:"active",resource:{worktreeId:$wt,terminalHandle:"structworker_impl"}}]' \
+   "$HERE/fixtures/worker-list.json" > "$P/structlive.json"
+jq '.result.terminals = []' "$P/aterms.json" > "$P/noterms.json"
+: > "$STUB_ORCA_LOG"
+out="$(STUB_ORCA_WORKERS_FIXTURE="$P/structlive.json" STUB_ORCA_TERMINALS_FIXTURE="$P/noterms.json" \
+       cmd_attach probe review 2>&1 >/dev/null)"; rc=$?
+assert_eq "$rc" "1" "attach review: 구조화 구현자가 이 워크트리에서 진행 중이면 띄우지 않는다"
+assert_eq "$(grep -c 'orchestration worker-start' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 구조화 구현자 사례도 worker-start 까지 가지 않는다"
+assert_eq "$(printf '%s' "$out" | grep -c 'structworker_impl 에 아직 진행 중인 Dispatch(ctx_struct_live)')" "1" \
+  "attach review: 구조화 구현자의 핸들과 Dispatch 를 말한다"
+
+# 구조화 리뷰어를 띄우면 spawn 과 같은 마무리 — stage 로 확인하고 화면 동사를 부르지 않는다.
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STUB_ORCA_TERMINALS_FIXTURE="$P/noterms.json" \
+       cmd_attach probe review 2>&1)"; rc=$?
+assert_eq "$rc" "0" "attach review: 구조화 영수증으로 0 으로 끝난다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_s1$')" "1" \
+  "attach review: 구조화 워커의 핸들을 끝 출력에 싣는다"
+assert_eq "$(grep 'orchestration worker-show' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_struct')" "1" \
+  "attach review: 구조화 워커의 제출은 worker-show 의 stage 로 확인한다"
+assert_eq "$(grep -cE 'terminal (read|wait|rename|send)' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 구조화 워커에 화면 동사를 부르지 않는다"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
   "attach review --force: --agent 로 새 에이전트를 띄운다"
 # 같은 조건의 implement 는 재사용한다.
