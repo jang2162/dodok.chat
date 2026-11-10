@@ -1828,21 +1828,141 @@ attach_worker() {
 # 1.4.246 의 짧은 영수증은 핸들을 `.result.terminal` 에 **문자열로** 둔다. 그 자리를 못 읽으면
 # 되짚기로 넘어가는데, 갓 뜬 터미널은 `agentIdentity` 가 아직 null 일 수 있어 그쪽도 비고
 # spawn 이 「붙긴 했으나 터미널 핸들을 얻지 못했다」로 멈췄다. 호출은 `--full` 이지만 그 자리도 읽는다.
+#
+# 1.4.254 의 구조화 워커(`mode: "structured"`, 핸들 `structworker_…`)에서 같은 멈춤이 또 났다
+# (2026-11-09, 열 번 넘게). 그 판의 `worker-start --json --full` 영수증은 이 저장소에서 재지
+# 못했다 — 띄우지 않고는 볼 수 없다. 그래서 **자리를 짚지 않고 이름으로 훑는다**
+# (attach_residual_count 와 같은 원칙). 이름은 같은 판의 `worker-show --full` 실물에서 왔다:
+# `.result.worker.agentTerminalHandle`·`.result.dispatch.assigneeHandle`·
+# `effects` 의 `{kind:"terminal",role:"agent",id}`. `residualResources` 는 훑기 전에 잘라 낸다 — 실패
+# 봉투의 남은 자원을 붙은 워커로 읽게 된다.
+#
+# 되짚기 순서는 정확한 것부터다(2026-11-10 리뷰). ① 영수증의 Dispatch id 로 `worker-show` — 방금 붙인
+# 그 Dispatch 의 핸들이다. ② 그것으로도 못 찾고 구조화 워커가 아닐 때만 `terminal list` 의 「이 워크트리에서
+# agentIdentity 가 있는 마지막 터미널」— 추측이다. 리뷰어를 띄우는 attach 에서는 살아 있는 구현자 TUI 를
+# 잡아 리뷰어 대신 구현자 핸들을 내준다(①을 뒤에 두었을 때 실제로 그랬다). 구조화 워커는 `terminal list`
+# 에 나오지 않으므로(실측: 그 워크트리의 목록에 `term_…` 둘만, 둘 다 agentIdentity null) 부르지 않는다.
+# ③ 그래도 없으면 `worker-list` 에서 **방금 만든 Task**(`taskId`)의 Dispatch 를 찾는다 — 이 워크트리의
+# 아무 진행 중 Dispatch 를 고르면 진행 중인 구현자를 리뷰어로 잡는다. 못 찾으면 빈 핸들(호출자가 멈춘다).
+# 이전 판(짧은 `.result.terminal`·`--full` 의 `.result.worker.agentTerminalHandle`)도 이 훑기가 읽는다
+# — 그러니 1.4.254 의 `--full` 영수증은 그 밖의 자리(또는 빈 값)에 핸들을 둔 것으로 본다.
+# 사용: attach_handle <영수증 파일> <워크트리 id> <Task id>
 attach_handle() {
-  local resp="$1" wt_id="$2" handle
-  handle="$(jq -r '.result.worker.agent_terminal_handle?
-                   // .result.worker.agentTerminalHandle?
-                   // .result.agentTerminalHandle?
-                   // .result.terminal.handle?
-                   // (.result.terminal? | strings)
-                   // empty' "$resp" 2>/dev/null)"
+  local resp="$1" wt_id="$2" task_id="${3:-}" handle dispatch
+  handle="$(jq -r 'walk(if type == "object" then del(.residualResources) else . end)
+                   | [ .. | objects
+                     | (.agent_terminal_handle?, .agentTerminalHandle?, .assigneeHandle?,
+                        .terminalHandle?, (.terminal? | strings), (.terminal?.handle?)?,
+                        (.effects? | arrays | .[]
+                         | select(type == "object" and .kind? == "terminal" and .role? == "agent")
+                         | .id?)) ]
+                   | map(strings | select(. != "")) | first // empty' "$resp" 2>/dev/null)"
   if [ -z "$handle" ]; then
+    dispatch="$(attach_dispatch_id "$resp")"
+    [ -n "$dispatch" ] && handle="$(dispatch_handle "$dispatch")"
+  fi
+  if [ -z "$handle" ] && ! is_structured_worker "$resp" ""; then
     handle="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
       | jq -r '[ .result.terminals[]?
                  | select((.agentIdentity? // "") != "")
                  | select(.orphaned? != true) ] | last | .handle? // empty')"
   fi
+  # 1.4.254 worker-list --full 실물: 항목에 `taskId`·`.resource.worktreeId`·`.agentTerminalHandle`.
+  if [ -z "$handle" ] && [ -n "$task_id" ]; then
+    handle="$("$(orca_cli)" orchestration worker-list --json --full 2>/dev/null \
+      | jq -r --arg wt "$wt_id" --arg task "$task_id" '[ .result.workers[]?
+                 | select(.taskId? == $task)
+                 | select((.resource? | type == "object") and .resource.worktreeId? == $wt)
+                 | .agentTerminalHandle? | strings | select(. != "") ] | first // empty' 2>/dev/null)"
+  fi
   printf '%s\n' "$handle"
+}
+
+# 붙이기 영수증의 Dispatch id. 짧은 모양(`.result.dispatchId`)과 긴 모양(`.result.dispatch.id`)을
+# 다 읽고, 그 밖의 깊이도 이름으로 훑는다. 없으면 빈 문자열.
+attach_dispatch_id() {
+  jq -r '[ .result.dispatchId?, .result.dispatch.id?,
+           (.. | objects | .dispatchId?) ]
+         | map(strings | select(. != "")) | first // empty' "$1" 2>/dev/null
+}
+
+# Dispatch id 로 워커의 핸들을 읽는다(worker-show — 짧은 모양 `.result.terminal`, 긴 모양
+# `.result.worker.agentTerminalHandle`·`.result.dispatch.assigneeHandle`). 못 읽으면 빈 문자열.
+dispatch_handle() {
+  "$(orca_cli)" orchestration worker-show --dispatch "$1" --json 2>/dev/null \
+    | jq -r '[ (.result.terminal? | strings), .result.worker.agentTerminalHandle?,
+               .result.dispatch.assigneeHandle? ]
+             | map(strings | select(. != "")) | first // empty' 2>/dev/null
+}
+
+# 구조화 워커인가. 영수증이 `mode: "structured"` 를 말하거나(짧은 모양은 `.result.mode` 문자열,
+# 긴 모양은 `startOptions.mode.mode` 일 것으로 본다 — worker-show --full 실물의 자리) 핸들이
+# `structworker_` 로 시작하면 그렇다.
+#
+# **구조화 워커는 TUI 화면이 없다.** 1.4.254 실측: `terminal wait --for tui-idle` 은
+# `terminal_unsupported_for_agent_session` 으로 곧바로 거부되고, `terminal read --screen` 은
+# 화면 대신 대화 기록 꼬리(`source: "screen-unavailable"`)를 준다 — 상태줄(Ctx Used)이 없어
+# verify_submitted 가 시도를 다 쓰고 거짓 경고를 낸다.
+is_structured_worker() {
+  local resp="$1" handle="$2"
+  case "$handle" in structworker_*) return 0 ;; esac
+  [ -f "$resp" ] || return 1
+  jq -e '[ .. | objects | .mode? | (strings, (objects | .mode? | strings)) ]
+         | any(. == "structured")' "$resp" >/dev/null 2>&1
+}
+
+# 구조화 워커의 제출 확인 — 화면이 아니라 `worker-show` 의 stage 로 본다.
+# 1.4.254 실측: 브리프를 받은 워커의 `worker-show --json` 은 `.result.stage: "input_accepted"`
+# (`--full` 이면 `.result.worker.stage`·`.result.projection.stage.detail`)다.
+# 실물 stage 는 input_accepted·settled·abandoned·process_stopped 넷이다(worker-list --full 관측).
+# settled 는 받아들여지고 이미 끝난 것이라 수신으로 본다. abandoned·process_stopped 는 끝난 상태라
+# 기다려도 바뀌지 않으므로 바로 그 stage 를 경고한다. 종료 코드는 TUI 경로(verify_submitted)와 같다.
+# 판정 불가(Dispatch id 가 없음·stage 를 못 읽음)는 「제출됨」으로 넘기지 않는다.
+verify_dispatch_accepted() {
+  local dispatch="$1" attempt=1 tries pause stage
+  tries="${ORCA_WORKER_SUBMIT_TRIES:-6}"
+  pause="${ORCA_WORKER_SUBMIT_SLEEP:-5}"
+  if [ -z "$dispatch" ]; then
+    printf '경고: 영수증에 Dispatch id 가 없어 제출을 확인하지 못했다. worker-list 로 직접 확인하라\n' >&2
+    return 1
+  fi
+  while [ "$attempt" -le "$tries" ]; do
+    stage="$("$(orca_cli)" orchestration worker-show --dispatch "$dispatch" --json 2>/dev/null \
+      | jq -r '[ (.result.stage? | strings), (.result.worker.stage? | strings),
+                 (.result.projection.stage.detail? | strings) ]
+               | map(select(. != "")) | first // empty' 2>/dev/null)"
+    case "$stage" in
+      input_accepted|settled) return 0 ;;
+      abandoned|process_stopped)
+        printf '경고: 워커가 이미 끝났다(stage: %s) — 브리프를 받았는지 확인하지 못했다. 직접 확인하라: %s orchestration worker-show --dispatch %s --json\n' \
+          "$stage" "$(orca_cli)" "$dispatch" >&2
+        return 1 ;;
+    esac
+    printf '브리프 수신(stage input_accepted)을 아직 확인하지 못했다(stage: %s). 기다린다 (%s/%s)\n' \
+      "${stage:-없음}" "$attempt" "$tries" >&2
+    sleep "$pause"
+    attempt=$((attempt + 1))
+  done
+  printf '경고: %s회 시도 후에도 제출을 확인하지 못했다. 직접 확인하라: %s orchestration worker-show --dispatch %s --json\n' \
+    "$tries" "$(orca_cli)" "$dispatch" >&2
+  return 1
+}
+
+# 붙인 뒤의 마무리 — 제목·렌더 대기·제출 확인. spawn 과 attach 가 함께 쓴다.
+# 사용: after_attach <핸들> <제목> <structured yes|no> <Dispatch id>
+after_attach() {
+  local handle="$1" title="$2" structured="$3" dispatch="$4"
+  if [ "$structured" = "yes" ]; then
+    # terminal rename·wait 는 구조화 워커를 받지 않는다(위 is_structured_worker). 부르지 않는다.
+    verify_dispatch_accepted "$dispatch" || true
+    return 0
+  fi
+  # worker-start 가 만든 터미널에는 우리 제목이 없다. 붙인 뒤에 붙여 준다.
+  # (--display-name 은 이미 있는 워크트리에서 거부된다. 에이전트가 곧 자기 상태로
+  # 덮으므로 잠깐 보이는 이름일 뿐이고, 실패해도 아무것도 잃지 않는다.)
+  "$(orca_cli)" terminal rename --terminal "$handle" --title "$title" --json >/dev/null 2>&1
+  wait_rendered "$handle"
+  verify_submitted "$handle" || true
 }
 
 # 붙지 못한 채 살아 있는 워커를 조율자가 잃지 않게 한다.
@@ -1933,7 +2053,10 @@ cmd_spawn() {
     --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   rc=$?
 
-  handle="$(attach_handle "$resp" "$wt_id")"
+  handle="$(attach_handle "$resp" "$wt_id" "$task_id")"
+  local structured=no dispatch
+  is_structured_worker "$resp" "$handle" && structured=yes
+  dispatch="$(attach_dispatch_id "$resp")"
   rm -f "$resp" "$resp.err"
 
   if [ "$rc" -ne 0 ]; then
@@ -1956,13 +2079,7 @@ cmd_spawn() {
     return 1
   }
 
-  # worker-start 가 만든 터미널에는 우리 제목이 없다. 붙인 뒤에 붙여 준다.
-  # (--display-name 은 이미 있는 워크트리에서 거부된다. 에이전트가 곧 자기 상태로
-  # 덮으므로 잠깐 보이는 이름일 뿐이고, 실패해도 아무것도 잃지 않는다.)
-  "$(orca_cli)" terminal rename --terminal "$handle" --title "$role:$slug" --json >/dev/null 2>&1
-
-  wait_rendered "$handle"
-  verify_submitted "$handle" || true
+  after_attach "$handle" "$role:$slug" "$structured" "$dispatch"
 
   printf '워크트리: %s\n태스크: %s\n터미널: %s\n모델: %s\n' \
     "$wt_id" "$task_id" "$handle" "$(model_label)"
@@ -2051,7 +2168,12 @@ cmd_attach() {
   # 묶인 터미널에서는 Run 수만큼 왕복하므로 두 번 읽으면 그 시간이 두 배다. 두 쓰임 사이에
   # 목록이 바뀔 일은 없다(새 Task 는 아직 dispatch 되지 않았다). Task 를 만든 뒤에 읽다가
   # 실패하면 시작되지 않는 Task 가 Run 에 남는다.
-  if [ -n "$handle" ] || { [ -n "$check_handles" ] && [ "$force" != "yes" ]; }; then
+  # **핸들을 받지 않았으면 워크트리로도 본다.** 구조화 워커(`structworker_…`, Orca 1.4.254)는
+  # `terminal list` 에 나오지 않아 위 live_handles 가 비고, 그러면 진행 중인 구현자를 못 본 채
+  # 리뷰어를 띄운다. worker-list 의 `resource.worktreeId` 로 이 워크트리의 Dispatch 를 함께 잡는다.
+  local by_wt=no
+  [ -z "$handle" ] && by_wt=yes
+  if [ -n "$handle" ] || { [ "$force" != "yes" ] && { [ -n "$check_handles" ] || [ "$by_wt" = "yes" ]; }; }; then
     if all="$(all_workers)"; then
       have_list=yes
     elif [ "$force" != "yes" ]; then
@@ -2068,10 +2190,12 @@ cmd_attach() {
 
   if [ "$have_list" = "yes" ] && [ "$force" != "yes" ]; then
     live="$(printf '%s\n' "$all" \
-      | jq -rs --arg hs "$check_handles" \
+      | jq -rs --arg hs "$check_handles" --arg wt "$wt_id" --arg bywt "$by_wt" \
           '($hs | split("\n") | map(select(. != ""))) as $hs
            | [ .[].result.workers[]?
-               | select(.agentTerminalHandle? as $h | any($hs[]; . == $h))
+               | select((.agentTerminalHandle? as $h | any($hs[]; . == $h))
+                        or ($bywt == "yes" and (.resource? | type == "object")
+                            and .resource.worktreeId? == $wt))
                | select(.dispatchStatus? == "dispatched") ] | first
            | select(. != null) | "\(.agentTerminalHandle) \(.dispatchId // "")"')"
     if [ -n "$live" ]; then
@@ -2184,7 +2308,10 @@ cmd_attach() {
       --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   fi
   rc=$?
-  [ -n "$handle" ] || handle="$(attach_handle "$resp" "$wt_id")"
+  [ -n "$handle" ] || handle="$(attach_handle "$resp" "$wt_id" "$task_id")"
+  local structured=no dispatch
+  is_structured_worker "$resp" "$handle" && structured=yes
+  dispatch="$(attach_dispatch_id "$resp")"
   rm -f "$resp" "$resp.err"
 
   if [ "$rc" -ne 0 ]; then
@@ -2198,10 +2325,7 @@ cmd_attach() {
   [ -n "$handle" ] || {
     printf 'attach: 붙긴 했으나 터미널 핸들을 얻지 못했다\n' >&2; return 1; }
 
-  "$(orca_cli)" terminal rename --terminal "$handle" --title "$role:$slug" --json >/dev/null 2>&1
-
-  wait_rendered "$handle"
-  verify_submitted "$handle" || true
+  after_attach "$handle" "$role:$slug" "$structured" "$dispatch"
 
   printf '워크트리: %s\n태스크: %s\n터미널: %s\n역할: %s\n' "$wt_id" "$task_id" "$handle" "$role"
   printf '\n다음: scripts/orca-worker.sh wait\n'
