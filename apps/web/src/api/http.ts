@@ -26,13 +26,22 @@ export class NetworkError extends Error {
   }
 }
 
-/** 같은 출처 REST(`/api/v1` + path). 인증은 httpOnly 쿠키가 자동으로 붙는다 — 토큰을 다루지 않는다 */
-export async function api<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
+/**
+ * 같은 출처 REST(`/api/v1` + path). 인증은 httpOnly 쿠키가 자동으로 붙는다 — 토큰을 다루지 않는다.
+ * `signal` 은 그 호출만의 중단·시간 제한(전역 시간 제한은 없다) — 끊기면 받지 못한 것과 같게 `NetworkError`
+ */
+export async function api<T>(
+  method: HttpMethod,
+  path: string,
+  body?: unknown,
+  opts: { signal?: AbortSignal } = {},
+): Promise<T> {
   return send<T>(path, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(opts.signal === undefined ? {} : { signal: opts.signal }),
   });
 }
 
