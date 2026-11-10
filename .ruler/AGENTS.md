@@ -10,7 +10,7 @@
 ## 구조
 pnpm 모노레포, npm 스코프 @dodok. apps/web(React+Vite PWA), apps/server(Fastify+Socket.IO+브리지 엔드포인트),
 packages/shared(타입·Zod·components 규약·wire/bridge 계약), packages/openclaw-plugin(원격 Gateway 안 채널 플러그인, id "dodok"),
-packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트), packages/runner-adapter(서버 측 /runner 러너 어댑터), packages/claude-runner(사람 머신의 러너 CLI dodok-runner — 로컬 설정은 천장(허용 루트·프로그램·권한 상한)만, 프로젝트·러너 에이전트는 앱에서 만든다. 드라이버는 Claude Code 하나 — Claude Agent SDK, 정확 핀).
+packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트), packages/runner-adapter(서버 측 /runner 러너 어댑터), packages/claude-runner(사람 머신의 러너 CLI dodok-runner — 로컬 설정은 천장(허용 루트·프로그램·권한 상한)만, 프로젝트·러너 에이전트는 앱에서 만든다. 드라이버는 Claude Code 하나 — Claude Agent SDK 는 정확 핀, 실행은 머신에 설치된 claude(없으면 SDK 내장 CLI, plan.md 10장 #27)).
 
 ## 불변 규칙
 - 에이전트 간 소통은 채널 @멘션 릴레이로만. OpenClaw agentToAgent는 꺼둔다.
@@ -18,7 +18,7 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 - 응답 정본은 플러그인 경로, Gateway WS는 델타/툴 이벤트/승인. runId로 dedupe.
 - Gateway는 원격이 기본. 플러그인이 서버 /bridge 로 아웃바운드 WSS 접속. Gateway 쪽 포트를 열지 않는다.
 - OpenClaw 패키지 3종은 배포 Gateway와 같은 버전으로 정확 핀(현재 2026.9.4, 프로토콜 v4).
-- Claude Agent SDK(`@anthropic-ai/claude-agent-sdk`)는 claude-runner 의 dependencies 에만 정확 핀, 번들에 넣지 않는다. 러너 CLI env 는 허용 목록(ANTHROPIC_* 를 넘기지 않는다). 모델 런은 실행 직전 사용자 승인 — 하네스는 번들 CLI + 로컬 가짜 Messages API(docs/guides/live-smoke.md 「Claude 러너 런 0회 하네스」).
+- Claude Agent SDK(`@anthropic-ai/claude-agent-sdk`)는 claude-runner 의 dependencies 에만 정확 핀, 번들에 넣지 않는다. 러너 CLI env 는 허용 목록(ANTHROPIC_* 를 넘기지 않는다). 모델 런은 실행 직전 사용자 승인 — 하네스는 설치본 또는 내장 CLI + 로컬 가짜 Messages API(docs/guides/live-smoke.md 「Claude 러너 런 0회 하네스」).
 - components v1 제약(액션 로우 버튼≤5 또는 셀렉트 1, 옵션≤25, 모달 필드≤5)은 shared 스키마가 강제.
 - 외부 입력은 경계에서 Zod 파싱. shared는 Node 전용 API 금지.
 - 시크릿·디바이스 아이덴티티·브리지 토큰은 data/ 와 .env 에만. 커밋 금지.
