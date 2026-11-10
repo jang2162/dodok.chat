@@ -157,6 +157,17 @@ describe("RunnerHello", () => {
     expect(RunnerHello.parse(HELLO).programs[0]?.login).toBeUndefined();
   });
 
+  it("hello 프로그램 상태 — cli 는 installed·bundled 를 받고 없어도(옛 러너) 받는다, 모르는 값은 거절", () => {
+    for (const cli of ["installed", "bundled"] as const) {
+      const programs = [{ ...HELLO.programs[0], cli }];
+      expect(RunnerHello.parse({ ...HELLO, programs }).programs[0]?.cli).toBe(cli);
+    }
+    expect(RunnerHello.parse(HELLO).programs[0]?.cli).toBeUndefined();
+    expect(
+      RunnerHello.safeParse({ ...HELLO, programs: [{ ...HELLO.programs[0], cli: "npm" }] }).success,
+    ).toBe(false);
+  });
+
   it("hello 프로그램 상태 — 모르는 login 값은 거절", () => {
     const programs = [{ ...HELLO.programs[0], login: "shared" }];
     expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(false);
