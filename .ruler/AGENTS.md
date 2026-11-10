@@ -32,7 +32,7 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 - 커밋: git add -A / git commit -a 금지, 경로를 명시해 stage. Conventional Commits, 패키지 스코프(feat(plugin): …). zsh 는 변수를 단어로 가르지 않고 `=` 로 시작하는 단어를 명령 경로로 펼친다 — `git add`·`cp`·`git checkout` 처럼 여러 경로를 받는 명령에는 경로를 직접 적고(`cp $F` 가 한 인자로 넘어가 조용히 실패한 뒤 이어진 `git checkout` 이 고친 내용을 지운 일이 있다), `=` 로 시작하는 단어(`echo ====` 같은 구분선)는 따옴표로 감싼다.
 
 ## 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓴다
-CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공용 지침은 지침 서버(https://guideline.develma.com) 사본이다 — 규칙은 아래 「공용 지침 관리」·「ruler 소스와 생성물」. 새 워크트리에는 생성물이 없으므로 `orca.yaml` 셋업과 `scripts/orca-worker.sh` spawn·sync-config 가 `ruler apply` 와 `codegraph init` 을 돌린다(안 돌리면 워커가 지침·MCP 없이, codegraph 는 「not initialized」 로 뜬다).
+AGENTS.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공용 지침은 지침 서버(https://guideline.develma.com) 사본이다 — 규칙은 아래 「공용 지침 관리」·「ruler 소스와 생성물」. 새 워크트리에는 생성물이 없으므로 `orca.yaml` 셋업과 `scripts/orca-worker.sh` spawn·sync-config 가 `ruler apply` 와 `codegraph init` 을 돌린다(안 돌리면 워커가 지침·MCP 없이, codegraph 는 「not initialized」 로 뜬다).
 
 ## 명령
 pnpm i · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev (루트 `pnpm dev` 는 없다)

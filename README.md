@@ -63,4 +63,4 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·러너·모델로 돌려 보는 절차, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·러너) |
 | `docs/guides/runner-release.md` | 러너 npm 패키지 `@dodok/runner` 를 배포하는 법 — 판본 올리기·`runner-v*` 태그·GitHub Actions·npm 쪽 사전 준비·실패할 때 볼 것 |
 | `docs/guides/worktree-workflow.md` | 이 저장소의 작업 방식(워크트리·Orca 워커·커밋 규칙) |
-| `.ruler/AGENTS.md` | 코딩 에이전트가 이 저장소에서 따르는 지침의 소스 — `CLAUDE.md` 는 `pnpm exec ruler apply` 가 만드는 생성물이다 |
+| `.ruler/AGENTS.md` | 코딩 에이전트가 이 저장소에서 따르는 지침의 소스 — 루트 `AGENTS.md` 는 `pnpm exec ruler apply` 가 만드는 생성물이다 |

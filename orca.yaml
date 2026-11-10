@@ -7,7 +7,7 @@ scripts:
     mise trust "$ORCA_WORKTREE_PATH/mise.toml"
     mise install
     mise exec -- pnpm install --frozen-lockfile
-    # CLAUDE.md·.mcp.json·.claude/skills 는 gitignore 된 ruler 생성물이라 새 워크트리에 없다
+    # AGENTS.md·.mcp.json·.claude/skills 는 gitignore 된 ruler 생성물이라 새 워크트리에 없다
     mise exec -- pnpm exec ruler apply
     # .env 는 gitignore 라 따라오지 않는다. data/ 는 복사하지 않는다(워크트리마다 따로)
     if [ -f "$ORCA_ROOT_PATH/.env" ]; then cp "$ORCA_ROOT_PATH/.env" "$ORCA_WORKTREE_PATH/.env"; fi

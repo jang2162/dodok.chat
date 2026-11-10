@@ -47,7 +47,7 @@ dodok.chat/
 ├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티, VAPID 키 vapid.json) — git 제외
 ├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / docker-deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다
 ├─ .ruler/                    # 에이전트 지침 소스 — AGENTS.md(이 프로젝트 고유)·<스택>/(지침 서버 사본)·skills/·ruler.toml (7장)
-├─ CLAUDE.md                  # ruler 생성물 — git 제외 (pnpm exec ruler apply)
+├─ AGENTS.md                  # ruler 생성물 — git 제외 (pnpm exec ruler apply)
 ├─ guideline.json / guideline-lock.json  # 지침 서버에서 고른 항목과 받은 리비전 (guideline CLI 가 쓴다)
 ├─ .mcp.json                  # ruler 생성물 — git 제외. 프로젝트 MCP(playwright-neo·codegraph·context7)의 소스는 .ruler/ruler.toml
 ├─ .oxlintrc.json / .oxfmtrc.json
@@ -1340,7 +1340,7 @@ Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 ## 7. 에이전트 지침 (`.ruler/`)
 
-에이전트 지침의 소스는 `.ruler/` 이고, `CLAUDE.md` 는 `pnpm exec ruler apply` 가 그 소스를 이어붙여 만드는 생성물(git 제외)이다.
+에이전트 지침의 소스는 `.ruler/` 이고, 루트 `AGENTS.md` 는 `pnpm exec ruler apply` 가 그 소스를 이어붙여 만드는 생성물(git 제외)이다.
 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓰고, 같은 내용을 두 곳에 두지 않는다 —
 가르치는 자리가 둘이면 둘 다 맞아야 하므로 한 곳만 남긴다. 작업 방식(워크트리·Orca 워커·커밋 규칙)은
 `docs/guides/worktree-workflow.md` 가 정본이고 `.ruler/AGENTS.md` 는 그 요약이다.
@@ -1348,4 +1348,4 @@ Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 공용 지침은 지침 서버(https://guideline.develma.com)에서 `guideline` CLI 로 받는다 — 상시 지침 `.ruler/<스택>/`,
 참조 지침 `docs/guideline/<스택>/`, 스킬 `.ruler/skills/`. 이 사본들은 CLI 만 쓰고 직접 고치지 않는다.
 이 프로젝트만 다르게 할 것은 `.ruler/<스택>/override.md`, 공용으로 고칠 것은 `guideline propose` 로 서버에 올린다.
-새 워크트리에는 `CLAUDE.md` 가 없으므로 `scripts/orca-worker.sh` 의 spawn·sync-config 가 `ruler apply` 를 돌린다.
+새 워크트리에는 루트 `AGENTS.md` 가 없으므로 `scripts/orca-worker.sh` 의 spawn·sync-config 가 `ruler apply` 를 돌린다.

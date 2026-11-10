@@ -1404,7 +1404,7 @@ assert_eq "$(grep -c 'pnpm exec ruler apply' "$SETUP_LOG")" "0" \
 mkdir -p "$S2/wt/.ruler"
 verify_setup "$S2/wt" >/dev/null 2>&1
 assert_eq "$(grep -c 'pnpm exec ruler apply' "$SETUP_LOG")" "1" \
-  ".ruler/ 가 있으면 ruler apply 로 CLAUDE.md 를 만든다(gitignore 생성물이라 새 워크트리에 없다)"
+  ".ruler/ 가 있으면 ruler apply 로 AGENTS.md 를 만든다(gitignore 생성물이라 새 워크트리에 없다)"
 : > "$SETUP_LOG"
 verify_setup "$S2/wt" >/dev/null 2>&1
 assert_eq "$(grep -c '^codegraph init' "$SETUP_LOG")" "1" \
