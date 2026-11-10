@@ -1,0 +1,71 @@
+# 푸시(main)·PR 마다 lint·fmt·typecheck·시험·orca-worker 시험·서버 번들 스모크를 잰다.
+# 시험은 실제 시간에 기대는 것이 많아 typecheck 와 다른 잡(다른 머신)에서, 패키지를 하나씩 돌린다(AGENTS.md 「명령」)
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Check tool versions against mise.toml
+        run: |
+          node_pin=$(sed -n 's/^node = "\(.*\)"$/\1/p' mise.toml)
+          pnpm_pin=$(sed -n 's/^"npm:pnpm" = "\(.*\)"$/\1/p' mise.toml)
+          test -n "$node_pin" && test -n "$pnpm_pin"
+          test "$(node -v)" = "v$node_pin" || { echo "::error::node $(node -v) != mise.toml $node_pin"; exit 1; }
+          test "$(pnpm -v)" = "$pnpm_pin" || { echo "::error::pnpm $(pnpm -v) != mise.toml $pnpm_pin"; exit 1; }
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+      - run: pnpm fmt:check
+      - run: pnpm typecheck
+
+      - name: orca-worker script tests
+        run: bash scripts/test/orca-worker.test.sh
+
+      # 러너 tgz 는 필요 없다 — 번들은 tgz 를 싣지 않고, 서버는 없으면 설치 파일만 「없음」으로 낸다
+      - name: Server bundle smoke
+        run: |
+          pnpm -F @dodok/server build
+          pnpm -F @dodok/server bundle:smoke
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # --concurrency=1: 러너 코어가 적어 패키지를 함께 돌리면 실제 시간 시험이 흔들린다.
+      # --continue: 한 패키지가 실패해도 나머지 패키지 시험을 끝까지 돌려 실패를 한 번에 본다
+      - run: pnpm exec turbo run test --continue --concurrency=1
