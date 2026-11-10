@@ -1,6 +1,9 @@
 import { RUNNER_PROGRAM_NAME, type RunnerProgramStatus, type RunnerSummary } from "@dodok/shared";
 import { AUTH_LABEL, LOGIN_LABEL } from "./copy";
 
+/** 러너가 띄우는 CLI(hello `programs[].cli`) — 판본 뒤 괄호. 옛 러너는 싣지 않아 붙지 않는다 */
+const CLI_LABEL = { installed: "설치본", bundled: "내장" } as const;
+
 /** 붙은 러너의 판본·루트·프로그램 — 러너 상세 머리 아래(연결 탭 통합 스펙 3.3) */
 export function RunnerFacts({ runner }: { runner: RunnerSummary }) {
   return (
@@ -34,7 +37,7 @@ export function RunnerFacts({ runner }: { runner: RunnerSummary }) {
   );
 }
 
-/** 프로그램 한 줄 — 설치(판본)·로그인·권한 상한. 못 쓰는 것은 흐리게 사유와 함께 */
+/** 프로그램 한 줄 — 설치(판본·설치본/내장)·로그인·권한 상한. 못 쓰는 것은 흐리게 사유와 함께 */
 export function ProgramLine({ program }: { program: RunnerProgramStatus }) {
   const name = RUNNER_PROGRAM_NAME[program.program];
   if (!program.available)
@@ -48,7 +51,8 @@ export function ProgramLine({ program }: { program: RunnerProgramStatus }) {
   return (
     <li aria-label={name} className="break-words">
       <span className="font-medium">{name}</span>
-      {program.version && <> {program.version}</>} · {AUTH_LABEL[program.auth]}
+      {program.version && <> {program.version}</>}
+      {program.cli && <> ({CLI_LABEL[program.cli]})</>} · {AUTH_LABEL[program.auth]}
       {program.login && <> ({LOGIN_LABEL[program.login]})</>} · 권한 상한{" "}
       <code className="font-mono text-xs">{program.ceiling.maxPermissionMode}</code>
       {tools !== null && <> · 허용 도구 상한 {tools.length === 0 ? "없음" : tools.join(", ")}</>}

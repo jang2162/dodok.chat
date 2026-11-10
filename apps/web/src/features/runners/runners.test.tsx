@@ -110,6 +110,23 @@ describe("러너 카드", () => {
     expect(line).not.toHaveTextContent("평소 로그인");
   });
 
+  it("프로그램 줄 — cli 가 있으면 판본 뒤에 (설치본)·(내장), 없으면(옛 러너) 붙지 않는다", async () => {
+    const cases = [
+      [programOf({ version: "2.1.322", cli: "installed" }), "Claude Code 2.1.322 (설치본) · 로그인됨"],
+      [programOf({ cli: "bundled" }), "Claude Code 2.1.283 (내장) · 로그인됨"],
+      [programOf({}), "Claude Code 2.1.283 · 로그인됨"],
+    ] as const;
+    for (const [program, text] of cases) {
+      stub({ runners: [runnerOf(1, { label: "맥북", programs: [program] })] });
+      renderRunnersPage();
+      const line = within(await card("맥북")).getByRole("listitem", { name: "Claude Code" });
+      expect(line).toHaveTextContent(`${text} · 권한 상한 acceptEdits`);
+      if (!program.cli) expect(line).not.toHaveTextContent(/설치본|내장/);
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("끊긴 러너는 「끊김」 하나 — 판본·프로그램이 없고 프로젝트 추가가 잠긴다. 폐기한 러너는 옮기라는 안내", async () => {
     stub({
       runners: [
