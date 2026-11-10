@@ -75,6 +75,11 @@ export type ConnectionManagerOptions = {
   sessionKeysToRecover?: () => RecoverTarget[];
   /** 세션 구독 응답의 `approvalReplay`(미해결 승인) — 재접속 되감기(스파이크 5.3). 없으면 부르지 않는다. */
   onApprovalReplay?: (approvals: ProviderApproval[]) => void;
+  /**
+   * 붙은 뒤 재접속 복구(구독·`chat.history`)가 끝났다 — 일부 세션이 실패했어도 부른다. 그사이 다시 끊겼거나 stop 됐으면 부르지 않는다.
+   * 끊긴 사이 놓친 종료 프레임은 복구가 되살리지 않으므로, 연결이 쥔 열린 런을 맞춰 보는 자리다
+   */
+  onRecovered?: () => void;
   historyCursors?: Map<string, string>;
   backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
   /** 지터용 [0,1) 난수 — 테스트 주입 */
@@ -220,6 +225,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
     setDetail({ version: next.hello?.server.version ?? null, pairing: null });
     setState("connected");
     await recover(next, gen);
+    if (running && gen === generation) opts.onRecovered?.();
   }
 
   function onClose(gen: number, info: { code: number; reason: string }) {

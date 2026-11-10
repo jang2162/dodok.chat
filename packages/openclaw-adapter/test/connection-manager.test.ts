@@ -469,6 +469,59 @@ describe("createConnectionManager — 재접속 복구", () => {
   });
 });
 
+describe("createConnectionManager — 복구 끝 알림(onRecovered)", () => {
+  it("세션 복구가 실패해도 복구를 다 돈 뒤 한 번 부르고, 다시 붙으면 또 부른다", async () => {
+    const order: string[] = [];
+    const link = fakeLink({
+      "chat.history": () => {
+        order.push("chat.history");
+        throw new Error("history down");
+      },
+    });
+    const second = fakeLink();
+    const { connector, attempts } = scriptedConnector([link, second]);
+    const onRecovered = vi.fn(() => order.push("recovered"));
+    const { manager } = setup({
+      connector,
+      onRecovered,
+      sessionKeysToRecover: () => [{ sessionKey: KEY_A, agentId: "dev" }],
+    });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["chat.history", "recovered"]);
+
+    attempts[0]?.options.onClose?.({ code: 1006, reason: "" });
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onRecovered).toHaveBeenCalledTimes(2);
+  });
+
+  it("복구 도중 끊기면 그 연결의 복구 끝은 알리지 않는다", async () => {
+    let close: (() => void) | undefined;
+    const link = fakeLink({
+      "chat.history": () => {
+        close?.();
+        return {};
+      },
+    });
+    const { connector, attempts } = scriptedConnector([link]);
+    close = () => attempts[0]?.options.onClose?.({ code: 1006, reason: "" });
+    const onRecovered = vi.fn();
+    const { manager } = setup({
+      connector,
+      onRecovered,
+      sessionKeysToRecover: () => [{ sessionKey: KEY_A, agentId: "dev" }],
+    });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(manager.state()).toBe("reconnecting");
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+});
+
 describe("createConnectionManager — 승인 되감기", () => {
   it("구독 응답의 approvalReplay 를 onApprovalReplay 로 흘린다(스파이크 5.3)", async () => {
     const link = fakeLink({
