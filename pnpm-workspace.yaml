@@ -12,7 +12,6 @@ allowBuilds:
   tree-sitter-bash: false
 # pnpm 11의 최소 배포 경과 시간 보호가 정확 핀 설치를 막을 때 자동 추가됨. 해당 버전이 충분히 오래되면 지워도 된다.
 minimumReleaseAgeExclude:
-  - zod@4.6.5
   - "@oxfmt/binding-android-arm-eabi@0.68.0"
   - "@oxfmt/binding-android-arm64@0.68.0"
   - "@oxfmt/binding-darwin-arm64@0.68.0"
