@@ -138,6 +138,14 @@ function outboundError(error: unknown): ApiError {
   return { code: "INTERNAL", message: String(error) };
 }
 
+/**
+ * 받은 프레임의 ack — 콜백 없이 emit 한 프레임에는 socket.io 가 ack 인자를 붙이지 않는다. 그대로 부르면 TypeError 가 핸들러 밖으로
+ * 나가 uncaughtException(프라미스 안이면 unhandledRejection)으로 서버가 내려간다. 프레임 처리 자체는 ack 유무와 상관없이 같다
+ */
+function ackOrNoop(ack: unknown): (result: unknown) => void {
+  return typeof ack === "function" ? (result) => ack(result) : () => {};
+}
+
 const AckEnvelope = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), data: z.unknown() }),
   z.object({ ok: z.literal(false), error: ApiError }),
@@ -270,18 +278,19 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
     connections.set(socket.id, { socket, session });
 
     socket.on("hello", (payload, ack) => {
+      const reply = ackOrNoop(ack);
       const parsed = parseBridgeClientEvent("hello", payload);
-      if (!parsed.ok) return ack(parsed);
+      if (!parsed.ok) return reply(parsed);
       // 핸드셰이크와 hello 사이에 그 Gateway 가 꺼졌을 수 있다
       if (!opts.acceptGateway(gatewayId)) {
-        ack({ ok: false, error: { code: "UNAUTHORIZED", message: "gateway is not enabled" } });
+        reply({ ok: false, error: { code: "UNAUTHORIZED", message: "gateway is not enabled" } });
         socket.disconnect(true);
         return;
       }
       try {
         session.onHello(parsed.data);
       } catch (error) {
-        return ack({ ok: false, error: { code: "CONFLICT", message: String(error) } });
+        return reply({ ok: false, error: { code: "CONFLICT", message: String(error) } });
       }
       // 플러그인 연결은 Gateway 마다 하나만 유지한다 — 새 연결이 이기고 이전 연결에는 알린다. 다른 Gateway 의 연결은 건드리지 않는다
       const previous = slot.active;
@@ -291,21 +300,22 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
         previous.socket.disconnect(true);
       }
       slot.active = { socket, session };
-      ack({ ok: true, data: { serverVersion: opts.serverVersion, protocol: BRIDGE_PROTOCOL } });
+      reply({ ok: true, data: { serverVersion: opts.serverVersion, protocol: BRIDGE_PROTOCOL } });
       opts.onHello?.(session, parsed.data);
       for (const waiter of slot.readyWaiters) waiter.resolve(session);
       slot.readyWaiters.clear();
     });
 
     socket.on("outbound.message", (payload, ack) => {
+      const reply = ackOrNoop(ack);
       const parsed = parseBridgeClientEvent("outbound.message", payload);
-      if (!parsed.ok) return ack(parsed);
+      if (!parsed.ok) return reply(parsed);
       const acceptance = session.acceptOutbound(parsed.data.outboundId);
       if (acceptance.kind === "reject") {
-        return ack({ ok: false, error: { code: acceptance.code, message: "hello first" } });
+        return reply({ ok: false, error: { code: acceptance.code, message: "hello first" } });
       }
       if (acceptance.kind === "duplicate")
-        return ack({ ok: true, data: { messageId: acceptance.messageId } });
+        return reply({ ok: true, data: { messageId: acceptance.messageId } });
       const { outboundId } = parsed.data;
       let pending = slot.inflight.get(outboundId);
       if (!pending) {
@@ -319,8 +329,8 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
         slot.inflight.set(outboundId, pending);
       }
       pending.then(
-        (data) => ack({ ok: true, data }),
-        (error: unknown) => ack({ ok: false, error: outboundError(error) }),
+        (data) => reply({ ok: true, data }),
+        (error: unknown) => reply({ ok: false, error: outboundError(error) }),
       );
     });
 
