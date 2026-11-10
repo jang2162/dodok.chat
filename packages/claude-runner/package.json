@@ -1,6 +1,6 @@
 {
   "name": "@dodok/runner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "dodok local runner — runs Claude Code agents via the Claude Agent SDK and connects to the dodok server",
   "keywords": [
     "agent",
