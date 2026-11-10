@@ -836,8 +836,8 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 
 ## 11. Claude 러너 런 0회 하네스 — 번들 CLI + 가짜 Messages API
 
-러너 어댑터는 번들 CLI 에 `ANTHROPIC_BASE_URL`(로컬 가짜 Messages API)·가짜 API 키·스크래치 `CLAUDE_CONFIG_DIR` 을 주어 모델 없이 실제 요청 본문과 권한·도구·interrupt 흐름을 두드린다(ADR 0007 「다시 재는 법」).
-**실제 서버** + **실제 러너**(서버가 내려준 tgz 를 `npm install -g` 한 설치본) + **실제 번들 CLI**(SDK 가 찾는 그 바이너리)를 끝까지 돌린다. 가짜는 모델 자리의 `packages/claude-runner/scripts/fake-messages-api.ts` 하나다.
+러너 어댑터는 실제 Claude Code CLI 에 `ANTHROPIC_BASE_URL`(로컬 가짜 Messages API)·가짜 API 키·스크래치 `CLAUDE_CONFIG_DIR` 을 주어 모델 없이 실제 요청 본문과 권한·도구·interrupt 흐름을 두드린다(ADR 0007 「다시 재는 법」). 절 제목의 「번들 CLI」는 러너가 SDK 번들 CLI 로만 돌던 때의 이름이다 — 지금 러너는 머신에 설치된 `claude` 를 먼저 쓴다.
+**실제 서버** + **실제 러너**(서버가 내려준 tgz 를 `npm install -g` 한 설치본) + **실제 CLI**(이 머신에 설치된 `claude` — 러너가 실제로 쓰는 그 실행 파일. 번들 CLI 를 재려면 아래 「번들 CLI 를 잴 때」)를 끝까지 돌린다. 가짜는 모델 자리의 `packages/claude-runner/scripts/fake-messages-api.ts` 하나다.
 러너의 로컬 설정은 **천장(허용 루트·프로그램·권한 상한)만** 쥐고, 프로젝트·러너 에이전트는 앱(REST — 화면과 같은 경로)에서 만든다.
 러너·SDK·CLI 판본을 올렸을 때, 러너의 `buildQueryOptions`·천장·경로 가림·권한·도구·중지를 고쳤을 때, 그리고 **모델 런으로 도는 러너 실연 전에** 한 번 돌린다.
 **CLI `cwd`·절대 경로 기준(아래 「합격 기준」 1·11)은 러너 일반화 스펙 완료 기준 1·4 의 유일한 실물 근거다** — 통합 시나리오(`apps/server/test/integration/runner-projects.test.ts`)는 가짜 러너라 서버 경계까지만 증명한다.
@@ -847,7 +847,7 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 | 항목 | 값 |
 | --- | --- |
 | 서버 | 기동 전에 `pnpm -F @dodok/runner pack:runner` — 서버는 부팅 때 `packages/claude-runner/dist` 의 tgz 를 잰다. `PORT=<포트> APP_ORIGIN=http://localhost:<웹 포트> LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`(웹은 띄우지 않아도 된다) — dev:fake 의 가짜 러너 둘은 `POST /__devfake/runner {"connected":false}`·`{"connected":false,"runner":"limited"}` 로 내린다. 또는 스크래치 `DATA_DIR` 의 소스 실행 서버(「절차」 절 (d) 끝 줄) |
-| 러너 | owner 로 `POST /api/v1/setup/runner-tokens` → 원문은 스크래치 `home/.dodok-runner/token`(0600)에만, 응답의 토큰 id 가 러너 id 다 → `GET /api/v1/setup/runner.tgz` → `npm install -g --prefix <스크래치>/runner <받은 tgz>` → 아래 감싸개 → `env -i PATH=<스크래치>/runner/bin:<node bin>:/usr/bin:/bin HOME=<스크래치>/home LANG=en_US.UTF-8 TMPDIR=<스크래치>/tmp SHELL=/bin/bash USER=$USER dodok-runner --config <스크래치>/runner-config.json`. 첫 줄 `dodok-runner <판> · Claude Agent SDK <판> · Claude Code <판> · 루트 src(smoke-src) · 프로그램 claude · 동시 1` |
+| 러너 | owner 로 `POST /api/v1/setup/runner-tokens` → 원문은 스크래치 `home/.dodok-runner/token`(0600)에만, 응답의 토큰 id 가 러너 id 다 → `GET /api/v1/setup/runner.tgz` → `npm install -g --prefix <스크래치>/runner <받은 tgz>` → 아래 감싸개 → `env -i PATH=<스크래치>/runner/bin:<node bin>:/usr/bin:/bin HOME=<스크래치>/home LANG=en_US.UTF-8 TMPDIR=<스크래치>/tmp SHELL=/bin/bash USER=$USER dodok-runner --config <스크래치>/runner-config.json`. 첫 줄 `dodok-runner <판> · Claude Agent SDK <판> · 내장 Claude Code <판> · 루트 src(smoke-src) · 프로그램 claude · 동시 1`, 이어서 `dodok-runner: Claude Code 설치본 <감싸개가 감싼 claude 의 판>`(설정 `executable` 이 감싸개다) |
 | 러너 설정 | 아래 JSON. `serverUrl` 은 서버 오리진을 직접 적는다 — 발급 응답의 `runnerConfig.serverUrl` 은 공개 주소(`BRIDGE_PUBLIC_URL`)에서, 없으면 `APP_ORIGIN`(dev 에서는 웹 오리진)에서 만든다. `tokenFile` 은 스크래치 `HOME` 기준 |
 | 루트·작업 파일 | 루트 `<스크래치>/roots/src` 안에 `proj-a`(커밋 하나 있는 git 저장소)·`proj-b`(일반 디렉터리), 루트 밖 `<스크래치>/outside/elsewhere`. `proj-a` 안 `hx-out.txt`, 루트 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
 | 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port <포트> --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표. 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
@@ -859,27 +859,31 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
   "maxConcurrentRuns": 1,
   "roots": [{ "id": "src", "path": "<스크래치>/roots/src", "label": "smoke-src" }],
   "browse": true,
-  "programs": { "claude": { "configDir": "<스크래치>/cfg", "maxPermissionMode": "acceptEdits" } }
+  "programs": {
+    "claude": { "configDir": "<스크래치>/cfg", "executable": "<스크래치>/bin/claude", "maxPermissionMode": "acceptEdits" }
+  }
 }
 ```
 
 옛 꼴(작업 디렉터리를 러너 설정의 `agents` 에 적던 판)은 러너가 `dodok-runner: 에이전트는 이제 앱에서 만듭니다 — 설정에서 agents 를 지우고 roots 를 적으세요` 로 거절하고 exit 1 이다(서버에 붙지 않는다).
 
-**번들 CLI 감싸개.** 러너의 env 허용 목록(`packages/claude-runner/src/drivers/claude/run.ts` 의 `ENV_ALLOWLIST`)은 `ANTHROPIC_*` 를 CLI 로 넘기지 않는다(ADR 0007 「함정」 — 러너 env 가 CLI 로 새지 않게). 그래서 가짜 API 주소는 러너가 아니라 **스크래치 설치본의 번들 CLI 자리**에 얹는다. SDK 는 `@anthropic-ai/claude-agent-sdk-<os>-<arch>/claude` 를 찾아 그대로 spawn 하므로, 진짜 바이너리를 `claude.real` 로 옮기고 그 자리에 셸 조각을 둔다 — **이 설치본의 CLI 는 로컬 주소 없이는 뜨지 않는다.** 기록 줄의 `cwd` 가 CLI 가 뜬 디렉터리다(합격 기준 1).
+**CLI 감싸개.** 러너의 env 허용 목록(`packages/claude-runner/src/drivers/claude/run.ts` 의 `ENV_ALLOWLIST`)은 `ANTHROPIC_*` 를 CLI 로 넘기지 않는다(ADR 0007 「함정」 — 러너 env 가 CLI 로 새지 않게). 그래서 가짜 API 주소는 러너가 아니라 **CLI 를 감싼 셸 조각**에 얹고, 러너 설정의 `programs.claude.executable` 로 그 감싸개를 가리킨다 — 러너는 그 파일을 `pathToClaudeCodeExecutable` 로 띄우고, 붙을 때 `--version` 도 그 파일로 부른다(감싸개가 그대로 넘긴다). **감싸개 없이는 이 설정의 CLI 가 로컬 주소로 가지 않는다** — `executable` 을 빼면 러너가 `PATH` 의 실제 `claude` 를 고르므로 스크래치 `PATH` 에 `claude` 를 두지 않는다(위 `env -i` 의 `PATH`). 기록 줄의 `cwd` 가 CLI 가 뜬 디렉터리다(합격 기준 1). `REAL` 은 이 머신에 설치된 `claude` 의 실제 파일이다(`command -v claude` — 네이티브 설치면 `~/.local/bin/claude`).
 
 ```sh
-B=<스크래치>/runner/lib/node_modules/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')
-mv "$B/claude" "$B/claude.real"
-cat > "$B/claude" <<SH
+REAL=$(command -v claude)
+mkdir -p <스크래치>/bin
+cat > <스크래치>/bin/claude <<SH
 #!/bin/sh
 echo "\$(date -u +%FT%TZ) pid=\$\$ cwd=\$(pwd -P) argv=\$*" >> <스크래치>/logs/cli-invocations.log
 exec /usr/bin/env ANTHROPIC_BASE_URL=http://127.0.0.1:<가짜 API 포트> ANTHROPIC_API_KEY=sk-ant-fake-harness-0000 \\
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 DISABLE_AUTOUPDATER=1 \\
-  ENABLE_TOOL_SEARCH=true "$B/claude.real" "\$@"
+  ENABLE_TOOL_SEARCH=true "$REAL" "\$@"
 SH
-chmod +x "$B/claude"
+chmod +x <스크래치>/bin/claude
 ```
 
+- 기록 줄에는 러너가 붙을 때의 `argv=--version` 줄도 섞인다(연결마다 하나) — CLI 기동 수를 셀 때는 그 줄을 뺀다(합격 기준 12).
+- **번들 CLI 를 잴 때**(SDK 를 올렸을 때·`claude` 가 없는 머신을 흉내 낼 때) — 감싸개의 `REAL` 을 스크래치 설치본의 번들 CLI(`<스크래치>/runner/lib/node_modules/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude`)로 바꾼다. 러너 상세에는 그래도 「(설치본)」과 번들의 판이 보인다(러너는 `executable` 을 설치본으로 센다) — 「(내장)」 표시는 `executable` 을 빼고 `PATH` 에 `claude` 가 없을 때만이다.
 - `ENABLE_TOOL_SEARCH=true` — 가짜 키 모드는 도구 검색이 꺼져 있어 지연 로드를 볼 수 없다(ADR 0007 「함정」의 SDK MCP 도구 지연 로드). 켜야 `alwaysLoad` 를 잰다.
 - 러너 전용 로그인(`~/.dodok-runner/claude`)은 쓰지 않는다 — `HOME` 도 `CLAUDE_CONFIG_DIR` 도 스크래치다. 가짜 키라 CLI 의 `apiKeySource` 는 `ANTHROPIC_API_KEY` 이고 런 비용은 `costKind: "api"` 로 온다.
 - CLI 는 기동마다 `HEAD <ANTHROPIC_BASE_URL>/api/hello` 를 한 번 보낸다(연결 확인). 가짜 API 는 404 로 답하고 CLI 는 그대로 진행한다.
@@ -922,18 +926,18 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 
 | # | 기준 | 어떻게 본다 |
 | --- | --- | --- |
-| 1 | 앱에서 더한 프로젝트 디렉터리에서 돈다(CLI `cwd`) | 감싸개 기록의 `cwd=` 가 그 프로젝트 디렉터리 · 요청 `messages[0]` 환경 블록의 `Primary working directory` · 오래 도는 런(`HX-SLOW`) 동안 `lsof -a -p <claude.real pid> -d cwd`. argv 의 `--model`·`--permission-mode` 가 에이전트 정의 그대로 |
+| 1 | 앱에서 더한 프로젝트 디렉터리에서 돈다(CLI `cwd`) | 감싸개 기록의 `cwd=` 가 그 프로젝트 디렉터리 · 요청 `messages[0]` 환경 블록의 `Primary working directory` · 오래 도는 런(`HX-SLOW`) 동안 `lsof -a -p <감싸개가 exec 한 claude pid> -d cwd`. argv 의 `--model`·`--permission-mode` 가 에이전트 정의 그대로 |
 | 2 | 시스템 프롬프트에 에이전트 지시(`<agent-instructions>`)·틀 입힌 채널 규칙이 **한 벌씩** | `system[]` 셋째 블록에 `# dodok agent instructions` → `<agent-instructions>` … → `# dodok channel settings` → `<channel-rules …>` 차례, 각 1. 지시·규칙 속 태그는 `&lt;` 로 이스케이프 |
 | 3 | 규칙·지시를 바꾼 뒤 런에 새 것만 | `PATCH /channels/<CH> {"prompt":…}` 또는 `PATCH /agents/<id> {"basePrompt":…}` 뒤 다음 런은 새 `--session-id`(러너 세션을 새로 연다) + 채널 시스템 글, 요청에 새 표식 1 · 옛 표식 0 |
 | 4 | `UserPromptSubmit` 훅 문맥 자리 | 프롬프트 뒤의 `role: "system"` 메시지 안 `<system-reminder>UserPromptSubmit hook additional context: [dodok context] 이 턴의 사실 — … 참여자: … 자리: 채널</system-reminder>` |
 | 5 | `mcp__dodok__post` 가 지연 목록에 없음(`alwaysLoad`) | `tools[]` 에 `input_schema`째 있고 `defer_loading` 없음, 「deferred tools」 블록에 없음 |
 | 6 | 쓰기 Bash → 승인 카드 → 허용·거절·항상 허용 | `HX-BASH` — `approval.requested`(`kind: tool`) → 결정 → `TOOL_CALL_RESULT` → 다음 요청의 `tool_result is_error` 가 결정대로. 항상 허용이 작업 디렉터리에 `.claude/` 를 만들지 않는다(규칙이 `session` 으로만) |
 | 7 | 중지 → 메시지 없는 중지 | `HX-SLOW` 델타 몇 개 뒤 `run.abort` → `RUN_ABORTED {by:"user"}`, 그 런의 에이전트 메시지 0, 남은 CLI 프로세스 0 |
-| 8 | 러너를 죽이면 run_error 카드, 「다시 실행」은 같은 세션 `--resume` | 러너 PID 에 `SIGKILL` → `RUN_ERROR ADAPTER_UNAVAILABLE` + 「다시 실행」 → 러너를 다시 띄우고 누르면 새 런(`parentRunId`)이 `--resume` 으로 `done`. `SIGKILL` 은 러너가 CLI 를 멈출 틈이 없어 `claude.real` 이 고아로 남아 그 턴을 끝까지 돈다 — 「다시 실행」의 `resume` 이력에 채널에 없던 답이 실린다(`docs/guides/docker-deploy.md` 「러너 설치」 절이 `kill -9` 를 막는 까닭) |
+| 8 | 러너를 죽이면 run_error 카드, 「다시 실행」은 같은 세션 `--resume` | 러너 PID 에 `SIGKILL` → `RUN_ERROR ADAPTER_UNAVAILABLE` + 「다시 실행」 → 러너를 다시 띄우고 누르면 새 런(`parentRunId`)이 `--resume` 으로 `done`. `SIGKILL` 은 러너가 CLI 를 멈출 틈이 없어 CLI 가 고아로 남아 그 턴을 끝까지 돈다 — 「다시 실행」의 `resume` 이력에 채널에 없던 답이 실린다(`docs/guides/docker-deploy.md` 「러너 설치」 절이 `kill -9` 를 막는 까닭) |
 | 9 | 서버 재시작 → 러너 재접속 | 서버 SIGINT → 러너 「서버와 끊겼습니다 …」 → 백오프 → 「연결됨」, 러너는 끝나지 않는다(종료 2 아님) |
 | 10 | 첨부 — 러너가 남의 첨부 GET 404 · 파일 보내기는 작업 디렉터리 안만 | 러너 토큰 `GET /runner/attachments/<id>`: 열린 런의 트리거 첨부·자기 업로드만 200, 나머지 404(같은 응답). `HX-POST-IN` 은 채널 파일 카드, `HX-POST-OUT`(`../…`)은 도구 결과 `is_error` 「작업 디렉터리 밖을 가리킵니다」 |
 | 11 | 천장 — 루트 밖·상한 넘는 권한·루트 id 바꿈·꺼진 프로그램이 `RUNNER_CEILING` 카드(「다시 실행」 포함), CLI 기동 0 | 「러너 설정을 바꿔 띄우기」의 넷 → `RUN_ERROR {code: "RUNNER_CEILING", message: path\|permissionMode\|root\|program}`, 러너 로그 「천장에 걸려 거절」 |
-| 12 | 로그 위생 — 시크릿·러너 머신 절대 경로 0, 모델 런 0 | 러너 토큰·세션 토큰·로컬 토큰 파일로 `grep -a -c -F -f`, 스크래치 루트의 절대 경로(앞 `/private` 를 뗀 꼴 포함)로도 같게 — 서버 로그·DB(`sqlite3 -readonly .dump` 와 파일 바이트)·러너 로그·wire 기록·REST 응답 전부 0, 양성 대조(토큰 파일·러너 설정 자신) ≥1. CLI 기동 수 = 감싸개 기록 줄 수(모두 `ANTHROPIC_BASE_URL=http://127.0.0.1:…`) = 런 수 |
+| 12 | 로그 위생 — 시크릿·러너 머신 절대 경로 0, 모델 런 0 | 러너 토큰·세션 토큰·로컬 토큰 파일로 `grep -a -c -F -f`, 스크래치 루트의 절대 경로(앞 `/private` 를 뗀 꼴 포함)로도 같게 — 서버 로그·DB(`sqlite3 -readonly .dump` 와 파일 바이트)·러너 로그·wire 기록·REST 응답 전부 0, 양성 대조(토큰 파일·러너 설정 자신) ≥1. CLI 기동 수 = 감싸개 기록 줄 수에서 `argv=--version` 줄을 뺀 수(모두 `ANTHROPIC_BASE_URL=http://127.0.0.1:…`) = 런 수 |
 
 ### 절차 메모
 
@@ -944,12 +948,12 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - hello 의 프로그램 `auth` 는 로그인 디렉터리(`configDir`)가 있는지만 본다(자격 증명을 읽지 않는다) — 스크래치 `cfg/` 면 「로그인 모름」(`unknown`)이 정상이다.
 - 런의 세션이 어느 길로 열렸는지는 러너 로그 `dodok-runner: 런 <runId> 세션 resume`·`… 세션 새로 열기`(전사 확인이 실패했으면 `… 세션 새로 열기(전사 확인 실패)`)로 본다. CLI 가 「이미 있는 세션」으로 거절해 다시 열었으면 `… 이미 있는 세션이라 resume 으로 다시 엽니다` 가 함께 남는다. 이 줄을 러너 로거로 잇는 연결(`packages/claude-runner/src/main.ts` 의 `logger`)은 시험이 잡지 않으니 하네스·실연 때 그 줄이 나오는지 눈으로 본다.
 - 러너 전용 로그인(`~/.dodok-runner/claude`)·사람의 `~/.claude` 는 읽지도 쓰지도 않는다 — `HOME` 도 `configDir` 도 스크래치다. 가짜 키라 CLI 의 `apiKeySource` 는 `ANTHROPIC_API_KEY` 이고 런 비용은 `costKind: "api"` 로 온다.
-- **정리** — 러너(SIGTERM)·가짜 API·서버를 자기 PID 로 내리고 포트 LISTEN 0, 남은 `claude.real`·`dodok-runner`·`fake-messages-api` 프로세스 0 을 본다. 스크래치(러너 설치본·감싸개·`HOME`(토큰)·`cfg/`(세션 전사)·루트·요청 본문·로그)와 워크트리 `data/`(드라이버·세션)·`packages/claude-runner/dist` 를 지운다.
+- **정리** — 러너(SIGTERM)·가짜 API·서버를 자기 PID 로 내리고 포트 LISTEN 0, 남은 CLI(감싸개가 띄운 `claude`)·`dodok-runner`·`fake-messages-api` 프로세스 0 을 본다. 스크래치(러너 설치본·감싸개·`HOME`(토큰)·`cfg/`(세션 전사)·루트·요청 본문·로그)와 워크트리 `data/`(드라이버·세션)·`packages/claude-runner/dist` 를 지운다.
 
 ### 모델 런으로 도는 러너 실연
 
 이 절의 하네스를 먼저 끝까지 돌린 뒤에 한다. 모델 런은 사용자가 승인한 상한 안에서 센다(러너가 연 `query()` 하나 = 1회 — 릴레이·카드 누르기가 만드는 러너 런도 센다).
-- **감싸개를 두지 않는다**(실제 API). 평소 로그인이면 프로그램의 `configDir` 을 빼고, 러너 전용 로그인이면 `~/.dodok-runner/claude` 를 적는다(`docs/guides/docker-deploy.md` 「러너 설치」 절의 로그인). 러너 env 의 `HOME` 은 실제 홈이다(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증).
+- **감싸개를 두지 않는다**(실제 API) — 설정에서 `executable` 을 빼면 러너가 `PATH` 의 `claude` 를(없으면 번들 CLI 를) 쓴다. 평소 로그인이면 프로그램의 `configDir` 을 빼고, 러너 전용 로그인이면 `~/.dodok-runner/claude` 를 적는다(`docs/guides/docker-deploy.md` 「러너 설치」 절의 로그인). 러너 env 의 `HOME` 은 실제 홈이다(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증).
 - OpenClaw 모델 런을 0 으로 지키려면 OpenClaw 쪽은 `dev:fake` 의 가짜 Gateway·에이전트로 둔다. 가짜 `dev` 는 부른 에이전트를 늘 되부르므로 채널 `relayPolicy.maxRelayTurns` 를 1 로 둬 러너 런이 더 생기지 않게 한다.
 - 운영 화면의 러너 런 비용(구독이면 「환산 포함」)을 같이 본다.
 - 런마다 러너 로그에 세션 길 줄(`dodok-runner: 런 <runId> 세션 resume|새로 열기`, 재시도면 `… 이미 있는 세션이라 resume 으로 다시 엽니다`)이 나오는지 본다(위 「절차 메모」 — 그 연결은 시험이 잡지 않는다).

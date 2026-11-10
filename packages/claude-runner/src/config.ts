@@ -4,7 +4,7 @@ import { basename, isAbsolute, resolve } from "node:path";
 import { RunnerPermissionMode, RunnerProgram, RunnerRootId } from "@dodok/shared";
 import { z } from "zod";
 
-// 설정 파일 — 러너 머신의 「천장」만 쥔다(러너 일반화 스펙 2장): 허용 루트·프로그램별 로그인 디렉터리·권한 상한·늘 막는 도구·
+// 설정 파일 — 러너 머신의 「천장」만 쥔다(러너 일반화 스펙 2장): 허용 루트·프로그램별 로그인 디렉터리·실행 파일·권한 상한·늘 막는 도구·
 // 동시 실행 수. 에이전트는 앱에서 만들고 서버가 run.start 에 싣는다. 오류 문구는 러너 터미널·로그에 그대로 찍히므로 토큰 값과
 // 호스트 경로 원문을 싣지 않는다 — 루트는 라벨로, 파일은 키 이름으로 가리킨다
 
@@ -23,6 +23,8 @@ const ToolNames = z.array(z.string().min(1).max(200)).max(100);
 const ProgramCeiling = z.strictObject({
   // 없으면 평소 claude 로그인(~/.claude 또는 셸의 CLAUDE_CONFIG_DIR), 적으면 그 디렉터리의 전용 로그인. 빈 문자열은 거절 — 평소를 쓰려면 줄을 지운다
   configDir: z.string().min(1).optional(),
+  // 없으면 러너 PATH 의 claude, 그것도 없으면 SDK 번들 CLI. 적으면 그 실행 파일(없거나 실행할 수 없으면 그 프로그램을 못 쓴다). 빈 문자열은 거절
+  executable: z.string().min(1).optional(),
   // bypassPermissions 는 받지 않는다 — 승인 카드가 아예 뜨지 않는다(스펙 2장)
   maxPermissionMode: RunnerPermissionMode.default("default"),
   disallowedTools: ToolNames.default([]),
@@ -150,6 +152,9 @@ export function loadRunnerConfig(
                 ...(ceiling.configDir === undefined
                   ? {}
                   : { configDir: expandHome(ceiling.configDir, home) }),
+                ...(ceiling.executable === undefined
+                  ? {}
+                  : { executable: expandHome(ceiling.executable, home) }),
               },
             ],
           ]

@@ -262,6 +262,15 @@ describe("runOnce", () => {
     });
   });
 
+  it("설치본 경로를 받으면 pathToClaudeCodeExecutable 로 넘긴다 — 없으면 넘기지 않는다(번들 CLI)", async () => {
+    const withExe = buildQueryOptions(runSpec(), { ...deps(false), executable: "/usr/local/bin/claude" });
+    expect(withExe.pathToClaudeCodeExecutable).toBe("/usr/local/bin/claude");
+    const { fake, ctx } = harness(createFakeSdk(), { executable: "/opt/c/claude" });
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(runSpec(), ctx);
+    expect(fake.calls[0]!.options.pathToClaudeCodeExecutable).toBe("/opt/c/claude");
+  });
+
   it("전사가 있으면 resume 으로 연다(판정 P2)", async () => {
     const { fake, ctx } = harness();
     fake.sessions.add(SESSION_ID);

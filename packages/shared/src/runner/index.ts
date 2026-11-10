@@ -186,6 +186,10 @@ export type RunnerProgramCapability = z.infer<typeof RunnerProgramCapability>;
 export const RunnerProgramLogin = z.enum(["default", "dedicated"]);
 export type RunnerProgramLogin = z.infer<typeof RunnerProgramLogin>;
 
+/** 러너가 띄우는 CLI — 머신에 설치된 것(설정 executable 또는 PATH)·SDK 에 든 것. 옛 러너는 싣지 않는다 */
+export const RunnerProgramCli = z.enum(["installed", "bundled"]);
+export type RunnerProgramCli = z.infer<typeof RunnerProgramCli>;
+
 export const RunnerProgramStatus = z.object({
   program: RunnerProgram,
   /** 이 러너가 그 프로그램을 돌릴 수 있나 — 드라이버가 있고 설치돼 있다 */
@@ -193,6 +197,7 @@ export const RunnerProgramStatus = z.object({
   version: z.string().max(64).optional(),
   auth: z.enum(["ok", "missing", "unknown"]),
   login: RunnerProgramLogin.optional(),
+  cli: RunnerProgramCli.optional(),
   /** 못 쓰는 까닭·로그인 안내 — 경로 원문은 싣지 않는다 */
   reason: z.string().max(200).optional(),
   // 문자열이면 받는다 — 모르는 값은 서버가 버린다(hello capabilities 와 같은 까닭)

@@ -127,6 +127,23 @@ describe("loadRunnerConfig", () => {
     expect(e.message).toContain("programs.claude.configDir");
   });
 
+  it("programs.claude.executable — ~ 를 풀어 쥐고, 없으면 해석된 값에도 없다", () => {
+    const { config } = load({
+      ...baseConfig,
+      programs: { claude: { executable: "~/.local/bin/claude" } },
+    });
+    expect(config.programs.claude?.executable).toBe("/home/u/.local/bin/claude");
+    const none = load(baseConfig).config.programs.claude;
+    expect(none && "executable" in none).toBe(false);
+    const abs = load({ ...baseConfig, programs: { claude: { executable: "/opt/claude/bin/claude" } } });
+    expect(abs.config.programs.claude?.executable).toBe("/opt/claude/bin/claude");
+  });
+
+  it("executable 빈 문자열은 거절", () => {
+    const e = errorOf(() => load({ ...baseConfig, programs: { claude: { executable: "" } } }));
+    expect(e.message).toContain("programs.claude.executable");
+  });
+
   it("권한 상한에 bypassPermissions 는 받지 않는다", () => {
     const e = errorOf(() =>
       load({
