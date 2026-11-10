@@ -314,11 +314,15 @@ describe("초대", () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const { queryClient } = renderRoute("/settings/members");
     const dialog = await openInvite();
+    // 입력 화면에는 설명이 없다 — 없는 요소를 가리키지 않는다
+    expect(dialog).not.toHaveAttribute("aria-describedby");
     await userEvent.click(within(dialog).getByRole("radio", { name: "관리자" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "링크 만들기" }));
     const url = await within(dialog).findByText(INVITE_URL);
     expect(server.writes()).toEqual([{ method: "POST", url: "/api/v1/invites", body: { role: "admin" } }]);
     expect(dialog).toHaveTextContent("닫으면 다시 볼 수 없습니다.");
+    // 발급 화면의 설명은 대화상자에 이어져 있다 — 입력 화면에서 끊은 것이 여기까지 끊지 않는다
+    expect(dialog).toHaveAccessibleDescription("닫으면 다시 볼 수 없습니다. 7일 안에 한 번 쓸 수 있습니다.");
     // 390px 에서도 잘리지 않게 — 아무 글자 사이에서나 줄을 바꾼다(설정 마법사의 토큰 대화상자와 같은 처리)
     expect(url).toHaveClass("whitespace-pre-wrap", "break-all");
     expect(url.parentElement).toHaveClass("min-w-0");

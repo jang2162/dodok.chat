@@ -657,6 +657,19 @@ describe("시간대 — 예약 자동화의 벽시계", () => {
     expect(values.filter((v) => /^[+-]/.test(v))).toEqual([]);
   });
 
+  it("aria-describedby 는 있는 요소만 가리킨다 — 평소에는 없고, 저장 실패면 오류 줄", async () => {
+    stubOpsServer({ patch: () => json(400, { code: "VALIDATION", message: "timeZone 이름" }) });
+    renderOps();
+    const zone = await select();
+    expect(zone).not.toHaveAttribute("aria-describedby");
+    await userEvent.selectOptions(zone, "UTC");
+    await userEvent.click(within(await region("시간대")).getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(zone).toHaveAttribute("aria-describedby"));
+    for (const ref of zone.getAttribute("aria-describedby")!.split(" "))
+      expect(document.getElementById(ref)).not.toBeNull();
+    expect(zone).toHaveAccessibleDescription(/저장하지 못했습니다/);
+  });
+
   it("지금 값이 브라우저 목록에 없어도(Etc/GMT-9) 그 값으로 보인다", async () => {
     stubOpsServer({ status: opsStatusOf({ timeZone: "Etc/GMT-9" }) });
     renderOps();

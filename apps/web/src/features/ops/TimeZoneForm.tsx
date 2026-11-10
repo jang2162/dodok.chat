@@ -53,7 +53,7 @@ export function TimeZoneForm({ status }: { status: OpsStatus }) {
           <select
             id={`${id}-zone`}
             value={value}
-            aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
+            aria-describedby={error ? `${id}-error` : undefined}
             disabled={save.isPending}
             onChange={(e) => {
               setDraft(e.target.value);

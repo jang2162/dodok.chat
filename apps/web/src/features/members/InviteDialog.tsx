@@ -55,7 +55,12 @@ export function InviteDialog({ viewerRole }: { viewerRole: TeamRole }) {
           초대
         </Button>
       </DialogTrigger>
-      <DialogContent aria-describedby={undefined} showCloseButton={!url} closeDisabled={issue.isPending}>
+      <DialogContent
+        // 발급 화면은 IssuedLink 의 DialogDescription 을 Radix 가 잇는다 — 설명이 없는 입력 화면에서만 끊는다
+        {...(url ? {} : { "aria-describedby": undefined })}
+        showCloseButton={!url}
+        closeDisabled={issue.isPending}
+      >
         {url ? (
           <IssuedLink
             title="초대 링크를 만들었습니다"
