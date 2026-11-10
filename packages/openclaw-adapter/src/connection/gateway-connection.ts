@@ -29,6 +29,7 @@ import {
   type AdapterLogger,
   type AdapterSendResult,
   type OpenClawSetupDetail,
+  type RunEventBody,
 } from "../adapter-types";
 import type { BridgeHandle } from "../bridge/server";
 import type { BridgeSessionState } from "../bridge/session";
@@ -51,7 +52,7 @@ import {
   type GatewayState,
   type RecoverTarget,
 } from "../gateway/connection-manager";
-import { createGatewayEventMapper } from "../gateway/events";
+import { createGatewayEventMapper, frameRunId } from "../gateway/events";
 import { type FrameDump, openFrameDump } from "../gateway/frame-dump";
 
 export type GatewayConnectionConfig = {
@@ -100,6 +101,13 @@ const APPROVAL_DEDUPE_MAX = 1_000;
 // 연결을 닫을 때 보내는 chat.abort 의 런마다 상한(런끼리는 함께 보낸다) — 답 없는 Gateway 가 옛 링크 정리를 오래 붙잡지 않게.
 // 가짜 connector 는 요청 제한시간을 보지 않으므로 여기서 직접 끊는다
 const ABORT_ON_CLOSE_TIMEOUT_MS = 2_000;
+
+// Gateway WS 가 다시 붙은 뒤, 끊기기 전부터 열려 있던 런이 아무 프레임도 내지 않고 버틸 수 있는 시간. 끊긴 사이 Gateway 가 보낸
+// chat final 은 다시 오지 않고(재접속 복구는 구독만 다시 한다) Gateway 가 재시작했으면 런 자체가 없다 — 이 시계가 없으면 그 런은 서버의
+// 런 상한(runMs 600s)까지 살며 같은 세션의 다음 런을 막는다. 살아 있는 런은 구독 뒤 곧바로 델타·툴·thinking 프레임을 내고(그 런 id 의
+// 프레임이면 무엇이든 시계를 푼다), 그래도 프레임 없이 조용한 틈(첫 토큰 전 등)이 있을 수 있다 — 그래서 플러그인 대기 상한과 같은 120s 로 둔다. 툴이 열려 있거나 그
+// 세션에 미해결 승인이 있는 런은 조용한 것이 정상이라 이 시계를 걸지 않는다(서버의 런 상한·승인 감시가 닫는다)
+export const RECONNECT_RUN_GRACE_MS = 120_000;
 
 const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
@@ -170,6 +178,11 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
   const knownRunIds = new Set<string>();
   const openRuns = new Map<string, string>();
   const finalRuns = new Set<string>();
+  // 열린 런 가운데 플러그인 경로로 정본이 온 것과, 툴 프레임으로 본 열린 툴 — 재접속 뒤 맞추기(reconcileOpenRuns)가 쓴다
+  const canonicalRuns = new Set<string>();
+  const openTools = new Map<string, Set<string>>();
+  // 재접속 복구 뒤 프레임을 기다리는 열린 런의 유예 시계(RECONNECT_RUN_GRACE_MS)
+  const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // 플러그인 ack 를 기다리는 send — 끄기·삭제·주소/토큰 변경이 곧바로 끝낸다
   const pendingSends = new Map<
     string,
@@ -204,6 +217,8 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
         // 주소·토큰을 바꾸며 버린 루프의 stop() 도 down 을 알린다 — 지금 루프의 것만 받는다
         if (ws !== created) return;
         gatewayState = next;
+        // 유예 중 다시 끊겼다 — 그사이 프레임은 못 받으니 다음 복구 뒤에 처음부터 다시 잰다
+        if (next !== "connected") clearReconcileTimers();
         deps.onStatusChange();
         deps.onDetailChange();
       },
@@ -213,6 +228,9 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       onApprovalReplay: (approvals) => {
         if (ws !== created) return;
         for (const approval of approvals) emitApproval(approval);
+      },
+      onRecovered: () => {
+        if (ws === created) reconcileOpenRuns();
       },
       ...(deps.sessionKeysToRecover ? { sessionKeysToRecover: deps.sessionKeysToRecover } : {}),
       ...(deps.backoff ? { backoff: deps.backoff } : {}),
@@ -234,10 +252,95 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
   function forgetRun(runId: string) {
     clearTimeout(forgetTimers.get(runId));
     forgetTimers.delete(runId);
+    clearReconcileTimer(runId);
     knownRunIds.delete(runId);
     openRuns.delete(runId);
     finalRuns.delete(runId);
+    canonicalRuns.delete(runId);
+    openTools.delete(runId);
     mapper.forget(runId);
+  }
+
+  /** final 을 본 런 — 열린 런에서 빼고, 늦은 프레임(usage 등)을 받을 만큼 기억했다가 잊는다 */
+  function markFinal(runId: string) {
+    clearReconcileTimer(runId);
+    openRuns.delete(runId);
+    finalRuns.add(runId);
+    forgetRunLater(runId);
+  }
+
+  function clearReconcileTimer(runId: string) {
+    const timer = reconcileTimers.get(runId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    reconcileTimers.delete(runId);
+  }
+
+  function clearReconcileTimers() {
+    for (const timer of reconcileTimers.values()) clearTimeout(timer);
+    reconcileTimers.clear();
+  }
+
+  /** 디스패치된 런을 연결이 닫힌 것과 같은 신호(RUN_ERROR + gateway_error connectionClosed)로 닫는다 — 서버가 「다시 실행」 카드를 단다 */
+  function emitConnectionClosed(runId: string, error: AdapterError) {
+    deps.emit({
+      kind: "run_event",
+      runId,
+      connectionId: id,
+      event: { type: "RUN_ERROR", runId, code: error.code, message: error.message },
+    });
+    emitRunSignal(runId, {
+      kind: "gateway_error",
+      code: error.code,
+      message: error.message,
+      connectionClosed: true,
+    });
+  }
+
+  function hasPendingApproval(sessionKey: string): boolean {
+    for (const approval of emittedApprovals.values()) {
+      if (approval.sessionKey === sessionKey && approval.status === "pending") return true;
+    }
+    return false;
+  }
+
+  /**
+   * 재접속 복구가 끝났다 — 끊기기 전부터 열린 런마다 유예 시계를 건다. 그 런의 프레임이 하나라도 오면 살아 있는 것이라 시계를 푼다
+   * (onGatewayEvent). 끝내 아무것도 없으면 끊긴 사이 끝났거나(final 을 놓쳤다) Gateway 재시작으로 사라진 것이다 — 정본이 왔으면
+   * gateway_final(서버는 hasCanonical 이면 done)로, 아니면 연결 끊김과 같은 ADAPTER_UNAVAILABLE 로 닫는다. Gateway 가 재구독 뒤
+   * final 을 다시 보내도 겹치지 않는다 — 먼저 온 쪽이 런을 닫고, 서버 transition 은 종료된 런의 신호를 무시한다
+   */
+  function reconcileOpenRuns() {
+    for (const [runId, sessionKey] of openRuns) {
+      clearReconcileTimer(runId);
+      if ((openTools.get(runId)?.size ?? 0) > 0 || hasPendingApproval(sessionKey)) continue;
+      const timer = setTimeout(() => {
+        reconcileTimers.delete(runId);
+        if (!openRuns.has(runId)) return;
+        if (canonicalRuns.has(runId)) {
+          logger.info({ runId }, "open run silent after reconnect with canonical — closing as final");
+          emitRunSignal(runId, { kind: "gateway_final" });
+          markFinal(runId);
+          return;
+        }
+        logger.warn({ runId, graceMs: RECONNECT_RUN_GRACE_MS }, "open run silent after reconnect — closing");
+        forgetRun(runId);
+        emitConnectionClosed(runId, unavailable("gateway run lost across reconnect"));
+      }, RECONNECT_RUN_GRACE_MS);
+      timer.unref();
+      reconcileTimers.set(runId, timer);
+    }
+  }
+
+  /** 열린 툴을 센다 — 툴 하나가 오래 도는 동안에는 프레임이 없다 */
+  function trackTools(runId: string, event: RunEventBody) {
+    if (event.type === "TOOL_CALL_START") {
+      const open = openTools.get(runId) ?? new Set<string>();
+      open.add(event.toolCallId);
+      openTools.set(runId, open);
+    } else if (event.type === "TOOL_CALL_END") {
+      openTools.get(runId)?.delete(event.toolCallId);
+    }
   }
 
   function forgetRunLater(runId: string) {
@@ -278,20 +381,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       targets.push({ runId, sessionKey });
     }
     const signal = () => {
-      for (const [runId] of dispatched) {
-        deps.emit({
-          kind: "run_event",
-          runId,
-          connectionId: id,
-          event: { type: "RUN_ERROR", runId, code: error.code, message: error.message },
-        });
-        emitRunSignal(runId, {
-          kind: "gateway_error",
-          code: error.code,
-          message: error.message,
-          connectionClosed: true,
-        });
-      }
+      for (const [runId] of dispatched) emitConnectionClosed(runId, error);
     };
     if (!linkUp || targets.length === 0) {
       signal();
@@ -352,13 +442,24 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
     if (isApprovalEvent(frame.event)) {
       const approval = parseApprovalFrame(frame.event, frame.payload);
       // 우리 세션이 아닌 승인(다른 채널 플러그인·TUI)도 전역으로 온다 — 버린다. 세션 키·본문은 남기지 않는다.
-      if (approval) emitApproval(approval);
-      else logger.debug({ event: frame.event }, "gateway approval frame ignored");
+      if (approval) {
+        // 승인을 기다리는 런은 조용한 것이 정상이다 — 그 세션의 유예 시계를 푼다
+        if (approval.status === "pending") {
+          for (const [runId, sessionKey] of openRuns)
+            if (sessionKey === approval.sessionKey) clearReconcileTimer(runId);
+        }
+        emitApproval(approval);
+      } else logger.debug({ event: frame.event }, "gateway approval frame ignored");
       return;
     }
+    // 그 런 id 로 온 프레임이면 무엇이든 살아 있다는 뜻이다 — 매퍼가 버리는 thinking·run_status 도. 첫 토큰 전에 오래 생각하는 런을 닫지 않는다
+    const liveRunId = frameRunId(frame);
+    if (liveRunId !== undefined) clearReconcileTimer(liveRunId);
     for (const item of mapper.map(frame)) {
-      if (item.event)
+      if (item.event) {
+        trackTools(item.runId, item.event);
         deps.emit({ kind: "run_event", runId: item.runId, connectionId: id, event: item.event });
+      }
       if (!item.signal) continue;
       deps.emit({
         kind: "run_signal",
@@ -368,9 +469,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
         ...(item.snapshotText === undefined ? {} : { snapshotText: item.snapshotText }),
       });
       if (item.signal.kind === "gateway_final") {
-        openRuns.delete(item.runId);
-        finalRuns.add(item.runId);
-        forgetRunLater(item.runId);
+        markFinal(item.runId);
       } else if (item.signal.kind === "gateway_error" || item.signal.kind === "gateway_aborted") {
         forgetRun(item.runId);
       }
@@ -487,6 +586,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
 
   function clearRunMemory() {
     emittedApprovals.clear();
+    clearReconcileTimers();
     for (const timer of forgetTimers.values()) clearTimeout(timer);
     forgetTimers.clear();
   }
@@ -668,6 +768,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
 
     async onOutbound(message) {
       const stored = await deps.onCanonical(message);
+      if (message.runId !== undefined && knownRunIds.has(message.runId)) canonicalRuns.add(message.runId);
       deps.emit({ kind: "canonical", connectionId: id, message });
       return { messageId: stored.messageId ?? message.outboundId };
     },

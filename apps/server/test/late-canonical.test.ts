@@ -334,7 +334,7 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     }
   });
 
-  it("표지가 없는 실패 런(연결을 닫지 않은 ADAPTER_UNAVAILABLE)의 늦은 정본은 지금처럼 릴레이·푸시하고 카드는 그대로", async () => {
+  it("표지가 없는 실패 런(연결을 닫지 않은 ADAPTER_UNAVAILABLE)의 늦은 정본은 지금처럼 릴레이·푸시하고 「다시 실행」 카드는 닫는다", async () => {
     const { app, adapter, pushes } = await boot();
     const s = { app, adapter, pushes, ...(await seed(app)) };
     const runId = await closedRun(s, false);
@@ -345,6 +345,6 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     expect(adapter.calls.send[1]?.sessionKey).toBe(
       dodokSessionKey("fin", channelConversation(app.db, s.channelId)),
     );
-    expect(getMessage(app.db, card.id)?.componentState?.consumed).toEqual([]);
+    expect(getMessage(app.db, card.id)?.componentState?.consumed).toEqual(["retry_run"]);
   });
 });

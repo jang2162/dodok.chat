@@ -252,6 +252,28 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
   };
 }
 
+const FrameRunId = z.looseObject({ runId: z.string().min(1).optional() });
+
+/**
+ * 프레임이 가리키는 런 id — 매퍼가 item 을 내지 않는 프레임(agent thinking·run_status·assistant, 빈 delta, 모르는 tool phase 등)도
+ * 읽는다. 런이 살아 있는지 볼 때 쓴다(재접속 유예 시계). session.message 는 mapSessionMessage 와 같은 순서로 읽는다
+ */
+export function frameRunId(frame: EventFrame): string | undefined {
+  if (frame.event === "chat" || frame.event === "agent") {
+    const parsed = FrameRunId.safeParse(frame.payload);
+    return parsed.success ? parsed.data.runId : undefined;
+  }
+  if (frame.event === "session.message") {
+    const parsed = SessionMessagePayload.safeParse(frame.payload);
+    if (!parsed.success) return undefined;
+    const { message } = parsed.data;
+    const key = message.idempotencyKey;
+    const keyRunId = key?.startsWith(USAGE_KEY_PREFIX) ? key.slice(USAGE_KEY_PREFIX.length) : key;
+    return message.__openclaw?.runId || parsed.data.runId || keyRunId || undefined;
+  }
+  return undefined;
+}
+
 /** message.content 의 text 조각을 이어 붙인다. 문자열 content 는 그대로. */
 function messageText(message: unknown): string {
   if (typeof message !== "object" || message === null) return "";

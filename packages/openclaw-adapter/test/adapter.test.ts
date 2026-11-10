@@ -10,6 +10,7 @@ import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterEvent, AdapterError, createOpenClawAdapter, type OpenClawAdapter } from "../src";
+import { RECONNECT_RUN_GRACE_MS } from "../src/connection/gateway-connection";
 import { GatewayPairingRequiredError, type GatewayConnectOptions } from "../src/gateway/client";
 import * as f from "./fixtures/gateway-events";
 
@@ -1471,5 +1472,187 @@ describe("승인 — 수신·병합·해결 RPC", () => {
       code: "INTERNAL",
       message: expect.stringMatching(/^ADAPTER_PROTOCOL: approval\.resolve/),
     });
+  });
+});
+
+describe("Gateway 재접속 뒤 열린 런 맞추기", () => {
+  /** 디스패치된 런 하나를 두고, 그 뒤 Gateway WS 를 끊는다. 다시 붙는 것은 reconnect() 가 한다 */
+  async function runThenDrop() {
+    await connectedGateway();
+    const socket = await plugin({ "inbound.deliver": dispatchAck });
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
+    gatewayEvent(f.lifecycleStart());
+    gatewayEvent(f.chatDelta("PO"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    drop();
+    events = [];
+    return socket;
+  }
+
+  /** Gateway WS 가 끊긴다(순단·Gateway 재시작) */
+  function drop() {
+    const closing = connectOptions;
+    connectOptions = undefined;
+    closing?.onClose?.({ code: 1006, reason: "" });
+  }
+
+  /** 백오프(1s ±20%) 뒤 다시 붙고 복구가 끝날 때까지 — 1ms 씩 밀어 유예 시계가 걸린 시각에 멈춘다 */
+  async function reconnect() {
+    for (let ms = 0; connectOptions === undefined; ms += 1) {
+      if (ms > 2_000) throw new Error("gateway did not reconnect");
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gw().gateway).toBe("connected");
+  }
+
+  const closedSignals = () => ofKind("run_signal").filter((e) => e.runId === f.RUN_ID);
+
+  it("끊긴 사이 정본이 왔으면 유예 뒤 gateway_final 로 닫는다 — 런 상한(600s)까지 기다리지 않는다", async () => {
+    const socket = await runThenDrop();
+    // 플러그인 브리지는 별개 연결이라 끊긴 동안에도 정본이 온다
+    await socket.emitWithAck("outbound.message", {
+      outboundId: "dodok-reply-reconnect",
+      conversationId: CH,
+      agentId: f.PROVIDER_AGENT_ID,
+      sessionKey: f.SESSION_KEY,
+      runId: f.RUN_ID,
+      text: "PONG",
+      ts: new Date().toISOString(),
+    });
+    await reconnect();
+    events = [];
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+    expect(closedSignals()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closedSignals()).toEqual([
+      { kind: "run_signal", runId: f.RUN_ID, connectionId: CONNECTION_ID, signal: { kind: "gateway_final" } },
+    ]);
+    expect(ofKind("run_event")).toEqual([]);
+
+    // 실물이 재구독 뒤 final 을 다시 보내면 그대로 넘긴다 — 서버 transition 이 종료된 런의 신호를 무시한다(겹치는 메시지 없음)
+    events = [];
+    gatewayEvent(f.chatFinal("PONG"));
+    expect(closedSignals().map((e) => e.signal.kind)).toEqual(["gateway_final"]);
+  });
+
+  it("정본 없이 런이 사라졌으면(Gateway 재시작) 유예 뒤 연결 끊김과 같은 ADAPTER_UNAVAILABLE 로 닫고 잊는다", async () => {
+    await runThenDrop();
+    await reconnect();
+    events = [];
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS);
+    expect(events).toEqual([
+      {
+        kind: "run_event",
+        runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+        event: {
+          type: "RUN_ERROR",
+          runId: f.RUN_ID,
+          code: "ADAPTER_UNAVAILABLE",
+          message: "gateway run lost across reconnect",
+        },
+      },
+      {
+        kind: "run_signal",
+        runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+        signal: {
+          kind: "gateway_error",
+          code: "ADAPTER_UNAVAILABLE",
+          message: "gateway run lost across reconnect",
+          connectionClosed: true,
+        },
+      },
+    ]);
+
+    events = [];
+    gatewayEvent(f.chatDelta("late"));
+    expect(events).toEqual([]);
+  });
+
+  it("재접속 뒤 이벤트가 이어지는 런은 닫지 않는다", async () => {
+    await runThenDrop();
+    await reconnect();
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+    gatewayEvent(f.chatDelta("NG"));
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 5);
+    expect(closedSignals()).toEqual([]);
+
+    gatewayEvent(f.chatFinal("PONG"));
+    expect(closedSignals().map((e) => e.signal.kind)).toEqual(["gateway_final"]);
+  });
+
+  it("툴이 열려 있거나 그 세션에 미해결 승인이 있는 런은 조용한 것이 정상이라 유예로 닫지 않는다", async () => {
+    await connectedGateway();
+    await plugin({ "inbound.deliver": dispatchAck });
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
+    gatewayEvent(f.toolStart());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    drop();
+    await reconnect();
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 2);
+    expect(closedSignals()).toEqual([]);
+
+    // 툴이 끝났다 — 이제는 승인 대기다
+    gatewayEvent(f.toolResult());
+    gatewayEvent(f.pluginApprovalRequested());
+    drop();
+    await reconnect();
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 2);
+    expect(closedSignals()).toEqual([]);
+  });
+
+  it("재접속 뒤 매퍼가 item 을 내지 않는 프레임(thinking·run_status)만 오는 런도 살아 있는 것이라 유예를 넘겨도 닫지 않는다", async () => {
+    await runThenDrop();
+    await reconnect();
+
+    // 첫 토큰 전에 오래 생각한다 — 매퍼는 이 프레임들을 버리지만 그 런 id 의 프레임이다
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+      gatewayEvent(
+        i % 2 === 0
+          ? f.agentEvent("thinking", { progressTokens: i })
+          : f.agentEvent("run_status", { phase: "running" }),
+      );
+    }
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 5);
+    expect(closedSignals()).toEqual([]);
+
+    gatewayEvent(f.chatFinal("PONG"));
+    expect(closedSignals().map((e) => e.signal.kind)).toEqual(["gateway_final"]);
+  });
+
+  it("유예 중 그 세션의 승인 요청이 오면 승인 대기라 시계를 풀고 닫지 않는다", async () => {
+    await runThenDrop();
+    await reconnect();
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+    gatewayEvent(f.pluginApprovalRequested());
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 5);
+    expect(closedSignals()).toEqual([]);
+  });
+
+  it("유예 중 다시 끊기면 시계를 버리고 다음 복구 뒤에 다시 잰다", async () => {
+    await runThenDrop();
+    await reconnect();
+    // 남은 유예(0.5s)가 재접속 백오프(1s 안팎)보다 짧다 — 끊긴 동안 시계가 울리면 프레임을 받을 수 없던 런을 닫는다
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 500);
+    drop();
+    await reconnect();
+    events = [];
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+    expect(closedSignals()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closedSignals().map((e) => e.signal.kind)).toEqual(["gateway_error"]);
   });
 });
