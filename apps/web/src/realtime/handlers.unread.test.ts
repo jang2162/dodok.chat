@@ -9,7 +9,7 @@ import { setViewingAtEnd, useUnread } from "@/features/reads/useUnread";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { CH, CH2, uid, USER } from "../../test/fixtures";
 import { channelOf, json } from "../../test/shellApi";
-import { attachHandlers } from "./handlers";
+import { attachHandlers, UNREAD_RETRY_DELAYS_MS, UNREAD_TIMEOUT_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
@@ -54,12 +54,16 @@ function stubUnread() {
   let calls = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof globalThis.fetch>(async (input) => {
+    vi.fn<typeof globalThis.fetch>(async (input, init) => {
       if (String(input) !== UNREAD_URL) return json(404, { code: "NOT_FOUND", message: String(input) });
       calls += 1;
       const next = replies.shift();
       if (next) return next();
-      return new Promise<Response>((resolve) => held.push(resolve));
+      // 매달린 요청도 신호(시간 제한)가 끊으면 실제 fetch 처럼 그 사유로 거절한다
+      return new Promise<Response>((resolve, reject) => {
+        held.push(resolve);
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
     }),
   );
   return {
@@ -129,13 +133,14 @@ describe("현황 스냅숏", () => {
     expect(view()).toEqual({ unread: true, mentions: 2 });
   });
 
-  it("받지 못하면 굵게·배지를 끈다 — 토스트는 없다", async () => {
+  it("다시 받아도 같은 실패(400 류)는 다시 받지 않고 굵게·배지를 끈다 — 토스트는 없다", async () => {
     const server = stubUnread();
-    server.reply(json(500, { code: "INTERNAL", message: "boom" }));
+    server.reply(json(403, { code: "FORBIDDEN", message: "no" }));
     const { fake } = setup();
     fake.serverEmit("connect");
     await waitFor(() => expect(store().loading).toBe(false));
     expect(store().ready).toBe(false);
+    expect(server.calls()).toBe(1);
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -188,6 +193,118 @@ describe("현황 스냅숏", () => {
     server.release(snap(row({ lastReadSeq: 9, latestSeq: 10, unread: true, mentions: 1 })));
     await waitFor(() => expect(store().ready).toBe(true));
     expect(view()).toEqual({ unread: true, mentions: 2 });
+  });
+});
+
+describe("현황 스냅숏 — 일시 실패 다시 받기(가짜 타이머)", () => {
+  const RETRIES = UNREAD_RETRY_DELAYS_MS.length;
+  const fail502 = () => new Response("<html>bad gateway</html>", { status: 502 });
+  /** 대기 중인 프로미스(가짜 fetch·파싱)를 흘린다 — 시간은 옮기지 않는다 */
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // `AbortSignal.timeout` 의 타이머는 가짜 타이머 밖이다 — 같은 뜻을 가짜 setTimeout 으로
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const c = new AbortController();
+      setTimeout(() => c.abort(new DOMException("timed out", "TimeoutError")), ms);
+      return c.signal;
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("첫 요청이 502 여도 간격을 두고 다시 받아 ready — 그동안 온 activity 도 얹힌다", async () => {
+    const server = stubUnread();
+    server.reply(fail502());
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    await flush();
+    expect(server.calls()).toBe(1);
+    // 재시도를 기다리는 동안에도 받는 중이다 — activity 는 버퍼로
+    expect(store().loading).toBe(true);
+    expect(store().ready).toBe(false);
+    fake.serverEmit("channel.activity", activity(12, { mentionedUserIds: [USER] }));
+    server.reply(snap(row({ lastReadSeq: 9, latestSeq: 10, unread: true, mentions: 1 })));
+    await vi.advanceTimersByTimeAsync(UNREAD_RETRY_DELAYS_MS[0] - 1);
+    expect(server.calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await flush();
+    expect(server.calls()).toBe(2);
+    expect(store().ready).toBe(true);
+    expect(view()).toEqual({ unread: true, mentions: 2 });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it(`끝까지 실패하면(첫 요청 + ${RETRIES}번) 굵게·배지를 끈다 — 더 받지 않는다`, async () => {
+    const server = stubUnread();
+    for (let i = 0; i <= RETRIES; i += 1) server.reply(fail502());
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    for (const delay of UNREAD_RETRY_DELAYS_MS) {
+      await flush();
+      expect(store().loading).toBe(true);
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    await flush();
+    expect(server.calls()).toBe(RETRIES + 1);
+    expect(store().loading).toBe(false);
+    expect(store().ready).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(server.calls()).toBe(RETRIES + 1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("다시 받기를 기다리는 동안 끊겼다 다시 붙으면, 옛 재시도는 새 상태를 덮지 않는다", async () => {
+    const server = stubUnread();
+    server.reply(fail502());
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    await flush();
+    expect(server.calls()).toBe(1);
+    fake.serverEmit("disconnect", "transport close");
+    server.reply(snap(row({ unread: true, mentions: 3, latestSeq: 7 })));
+    fake.serverEmit("connect");
+    await flush();
+    expect(server.calls()).toBe(2);
+    expect(view()).toEqual({ unread: true, mentions: 3 });
+    // 옛 재시도의 때가 와도 요청을 다시 보내지 않고, 새 스냅숏을 덮지 않는다
+    server.reply(snap(row()));
+    await vi.advanceTimersByTimeAsync(UNREAD_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0) + 1);
+    expect(server.calls()).toBe(2);
+    expect(view()).toEqual({ unread: true, mentions: 3 });
+    expect(store().ready).toBe(true);
+  });
+
+  it("다시 받기를 기다리는 동안 끊기기만 해도 버린다 — 끊긴 채 ready 가 되지 않는다", async () => {
+    const server = stubUnread();
+    server.reply(fail502());
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    await flush();
+    fake.serverEmit("disconnect", "transport close");
+    server.reply(snap(row({ unread: true })));
+    await vi.advanceTimersByTimeAsync(UNREAD_RETRY_DELAYS_MS[0] + 1);
+    expect(server.calls()).toBe(1);
+    expect(store().ready).toBe(false);
+  });
+
+  it("매달린 요청은 시간 제한에 끊겨 다시 받는다", async () => {
+    const server = stubUnread();
+    const { fake } = setup();
+    fake.serverEmit("connect");
+    await flush();
+    expect(server.calls()).toBe(1);
+    server.reply(snap(row({ unread: true, mentions: 1, latestSeq: 3 })));
+    await vi.advanceTimersByTimeAsync(UNREAD_TIMEOUT_MS - 1);
+    expect(store().loading).toBe(true);
+    expect(server.calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1 + UNREAD_RETRY_DELAYS_MS[0]);
+    await flush();
+    expect(server.calls()).toBe(2);
+    expect(store().ready).toBe(true);
+    expect(view()).toEqual({ unread: true, mentions: 1 });
   });
 });
 

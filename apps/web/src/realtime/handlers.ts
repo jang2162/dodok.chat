@@ -10,7 +10,7 @@ import {
 } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ApiRequestError, api } from "@/api/http";
+import { ApiRequestError, api, NetworkError } from "@/api/http";
 import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
@@ -54,6 +54,20 @@ export function nextRetryDelay(attempt: number, random: () => number = Math.rand
   const base = Math.min(WIRE_RETRY_BASE_MS * 2 ** attempt, WIRE_RETRY_MAX_MS);
   return Math.round(base * (0.8 + 0.4 * random()));
 }
+
+/**
+ * 읽지 않음 현황이 일시 실패(5xx·429·네트워크·시간 초과)로 끝났을 때 다시 받기까지의 간격 — 길이가 재시도 횟수다.
+ * 배포 중 프록시 502 처럼 몇 초에서 십여 초 가는 실패를 넘기되(합 약 13초), 오래 가는 장애는 다음 연결에 맡긴다
+ */
+export const UNREAD_RETRY_DELAYS_MS = [1_000, 3_000, 9_000] as const;
+/**
+ * 현황 요청 한 번의 시간 제한 — 응답이 매달리면 `loading` 인 채 activity 가 버퍼에만 쌓인다. 본문이 작은 요청이라 정상이면 1초 안이다
+ */
+export const UNREAD_TIMEOUT_MS = 10_000;
+
+/** 다시 받으면 나을 수 있는 실패인가 — 401·400 류·모양이 틀린 응답은 다시 받아도 같다 */
+const transientUnreadFailure = (e: unknown) =>
+  e instanceof NetworkError || (e instanceof ApiRequestError && (e.status >= 500 || e.status === 429));
 
 /** 에이전트 줄이 보이는 Gateway 의 얼굴(id·이름) — 순서가 달라도 같은 집합이면 같다 */
 const gatewayNames = (gateways: readonly OpenClawGatewayStatus[]) =>
@@ -152,22 +166,37 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
 
   /**
    * 읽지 않음 현황(`GET /me/unread`)을 받아 통째로 갈아 끼운다 — 붙을 때마다, 그리고 보관 상태가 현황과 어긋날 때.
-   * 실패하면 굵게·배지를 끈다(토스트 없음 — 틀린 배지보다 없는 배지). 다음 연결이 다시 받는다
+   * 일시 실패면 `UNREAD_RETRY_DELAYS_MS` 간격으로 다시 받는다 — 그동안 `loading` 이라 activity 는 버퍼에 남아 받은 스냅숏 위에
+   * 얹힌다. 끊김·다시 요청(세대가 바뀜)·해제면 그 재시도는 버린다. 끝내 실패하면 굵게·배지를 끈다(토스트 없음 — 틀린 배지보다 없는
+   * 배지). 다음 연결이 다시 받는다
    */
   async function loadUnread(): Promise<void> {
     const request = ++unreadRequest;
     const current = () => request === unreadRequest && !detached;
     useUnread.getState().beginSnapshot();
-    let snapshot: UnreadSnapshot;
-    try {
-      snapshot = UnreadSnapshot.parse(await api<unknown>("GET", "/me/unread"));
-    } catch (e) {
-      if (!current()) return;
-      useUnread.getState().failSnapshot();
-      if (e instanceof ApiRequestError && e.status === 401) onUnauthorized();
+    for (let attempt = 0; ; attempt += 1) {
+      let snapshot: UnreadSnapshot;
+      try {
+        snapshot = UnreadSnapshot.parse(
+          await api<unknown>("GET", "/me/unread", undefined, {
+            signal: AbortSignal.timeout(UNREAD_TIMEOUT_MS),
+          }),
+        );
+      } catch (e) {
+        if (!current()) return;
+        const delay = UNREAD_RETRY_DELAYS_MS[attempt];
+        if (delay !== undefined && transientUnreadFailure(e)) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          if (!current()) return;
+          continue;
+        }
+        useUnread.getState().failSnapshot();
+        if (e instanceof ApiRequestError && e.status === 401) onUnauthorized();
+        return;
+      }
+      if (current()) useUnread.getState().applySnapshot(snapshot);
       return;
     }
-    if (current()) useUnread.getState().applySnapshot(snapshot);
   }
 
   /**
