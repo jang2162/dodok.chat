@@ -145,9 +145,7 @@ describe("멤버 표", () => {
     const mina = await rowOf("mina");
     await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
     let dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
-    expect(dialog).toHaveTextContent(
-      "@mina 을 비활성화합니다. 로그인할 수 없게 되고, 쓴 메시지는 남습니다. 다시 활성화하면 그대로 돌아옵니다.",
-    );
+    expect(dialog).toHaveTextContent("@mina 을 비활성화합니다 — 로그인할 수 없게 됩니다.");
     await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.writes()).toEqual([]);
@@ -267,7 +265,7 @@ describe("멤버 표", () => {
     const dialog = await screen.findByRole("dialog", { name: "비밀번호 재설정 링크" });
     await userEvent.click(within(dialog).getByRole("button", { name: "링크 만들기" }));
     expect(await within(dialog).findByText(RESET_URL)).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("이 링크는 다시 볼 수 없습니다");
+    expect(dialog).toHaveTextContent("닫으면 다시 볼 수 없습니다.");
     expect(server.writes()).toEqual([
       { method: "POST", url: `/api/v1/members/${MINA_ID}/reset-link`, body: undefined },
     ]);
@@ -320,7 +318,7 @@ describe("초대", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "링크 만들기" }));
     const url = await within(dialog).findByText(INVITE_URL);
     expect(server.writes()).toEqual([{ method: "POST", url: "/api/v1/invites", body: { role: "admin" } }]);
-    expect(dialog).toHaveTextContent("이 링크는 다시 볼 수 없습니다");
+    expect(dialog).toHaveTextContent("닫으면 다시 볼 수 없습니다.");
     // 390px 에서도 잘리지 않게 — 아무 글자 사이에서나 줄을 바꾼다(설정 마법사의 토큰 대화상자와 같은 처리)
     expect(url).toHaveClass("whitespace-pre-wrap", "break-all");
     expect(url.parentElement).toHaveClass("min-w-0");

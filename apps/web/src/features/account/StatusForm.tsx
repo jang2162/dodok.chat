@@ -242,21 +242,15 @@ export function StatusForm({ status, onSaved }: { status: MyStatus | undefined; 
           {...(keepText ? { keep: keepText } : {})}
         />
       )}
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         <Checkbox
           id={ids.approvals}
           checked={allowApprovals}
-          aria-describedby={`${ids.approvals}-hint`}
           onCheckedChange={(v) => setAllowApprovals(v === true)}
         />
-        <div className="flex flex-col gap-0.5">
-          <Label htmlFor={ids.approvals} className="font-normal">
-            도구 승인 요청은 계속 받기
-          </Label>
-          <span id={`${ids.approvals}-hint`} className="text-xs text-muted-foreground">
-            방해 금지 중에도 승인 푸시는 보냅니다 — 놓치면 런이 멈춰 기다립니다
-          </span>
-        </div>
+        <Label htmlFor={ids.approvals} className="font-normal">
+          도구 승인 요청은 계속 받기
+        </Label>
       </div>
       <div className="flex items-center justify-end gap-3">
         <p role="status" className="text-sm text-muted-foreground">

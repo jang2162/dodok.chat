@@ -57,7 +57,7 @@ export function MemberRowActions({
         open={confirming}
         onOpenChange={setConfirming}
         title="멤버 비활성화"
-        description={`${handle} 을 비활성화합니다. 로그인할 수 없게 되고, 쓴 메시지는 남습니다. 다시 활성화하면 그대로 돌아옵니다.`}
+        description={`${handle} 을 비활성화합니다 — 로그인할 수 없게 됩니다.`}
         confirmLabel="비활성화"
         pendingLabel="비활성화하는 중…"
         pending={deactivate.isPending}
@@ -106,16 +106,14 @@ function ResetLinkDialog({ member }: { member: MemberRow }) {
           <IssuedLink
             title="재설정 링크를 만들었습니다"
             url={url}
-            hint={`${handle} 에게 건네세요. 24시간 안에 한 번 쓸 수 있습니다.`}
+            hint="24시간 안에 한 번 쓸 수 있습니다."
             onDone={close}
           />
         ) : (
           <div className="grid gap-4">
             <DialogHeader>
               <DialogTitle>비밀번호 재설정 링크</DialogTitle>
-              <DialogDescription>
-                {handle} 의 비밀번호를 새로 정하는 링크를 만듭니다. 앞서 만든 재설정 링크는 쓸 수 없게 됩니다.
-              </DialogDescription>
+              <DialogDescription>앞서 만든 재설정 링크는 쓸 수 없게 됩니다.</DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button type="button" variant="outline" disabled={issue.isPending} onClick={close}>

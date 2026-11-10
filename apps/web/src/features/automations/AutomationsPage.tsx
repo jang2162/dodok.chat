@@ -25,13 +25,7 @@ export function AutomationsPage() {
       className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-4 sm:p-6"
     >
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">자동화</h1>
-          <p className="text-sm text-muted-foreground">
-            정한 시각이나 들어오는 웹훅에 맞춰 채널에 문구를 게시합니다. 문구에서 @로 부른 에이전트가 그 글에
-            답합니다.
-          </p>
-        </div>
+        <h1 className="text-xl font-semibold">자동화</h1>
         {manager && (
           <AutomationDialog>
             <Button ref={createButton} type="button" size="sm">
@@ -120,14 +114,10 @@ function AutomationList({ createButton }: { createButton: RefObject<HTMLButtonEl
   return (
     <>
       {automations.data.length === 0 ? (
-        <p className="text-sm text-muted-foreground">아직 자동화가 없습니다. 「만들기」로 시작합니다.</p>
+        <p className="text-sm text-muted-foreground">아직 자동화가 없습니다.</p>
       ) : (
         <div className="flex flex-col gap-3">
-          {timeZone && (
-            <p className="text-xs text-muted-foreground">
-              시각은 워크스페이스 시간대 {timeZone} 기준입니다 — 운영 화면에서 바꿉니다.
-            </p>
-          )}
+          {timeZone && <p className="text-xs text-muted-foreground">시간대 {timeZone}</p>}
           <ul aria-label="자동화" className="flex flex-col divide-y rounded-lg border">
             {automations.data.map((a) => (
               <AutomationRow
@@ -150,7 +140,7 @@ function AutomationList({ createButton }: { createButton: RefObject<HTMLButtonEl
         open={deleting}
         onOpenChange={setDeleting}
         title="자동화 삭제"
-        description={`「${target?.name ?? ""}」 자동화를 삭제합니다. 이미 게시한 메시지는 남고 「⚙ 지운 자동화」로 보입니다.`}
+        description={`「${target?.name ?? ""}」 자동화를 삭제합니다.`}
         confirmLabel="삭제"
         pendingLabel="삭제하는 중…"
         pending={remove.isPending}

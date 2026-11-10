@@ -35,9 +35,7 @@ export function ChannelOffline() {
       )}
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
         <h1 className="text-lg font-semibold">오프라인이라 이 채널을 열 수 없습니다</h1>
-        <p className="text-sm text-muted-foreground">
-          이 기기에 저장된 세션이 없습니다. 연결되면 다시 불러옵니다.
-        </p>
+        <p className="text-sm text-muted-foreground">이 기기에 저장된 세션이 없습니다.</p>
       </div>
     </>
   );

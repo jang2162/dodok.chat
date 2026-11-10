@@ -5,13 +5,5 @@ import { IssuedLink } from "@/features/members/IssuedLink";
  * 대화상자의 컴포넌트 상태에만 있고 「복사했습니다」(`onDone`)로 버린다 — 쿼리 캐시·저장소·주소·콘솔에 남기지 않는다
  */
 export function WebhookUrlOnce({ title, url, onDone }: { title: string; url: string; onDone: () => void }) {
-  return (
-    <IssuedLink
-      noun="주소"
-      title={title}
-      url={url}
-      hint="바깥 서비스의 웹훅 주소 칸에 넣으면 POST 가 올 때마다 문구와 본문을 채널에 게시합니다."
-      onDone={onDone}
-    />
-  );
+  return <IssuedLink noun="주소" title={title} url={url} onDone={onDone} />;
 }

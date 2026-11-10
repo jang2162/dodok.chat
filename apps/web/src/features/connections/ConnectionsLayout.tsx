@@ -101,7 +101,6 @@ function ListHeader({ addRef }: { addRef: React.Ref<HTMLAnchorElement> }) {
           </Button>
         )}
       </div>
-      <p className="text-sm text-muted-foreground">에이전트가 어디에 붙어 있는지 보고 관리합니다.</p>
     </header>
   );
 }

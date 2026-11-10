@@ -9,7 +9,6 @@ import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { usePatchChannel } from "./mutations";
 import { type RelayForm, type RelayFormField, fromForm, toForm } from "./relayPolicyForm";
-import { RUNNER_RENEW_NOTICE } from "./PromptSection";
 import { Saved, Section } from "./Section";
 
 /**
@@ -120,7 +119,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
             {error.message}
           </p>
         )}
-        {saved && <Saved>저장했습니다. {RUNNER_RENEW_NOTICE}</Saved>}
+        {saved && <Saved />}
         {!locked && (
           <div className="flex items-center justify-end gap-3">
             <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
@@ -147,17 +146,11 @@ function PairList({
 }) {
   const id = useId();
   if (agents.length < 2) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        에이전트가 둘 이상 있어야 쌍을 고를 수 있습니다. 지금은 릴레이가 일어나지 않습니다.
-      </p>
-    );
+    return <p className="text-xs text-muted-foreground">에이전트가 둘 이상 있어야 쌍을 고를 수 있습니다.</p>;
   }
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className="mb-1 text-xs text-muted-foreground">
-        체크한 쌍만 릴레이합니다(보내는 쪽 → 받는 쪽)
-      </legend>
+      <legend className="mb-1 text-xs text-muted-foreground">보내는 쪽 → 받는 쪽</legend>
       {agents.flatMap((from) =>
         agents
           .filter((to) => to.id !== from.id)

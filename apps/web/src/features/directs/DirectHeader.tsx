@@ -10,14 +10,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { isDeactivated } from "@/features/members/deactivated";
 import { useOpenProfile } from "@/features/profile/openProfile";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { DmAgentAvatar, GroupAvatars, PersonPresenceAvatar } from "./DirectRow";
 import { directNames, directPeer, isLoneGroup, isOneStream, personName } from "./queries";
 
@@ -198,10 +191,9 @@ function GroupTitle({ direct }: { direct: DirectSummary }) {
           </button>
         </DialogTrigger>
       </h1>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>참여자</DialogTitle>
-          <DialogDescription>이 대화는 참여자만 봅니다.</DialogDescription>
         </DialogHeader>
         <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
           {direct.users.map((p) =>

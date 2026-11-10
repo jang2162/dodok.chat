@@ -15,7 +15,7 @@ import { Textarea } from "@/ui/textarea";
 import { type AutoRespondStep, autoRespondPlan } from "./autoRespond";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { usePatchMember, useRemoveMember } from "./mutations";
-import { PROMPT_MAX, RUNNER_RENEW_NOTICE } from "./PromptSection";
+import { PROMPT_MAX, PROMPT_SAVED_NOTICE } from "./PromptSection";
 import { LockedNotice, Saved } from "./Section";
 
 /**
@@ -200,7 +200,7 @@ function OverrideEditor({
             </Button>
           )}
         </div>
-        {saved && !readOnly && <Saved>다음 턴부터 반영됩니다. {RUNNER_RENEW_NOTICE}</Saved>}
+        {saved && !readOnly && <Saved>{PROMPT_SAVED_NOTICE}</Saved>}
       </div>
     );
   }
@@ -244,8 +244,7 @@ function OverrideEditor({
         onChange={(e) => setDraft(e.target.value)}
       />
       <p id={`${id}-count`} className="text-xs text-muted-foreground">
-        {(PROMPT_MAX - draft.length).toLocaleString("ko-KR")}자 남음 · 이 채널에서 {handle} 에게만 더하는
-        지시입니다
+        {(PROMPT_MAX - draft.length).toLocaleString("ko-KR")}자 남음
       </p>
       {error && (
         <p id={`${id}-error`} role="alert" className="text-sm text-destructive">

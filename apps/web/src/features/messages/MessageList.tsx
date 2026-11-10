@@ -670,9 +670,7 @@ function ChannelMessages({
         {rows.length === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
             {/* 보관한 채널에는 멘션을 보낼 수 없다 — 부르라는 안내를 빼고 */}
-            {archived
-              ? "메시지가 없습니다."
-              : (emptyText ?? "아직 메시지가 없습니다. @멘션으로 에이전트를 불러 보세요.")}
+            {archived ? "메시지가 없습니다." : (emptyText ?? "아직 메시지가 없습니다.")}
           </p>
         )}
       </div>

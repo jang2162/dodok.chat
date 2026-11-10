@@ -25,14 +25,7 @@ export function MembersPage() {
   return (
     <section data-testid="page-members" className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">멤버</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            워크스페이스 사람을 초대하고 역할·비밀번호 재설정·비활성화를 맡습니다.
-          </p>
-        </div>
+        <h1 className="text-xl font-semibold">멤버</h1>
         {manager && <InviteDialog viewerRole={manager} />}
       </header>
       {manager ? (

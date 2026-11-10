@@ -471,16 +471,14 @@ describe("런 표", () => {
     expect(rowNamed("writer")).not.toHaveTextContent("환산");
     expect(within(rowNamed("dev")).getAllByText("측정 불가")).toHaveLength(2);
     expect(rowNamed("coder")).not.toHaveTextContent("측정 불가");
-    // 「환산 포함」이 무엇인지 한 줄 — api 로 청구된 몫과 섞일 수 있어 환산한 몫만 청구액이 아니라고 말한다
-    expect(runs).toHaveTextContent(
-      "「환산 포함」 금액에는 구독 로그인으로 돈 런을 공시 단가로 환산한 몫이 들어 있습니다 — 그 몫은 청구액이 아닙니다.",
-    );
+    // 「환산 포함」 각주 한 줄 — 환산한 몫은 청구액이 아니다
+    expect(runs).toHaveTextContent("「환산 포함」 몫은 청구액이 아닙니다.");
     // 모든 런을 더한 행뿐이라 부분합 표시·각주가 없다
     expect(runs).not.toHaveTextContent(/개만/);
     expect(runs).not.toHaveTextContent("부분합");
   });
 
-  it("믿는 런만 더한 행(OpenClaw·Claude 런이 섞인 채널)은 토큰·금액에 「런 m/n개만」, 표 아래 부분합 한 줄", async () => {
+  it("믿는 런만 더한 행(OpenClaw·Claude 런이 섞인 채널)은 토큰·금액에 「런 m/n개만」 — 표 아래 각주는 없다", async () => {
     stubOpsServer({
       runs: (days) =>
         runsOf({
@@ -499,9 +497,7 @@ describe("런 표", () => {
     expect(within(rowNamed("general")).getAllByText("런 2/5개만")).toHaveLength(2);
     expect(rowNamed("general")).toHaveTextContent("$0.13");
     expect(rowNamed("random")).not.toHaveTextContent(/개만/);
-    expect(runs).toHaveTextContent(
-      "「런 m/n개만」은 사용량을 믿을 수 있는 런만 더한 부분합입니다 — 나머지 런의 토큰·금액은 측정 불가입니다.",
-    );
+    expect(runs).not.toHaveTextContent("부분합");
     expect(runs).not.toHaveTextContent("환산 포함");
   });
 
@@ -636,12 +632,12 @@ describe("한도", () => {
     expect(await within(await region("한도")).findByText(/저장하지 못했습니다/)).toBeInTheDocument();
   });
 
-  it("오늘 워크스페이스 상한으로 막힌 수와 채널별 한도 안내", async () => {
+  it("오늘 워크스페이스 상한으로 막힌 수 — 채널별 한도 안내는 걷었다", async () => {
     stubOpsServer({ status: opsStatusOf({ blockedToday: 4 }) });
     renderOps();
     const limit = await region("한도");
     expect(await within(limit).findByText(/막힌 런 4회/)).toBeInTheDocument();
-    expect(limit).toHaveTextContent("채널별 한도는 각 채널 설정");
+    expect(limit).not.toHaveTextContent("채널별 한도는 각 채널 설정");
   });
 });
 

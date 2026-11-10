@@ -118,15 +118,13 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
     expect(screen.queryByText(/gateway not found/)).toBeNull();
   });
 
-  it("옮기기 안내는 실제 규칙 — 그 Gateway 에 OpenClaw 에이전트는 있어야 하고, 이미 등록된 같은 id 는 없어야 한다", async () => {
+  it("옮기기 대화상자에는 설명 줄이 없다(2026-11-10 문구 걷기)", async () => {
     const office = mainOffice();
     stubServer({ agents: [office], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
     renderPage(undefined, "owner", agentPath(office));
     await userEvent.click(await screen.findByRole("button", { name: "@main-office Gateway 옮기기" }));
     const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
-    expect(dialog).toHaveAccessibleDescription(
-      "@main-office 가 답할 Gateway 를 고릅니다. 그 Gateway 에 OpenClaw 에이전트 main 이 있어야 하고, 그 Gateway 로 이미 등록된 main 이 없어야 합니다.",
-    );
+    expect(dialog).not.toHaveAttribute("aria-describedby");
   });
 
   it("옮기기 대화상자는 지금 Gateway 를 후보에서 뺀다", async () => {
@@ -156,9 +154,7 @@ describe("에이전트 가져오기 — 그 Gateway 상세에 고정", () => {
     renderPage();
     const dialog = await openDiscover("사무실");
     // 고르기 없이 그 Gateway 하나 — 사무실의 main 은 이미 등록돼 숨는다
-    expect(dialog).toHaveAccessibleDescription(
-      "「사무실」 Gateway 의 에이전트 중 아직 등록하지 않은 것을 고릅니다.",
-    );
+    expect(dialog).not.toHaveAttribute("aria-describedby");
     expect(within(dialog).queryByRole("radio")).toBeNull();
     await within(dialog).findByRole("checkbox", { name: "fin" });
     expect(within(dialog).queryByRole("checkbox", { name: "Main" })).toBeNull();

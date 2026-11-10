@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import { IssueTokenDialog } from "./IssueTokenDialog";
 import { publicOriginOf } from "./llms";
 import { useBridgeTokens } from "./queries";
-import { HelpDetails } from "@/features/connections/HelpDetails";
 import { CopyBlock, PAIRING_STALE_MS, Pending, PluginInstall, Section } from "./sections";
 import { TokenList } from "./TokenList";
 
@@ -139,8 +138,8 @@ export function PluginStatus({ gateway, status }: { gateway: GatewaySetup; statu
 }
 
 /**
- * 「브리지 토큰」 섹션 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 한 줄 설명과 「?」(교체 절차·브리지 주소),
- * 쓸 수 있는 토큰이 없으면 늘 보이는 경고. 발급 대화상자는 그대로
+ * 「브리지 토큰」 섹션 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 쓸 수 있는 토큰이 없으면
+ * 늘 보이는 경고. 발급 대화상자는 그대로
  */
 export function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const tokens = useBridgeTokens(gateway.id);
@@ -148,16 +147,7 @@ export function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; statu
   const none = tokens.data !== undefined && tokens.data.every((t) => t.revokedAt !== null);
   return (
     <Section title="브리지 토큰" bare>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <p className="text-sm text-muted-foreground">플러그인이 이 서버에 붙을 때 쓰는 토큰.</p>
-          <HelpDetails label="브리지 토큰">
-            <p>새 토큰을 넣고 플러그인이 다시 붙은 뒤 옛 토큰을 폐기하면 에이전트가 멈추지 않습니다.</p>
-            <p>
-              브리지 주소 <code className="font-mono break-all">{status.bridge.publicUrl}</code>
-            </p>
-          </HelpDetails>
-        </div>
+      <div>
         <IssueTokenDialog
           gatewayId={gateway.id}
           origin={publicOriginOf(status.bridge.publicUrl)}

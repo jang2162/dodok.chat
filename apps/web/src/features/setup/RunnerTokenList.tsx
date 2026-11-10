@@ -33,12 +33,7 @@ function RunnerBuild({
   if (runner.bundleSha256 === null || !file.available) return null;
   if (runner.bundleSha256 === file.bundleSha256)
     return <p className="text-xs text-muted-foreground">서버와 같은 빌드입니다</p>;
-  return (
-    <p className="text-xs text-muted-foreground">
-      서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 「설치 안내」의 「서버와
-      같은 빌드로 설치」를 쓰세요.
-    </p>
-  );
+  return <p className="text-xs text-muted-foreground">서버와 다른 빌드입니다 — npm 판이면 정상입니다.</p>;
 }
 
 /**
@@ -144,8 +139,8 @@ export function RunnerTokenList({
         title={`「${target?.label ?? ""}」 러너 토큰을 폐기할까요?`}
         description={
           target && connectedIds.has(target.id)
-            ? "지금 이 토큰으로 러너가 붙어 있습니다. 폐기하면 곧바로 끊기고 그 러너의 에이전트가 멈춥니다. 되돌릴 수 없습니다."
-            : "폐기한 토큰으로는 다시 접속할 수 없습니다. 되돌릴 수 없습니다."
+            ? "지금 붙은 러너가 곧바로 끊기고 그 러너의 에이전트가 멈춥니다."
+            : "되돌릴 수 없습니다."
         }
         confirmLabel="폐기"
         pendingLabel="폐기하는 중…"

@@ -7,13 +7,12 @@ import { ProjectList } from "@/features/runners/ProjectList";
 import { useRunners } from "@/features/runners/queries";
 import { RunnerFacts } from "@/features/runners/RunnerParts";
 import { useRunnerTokens, useSetupStatus } from "@/features/setup/queries";
-import { InstallSteps, RunnerExposure } from "@/features/setup/RunnerSection";
+import { InstallSteps } from "@/features/setup/RunnerSection";
 import { RunnerTokenList } from "@/features/setup/RunnerTokenList";
 import { Section } from "@/features/setup/sections";
 import { Badge } from "@/ui/badge";
 import { AgentLinks } from "./ConnectionTreeList";
 import { DetailHeader } from "./DetailHeader";
-import { HelpDetails } from "./HelpDetails";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
 import { canManageConnection, useViewer } from "./permissions";
 import { useConnectionList } from "./queries";
@@ -21,14 +20,10 @@ import { runnerStateLabel } from "./useConnectionTree";
 
 type ListedRunner = ConnectionsResponse["runners"][number];
 
-/** 러너 경고 한 줄(연결 탭 통합 스펙 3.3) — 늘 보인다. 「?」 안에 「드러나는 것」 네 줄 */
-export const RUNNER_WARNING =
-  "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.";
-
 /**
  * 러너 상세(연결 탭 통합 스펙 3.3·5장) — 러너 하나 = 러너 토큰 하나(id 가 같다). 관리할 수 있는 사람(그 러너의 주인·admin 이상): 머리(라벨·
- * 상태)·메타(주인·판본)·루트·프로그램·경고 한 줄·「프로젝트 N」·「설치 안내」(붙은 적이 있으면 접힘)·그 러너의 토큰 한 줄(다시 발급·폐기).
- * 그 밖의 사람: 머리(라벨·상태·주인)·경고·그 러너의 에이전트만 — 설치·토큰·루트는 주인과 admin 이상의 몫이다
+ * 상태)·메타(주인·판본)·루트·프로그램·「프로젝트 N」·「설치 안내」(붙은 적이 있으면 접힘)·그 러너의 토큰 한 줄(다시 발급·폐기).
+ * 그 밖의 사람: 머리(라벨·상태·주인)·그 러너의 에이전트만 — 설치·토큰·루트는 주인과 admin 이상의 몫이다
  */
 export function RunnerDetail() {
   const { runnerId } = useParams({ strict: false });
@@ -43,19 +38,6 @@ export function RunnerDetail() {
     <ManagedRunner id={id} entry={entry} />
   ) : (
     <MemberRunner id={id} entry={entry} />
-  );
-}
-
-function Warning() {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <p role="note" className="text-sm font-medium text-amber-700 dark:text-amber-400">
-        {RUNNER_WARNING}
-      </p>
-      <HelpDetails label="러너 경고">
-        <RunnerExposure />
-      </HelpDetails>
-    </div>
   );
 }
 
@@ -86,13 +68,8 @@ function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefi
           </>
         }
       />
-      {runner.revoked && (
-        <p className="text-sm text-muted-foreground">
-          토큰이 폐기된 러너입니다. 프로젝트를 다른 러너로 옮기면 그 에이전트가 다시 답합니다.
-        </p>
-      )}
+      {runner.revoked && <p className="text-sm text-muted-foreground">토큰이 폐기된 러너입니다.</p>}
       {live && <RunnerFacts runner={runner} />}
-      <Warning />
       <Section title={`프로젝트 ${runner.projectCount}`} bare>
         <div>
           <AddProjectDialog runner={runner} triggerRef={addButton} />
@@ -185,7 +162,6 @@ function MemberRunner({ id, entry }: { id: string; entry: ListedRunner | undefin
         }
         meta={entry?.owner ? `러너 · 주인 ${entry.owner.name}` : "러너"}
       />
-      <Warning />
       <Section title={`에이전트 ${live.length}`} bare>
         {live.length === 0 ? (
           <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>

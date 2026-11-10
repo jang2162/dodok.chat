@@ -6,15 +6,7 @@ import { qk } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
 import {
@@ -26,7 +18,6 @@ import {
   nameProblem,
 } from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
-import { PROVIDER_ID_LABEL } from "./providerLabels";
 import { isArchived } from "./archived";
 import { type DiscoveredAgent, useCreateAgent, useDiscover, useRestoreAgent } from "./mutations";
 
@@ -54,12 +45,10 @@ function discoverErrorText(e: Error): string {
 export function DiscoverDialog({
   agents,
   gatewayId,
-  gatewayName,
   disabled = false,
 }: {
   agents: readonly Agent[];
   gatewayId: string;
-  gatewayName: string;
   disabled?: boolean;
 }) {
   const qc = useQueryClient();
@@ -138,10 +127,7 @@ export function DiscoverDialog({
         <Alert variant="destructive">
           <AlertDescription>{discoverErrorText(discover.error)}</AlertDescription>
         </Alert>
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            {PROVIDER_ID_LABEL.openclaw} 를 직접 입력해 등록할 수 있습니다.
-          </p>
+        <div className="flex items-center justify-end gap-3">
           <Button variant="outline" size="sm" onClick={() => void discover.refetch()}>
             다시 시도
           </Button>
@@ -157,12 +143,13 @@ export function DiscoverDialog({
         <Button disabled={disabled}>에이전트 가져오기</Button>
       </DialogTrigger>
       {/* 등록 중엔 기본 닫기(X)를 잠근다 — Esc·바깥 클릭은 onOpenChange 가 무시 */}
-      <DialogContent closeDisabled={busy} className="max-h-[85svh] overflow-y-auto">
+      <DialogContent
+        aria-describedby={undefined}
+        closeDisabled={busy}
+        className="max-h-[85svh] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>에이전트 가져오기</DialogTitle>
-          <DialogDescription>
-            「{gatewayName}」 Gateway 의 에이전트 중 아직 등록하지 않은 것을 고릅니다.
-          </DialogDescription>
         </DialogHeader>
         {body}
       </DialogContent>

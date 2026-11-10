@@ -143,7 +143,7 @@ describe("러너 카드", () => {
     renderRunnersPage("admin", undefined, runnerPath(runnerId(2)));
     const old = await card("옛것");
     expect(within(old).getByText("폐기됨")).toBeInTheDocument();
-    expect(old).toHaveTextContent("프로젝트를 다른 러너로 옮기면");
+    expect(old).toHaveTextContent("토큰이 폐기된 러너입니다.");
     expect(within(old).getByRole("button", { name: "프로젝트 추가" })).toBeDisabled();
   });
 
@@ -254,7 +254,7 @@ describe("프로젝트 줄", () => {
     const row = await within(runner).findByRole("listitem", { name: /^dodok \(/ });
     await userEvent.click(within(row).getByRole("button", { name: /^dodok \(.+\) 보관$/ }));
     const confirm = await screen.findByRole("dialog");
-    expect(confirm).toHaveTextContent("이미 있는 에이전트 2개는 남아 계속 답합니다");
+    expect(confirm).toHaveTextContent("있는 에이전트 2개는 계속 답합니다");
     await userEvent.click(within(confirm).getByRole("button", { name: "보관" }));
     await waitFor(() => expect(within(runner).queryByRole("listitem", { name: /^dodok \(/ })).toBeNull());
     expect(within(runner).getByRole("button", { name: "보관한 프로젝트 1" })).toBeInTheDocument();

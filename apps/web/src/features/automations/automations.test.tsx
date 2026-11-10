@@ -332,9 +332,7 @@ describe("목록", () => {
     renderRoute(PATH);
     await user().click((await rowOf("점검")).getByRole("button", { name: "삭제" }));
     const ask = await screen.findByRole("dialog", { name: "자동화 삭제" });
-    expect(
-      within(ask).getByText(/이미 게시한 메시지는 남고 「⚙ 지운 자동화」로 보입니다/),
-    ).toBeInTheDocument();
+    expect(within(ask).getByText("「점검」 자동화를 삭제합니다.")).toBeInTheDocument();
     await user().click(within(ask).getByRole("button", { name: "취소" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.writes()).toEqual([]);
@@ -521,7 +519,7 @@ describe("만들기·수정 대화상자", () => {
     expect(await within(dialog).findByText(WEBHOOK_URL)).toBeInTheDocument();
   });
 
-  it("웹훅 만들기 — 주소를 한 번만 보이고(「이 주소는 다시 볼 수 없습니다」·복사), 원문은 대화상자 밖 어디에도 남지 않는다", async () => {
+  it("웹훅 만들기 — 주소를 한 번만 보이고(「닫으면 다시 볼 수 없습니다」·복사), 원문은 대화상자 밖 어디에도 남지 않는다", async () => {
     const secret = WEBHOOK_TOKEN.slice("whk_abc123".length);
     const watch = watchLeaks(secret);
     const server = stubAutomationsServer();
@@ -533,7 +531,7 @@ describe("만들기·수정 대화상자", () => {
     await user().type(within(dialog).getByRole("textbox", { name: "문구" }), "배포가 끝났습니다");
     await user().click(within(dialog).getByRole("button", { name: "만들기" }));
     expect(await within(dialog).findByText(WEBHOOK_URL)).toBeInTheDocument();
-    expect(within(dialog).getByText(/이 주소는 다시 볼 수 없습니다/)).toBeInTheDocument();
+    expect(within(dialog).getByText("닫으면 다시 볼 수 없습니다.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "주소 복사" })).toBeInTheDocument();
     expect(server.writes()[0]?.body).toEqual({
       kind: "webhook",
@@ -588,7 +586,7 @@ describe("만들기·수정 대화상자", () => {
     expect(server.writes()).toEqual([]);
     await user().click(within(dialog).getByRole("button", { name: "다시 만들기" }));
     expect(await within(dialog).findByText(REISSUED_URL)).toBeInTheDocument();
-    expect(within(dialog).getByText(/이 주소는 다시 볼 수 없습니다/)).toBeInTheDocument();
+    expect(within(dialog).getByText("닫으면 다시 볼 수 없습니다.")).toBeInTheDocument();
     expect(server.writes()).toEqual([
       { method: "POST", url: `/api/v1/automations/${hook.id}/token`, body: undefined },
     ]);

@@ -66,36 +66,12 @@ describe("러너 상세 — 권한·경고", () => {
     expect(server.calls.filter((c) => c.url.startsWith("/api/v1/setup"))).toEqual([]);
   });
 
-  it("경고 한 줄은 늘 보이고, 「?」 안에 드러나는 것 넷 [최종 리뷰 M5·러너 일반화 스펙 7장]", async () => {
+  it("경고 줄·「?」 펼침은 없다(2026-11-10 문구 걷기)", async () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    expect(
-      within(block).getByText(
-        "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.",
-      ),
-    ).toBeInTheDocument();
-    const help = within(block).getByRole("group", { name: "러너 경고 도움말" });
-    expect(help).not.toHaveAttribute("open");
-    const note = within(help).getByRole("note");
-    expect(within(note).getAllByRole("listitem")).toHaveLength(4);
-    expect(note).toHaveTextContent("러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다");
-    // docker-deploy.md 「드러나는 것 넷」 1 과 같은 뜻 — 기본은 평소 계정, 전용 계정은 걱정될 때의 선택
-    expect(note).toHaveTextContent(
-      "기본은 이 머신의 평소 계정입니다 — 걱정되면 러너 전용 계정으로 전용 로그인(설치 2단계의 「러너 전용 로그인을 따로 쓰려면」)을 씁니다.",
-    );
-    expect(note).not.toHaveTextContent("러너 전용 계정을 권합니다");
-    expect(note).toHaveTextContent("끌 방법이 없습니다");
-    // member 가 자기 컴퓨터의 러너를 팀에 내놓는 사람 기준으로(연결 탭 통합 스펙 5.5)
-    expect(note).toHaveTextContent(
-      "채널 멤버 누구나 이 러너의 에이전트를 부를 수 있습니다 — 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽습니다.",
-    );
-    expect(note).toHaveTextContent("토큰 하나가 그 러너의 모든 에이전트를 맡습니다");
-    expect(note).toHaveTextContent(
-      "admin 은 루트 안 아무 디렉터리에서 상한까지의 도구로 에이전트를 만들 수 있습니다(서버를 손에 넣은 사람도) — 루트는 좁게, 상한은 낮게.",
-    );
-    expect(note).toHaveTextContent("이 머신의 러너 설정(루트·상한)이 머신 주인의 유일한 안전장치입니다.");
-    expect(note).not.toHaveTextContent("이 러너로 묶기");
+    expect(within(block).queryByRole("note")).toBeNull();
+    expect(block).not.toHaveTextContent("루트는 좁게, 상한은 낮게");
   });
 });
 
@@ -138,9 +114,7 @@ describe("러너 토큰 — 이 러너의 토큰 한 줄", () => {
     stubSetupServer(opts);
     renderConnection(undefined, 2);
     const desk = await within(await runnerRegion()).findByRole("listitem", { name: "데스크톱" });
-    expect(desk).toHaveTextContent(
-      "서버와 다른 빌드입니다 — npm 판이면 정상입니다. 서버와 같은 빌드가 필요하면 「설치 안내」의 「서버와 같은 빌드로 설치」를 쓰세요.",
-    );
+    expect(desk).toHaveTextContent("서버와 다른 빌드입니다 — npm 판이면 정상입니다.");
     expect(desk).not.toHaveTextContent("다시 설치하세요");
     expect(within(desk).queryByRole("alert")).not.toBeInTheDocument();
     cleanup();
@@ -193,7 +167,7 @@ describe("러너 토큰", () => {
     const row = await within(block).findByRole("listitem", { name: "맥북" });
     await userEvent.click(within(row).getByRole("button", { name: "맥북 폐기" }));
     const confirm = await screen.findByRole("dialog");
-    expect(confirm).toHaveTextContent(/지금 이 토큰으로 러너가 붙어 있습니다/);
+    expect(confirm).toHaveTextContent("지금 붙은 러너가 곧바로 끊기고 그 러너의 에이전트가 멈춥니다.");
     expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(0);
     await userEvent.click(within(confirm).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(1));
@@ -202,7 +176,7 @@ describe("러너 토큰", () => {
 });
 
 describe("러너 토큰 다시 발급", () => {
-  it("확인을 거쳐 새 원문을 한 번 — 붙어 있으면 끊긴다고, 프로젝트·에이전트는 남는다고 알린다. 캐시에 원문이 없다", async () => {
+  it("확인을 거쳐 새 원문을 한 번 — 붙어 있으면 끊긴다고 알린다. 캐시에 원문이 없다", async () => {
     const server = stubSetupServer({
       status: statusOf({ runners: { list: [runnerOf(1, { label: "맥북" })] } }),
       runnerTokens: [tokenOf(1, { label: "맥북", prefix: "mac123" })],
@@ -212,8 +186,7 @@ describe("러너 토큰 다시 발급", () => {
     const row = await within(block).findByRole("listitem", { name: "맥북" });
     await userEvent.click(within(row).getByRole("button", { name: "맥북 다시 발급" }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("지금 이 토큰으로 러너가 붙어 있습니다");
-    expect(dialog).toHaveTextContent("프로젝트·에이전트는 그대로 남습니다");
+    expect(dialog).toHaveTextContent("옛 토큰은 곧바로 안 통하고 지금 붙은 러너가 끊깁니다.");
     expect(server.count("POST", `/api/v1/setup/runner-tokens/${tokenId(1)}/reissue`)).toBe(0);
 
     await userEvent.click(within(dialog).getByRole("button", { name: "다시 발급" }));
@@ -341,19 +314,19 @@ describe("러너 설치 안내", () => {
     expect(await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND)).toBeInTheDocument();
   });
 
-  /** 설치 2단계(로그인) 줄 — 평소 로그인 본문으로 찾는다 */
+  /** 설치 2단계(로그인) 줄 — 단계 이름으로 찾는다 */
   async function loginStep() {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    const body = await within(block).findByText(/러너는 이 머신의 평소 Claude Code 로그인을 씁니다\./);
+    const body = await within(block).findByText(/Claude Code 로그인/);
     return body.closest("li") as HTMLElement;
   }
 
   it("설치 2단계 — 평소 로그인을 쓰고 로그인돼 있으면 건너뛴다", async () => {
     const step = await loginStep();
     expect(step.parentElement?.children[1]).toBe(step);
-    expect(step).toHaveTextContent("claude 로 로그인돼 있으면 건너뜁니다.");
+    expect(step).toHaveTextContent("돼 있으면 건너뜀");
     expect(RUNNER_LOGIN_COMMAND).toBe("claude");
     // 단계는 모두 러너 상세의 「설치 안내」 펼침 안 — 그 안에서 또 접힌 안내(전용 로그인·같은 빌드)는 뺀다
     const outer = step.closest('details[aria-label="설치 안내"]');
@@ -378,14 +351,11 @@ describe("러너 설치 안내", () => {
     expect(details.open).toBe(true);
     expect(details).toHaveTextContent("CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude");
     expect(details).toHaveTextContent('"configDir": "~/.dodok-runner/claude"');
-    expect(details).toHaveTextContent("대화 기록도 그 디렉터리에 따로 남습니다");
   });
 
-  it("설치 2단계 — 이메일·--resume 경고", async () => {
+  it("설치 2단계 — 이메일·--resume 경고는 걷었다(2026-11-10 문구 걷기)", async () => {
     const step = await loginStep();
-    const warning = within(step).getByText(/계정 이메일이 에이전트에게 보이고/);
-    expect(warning.closest("details")).toBe(step.closest('details[aria-label="설치 안내"]'));
-    expect(warning).toHaveTextContent("claude --resume 목록에도 남습니다");
+    expect(step).not.toHaveTextContent("계정 이메일");
   });
 
   it("tgz 받기(서버가 준 이름) → 로그인 → 설정 파일 → dodok-runner", async () => {

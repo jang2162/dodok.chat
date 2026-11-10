@@ -235,7 +235,6 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     act(() => void router.navigate({ to: "/settings/channels" }));
     const alert = await within(dialog).findByRole("alert");
     expect(alert).toHaveTextContent("토큰 원문을 다시 볼 수 없습니다");
-    expect(alert).toHaveTextContent("「복사했습니다」를 누르세요. 닫고 이어서 이동합니다");
     await waitFor(() => expect(within(alert).getByRole("button", { name: "머무르기" })).toHaveFocus());
     expect(router.state.location.pathname).toBe(gatewayDetailPath());
 

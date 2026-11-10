@@ -132,14 +132,10 @@ export function AgentAvatarField({ agent }: { agent: Agent }) {
 
 /** `dmAccess` 선택지(에이전트 DM 계획 Global Constraints — 글자 그대로) */
 const DM_ACCESS_LABEL: Record<DmAccess, string> = { off: "끔", admins: "admin 이상", everyone: "모두" };
-/** 「모두」 아래 설명 — 「모두」는 member 가 이 에이전트의 도구 승인을 스스로 한다는 뜻이다(에이전트 DM 스펙 결정 5) */
-export const DM_ACCESS_EVERYONE_NOTE =
-  "member 도 이 에이전트와 DM 을 열고, 그 DM 의 도구 승인을 스스로 결정합니다.";
 
 /**
  * DM 허용 범위(에이전트 DM 스펙 결정 4) — 누가 이 에이전트와 새 DM 을 여나. 고르는 즉시 저장한다(채널의 세션 정책과 같은 방식). 좁히면 그
  * 범위 밖 사람의 DM 은 읽기 전용이 된다(서버가 판정 — wire `agents.changed` 로 그 사람의 화면이 바뀐다). `readOnly`(admin 미만)면 값만 보인다.
- * 「모두」의 설명은 고르기 전에도 늘 보인다 — 무엇을 허락하는지 알고 고르게
  */
 function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const save = usePatchAgent();
@@ -177,22 +173,11 @@ function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean })
         className="flex flex-col gap-2"
       >
         {(["off", "admins", "everyone"] as const).map((option) => (
-          <div key={option} className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-2">
-              <RadioGroupItem
-                id={`${id}-${option}`}
-                value={option}
-                aria-describedby={option === "everyone" ? `${id}-everyone-note` : undefined}
-              />
-              <Label htmlFor={`${id}-${option}`} className="font-normal">
-                {DM_ACCESS_LABEL[option]}
-              </Label>
-            </div>
-            {option === "everyone" && (
-              <p id={`${id}-everyone-note`} className="pl-6 text-xs text-muted-foreground">
-                {DM_ACCESS_EVERYONE_NOTE}
-              </p>
-            )}
+          <div key={option} className="flex items-center gap-2">
+            <RadioGroupItem id={`${id}-${option}`} value={option} />
+            <Label htmlFor={`${id}-${option}`} className="font-normal">
+              {DM_ACCESS_LABEL[option]}
+            </Label>
           </div>
         ))}
       </RadioGroup>
@@ -241,7 +226,7 @@ function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: 
         open={open}
         onOpenChange={setOpen}
         title="에이전트 삭제"
-        description={`${handle} ${josa(agent.handle, "을", "를")} 삭제합니다. 채팅 기록은 남고, 되살리면 채널·대화가 그대로 돌아옵니다.`}
+        description={`${handle} ${josa(agent.handle, "을", "를")} 삭제합니다.`}
         confirmLabel="삭제"
         pendingLabel="삭제하는 중…"
         pending={archive.isPending}

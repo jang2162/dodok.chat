@@ -75,9 +75,6 @@ export function TimeZoneForm({ status }: { status: OpsStatus }) {
             {saved ? "저장했습니다" : ""}
           </span>
         </div>
-        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-          예약 자동화의 시각을 이 시간대로 셉니다. 바꾸면 켜진 예약의 다음 실행 시각을 다시 셉니다.
-        </p>
         {error && (
           <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
             {error}

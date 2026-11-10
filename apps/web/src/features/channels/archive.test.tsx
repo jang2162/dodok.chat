@@ -202,11 +202,7 @@ describe("채널 설정 패널 「채널 보관」", () => {
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     await userEvent.click(await screen.findByRole("button", { name: "채널 보관" }));
     const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByText(
-        "#general 을 보관합니다. 기록은 남고 누구나 읽을 수 있으며, 보관 해제하면 그대로 돌아옵니다.",
-      ),
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText("#general 을 보관합니다.")).toBeInTheDocument();
     const confirm = within(dialog).getByRole("button", { name: "보관" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);

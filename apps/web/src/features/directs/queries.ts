@@ -19,10 +19,6 @@ export const isDirectChannel = (channel: Pick<Channel, "kind"> | undefined): boo
 /** 「새 메시지」 대화상자에서 고를 수 있는 상대 수 — 나를 빼고 */
 export const DIRECT_PICK_MAX = DIRECT_MAX_PARTICIPANTS - 1;
 
-/** 그룹 DM 첫 안내(에이전트가 있는 그룹, 세션이 하나도 없을 때 — 사람 간 DM 계획 Global Constraints, 글자 그대로) */
-export const GROUP_DM_FIRST_NOTICE =
-  "이 대화는 참여자만 봅니다. 다만 에이전트는 자기 기억(메모리·작업 디렉터리의 파일)을 거쳐 여기서 들은 것을 다른 자리의 답에 쓸 수 있습니다 — dodok 은 이것을 막지 못합니다.";
-
 /**
  * 에이전트 DM 목록(`dmsQuery`)과 같은 규칙 — 저절로 낡지 않고 바뀌는 길마다 realtime 이 다시 받게 한다: 다시 붙기·`agents.changed`·
  * `people.changed`(1:1 상대 비활성화 → `peer_deactivated`, 이름·아바타)·`direct` 의 `channel.created`·`channel.updated`·모르는 채널의

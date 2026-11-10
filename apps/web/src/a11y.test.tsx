@@ -269,8 +269,6 @@ describe("Gateway 상세", () => {
     const page = await screen.findByTestId("page-connection");
     await within(page).findByRole("listitem", { name: "env" });
     await within(page).findByRole("region", { name: "플러그인" });
-    // 「?」 펼침에도 이름이 있다(「브리지 토큰 도움말」)
-    expect(within(page).getByRole("group", { name: "브리지 토큰 도움말" })).toBeInTheDocument();
     expect(unnamed()).toEqual(NONE);
 
     await userEvent.click(within(page).getByRole("button", { name: "새 토큰 발급" }));

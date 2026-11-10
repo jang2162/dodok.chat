@@ -296,7 +296,7 @@ function ArchiveProjectButton({
         title={`「${project.label}」 프로젝트를 보관할까요?`}
         description={
           project.agentCount > 0
-            ? `보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다. 이미 있는 에이전트 ${project.agentCount}개는 남아 계속 답합니다 — 멈추려면 그 에이전트를 삭제하세요.`
+            ? `보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다(있는 에이전트 ${project.agentCount}개는 계속 답합니다).`
             : "보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다."
         }
         confirmLabel="보관"

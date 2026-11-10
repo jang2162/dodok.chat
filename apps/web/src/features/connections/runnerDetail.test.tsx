@@ -23,7 +23,6 @@ import {
   tokenId,
   tokenOf,
 } from "../../../test/setupServer";
-import { RUNNER_WARNING } from "./RunnerDetail";
 
 // 러너 상세·프로젝트 상세(연결 탭 통합 스펙 3.3). 토큰·설치 안내의 자세한 동작은 setup/runner.test, 프로젝트 줄은 runners/runners.test
 
@@ -35,14 +34,12 @@ afterEach(() => {
 const detail = () => screen.findByTestId("runner-detail");
 
 describe("owner", () => {
-  it("owner sees warning line, projects, install steps and its token — 섹션 차례대로", async () => {
+  it("owner sees projects, install steps and its token — 섹션 차례대로", async () => {
     stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
     const runner = await detail();
-    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
-    expect(RUNNER_WARNING).toBe(
-      "이 러너의 에이전트는 채널 멤버 누구나 부를 수 있고, 루트 안 파일을 읽습니다. 루트는 좁게, 상한은 낮게.",
-    );
+    // 경고 줄은 걷었다(2026-11-10 문구 걷기)
+    expect(within(runner).queryByRole("note")).toBeNull();
     await within(runner).findByRole("region", { name: "러너 토큰" });
     const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
       (el) => el.getAttribute("aria-label") ?? el.textContent,
@@ -83,13 +80,6 @@ describe("owner", () => {
     expect(within(runner).getByRole("group", { name: "설치 안내" })).not.toHaveAttribute("open");
   });
 
-  it("warning help contains the four exposure lines", async () => {
-    stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
-    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
-    const help = await within(await detail()).findByRole("group", { name: "러너 경고 도움말" });
-    expect(within(help).getAllByRole("listitem")).toHaveLength(4);
-  });
-
   it("unknown runner id shows not found", async () => {
     stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(9)));
@@ -113,7 +103,6 @@ describe("member", () => {
     renderRunnersPage("member", undefined, runnerPath());
     const runner = await detail();
     expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
-    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
     expect(within(runner).getByRole("region", { name: "에이전트 1" })).toBeInTheDocument();
     expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();
     expect(server.calls).toEqual([]);
@@ -163,7 +152,6 @@ describe("연결의 주인(2단계)", () => {
     const runner = await detail();
     expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
     expect(runner).toHaveTextContent("주인 mia");
-    expect(within(runner).getByText(RUNNER_WARNING)).toBeInTheDocument();
     expect(within(runner).queryByRole("group", { name: "설치 안내" })).toBeNull();
     expect(within(runner).queryByRole("region", { name: "러너 토큰" })).toBeNull();
     expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();

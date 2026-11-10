@@ -53,18 +53,13 @@ describe("owner", () => {
     expect(within(agents).getByRole("button", { name: "에이전트 가져오기" })).toBeInTheDocument();
   });
 
-  it("bridge token copy is one line with help — 브리지 주소·교체 절차는 「?」 안", async () => {
+  it("bridge token section has no explanation or 「?」 — 발급 단추와 목록만(2026-11-10 문구 걷기)", async () => {
     stubSetupServer();
     renderConnection();
     const tokens = await within(await detail()).findByRole("region", { name: "브리지 토큰" });
-    expect(within(tokens).getByText("플러그인이 이 서버에 붙을 때 쓰는 토큰.")).toBeInTheDocument();
-    const box = within(tokens).getByRole("group", { name: "브리지 토큰 도움말" });
-    const help = within(box).getByLabelText("브리지 토큰 도움말 펼치기");
-    expect(box).not.toHaveAttribute("open");
-    expect(box).toHaveTextContent(PUBLIC_URL);
-    expect(box).toHaveTextContent("옛 토큰을 폐기하면 에이전트가 멈추지 않습니다");
-    await userEvent.click(help);
-    expect(box).toHaveAttribute("open");
+    expect(within(tokens).getByRole("button", { name: "새 토큰 발급" })).toBeInTheDocument();
+    expect(within(tokens).queryByRole("group")).toBeNull();
+    expect(tokens).not.toHaveTextContent(PUBLIC_URL);
   });
 
   it("plugin box is open when no plugin is connected and collapsed otherwise", async () => {
@@ -139,7 +134,9 @@ describe("연결의 주인·승인(2단계)", () => {
     });
     renderConnection(MEMBER, undefined, gatewayDetailPath(GATEWAY_ID));
     const gw = await detail();
-    expect(within(gw).getByText("승인 대기 — admin 이 승인하면 서버가 접속합니다")).toBeInTheDocument();
+    // 머리 배지 하나 — 아래 따로 설명 줄은 없다(2026-11-10 문구 걷기)
+    expect(within(gw).getByText("승인 대기")).toBeInTheDocument();
+    expect(within(gw).queryByText(/승인하면/)).toBeNull();
     expect(within(gw).queryByRole("button", { name: /승인$/ })).toBeNull();
     expect(
       within(gw)

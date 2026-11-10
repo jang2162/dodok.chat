@@ -241,9 +241,7 @@ describe("채널 프롬프트", () => {
     await userEvent.type(box, "간결하게");
     expect(within(section).getByText("19,996자 남음")).toBeInTheDocument();
     await userEvent.click(within(section).getByRole("button", { name: "저장" }));
-    expect(await within(section).findByRole("status")).toHaveTextContent(
-      "다음 턴부터 반영됩니다. 러너 에이전트는 다음 런부터 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다. OpenClaw 에이전트는 이미 대화한 세션에 온전히 반영되지 않고 새 세션부터 반영됩니다",
-    );
+    expect(await within(section).findByRole("status")).toHaveTextContent("다음 턴부터 반영됩니다.");
     expect(box).toHaveValue("간결하게");
 
     // 다시 고치면 안내를 내린다
@@ -398,9 +396,7 @@ describe("릴레이 정책", () => {
         },
       ]),
     );
-    expect(await within(section).findByRole("status")).toHaveTextContent(
-      "저장했습니다. 러너 에이전트는 다음 런부터 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다",
-    );
+    expect(await within(section).findByRole("status")).toHaveTextContent("저장했습니다");
     expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.relayPolicy).toEqual({
       maxRelayTurns: 2,
       allowPairs: [{ from: DEV, to: FIN }],

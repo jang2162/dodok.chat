@@ -163,7 +163,7 @@ function DefinitionFields({
     permissionModeRank(draft.permissionMode) > permissionModeRank(ceiling.maxPermissionMode);
   return (
     <>
-      <Row label="모델" hint="비우면 프로그램의 기본 모델입니다(예: sonnet, opus)" error={errors.model}>
+      <Row label="모델" hint="비우면 기본 모델(예: sonnet, opus)" error={errors.model}>
         {(id, describedBy) => (
           <Input
             id={id}
@@ -215,8 +215,8 @@ function DefinitionFields({
         label="허용 도구"
         hint={
           toolCeiling
-            ? `묻지 않고 쓸 도구를 쉼표로 나눠 적습니다. 러너 상한: ${toolCeiling.length === 0 ? "없음" : toolCeiling.join(", ")}`
-            : "묻지 않고 쓸 도구를 쉼표로 나눠 적습니다(예: Read, Grep, Glob). 비우면 미리 허용한 도구가 없습니다"
+            ? `쉼표로 나눕니다. 러너 상한: ${toolCeiling.length === 0 ? "없음" : toolCeiling.join(", ")}`
+            : "쉼표로 나눕니다(예: Read, Grep, Glob)"
         }
         error={errors.allowedTools}
       >
@@ -506,10 +506,7 @@ export function RunnerAgentForm({
             errors={errors}
             disabled={pending}
           />
-          <Row
-            label="지시"
-            hint="이 에이전트가 매 런 받는 지시입니다(채널 규칙 앞에 붙습니다). 비워도 됩니다"
-          >
+          <Row label="지시">
             {(id, describedBy) => (
               <Textarea
                 id={id}
@@ -635,10 +632,6 @@ export function RunnerDefinitionForm({
           </dd>
         </div>
       </dl>
-      <p className="text-xs text-muted-foreground">
-        프로그램은 바꿀 수 없습니다(새 에이전트를 만드세요). 프로젝트는 프로젝트 화면에서 다른 러너로
-        옮깁니다.
-      </p>
       <DefinitionFields
         draft={draft}
         onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}

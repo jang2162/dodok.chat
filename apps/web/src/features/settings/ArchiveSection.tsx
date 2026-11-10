@@ -25,7 +25,7 @@ export function ArchiveSection({ channel }: { channel: Channel }) {
         open={open}
         onOpenChange={setOpen}
         title="채널 보관"
-        description={`#${channel.name} 을 보관합니다. 기록은 남고 누구나 읽을 수 있으며, 보관 해제하면 그대로 돌아옵니다.`}
+        description={`#${channel.name} 을 보관합니다.`}
         confirmLabel="보관"
         pendingLabel="보관하는 중…"
         pending={archive.isPending}

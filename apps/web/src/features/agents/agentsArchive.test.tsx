@@ -20,7 +20,7 @@ import {
   stubServer,
 } from "../../../test/agentsPage";
 
-const CONFIRM = "@dev 를 삭제합니다. 채팅 기록은 남고, 되살리면 채널·대화가 그대로 돌아옵니다.";
+const CONFIRM = "@dev 를 삭제합니다.";
 const detachers: Array<() => void> = [];
 
 afterEach(() => {

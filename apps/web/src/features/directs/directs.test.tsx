@@ -33,7 +33,7 @@ import { renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { agentOf } from "../../../test/settingsServer";
 import { channelOf, conversationOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
-import { GROUP_DM_FIRST_NOTICE, mergeDmEntries } from "./queries";
+import { mergeDmEntries } from "./queries";
 
 // 사람 간 DM 계획 태스크 5 — 사이드바 합친 목록·「새 메시지」·프로필 「메시지 보내기」·대화 화면·읽기 전용·그룹 승인(웹)
 
@@ -501,7 +501,7 @@ describe("대화 화면", () => {
     const header = await screen.findByTestId("direct-header");
     expect(await within(header).findByRole("button", { name: "세션 목록" })).toBeInTheDocument();
     expect(within(header).getByRole("link", { name: "활동" })).toBeInTheDocument();
-    expect(await screen.findByText(GROUP_DM_FIRST_NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText("아직 메시지가 없습니다.")).toBeInTheDocument();
     expect(screen.getByTestId("conversation-pane")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "채널 설정" })).toBeNull();
     // 세션 제목 칸은 남은 자리만 쓴다 — jsdom 은 폭을 못 재 클래스로 본다(태스크 6 리뷰 L-b, 390px 에서 참여자 이름이 잘리던 것)
