@@ -129,7 +129,7 @@ function runnerSection(input: LlmsInput): string {
    dodok-runner --version
    \`\`\`
 
-3. 러너는 이 머신의 평소 Claude Code 로그인을 쓴다. 아래 첫 줄(claude auth status)로 로그인돼 있는지 본다(출력 JSON 의 loggedIn). 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 로 본다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다. 로그인돼 있으면 4번으로 간다. 안 돼 있으면 로그인은 사람이 한다 — 사람에게 claude(없으면 둘째 줄에서 auth status 를 뺀 번들 CLI)를 열어 /login 을 마치게 하고, 마쳤다고 할 때까지 멈춘다. 전용 로그인을 쓸지 먼저 묻지 않는다. 사람이 전용 로그인을 원한다고 하면 그때만 그 명령 앞에 CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} 를 붙여 로그인하게 하고, 4번 설정의 programs.claude 에 "configDir": "${RUNNER_CLAUDE_DIR}" 를 더한다(전용 로그인이면 대화 기록도 그 디렉터리에 따로 남는다).
+3. 러너는 이 머신에 설치된 claude 로 실행하고(없으면 번들 CLI) 평소 Claude Code 로그인을 쓴다. 아래 첫 줄(claude auth status)로 로그인돼 있는지 본다(출력 JSON 의 loggedIn). 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 로 본다. 그 경로가 없으면 ls "${RUNNER_PKG_DIR}/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다. 로그인돼 있으면 4번으로 간다. 안 돼 있으면 로그인은 사람이 한다 — 사람에게 claude(없으면 둘째 줄에서 auth status 를 뺀 번들 CLI)를 열어 /login 을 마치게 하고, 마쳤다고 할 때까지 멈춘다. 전용 로그인을 쓸지 먼저 묻지 않는다. 사람이 전용 로그인을 원한다고 하면 그때만 그 명령 앞에 CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} 를 붙여 로그인하게 하고, 4번 설정의 programs.claude 에 "configDir": "${RUNNER_CLAUDE_DIR}" 를 더한다(전용 로그인이면 대화 기록도 그 디렉터리에 따로 남는다).
 
    \`\`\`bash
    claude auth status

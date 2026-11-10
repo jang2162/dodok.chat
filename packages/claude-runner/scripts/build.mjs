@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 const sdkPkg = JSON.parse(
   readFileSync(new URL(`../node_modules/${SDK}/package.json`, import.meta.url), "utf8"),
 );
-// 번들 CLI 판본이 SDK 판본에 묶인다 — 정확 핀이 풀리면 hello 의 claudeCodeVersion 이 설치본과 어긋난다
+// 내장 CLI 판본이 SDK 판본에 묶인다 — 머신에 claude 가 없어 내장 CLI 로 돌 때 hello 가 싣는 판본이다(정확 핀이 풀리면 실제와 어긋난다)
 if (pkg.dependencies[SDK] !== sdkPkg.version) {
   throw new Error(
     `${SDK} 는 정확 핀이어야 한다 — package.json ${pkg.dependencies[SDK]}, 설치본 ${sdkPkg.version}`,
