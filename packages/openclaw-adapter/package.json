@@ -24,7 +24,7 @@
     "@openclaw/gateway-protocol": "2026.9.4",
     "fastify": "5.12.4",
     "socket.io": "4.8.3",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "^24.13.4",

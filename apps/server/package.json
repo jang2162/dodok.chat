@@ -19,8 +19,8 @@
     "@fastify/cookie": "11.1.2",
     "@fastify/proxy-addr": "5.1.0",
     "@fastify/rate-limit": "11.2.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "better-auth": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "better-auth": "1.7.7",
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.2",
     "fastify": "5.12.4",
@@ -31,7 +31,7 @@
     "uuid": "14.0.2",
     "web-push": "3.6.7",
     "ws": "8.21.3",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
