@@ -2,7 +2,7 @@ import { RunEvent, type RunSignal } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { RunEventBody } from "../src";
-import { createGatewayEventMapper, type MappedEvent } from "../src/gateway/events";
+import { createGatewayEventMapper, frameRunId, type MappedEvent } from "../src/gateway/events";
 import * as f from "./fixtures/gateway-events";
 
 const OTHER_RUN = "01a09fc9-d204-7551-89d6-38544d07a299";
@@ -454,5 +454,25 @@ describe("createGatewayEventMapper — 경계", () => {
     expect(run(m, f.agentEvent("tool", { phase: "start" }))).toEqual([]);
     expect(run(m, { type: "event", event: "agent", payload: "nope" })).toEqual([]);
     expect(run(m, { type: "event", event: "session.message", payload: { message: 42 } })).toEqual([]);
+  });
+});
+
+describe("frameRunId — 매퍼가 버리는 프레임의 런 id 도 읽는다", () => {
+  it("chat·agent 는 payload.runId — thinking·run_status·빈 delta 처럼 item 이 없는 프레임도", () => {
+    expect(frameRunId(f.agentEvent("thinking", { progressTokens: 12 }))).toBe(f.RUN_ID);
+    expect(frameRunId(f.agentEvent("run_status", { phase: "running" }))).toBe(f.RUN_ID);
+    expect(frameRunId(f.chatStatus())).toBe(f.RUN_ID);
+    expect(frameRunId(f.chatDelta("x", { runId: OTHER_RUN }))).toBe(OTHER_RUN);
+  });
+
+  it("session.message 는 매퍼와 같은 순서(전사 메타 → payload → idempotencyKey), usage 가 없어도", () => {
+    expect(frameRunId(f.sessionMessage({ usage: null, role: "user" }))).toBe(f.RUN_ID);
+    expect(frameRunId(f.sessionMessage({ openclawRunId: OTHER_RUN }))).toBe(OTHER_RUN);
+    expect(frameRunId(f.sessionMessage({ idempotencyKey: null, payloadRunId: OTHER_RUN }))).toBe(OTHER_RUN);
+  });
+
+  it("런이 없는 프레임은 undefined", () => {
+    expect(frameRunId(f.sessionsChanged())).toBeUndefined();
+    expect(frameRunId(f.sessionMessage({ idempotencyKey: null }))).toBeUndefined();
   });
 });

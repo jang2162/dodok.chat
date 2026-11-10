@@ -1609,6 +1609,38 @@ describe("Gateway 재접속 뒤 열린 런 맞추기", () => {
     expect(closedSignals()).toEqual([]);
   });
 
+  it("재접속 뒤 매퍼가 item 을 내지 않는 프레임(thinking·run_status)만 오는 런도 살아 있는 것이라 유예를 넘겨도 닫지 않는다", async () => {
+    await runThenDrop();
+    await reconnect();
+
+    // 첫 토큰 전에 오래 생각한다 — 매퍼는 이 프레임들을 버리지만 그 런 id 의 프레임이다
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+      gatewayEvent(
+        i % 2 === 0
+          ? f.agentEvent("thinking", { progressTokens: i })
+          : f.agentEvent("run_status", { phase: "running" }),
+      );
+    }
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 5);
+    expect(closedSignals()).toEqual([]);
+
+    gatewayEvent(f.chatFinal("PONG"));
+    expect(closedSignals().map((e) => e.signal.kind)).toEqual(["gateway_final"]);
+  });
+
+  it("유예 중 그 세션의 승인 요청이 오면 승인 대기라 시계를 풀고 닫지 않는다", async () => {
+    await runThenDrop();
+    await reconnect();
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS - 1);
+    gatewayEvent(f.pluginApprovalRequested());
+    events = [];
+    await vi.advanceTimersByTimeAsync(RECONNECT_RUN_GRACE_MS * 5);
+    expect(closedSignals()).toEqual([]);
+  });
+
   it("유예 중 다시 끊기면 시계를 버리고 다음 복구 뒤에 다시 잰다", async () => {
     await runThenDrop();
     await reconnect();

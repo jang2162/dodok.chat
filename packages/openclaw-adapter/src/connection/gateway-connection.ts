@@ -52,7 +52,7 @@ import {
   type GatewayState,
   type RecoverTarget,
 } from "../gateway/connection-manager";
-import { createGatewayEventMapper } from "../gateway/events";
+import { createGatewayEventMapper, frameRunId } from "../gateway/events";
 import { type FrameDump, openFrameDump } from "../gateway/frame-dump";
 
 export type GatewayConnectionConfig = {
@@ -104,8 +104,8 @@ const ABORT_ON_CLOSE_TIMEOUT_MS = 2_000;
 
 // Gateway WS 가 다시 붙은 뒤, 끊기기 전부터 열려 있던 런이 아무 프레임도 내지 않고 버틸 수 있는 시간. 끊긴 사이 Gateway 가 보낸
 // chat final 은 다시 오지 않고(재접속 복구는 구독만 다시 한다) Gateway 가 재시작했으면 런 자체가 없다 — 이 시계가 없으면 그 런은 서버의
-// 런 상한(runMs 600s)까지 살며 같은 세션의 다음 런을 막는다. 살아 있는 런은 구독 뒤 곧바로 델타·툴 프레임을 내지만, 모델이 첫 토큰 전에
-// 오래 생각하는 동안(1분을 넘기도 한다)에는 아무 프레임도 없다 — 그래서 플러그인 대기 상한과 같은 120s 로 둔다. 툴이 열려 있거나 그
+// 런 상한(runMs 600s)까지 살며 같은 세션의 다음 런을 막는다. 살아 있는 런은 구독 뒤 곧바로 델타·툴·thinking 프레임을 내고(그 런 id 의
+// 프레임이면 무엇이든 시계를 푼다), 그래도 프레임 없이 조용한 틈(첫 토큰 전 등)이 있을 수 있다 — 그래서 플러그인 대기 상한과 같은 120s 로 둔다. 툴이 열려 있거나 그
 // 세션에 미해결 승인이 있는 런은 조용한 것이 정상이라 이 시계를 걸지 않는다(서버의 런 상한·승인 감시가 닫는다)
 export const RECONNECT_RUN_GRACE_MS = 120_000;
 
@@ -452,9 +452,10 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       } else logger.debug({ event: frame.event }, "gateway approval frame ignored");
       return;
     }
+    // 그 런 id 로 온 프레임이면 무엇이든 살아 있다는 뜻이다 — 매퍼가 버리는 thinking·run_status 도. 첫 토큰 전에 오래 생각하는 런을 닫지 않는다
+    const liveRunId = frameRunId(frame);
+    if (liveRunId !== undefined) clearReconcileTimer(liveRunId);
     for (const item of mapper.map(frame)) {
-      // 그 런의 프레임이 왔다 — 살아 있다
-      clearReconcileTimer(item.runId);
       if (item.event) {
         trackTools(item.runId, item.event);
         deps.emit({ kind: "run_event", runId: item.runId, connectionId: id, event: item.event });
