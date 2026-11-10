@@ -55,7 +55,8 @@ body="$(
 )"
 
 # porcelain 에는 waiting·active 행도 들어오므로 미정리 토큰만 센다.
-count="$(printf '%s\n' "$rows" | grep -c -E '^(recover|reap|blocked|orphan)\t')"
+# 탭은 $'\t' 로 실제 문자를 넘긴다 — GNU grep 은 패턴 안 \t 를 탭으로 읽지 않는다(BSD 는 읽는다).
+count="$(printf '%s\n' "$rows" | grep -c -E '^(recover|reap|blocked|orphan)'$'\t')"
 jq -n --arg ev "$EVENT" --arg ctx "$body" --arg n "$count" \
   '{systemMessage: ("⚠ 정리되지 않은 Orca 워크트리 " + $n + "건 — scripts/orca-worker.sh status"),
     hookSpecificOutput: {hookEventName: $ev, additionalContext: $ctx}}'

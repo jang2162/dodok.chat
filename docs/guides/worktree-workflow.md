@@ -416,7 +416,7 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 - **`--setup run` 이 무엇을 했는지 믿지 말고 재라.** 셋업은 저장소 루트의 `orca.yaml`(`scripts.setup`,
   `setupAgentStartupPolicy: wait-for-setup`)이 갖는다. **Orca 는 그 파일을 새 워크트리의 체크아웃에서 읽는다** — 커밋하지 않은
   `orca.yaml` 이나 기준 브랜치에 아직 없는 변경은 돌지 않고, 그래도 워크트리 생성은 성공한다(실측: 커밋 전 셋업 0회, 커밋 뒤
-  `.env`·`node_modules`·`CLAUDE.md` 생성). 출처 정책은 **Orca 앱의 repo 설정**(`commandSourcePolicy` — 이 머신은 `shared-only`)이
+  `.env`·`node_modules`·`AGENTS.md` 생성). 출처 정책은 **Orca 앱의 repo 설정**(`commandSourcePolicy` — 이 머신은 `shared-only`)이
   정하고 CLI 로는 못 바꾼다. 셋업이 안 돈 워크트리는 `spawn` 의 `verify_setup` 이 사후에 같은 단계를 채운다(멱등).
   손으로 만든 워크트리는 아래 「생성 직후 세팅」을 직접 밟는다.
 
@@ -482,7 +482,7 @@ git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 cd .worktrees/dodok.chat/<슬러그>
 node -v                                   # 24.x 여야 한다 (mise.toml 핀; 아니면 export PATH="$(mise where node)/bin:$PATH")
 pnpm install                              # node_modules 는 워크트리마다 따로 필요하다
-scripts/orca-worker.sh sync-config .      # ruler apply(CLAUDE.md 등 생성물) + codegraph 인덱스 + 최상위 .env 복사 (아래 Why 참고)
+scripts/orca-worker.sh sync-config .      # ruler apply(AGENTS.md 등 생성물) + codegraph 인덱스 + 최상위 .env 복사 (아래 Why 참고)
 pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는 꺼져 있다 (아래 참고)
 ```
 
