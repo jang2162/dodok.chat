@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { IssueTokenDialog } from "./IssueTokenDialog";
 import { publicOriginOf } from "./llms";
 import { useBridgeTokens } from "./queries";
-import { CopyBlock, PAIRING_STALE_MS, Pending, PluginInstall, Section } from "./sections";
+import { CopyBlock, CopyButton, PAIRING_STALE_MS, Pending, PluginInstall, Section } from "./sections";
 import { TokenList } from "./TokenList";
 
 /** 카드 머리의 상태(멀티 Gateway 스펙 「웹」 절 — 연결됨·재연결 중·페어링 대기·꺼짐). 페어링 대기는 상태 값이 아니라 `pairing` 으로 안다 */
@@ -138,8 +138,8 @@ export function PluginStatus({ gateway, status }: { gateway: GatewaySetup; statu
 }
 
 /**
- * 「브리지 토큰」 섹션 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 쓸 수 있는 토큰이 없으면
- * 늘 보이는 경고. 발급 대화상자는 그대로
+ * 「브리지 토큰」 섹션 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 브리지 주소 한 줄(플러그인 설정에 넣는 값),
+ * 쓸 수 있는 토큰이 없으면 늘 보이는 경고. 발급 대화상자는 그대로
  */
 export function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const tokens = useBridgeTokens(gateway.id);
@@ -147,6 +147,11 @@ export function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; statu
   const none = tokens.data !== undefined && tokens.data.every((t) => t.revokedAt !== null);
   return (
     <Section title="브리지 토큰" bare>
+      <p data-testid="bridge-url" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <span className="text-muted-foreground">브리지 주소</span>
+        <code className="font-mono break-all">{status.bridge.publicUrl}</code>
+        <CopyButton text={status.bridge.publicUrl} label="브리지 주소 복사" />
+      </p>
       <div>
         <IssueTokenDialog
           gatewayId={gateway.id}

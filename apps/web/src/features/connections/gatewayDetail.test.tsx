@@ -53,13 +53,18 @@ describe("owner", () => {
     expect(within(agents).getByRole("button", { name: "에이전트 가져오기" })).toBeInTheDocument();
   });
 
-  it("bridge token section has no explanation or 「?」 — 발급 단추와 목록만(2026-11-10 문구 걷기)", async () => {
+  it("bridge token section shows the bridge url as one copyable line — 설명 문장·「?」 없이(2026-11-10 문구 걷기)", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     stubSetupServer();
     renderConnection();
     const tokens = await within(await detail()).findByRole("region", { name: "브리지 토큰" });
     expect(within(tokens).getByRole("button", { name: "새 토큰 발급" })).toBeInTheDocument();
     expect(within(tokens).queryByRole("group")).toBeNull();
-    expect(tokens).not.toHaveTextContent(PUBLIC_URL);
+    const line = within(tokens).getByTestId("bridge-url");
+    expect(line).toHaveTextContent(`브리지 주소${PUBLIC_URL}`);
+    await userEvent.click(within(line).getByRole("button", { name: "브리지 주소 복사" }));
+    expect(writeText).toHaveBeenLastCalledWith(PUBLIC_URL);
   });
 
   it("plugin box is open when no plugin is connected and collapsed otherwise", async () => {
