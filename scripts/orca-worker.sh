@@ -1834,15 +1834,23 @@ attach_worker() {
 # 못했다 — 띄우지 않고는 볼 수 없다. 그래서 **자리를 짚지 않고 이름으로 훑는다**
 # (attach_residual_count 와 같은 원칙). 이름은 같은 판의 `worker-show --full` 실물에서 왔다:
 # `.result.worker.agentTerminalHandle`·`.result.dispatch.assigneeHandle`·
-# `effects` 의 `{kind:"terminal",role:"agent",id}`(`residualResources` 는 보지 않는다 — 실패 봉투의
-# 남은 자원을 붙은 워커로 읽게 된다). 구조화 워커는 `terminal list` 에 나오지 않으므로(실측: 그
-# 워크트리의 목록에 `term_…` 둘만, 둘 다 agentIdentity null) 그 되짚기도 비고, 다음으로 영수증의
-# Dispatch id 로 `worker-show` 를, 그것도 없으면 이 워크트리의 진행 중 Dispatch 를 `worker-list` 로 읽는다.
+# `effects` 의 `{kind:"terminal",role:"agent",id}`. `residualResources` 는 훑기 전에 잘라 낸다 — 실패
+# 봉투의 남은 자원을 붙은 워커로 읽게 된다.
+#
+# 되짚기 순서는 정확한 것부터다(2026-11-10 리뷰). ① 영수증의 Dispatch id 로 `worker-show` — 방금 붙인
+# 그 Dispatch 의 핸들이다. ② 그것으로도 못 찾고 구조화 워커가 아닐 때만 `terminal list` 의 「이 워크트리에서
+# agentIdentity 가 있는 마지막 터미널」— 추측이다. 리뷰어를 띄우는 attach 에서는 살아 있는 구현자 TUI 를
+# 잡아 리뷰어 대신 구현자 핸들을 내준다(①을 뒤에 두었을 때 실제로 그랬다). 구조화 워커는 `terminal list`
+# 에 나오지 않으므로(실측: 그 워크트리의 목록에 `term_…` 둘만, 둘 다 agentIdentity null) 부르지 않는다.
+# ③ 그래도 없으면 `worker-list` 에서 **방금 만든 Task**(`taskId`)의 Dispatch 를 찾는다 — 이 워크트리의
+# 아무 진행 중 Dispatch 를 고르면 진행 중인 구현자를 리뷰어로 잡는다. 못 찾으면 빈 핸들(호출자가 멈춘다).
 # 이전 판(짧은 `.result.terminal`·`--full` 의 `.result.worker.agentTerminalHandle`)도 이 훑기가 읽는다
 # — 그러니 1.4.254 의 `--full` 영수증은 그 밖의 자리(또는 빈 값)에 핸들을 둔 것으로 본다.
+# 사용: attach_handle <영수증 파일> <워크트리 id> <Task id>
 attach_handle() {
-  local resp="$1" wt_id="$2" handle dispatch
-  handle="$(jq -r '[ .. | objects
+  local resp="$1" wt_id="$2" task_id="${3:-}" handle dispatch
+  handle="$(jq -r 'walk(if type == "object" then del(.residualResources) else . end)
+                   | [ .. | objects
                      | (.agent_terminal_handle?, .agentTerminalHandle?, .assigneeHandle?,
                         .terminalHandle?, (.terminal? | strings), (.terminal?.handle?)?,
                         (.effects? | arrays | .[]
@@ -1850,22 +1858,21 @@ attach_handle() {
                          | .id?)) ]
                    | map(strings | select(. != "")) | first // empty' "$resp" 2>/dev/null)"
   if [ -z "$handle" ]; then
+    dispatch="$(attach_dispatch_id "$resp")"
+    [ -n "$dispatch" ] && handle="$(dispatch_handle "$dispatch")"
+  fi
+  if [ -z "$handle" ] && ! is_structured_worker "$resp" ""; then
     handle="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
       | jq -r '[ .result.terminals[]?
                  | select((.agentIdentity? // "") != "")
                  | select(.orphaned? != true) ] | last | .handle? // empty')"
   fi
-  if [ -z "$handle" ]; then
-    dispatch="$(attach_dispatch_id "$resp")"
-    [ -n "$dispatch" ] && handle="$(dispatch_handle "$dispatch")"
-  fi
-  # 영수증에 Dispatch id 조차 없으면 이 워크트리에 묶인 진행 중 Dispatch 를 worker-list 로 찾는다
-  # (1.4.254 worker-list --full 실물: `.resource.worktreeId`·`.agentTerminalHandle`, 최신순).
-  if [ -z "$handle" ]; then
+  # 1.4.254 worker-list --full 실물: 항목에 `taskId`·`.resource.worktreeId`·`.agentTerminalHandle`.
+  if [ -z "$handle" ] && [ -n "$task_id" ]; then
     handle="$("$(orca_cli)" orchestration worker-list --json --full 2>/dev/null \
-      | jq -r --arg wt "$wt_id" '[ .result.workers[]?
+      | jq -r --arg wt "$wt_id" --arg task "$task_id" '[ .result.workers[]?
+                 | select(.taskId? == $task)
                  | select((.resource? | type == "object") and .resource.worktreeId? == $wt)
-                 | select(.dispatchStatus? == "dispatched")
                  | .agentTerminalHandle? | strings | select(. != "") ] | first // empty' 2>/dev/null)"
   fi
   printf '%s\n' "$handle"
@@ -1907,6 +1914,9 @@ is_structured_worker() {
 # 구조화 워커의 제출 확인 — 화면이 아니라 `worker-show` 의 stage 로 본다.
 # 1.4.254 실측: 브리프를 받은 워커의 `worker-show --json` 은 `.result.stage: "input_accepted"`
 # (`--full` 이면 `.result.worker.stage`·`.result.projection.stage.detail`)다.
+# 실물 stage 는 input_accepted·settled·abandoned·process_stopped 넷이다(worker-list --full 관측).
+# settled 는 받아들여지고 이미 끝난 것이라 수신으로 본다. abandoned·process_stopped 는 끝난 상태라
+# 기다려도 바뀌지 않으므로 바로 그 stage 를 경고한다. 종료 코드는 TUI 경로(verify_submitted)와 같다.
 # 판정 불가(Dispatch id 가 없음·stage 를 못 읽음)는 「제출됨」으로 넘기지 않는다.
 verify_dispatch_accepted() {
   local dispatch="$1" attempt=1 tries pause stage
@@ -1921,7 +1931,13 @@ verify_dispatch_accepted() {
       | jq -r '[ (.result.stage? | strings), (.result.worker.stage? | strings),
                  (.result.projection.stage.detail? | strings) ]
                | map(select(. != "")) | first // empty' 2>/dev/null)"
-    [ "$stage" = "input_accepted" ] && return 0
+    case "$stage" in
+      input_accepted|settled) return 0 ;;
+      abandoned|process_stopped)
+        printf '경고: 워커가 이미 끝났다(stage: %s) — 브리프를 받았는지 확인하지 못했다. 직접 확인하라: %s orchestration worker-show --dispatch %s --json\n' \
+          "$stage" "$(orca_cli)" "$dispatch" >&2
+        return 1 ;;
+    esac
     printf '브리프 수신(stage input_accepted)을 아직 확인하지 못했다(stage: %s). 기다린다 (%s/%s)\n' \
       "${stage:-없음}" "$attempt" "$tries" >&2
     sleep "$pause"
@@ -2037,7 +2053,7 @@ cmd_spawn() {
     --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   rc=$?
 
-  handle="$(attach_handle "$resp" "$wt_id")"
+  handle="$(attach_handle "$resp" "$wt_id" "$task_id")"
   local structured=no dispatch
   is_structured_worker "$resp" "$handle" && structured=yes
   dispatch="$(attach_dispatch_id "$resp")"
@@ -2292,7 +2308,7 @@ cmd_attach() {
       --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   fi
   rc=$?
-  [ -n "$handle" ] || handle="$(attach_handle "$resp" "$wt_id")"
+  [ -n "$handle" ] || handle="$(attach_handle "$resp" "$wt_id" "$task_id")"
   local structured=no dispatch
   is_structured_worker "$resp" "$handle" && structured=yes
   dispatch="$(attach_dispatch_id "$resp")"

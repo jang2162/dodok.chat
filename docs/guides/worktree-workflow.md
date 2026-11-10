@@ -195,13 +195,17 @@ Orca 1.4.246 부터 `orca orchestration … --json` 기본 응답이 짧아졌�
 도달하지 못한다.** 그때 남는 것은 성공할 때마다 찍히는 경고뿐이고, 그 경고가 쌓이면 진짜
 미제출 경고까지 무시하게 된다. 여기의 `tui-idle` 은 붙이기 게이트가 아니라 렌더 대기다.
 
-**구조화 워커(Orca 1.4.254 의 기본 — 영수증의 `mode: "structured"`, 핸들 `structworker_…`)에는 이
-절차가 없다.** TUI 화면이 없어 `terminal wait`·`terminal rename` 은 `terminal_unsupported_for_agent_session`
+**구조화 워커(Orca 1.4.254 의 기본 — `mode: "structured"`, 핸들 `structworker_…`)에는 이
+절차가 없다.** 그 `mode` 의 실물 자리는 `worker-show --full` 의 `.result.worker.startOptions.mode.mode` 다
+(`worker-start` 영수증의 자리는 재지 못했다 — 스크립트는 이름으로 훑고, 핸들 접두로도 가른다). TUI 화면이 없어 `terminal wait`·`terminal rename` 은 `terminal_unsupported_for_agent_session`
 으로 거부되고 `terminal read --screen` 은 상태줄 대신 대화 기록 꼬리(`source: "screen-unavailable"`)를
 준다. 그래서 `spawn`·`attach` 는 구조화 워커면 제목·렌더 대기·`Ctx Used` 판별을 건너뛰고
-`worker-show --dispatch <id>` 의 `stage` 가 `input_accepted` 인지로 제출을 확인한다. 구조화 워커는
-`terminal list` 에도 나오지 않으므로 핸들은 영수증을 이름으로 훑고, 없으면 `worker-show`·`worker-list`
-(그 워크트리의 진행 중 Dispatch)로 되짚는다. 출력은 `orchestration worker-read --dispatch <id>` 로 읽는다.
+`worker-show --dispatch <id>` 의 `stage` 로 제출을 확인한다 — `input_accepted`·`settled`(받고 이미 끝남)는
+받은 것, `abandoned`·`process_stopped` 는 기다리지 않고 바로 경고한다. 구조화 워커는 `terminal list` 에도
+나오지 않으므로 핸들은 영수증을 이름으로 훑고, 없으면 영수증의 Dispatch id 로 `worker-show` 를, 그다음
+`worker-list` 에서 방금 만든 Task(`taskId`)의 Dispatch 를 읽는다. `terminal list` 의 「마지막 에이전트
+터미널」 되짚기는 구조화 워커가 아니고 앞의 것으로 못 찾았을 때만 쓴다 — 리뷰어를 띄울 때 살아 있는
+구현자 터미널을 잡기 때문이다. 출력은 `orchestration worker-read --dispatch <id>` 로 읽는다.
 
 ### 상태줄은 화면 전체가 아니라 한 줄이다 — 앵커와 NBSP
 
@@ -614,7 +618,7 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
   다시 읽어 입력창이 비고 `Ctx Used` 가 0 보다 커졌는지 확인한 뒤에 대기로 넘어간다. 이 확인을 건너뛰면 방치 시간을
   타임아웃이 다 쓴 뒤에야 알게 된다.
 - **구조화 워커(`structworker_…`)는 화면이 없으므로 위 화면 읽기 대신 `stage` 로 확인한다** —
-  `orca orchestration worker-show --dispatch <id> --json` 의 `.result.stage` 가 `input_accepted` 면 받았다(입력창이 없어
+  `orca orchestration worker-show --dispatch <id> --json` 의 `.result.stage` 가 `input_accepted`(또는 이미 끝난 `settled`)면 받았다(입력창이 없어
   Enter 가 줄바꿈으로 흡수되는 사고가 성립하지 않는다).
   `spawn`·`attach` 가 이 확인을 한다(2절 「붙인 뒤에는 화면이 그려질 때까지 기다린다」 끝 문단). 위의 화면 읽기는 TUI 워커(`term_…`) 몫이다.
 

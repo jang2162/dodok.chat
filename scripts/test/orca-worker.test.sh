@@ -696,6 +696,33 @@ assert_eq "$(grep -c 'orchestration worker-show' "$STUB_ORCA_LOG")" "2" \
 assert_eq "$(printf '%s' "$out" | grep -c '경고: 2회 시도 후에도 제출을 확인하지 못했다')" "1" \
   "구조화 워커: 끝내 확인하지 못하면 경고한다"
 
+# 실물 stage 는 input_accepted·settled·abandoned·process_stopped 넷이다(worker-list --full 관측).
+# settled 는 받아들여지고 이미 끝난 것 — 경고하지 않는다.
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_STAGE=settled ORCA_WORKER_SUBMIT_TRIES=3 \
+       cmd_spawn probe implement --base main 2>&1)"; rc=$?
+assert_eq "$rc" "0" "구조화 워커: stage settled 로도 붙이기를 끝낸다"
+assert_eq "$(grep -c 'orchestration worker-show' "$STUB_ORCA_LOG")" "1" \
+  "구조화 워커: settled 는 수신으로 보고 다시 보지 않는다"
+assert_eq "$(printf '%s' "$out" | grep -cE '제출을 확인하지 못했다|stage:')" "0" \
+  "구조화 워커: settled 면 제출 경고를 내지 않는다"
+# 끝난 실패 stage 는 기다려도 바뀌지 않는다 — 바로 그 stage 로 경고한다.
+for st in abandoned process_stopped; do
+  : > "$STUB_ORCA_LOG"
+  out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_STAGE="$st" ORCA_WORKER_SUBMIT_TRIES=3 \
+         cmd_spawn probe implement --base main 2>&1)"; rc=$?
+  assert_eq "$rc" "0" "구조화 워커: stage $st 도 종료 코드는 TUI 경로와 같다"
+  assert_eq "$(grep -c 'orchestration worker-show' "$STUB_ORCA_LOG")" "1" \
+    "구조화 워커: stage $st 면 기다리지 않는다"
+  assert_eq "$(printf '%s' "$out" | grep -c "경고: 워커가 이미 끝났다(stage: $st)")" "1" \
+    "구조화 워커: stage $st 를 경고로 바로 보고한다"
+done
+
+# 실패 봉투의 남은 자원(residualResources)은 붙은 워커가 아니다 — 핸들로 읽지 않는다.
+printf '%s\n' '{"ok":false,"error":{"code":"x","residualResources":[{"terminalHandle":"term_left"}]}}' > "$P/residual.json"
+assert_eq "$(attach_handle "$P/residual.json" "repo1::none" task_stub)" "" \
+  "attach_handle: residualResources 의 핸들을 붙은 워커로 읽지 않는다"
+
 : > "$STUB_ORCA_LOG"
 out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=nohandle \
        cmd_spawn probe implement --base main 2>&1)"; rc=$?
@@ -833,6 +860,9 @@ assert_status 0 "attach review --force: 확인하고도 띄울 수 있다" \
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0" \
   "attach review --force: 구현자 터미널에 붙지 않고 새로 띄운다"
 
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
+  "attach review --force: --agent 로 새 에이전트를 띄운다"
+
 # 구조화 워커(1.4.254)는 terminal list 에 나오지 않는다 — 터미널로는 진행 중인 구현자를 못 본다.
 # 핸들을 받지 않은 attach 는 worker-list 의 resource.worktreeId 로도 진행 중 Dispatch 를 잡는다.
 jq --arg wt "repo1::$P/.worktrees/$PB/probe" \
@@ -859,8 +889,28 @@ assert_eq "$(grep 'orchestration worker-show' "$STUB_ORCA_LOG" | grep -c -- '--d
   "attach review: 구조화 워커의 제출은 worker-show 의 stage 로 확인한다"
 assert_eq "$(grep -cE 'terminal (read|wait|rename|send)' "$STUB_ORCA_LOG")" "0" \
   "attach review: 구조화 워커에 화면 동사를 부르지 않는다"
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
-  "attach review --force: --agent 로 새 에이전트를 띄운다"
+
+# 결함 1(리뷰): 구현자 TUI 터미널이 살아 있고 영수증에 핸들·mode 가 없어도(Dispatch id 만),
+# 방금 띄운 리뷰어의 핸들은 Dispatch id 로 worker-show 에서 읽는다 — terminal list 의
+# 「마지막 에이전트 터미널」(구현자)을 먼저 잡으면 구현자 핸들을 리뷰어로 내준다.
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=nohandle cmd_attach probe review 2>&1)"; rc=$?
+assert_eq "$rc" "0" "attach review: 핸들 없는 영수증이면 Dispatch id 로 리뷰어 핸들을 찾는다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_s1$')" "1" \
+  "attach review: 구현자 터미널(term_reap_1)이 살아 있어도 worker-show 의 리뷰어 핸들을 낸다"
+assert_eq "$(grep -cE 'terminal (read|wait|rename).*term_reap_1' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 구현자 터미널에 제목·대기·읽기를 부르지 않는다"
+
+# 결함 2(리뷰): Dispatch id 조차 없을 때 worker-list 되짚기는 방금 만든 Task 의 항목만 받는다.
+# 이 워크트리에서 진행 중인 구현자(task_live)를 리뷰어로 잡지 않고 핸들 없음으로 멈춘다.
+: > "$STUB_ORCA_LOG"
+out="$(ORCA_CLI_COMMAND="$P/struct-orca.sh" STRUCT_RECEIPT=none STUB_ORCA_WORKERS_FIXTURE="$P/structlive.json" \
+       STUB_ORCA_TERMINALS_FIXTURE="$P/noterms.json" cmd_attach probe review --force 2>&1)"; rc=$?
+assert_eq "$rc" "1" "attach review --force: worker-list 에 새 Task 의 Dispatch 가 없으면 핸들 없음으로 멈춘다"
+assert_eq "$(printf '%s' "$out" | grep -c '^터미널: structworker_impl$')" "0" \
+  "attach review --force: 다른 Task(구현자)의 핸들을 리뷰어로 내지 않는다"
+assert_eq "$(printf '%s' "$out" | grep -c '핸들을 얻지 못했다')" "1" \
+  "attach review --force: 핸들을 얻지 못했다고 말한다"
 # 같은 조건의 implement 는 재사용한다.
 : > "$STUB_ORCA_LOG"
 cmd_attach probe implement >/dev/null 2>&1
