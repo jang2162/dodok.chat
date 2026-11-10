@@ -10,7 +10,8 @@
 // 단계 2: DODOK_MIGRATIONS_DIR 없이 띄우면 설정 오류로 죽는다 — 번들이 자기를 번들로 알아보는지(define·isBundled)를 이것으로 본다
 // 단계 3: dist/backup.js — 단계 1 서버가 떠 있는 동안 그 DATA_DIR 을 백업하면 exit 0·한 줄·사본, DB 없는 디렉터리면 exit 1·사유 한 줄.
 //   better-sqlite3 가 external 이라 번들 혼자로는 모른다 — 프로드 설치 위에서 실제로 적재되는지를 본다
-// 네트워크 밖으로 나가지 않는다(deploy 는 --offline 으로 로컬 스토어만 쓴다)
+// deploy 는 --prefer-offline 이다 — legacy deploy 는 패키지 메타데이터 캐시를 찾는데 install·fetch 는 그 캐시를 채우지 않아,
+// 캐시가 빈 머신(새 CI 러너)에서 --offline 이면 ERR_PNPM_NO_OFFLINE_META 로 실패한다. 판본은 lockfile 을 따른다(Dockerfile 도 같은 까닭으로 --offline 을 뺐다)
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
@@ -47,8 +48,8 @@ const work = mkdtempSync(join(tmpdir(), "dodok-bundle-"));
 const appDir = join(work, "app");
 const dataDir = join(work, "data");
 const failures = [];
-// 태스크 3 Dockerfile 이 같은 명령을 쓴다 — 바꾸면 거기도 함께
-const deployArgs = ["--filter", "@dodok/server", "deploy", "--prod", "--legacy", "--offline"];
+// 루트 Dockerfile 의 deploy 줄과 같은 명령이다(그쪽은 --prefer-offline 도 없이 네트워크를 쓴다) — 바꾸면 거기도 함께
+const deployArgs = ["--filter", "@dodok/server", "deploy", "--prod", "--legacy", "--prefer-offline"];
 
 // 중단(Ctrl-C·SIGTERM·터미널 닫힘 SIGHUP)에도 자식을 멈추고 work(deploy 산출물 약 260 MB)를 지운다. 처리기가 없으면 신호 기본 동작으로
 // 즉사해 finally 가 돌지 않는다. 자식을 먼저 멈추는 것은 pnpm 이 쓰고 있는 디렉터리를 지우다 경합하지 않게
