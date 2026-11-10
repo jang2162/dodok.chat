@@ -1060,7 +1060,7 @@ src/
 │  ├─ dms/                 에이전트 DM. queries.ts(useDms — `GET /dms`, `staleTime: Infinity` + 이벤트 무효화 invalidateDms·bumpDm, useDm·canOpenDm(서버 판정 흉내 — 숨기기는 편의)·
 │  │                       DM_READ_ONLY_TEXT(사유 셋의 문구))·DmSection.tsx(사이드바 「다이렉트 메시지」 절 — 에이전트 DM·사람 DM 을 합친 한 목록(directs/queries.ts mergeDmEntries), 글 있는 것 + 지금 연 것, 「+」 는 directs 의 「새 메시지」)·DmRedirect.tsx(`/dm/<에이전트 id>`
 │  │                       → `POST /dms` → 그 채널 주소로, 403·404 안내)·DmHeader.tsx(에이전트 이름·제공자·러너 라벨, 세션 제목·닫기, 「이 DM 의 지시」 대화상자, 「새 세션」, 「활동」)·
-│  │                       DmNotices.tsx(첫 안내·작성기 자리의 읽기 전용 사유 줄 — 초점 규칙은 ClosedNotice 와 같다)·context.ts. 채널 화면이 `channel.kind === "dm"` 이면 DM 꼴(세션 목록 날짜 묶음
+│  │                       DmNotices.tsx(작성기 자리의 읽기 전용 사유 줄 — 초점 규칙은 ClosedNotice 와 같다)·context.ts. 채널 화면이 `channel.kind === "dm"` 이면 DM 꼴(세션 목록 날짜 묶음
 │  │                       `conversations/dateGroups.ts` — 브라우저 시간대, 스레드·설정 패널·@ 후보 없음)
 │  ├─ conversations/       채널 세션. ConversationList.tsx(세션 목록 칸·좁은 화면 시트 — 「열림」·「닫힘」, 제목 검색은 서버 q, 「더 보기」, 줄마다 읽지 않음 점·멘션 배지)·ConversationTitle.tsx
 │  │                       (머리의 세션 제목 — 권한이 있으면 「세션 이름 바꾸기」 대화상자, 「세션 닫기」 확인)·ClosedNotice.tsx(작성기 자리 「닫힌 세션입니다」·「다시 열기」, 「세션 관리자만」 정책의
@@ -1124,7 +1124,7 @@ src/
 │  │                       상세의 「← 연결」은 설정 셸 머리 BackLink 가 단다) · tree.ts(buildConnectionTree — 순수 함수, 역할마다 모르는 칸은 null) · useConnectionTree.ts(역할마다 부를 수 있는 API 만 —
 │  │                       member: 에이전트 + wire Gateway, admin: + `GET /runners`·러너마다 프로젝트, owner: + `GET /setup/status`) · ConnectionTreeList.tsx(줄 = 링크, 「연결 없음」·접힌 「삭제된 에이전트 N」) ·
 │  │                       GatewayDetail·RunnerDetail·ProjectDetail(admin 이상)·AgentDetail·NewConnection(owner) — 상세 주소마다, 없는 id 는 NotFoundDetail 「이 연결을 찾을 수 없습니다」 ·
-│  │                       DetailHeader(h1 — 트리 줄을 눌러 오면 초점) · HelpDetails(「?」 펼침 — 접근 이름 「<섹션> 도움말」) · context.ts(트리 머리 라이브 영역·초점 돌려주기)
+│  │                       DetailHeader(h1 — 트리 줄을 눌러 오면 초점) · context.ts(트리 머리 라이브 영역·초점 돌려주기)
 │  ├─ composer/            Composer.tsx(Tiptap — `/stop` 은 그 세션(스레드 작성기면 그 스레드)의 런만, `/new` 는 명령이 아니다. 새 세션 창에서 첫 ack 뒤 그 세션으로 넘어가면 초안·첨부를 들고 간다 —
 │  │                       `useSendMessage` 의 settleNew 가 남기는 표 `["composerSettled"]`, 메인 작성기가 `new` 를 떠날 때 지운다) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(membership 없는 사람·비활성 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
 │  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`) · useSendMessage(channelId, conversationId, threadRootId? — conversationId 가 NEW_CONVERSATION("new")이면 newConversation 으로 보내고 ack 의 세션 주소로 바꿔 간다, 같은 틱의 둘째 글은 그 세션으로(「만드는 중」 표지 `composerCreating` — 결과 불명(TIMEOUT)인 첫 글은 그 항목이 `/s/new` 창에 있을 때만 같은 clientMsgId 로 다시 보낸다), ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, CHANNEL_ARCHIVED 면 사유 channel_archived(토스트 없이)·채널 다시 받기, CONVERSATION_CLOSED 면 사유 conversation_closed(「다시 보내기」 없음)·세션 다시 받기, FORBIDDEN 이면 「다시 보내기」 없음, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
@@ -1155,8 +1155,8 @@ src/
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시) ·
 │  │                       conversationNames.ts(useConversationNames — 채널 id → `#이름`·`DM · <에이전트>`·`DM · <참여자>`(+「 (그룹)」), 검색 결과와 파일함이 같이 쓴다)
 │  ├─ setup/               Phase 3 ②. 연결 설정 부품(owner — setup API) — 「연결」 탭의 Gateway 상세·러너 상세·연결 추가(features/connections)가 쓴다.
-│  │                       RunnerSection.tsx(InstallSteps — 러너 상세 「설치 안내」 · RunnerExposure — 드러나는 것 넷) · RunnerTokenList.tsx(러너 상세가 그 러너의 토큰 한 줄로) ·
-│  │                       GatewayCard.tsx(Gateway 상세의 섹션 — GatewayMeta 한 줄·PairingNotice·PluginStatus(설치 상자 PluginInstall — 플러그인이 없으면 펼침)·BridgeTokens(한 줄 + 「?」) · 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
+│  │                       RunnerSection.tsx(InstallSteps — 러너 상세 「설치 안내」) · RunnerTokenList.tsx(러너 상세가 그 러너의 토큰 한 줄로) ·
+│  │                       GatewayCard.tsx(Gateway 상세의 섹션 — GatewayMeta 한 줄·PairingNotice·PluginStatus(설치 상자 PluginInstall — 플러그인이 없으면 펼침)·BridgeTokens(「브리지 주소」 한 줄과 복사 + 발급·목록) · 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
 │  │                       (접근 이름 「<이름> 수정」 등 — 드롭다운 메뉴가 아니다)·주소·호스트·버전(drift 문구)·페어링 대기면 `openclaw devices approve <requestId>`,
 │  │                       requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 · 플러그인(같은 빌드 문구 넷) · 이 Gateway 의 브리지 토큰(TokenList·IssueTokenDialog),
 │  │                       활성 토큰 0 이면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」) ·
