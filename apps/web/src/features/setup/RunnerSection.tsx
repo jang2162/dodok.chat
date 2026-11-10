@@ -2,7 +2,6 @@ import type { SetupStatus } from "@dodok/shared";
 import { DownloadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { ApiRequestError } from "@/api/http";
-import { HelpDetails } from "@/features/connections/HelpDetails";
 import { Button } from "@/ui/button";
 import { publicOriginOf } from "./llms";
 import { useDownloadRunner } from "./mutations";
@@ -60,7 +59,6 @@ function SameBuildInstall({ file }: { file: SetupStatus["runners"]["runnerFile"]
     <details aria-label="서버와 같은 빌드로 설치" className="rounded-md border px-3 py-2">
       <summary className="cursor-pointer select-none">서버와 같은 빌드로 설치</summary>
       <div className="mt-2 flex flex-col gap-1.5">
-        <p className="text-muted-foreground">npm 판이 서버와 다른 빌드일 때 서버가 품은 파일로 설치합니다.</p>
         {file.available ? (
           <>
             <Button
@@ -114,8 +112,7 @@ function DedicatedLogin() {
         <CopyBlock text={RUNNER_DEDICATED_LOGIN_BUNDLED_COMMAND} label="전용 로그인 번들 CLI 명령 복사" />
         <p className="text-muted-foreground">
           설정의 <code className="font-mono">programs.claude</code> 에{" "}
-          <code className="font-mono">"configDir": "{RUNNER_CLAUDE_DIR}"</code> 를 적습니다. 전용 로그인이면
-          대화 기록도 그 디렉터리에 따로 남습니다.
+          <code className="font-mono">"configDir": "{RUNNER_CLAUDE_DIR}"</code> 를 적습니다.
         </p>
       </div>
     </details>
@@ -136,81 +133,33 @@ export function InstallSteps({ status }: { status: SetupStatus }) {
       <h3 className="text-sm font-medium">설치</h3>
       <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
         <li className="flex flex-col gap-1.5">
-          <p>러너를 돌릴 머신에 npm 으로 설치합니다. Claude Agent SDK 도 이때 npm 에서 받습니다.</p>
+          <p>npm 으로 설치</p>
           <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
           <SameBuildInstall file={status.runners.runnerFile} />
         </li>
         <li className="flex flex-col gap-1.5">
           <p>
-            러너는 이 머신의 평소 Claude Code 로그인을 씁니다. <code className="font-mono">claude</code> 로
-            로그인돼 있으면 건너뜁니다. 아니면 <code className="font-mono">claude</code> 를 열어{" "}
-            <code className="font-mono">/login</code> 을 마치고 나옵니다.
+            Claude Code 로그인(<code className="font-mono">/login</code>, 돼 있으면 건너뜀)
           </p>
           <CopyBlock text={RUNNER_LOGIN_COMMAND} label="로그인 명령 복사" />
           <p className="text-muted-foreground">
-            <code className="font-mono">claude</code> 명령이 없으면 러너가 품은 번들 CLI 로 로그인합니다.
+            <code className="font-mono">claude</code> 가 없으면 번들 CLI
           </p>
           <CopyBlock text={RUNNER_LOGIN_BUNDLED_COMMAND} label="번들 CLI 로그인 명령 복사" />
-          <p className="text-muted-foreground">
-            러너 런은 평소 계정으로 돌기 때문에 계정 이메일이 에이전트에게 보이고, 대화 기록이 이 머신의{" "}
-            <code className="font-mono">claude --resume</code> 목록에도 남습니다.
-          </p>
           <DedicatedLogin />
         </li>
         <li className="flex flex-col gap-1.5">
           <p>
             러너 토큰을 <code className="font-mono">{RUNNER_TOKEN_FILE}</code> 에 저장하고, 설정 파일을{" "}
-            <code className="font-mono">{RUNNER_CONFIG_PATH}</code> 에 둡니다. roots 는 좁게, label 은 꼭.
+            <code className="font-mono">{RUNNER_CONFIG_PATH}</code> 에 둡니다.
           </p>
-          <HelpDetails label="설정 파일">
-            <p>
-              <code className="font-mono">roots</code> 는 에이전트가 돌 수 있는 디렉터리입니다. 루트의{" "}
-              <code className="font-mono">label</code> 을 안 적으면 디렉터리 이름이 서버로 갑니다.
-            </p>
-            <p>
-              <code className="font-mono">programs</code> 의 권한 상한(
-              <code className="font-mono">maxPermissionMode</code>) 위로는 앱에서도 고를 수 없습니다.
-            </p>
-          </HelpDetails>
           <CopyBlock text={config} label="설정 예시 복사" />
         </li>
         <li className="flex flex-col gap-1.5">
-          <p>러너를 실행합니다. 붙으면 이 화면에 「연결됨」이 뜨고 프로젝트를 더할 수 있습니다.</p>
+          <p>실행</p>
           <CopyBlock text="dodok-runner" label="실행 명령 복사" />
         </li>
       </ol>
-    </div>
-  );
-}
-
-/**
- * 「러너를 붙이면 드러나는 것」 네 줄 — 러너 상세 경고 한 줄의 「?」 안과 연결 추가(러너)에 펼친 채로(연결 탭 통합 스펙 3.3). 자기
- * 컴퓨터의 러너를 팀에 내놓는 사람(member 도) 기준으로 쓴다 — 로컬 설정의 천장이 그 사람의 유일한 안전장치다(스펙 5.5)
- */
-export function RunnerExposure() {
-  return (
-    <div role="note" className="flex flex-col gap-1 rounded-md border border-amber-600/40 p-3 text-sm">
-      <p className="font-medium">러너를 붙이면 드러나는 것</p>
-      <ul className="flex list-disc flex-col gap-1 pl-5">
-        <li>
-          러너가 쓰는 Claude 계정의 이메일이 에이전트 문맥에 들어갑니다(끌 방법이 없습니다). 기본은 이 머신의
-          평소 계정입니다 — 걱정되면 러너 전용 계정으로 전용 로그인(설치 2단계의 「러너 전용 로그인을 따로
-          쓰려면」)을 씁니다.
-        </li>
-        <li>
-          채널 멤버 누구나 이 러너의 에이전트를 부를 수 있습니다 — 에이전트를 통해 러너 작업 디렉터리 안의
-          파일을 읽습니다.
-        </li>
-        <li>
-          토큰 하나가 그 러너의 모든 에이전트를 맡습니다. 토큰은 믿는 머신에만 주십시오 — 새는 것이 걱정되면
-          「다시 발급」으로 원문을 바꿉니다(프로젝트·에이전트는 그대로).
-        </li>
-        <li>
-          admin 은 루트 안 아무 디렉터리에서 상한까지의 도구로 에이전트를 만들 수 있습니다(서버를 손에 넣은
-          사람도) — 루트는 좁게, 상한은 낮게. 이 머신의 러너 설정(루트·상한)이 머신 주인의 유일한
-          안전장치입니다.
-        </li>
-      </ul>
     </div>
   );
 }

@@ -93,7 +93,6 @@ export function NotificationsPage() {
     >
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">알림</h1>
-        <p className="text-sm text-muted-foreground">이 기기에서 받을 알림</p>
       </header>
       <div className="grid max-w-sm gap-3 text-sm">
         {checking ? (

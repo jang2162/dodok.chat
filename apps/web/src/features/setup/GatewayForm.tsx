@@ -9,15 +9,7 @@ import { type ComponentProps, type FormEvent, type ReactNode, useId, useRef, use
 import { ApiRequestError } from "@/api/http";
 import { detailField, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
@@ -117,7 +109,7 @@ export function GatewayForm({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         {gateway ? (
           <EditForm key={formKey} gateway={gateway} onDone={() => onOpenChange(false)} />
         ) : (
@@ -146,7 +138,6 @@ export function GatewayFormBody({
   return (
     <GatewayFields
       title="Gateway 추가"
-      description="OpenClaw Gateway 의 WS 주소와 공유 토큰을 넣습니다. 저장하면 이 서버가 곧바로 붙습니다."
       submitLabel="추가"
       pendingLabel="추가하는 중…"
       initial={{ name: "", url: "" }}
@@ -165,7 +156,6 @@ function EditForm({ gateway, onDone }: { gateway: GatewaySetup; onDone: () => vo
   return (
     <GatewayFields
       title={`「${gateway.name}」 수정`}
-      description="주소나 토큰을 바꾸면 이 Gateway 만 다시 붙고, 진행 중인 런은 「다시 실행」 카드로 닫힙니다."
       submitLabel="저장"
       pendingLabel="저장하는 중…"
       initial={{ name: gateway.name, url: gateway.url }}
@@ -185,7 +175,6 @@ function EditForm({ gateway, onDone }: { gateway: GatewaySetup; onDone: () => vo
 
 function GatewayFields({
   title,
-  description,
   submitLabel,
   pendingLabel,
   initial,
@@ -197,7 +186,6 @@ function GatewayFields({
   /** 대화상자 밖(「연결 추가」 화면)에 그린다 — 제목·버튼 줄을 대화상자 부품 없이 */
   embedded?: boolean;
   title: string;
-  description: string;
   submitLabel: string;
   pendingLabel: string;
   initial: { name: string; url: string };
@@ -240,12 +228,9 @@ function GatewayFields({
 
   return (
     <form onSubmit={submit} noValidate className="grid gap-4" aria-label={embedded ? title : undefined}>
-      {embedded ? (
-        <p className="text-sm text-muted-foreground">{description}</p>
-      ) : (
+      {!embedded && (
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
       )}
       <Field

@@ -5,15 +5,7 @@ import { ApiRequestError } from "@/api/http";
 import { useArchivedChannels, useChannels } from "@/api/queries";
 import { useOpsStatus } from "@/features/ops/queries";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
@@ -175,6 +167,8 @@ export function AutomationDialog({
       <DialogContent
         showCloseButton={!url}
         closeDisabled={pending}
+        // 입력 화면에는 설명이 없다 — 웹훅 주소 화면만 설명을 잇는다
+        {...(url ? {} : { "aria-describedby": undefined })}
         // 문구 칸의 @ 후보가 열려 있으면 Esc 는 후보만 닫는다
         onEscapeKeyDown={(e) => menuOpen.current && e.preventDefault()}
       >
@@ -188,10 +182,6 @@ export function AutomationDialog({
           <form onSubmit={submit} noValidate className="grid min-w-0 gap-4">
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
-              <DialogDescription>
-                정한 시각이나 웹훅이 오면 이 문구를 채널에 게시합니다. 문구에서 @로 부른 에이전트가 그 글에
-                답합니다.
-              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-1.5">
               <Label htmlFor={`${id}-name`}>이름</Label>
@@ -260,17 +250,11 @@ export function AutomationDialog({
                 channelId={channelId}
                 value={draft.bodyMd}
                 maxLength={BODY_MAX}
-                aria-describedby={`${id}-body-hint`}
                 onChange={(bodyMd) => set({ bodyMd })}
                 onMenuChange={(o) => {
                   menuOpen.current = o;
                 }}
               />
-              <p id={`${id}-body-hint`} className="text-xs text-muted-foreground">
-                {scheduled
-                  ? "@로 이 채널의 에이전트를 부르면 게시할 때마다 그 에이전트가 답합니다."
-                  : "@로 이 채널의 에이전트를 부르면 웹훅이 올 때마다 그 에이전트가 답합니다. 웹훅 본문은 문구 아래 코드 블록으로 붙습니다."}
-              </p>
             </div>
             {scheduled && (
               <fieldset className="grid gap-3">
@@ -338,22 +322,16 @@ export function AutomationDialog({
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {timeZone
-                    ? `워크스페이스 시간대(${timeZone})의 시각입니다.`
-                    : "워크스페이스 시간대의 시각입니다."}{" "}
-                  10분 넘게 놓친 예약은 건너뜁니다.
+                  {timeZone ? `시간대 ${timeZone}` : "워크스페이스 시간대"}
                 </p>
               </fieldset>
             )}
             {automation?.kind === "webhook" && (
               <div className="grid gap-2 rounded-md border p-3">
                 <p className="text-sm font-medium">웹훅 주소</p>
-                <p className="text-sm text-muted-foreground">
-                  주소는 만들 때 한 번만 보입니다. 잃어버렸으면 새로 만듭니다.
-                </p>
                 {askReissue ? (
                   <div className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm">
-                    <p>옛 주소는 곧바로 쓸 수 없게 됩니다. 바깥 서비스의 주소도 새 주소로 바꿔야 합니다.</p>
+                    <p>옛 주소는 곧바로 쓸 수 없게 됩니다.</p>
                     <div className="flex flex-wrap gap-2">
                       <Button
                         type="button"

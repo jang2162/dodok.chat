@@ -28,7 +28,6 @@ function partialTag(r: OpsRunsRow) {
     ? `런 ${r.measuredRuns}/${r.runs}개만`
     : undefined;
 }
-const isPartial = (r: OpsRunsRow) => partialTag(r) !== undefined;
 
 /** 값 뒤 꼬리표들 */
 function Measured({ value, tags }: { value: string; tags: (string | undefined)[] }) {
@@ -223,7 +222,6 @@ export function RunsTable() {
   const usageTrusted = (data?.usageTrustedPrograms.length ?? 0) > 0;
   const rows = data ? [...data.byChannel, ...data.byAgent] : [];
   const estimated = rows.some((r) => r.costEstimated);
-  const partial = usageTrusted && rows.some(isPartial);
   const columns = usageTrusted ? [...COUNTS, ...USAGE] : COUNTS;
   return (
     <Section title="런">
@@ -245,22 +243,9 @@ export function RunsTable() {
         <>
           <Group title="채널별" rows={data.byChannel} columns={columns} channel narrow={narrow} />
           <Group title="에이전트별" rows={data.byAgent} columns={columns} channel={false} narrow={narrow} />
-          {!usageTrusted && (
-            <p className="text-xs text-muted-foreground">
-              토큰·금액은 측정 불가 — Gateway 가 주는 사용량 값을 아직 믿을 수 없습니다 (ADR 0005)
-            </p>
-          )}
+          {!usageTrusted && <p className="text-xs text-muted-foreground">토큰·금액은 측정 불가</p>}
           {estimated && (
-            <p className="text-xs text-muted-foreground">
-              「환산 포함」 금액에는 구독 로그인으로 돈 런을 공시 단가로 환산한 몫이 들어 있습니다 — 그 몫은
-              청구액이 아닙니다.
-            </p>
-          )}
-          {partial && (
-            <p className="text-xs text-muted-foreground">
-              「런 m/n개만」은 사용량을 믿을 수 있는 런만 더한 부분합입니다 — 나머지 런의 토큰·금액은 측정
-              불가입니다.
-            </p>
+            <p className="text-xs text-muted-foreground">「환산 포함」 몫은 청구액이 아닙니다.</p>
           )}
         </>
       ) : runs.isError ? (

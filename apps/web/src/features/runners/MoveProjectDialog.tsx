@@ -141,10 +141,7 @@ export function MoveProjectDialog({
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>「{project.label}」 다른 러너로 옮기기</DialogTitle>
-            <DialogDescription>
-              프로젝트와 그 에이전트가 함께 옮겨 갑니다. 옮길 러너의 같은 루트 id·경로에 같은 디렉터리가
-              있어야 하고, 에이전트는 새 세션에서 시작합니다(앞 작업 맥락은 옛 머신에 남습니다).
-            </DialogDescription>
+            <DialogDescription>프로젝트와 그 에이전트가 함께 옮겨 갑니다.</DialogDescription>
           </DialogHeader>
           {others.length === 0 ? (
             <p className="text-sm text-muted-foreground">옮길 다른 러너가 없습니다.</p>

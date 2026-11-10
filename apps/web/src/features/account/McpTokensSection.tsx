@@ -44,15 +44,9 @@ export function McpTokensSection() {
 
   return (
     <section aria-labelledby="mcp-tokens-title" className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1">
-        <h2 id="mcp-tokens-title" className="text-sm font-medium">
-          MCP 토큰
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Claude Code 같은 바깥 MCP 클라이언트가 내 권한으로 채널·에이전트를 읽고 바꿀 때 씁니다. 토큰을 가진
-          사람은 나와 같은 일을 할 수 있으니 비밀번호처럼 다루세요.
-        </p>
-      </div>
+      <h2 id="mcp-tokens-title" className="text-sm font-medium">
+        MCP 토큰
+      </h2>
       <div className="flex flex-col items-start gap-1.5">
         <IssueMcpTokenDialog triggerRef={issueButton} disabled={list === undefined || full} />
         {full && <p className="text-xs text-muted-foreground">{TOKENS_FULL}</p>}
@@ -145,7 +139,7 @@ function McpTokenList({
           if (!open) setTarget(undefined);
         }}
         title={`「${target?.label ?? ""}」 토큰을 폐기할까요?`}
-        description="이 토큰을 쓰는 MCP 클라이언트는 곧바로 거절됩니다. 되돌릴 수 없습니다."
+        description="이 토큰을 쓰는 MCP 클라이언트는 곧바로 거절됩니다."
         confirmLabel="폐기"
         pendingLabel="폐기하는 중…"
         pending={revoke.isPending}
@@ -228,12 +222,17 @@ function IssueMcpTokenDialog({
           <KeyRoundIcon />새 토큰 발급
         </Button>
       </DialogTrigger>
-      <DialogContent showCloseButton={!issued} closeDisabled={issue.isPending}>
+      <DialogContent
+        showCloseButton={!issued}
+        closeDisabled={issue.isPending}
+        // 이름 입력 화면에는 설명이 없다 — 발급 화면만 설명(원문 한 번)을 잇는다
+        {...(issued ? {} : { "aria-describedby": undefined })}
+      >
         {issued ? (
           <div className="grid min-w-0 gap-4">
             <DialogHeader>
               <DialogTitle>「{issued.token.label}」 토큰을 발급했습니다</DialogTitle>
-              <DialogDescription>이 토큰은 다시 볼 수 없습니다. 닫기 전에 복사해 두세요.</DialogDescription>
+              <DialogDescription>닫으면 다시 볼 수 없습니다.</DialogDescription>
             </DialogHeader>
             <div className="grid min-w-0 gap-1.5">
               <p className="text-sm font-medium">토큰</p>
@@ -241,10 +240,6 @@ function IssueMcpTokenDialog({
             </div>
             <div className="grid min-w-0 gap-1.5">
               <p className="text-sm font-medium">Claude Code 에 붙이기</p>
-              <p className="text-xs text-muted-foreground">
-                터미널에서 이 명령을 실행하면 Claude Code 가 dodok 도구를 씁니다. 토큰이 들어 있으니 원문처럼
-                다루세요.
-              </p>
               <CopyBlock
                 text={mcpAddCommand(window.location.origin, issued.raw)}
                 label="명령 복사"
@@ -257,7 +252,6 @@ function IssueMcpTokenDialog({
                 className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
               >
                 <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
-                <p>복사를 마쳤다면 「복사했습니다」를 누르세요. 닫고 이어서 이동합니다.</p>
                 <div className="flex flex-wrap gap-2">
                   <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
                     머무르기
@@ -278,9 +272,6 @@ function IssueMcpTokenDialog({
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>새 MCP 토큰</DialogTitle>
-              <DialogDescription>
-                알아볼 이름을 붙입니다(예: 노트북 Claude Code). 원문은 발급 직후 한 번만 보입니다.
-              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-2">
               <Label htmlFor={labelId}>이름</Label>

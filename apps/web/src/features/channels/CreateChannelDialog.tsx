@@ -2,15 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { formError as serverFormError, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { useCreateChannel } from "./mutations";
@@ -89,11 +81,10 @@ export function CreateChannelDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>채널 만들기</DialogTitle>
-            <DialogDescription>만든 뒤 설정 패널에서 에이전트를 넣을 수 있습니다.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor={nameId}>이름</Label>

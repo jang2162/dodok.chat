@@ -131,18 +131,13 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
 }
 
 /**
- * 승인 대기 줄(스펙 5.4) — admin 이상에게는 무엇을 승인하는지(주소)를 한 줄로 크게 보이고 「승인」, 주인(member)에게는 기다린다는 한 줄.
+ * 승인 대기 줄(스펙 5.4) — admin 이상에게는 무엇을 승인하는지(주소)를 한 줄로 크게 보이고 「승인」. 주인(member)에게는 그리지 않는다(머리의 「승인 대기」).
  * 승인 전에도 플러그인 설치·브리지 토큰은 그대로 보인다 — 플러그인은 브리지로 이 서버에 붙는 쪽이라 미리 준비해도 된다
  */
 function Approval({ gateway }: { gateway: GatewaySetup }) {
   const admin = roleAtLeast(useViewer().role, "admin");
   const approve = useApproveGateway(gateway.id);
-  if (!admin)
-    return (
-      <p role="note" className="text-sm font-medium text-amber-700 dark:text-amber-400">
-        승인 대기 — admin 이 승인하면 서버가 접속합니다
-      </p>
-    );
+  if (!admin) return null;
   return (
     <div role="group" aria-label="승인 대기" className="flex flex-col gap-2 rounded-md border p-3">
       <p className="text-sm font-medium">승인 대기 — 승인하면 서버가 이 주소에 접속합니다</p>
@@ -219,20 +214,11 @@ function GatewayAgents({
     <Section title={`에이전트 ${here.length}`} bare>
       {canManage && (
         <div>
-          <DiscoverDialog
-            agents={agents.data ?? []}
-            gatewayId={gateway.id}
-            gatewayName={gateway.name}
-            disabled={!agents.data}
-          />
+          <DiscoverDialog agents={agents.data ?? []} gatewayId={gateway.id} disabled={!agents.data} />
         </div>
       )}
       {here.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {canManage
-            ? "아직 에이전트가 없습니다. 「에이전트 가져오기」로 데려오세요."
-            : "아직 에이전트가 없습니다."}
-        </p>
+        <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>
       ) : (
         <AgentLinks agents={here} />
       )}

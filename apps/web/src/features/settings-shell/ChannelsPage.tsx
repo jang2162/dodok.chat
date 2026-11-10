@@ -21,9 +21,6 @@ export function ChannelsPage() {
     <section data-testid="page-channels" className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">채널</h1>
-        <p className="text-sm text-muted-foreground">
-          보관한 채널은 사이드바에 없고 읽기만 됩니다. 보관 해제하면 그대로 돌아옵니다.
-        </p>
       </header>
       {!rows ? (
         archived.isError ? (

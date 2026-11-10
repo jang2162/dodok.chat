@@ -138,7 +138,7 @@ describe("MCP 토큰", () => {
     expect(await within(section).findByText("발급한 토큰이 없습니다.")).toBeInTheDocument();
   });
 
-  it("발급 — 원문·「이 토큰은 다시 볼 수 없습니다」·복사·claude mcp add 예시를 보인다", async () => {
+  it("발급 — 원문·「닫으면 다시 볼 수 없습니다」·복사·claude mcp add 예시를 보인다", async () => {
     const { calls } = stubTokenServer();
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
@@ -147,7 +147,7 @@ describe("MCP 토큰", () => {
 
     expect(await within(dialog).findByText(RAW)).toBeInTheDocument();
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ label: "노트북" });
-    expect(within(dialog).getByText(/이 토큰은 다시 볼 수 없습니다/)).toBeInTheDocument();
+    expect(within(dialog).getByText("닫으면 다시 볼 수 없습니다.")).toBeInTheDocument();
     const command = within(dialog).getByTestId("mcp-add-command");
     expect(command).toHaveTextContent(
       `claude mcp add --transport http dodok ${window.location.origin}/mcp --header "Authorization: Bearer ${RAW}"`,

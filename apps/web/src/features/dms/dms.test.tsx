@@ -24,7 +24,6 @@ import { stubScrollLayout } from "../../../test/scrollLayout";
 import { agentOf, gate } from "../../../test/settingsServer";
 import { ME, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { type DmView, DmViewContext } from "./context";
-import { DM_FIRST_NOTICE } from "./DmNotices";
 import { canOpenDm, DM_READ_ONLY_TEXT } from "./queries";
 
 // 에이전트 DM 계획 태스크 5 — 사이드바 「다이렉트 메시지」·DM 열기·DM 화면·읽기 전용·`dmAccess` 설정(웹)
@@ -506,10 +505,10 @@ describe("DM 화면", () => {
     expect(within(within(pane).getByRole("group", { name: "어제" })).getByText("세션-2")).toBeInTheDocument();
   });
 
-  it("세션이 하나도 없는 DM 은 첫 안내, 세션이 있는 DM 의 새 세션 창은 멘션을 권하지 않는 빈 문구", async () => {
+  it("세션이 하나도 없는 DM 도 빈 문구 — 첫 안내는 걷었다(2026-11-10 문구 걷기)", async () => {
     stubServer({ dms: [dmOf(dmChannel(), DEV, { lastMessageAt: null })], conversations: [] });
     const { router } = renderRoute(`/c/${DM}`);
-    expect(await screen.findByText(DM_FIRST_NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText("아직 메시지가 없습니다.")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/c/${DM}/s/new`);
   });
 
@@ -517,7 +516,6 @@ describe("DM 화면", () => {
     stubServer();
     renderRoute(`/c/${DM}/s/new`);
     expect(await screen.findByText("아직 메시지가 없습니다.")).toBeInTheDocument();
-    expect(screen.queryByText(DM_FIRST_NOTICE)).toBeNull();
     const box = await screen.findByRole("textbox", { name: "메시지 입력" });
     await waitFor(() =>
       expect(box.querySelector("[data-placeholder]")).toHaveAttribute("data-placeholder", "메시지 보내기"),

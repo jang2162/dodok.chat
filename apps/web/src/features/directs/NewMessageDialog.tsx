@@ -113,9 +113,7 @@ export function NewMessageDialog({ onNavigate }: { onNavigate?: () => void }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>새 메시지</DialogTitle>
-          <DialogDescription>
-            대화할 사람과 에이전트를 고릅니다(최대 {DIRECT_PICK_MAX}명). 이 대화는 참여자만 봅니다.
-          </DialogDescription>
+          <DialogDescription>최대 {DIRECT_PICK_MAX}명</DialogDescription>
         </DialogHeader>
         {loading ? (
           <p role="status" className="text-sm text-muted-foreground">

@@ -2,10 +2,6 @@ import type { DmReadOnlyReason } from "@dodok/shared";
 import { useEffect, useRef } from "react";
 import { DM_READ_ONLY_TEXT } from "./queries";
 
-/** DM 첫 안내(세션이 하나도 없을 때의 빈 화면 — 에이전트 DM 계획 Global Constraints, 글자 그대로) */
-export const DM_FIRST_NOTICE =
-  "이 DM 은 나만 봅니다. 다만 에이전트는 자기 기억(메모리·작업 디렉터리의 파일)을 거쳐 여기서 들은 것을 다른 채널의 답에 쓸 수 있습니다 — dodok 은 이것을 막지 못합니다.";
-
 /**
  * 읽기 전용 DM 의 작성기 자리(에이전트 DM 스펙 3.3) — 사유 한 줄. 되돌리면(되살리기·켜기·허용) DM 목록이 다시 와 부르는 쪽이 작성기를
  * 다시 보인다(`agents.changed` → DM 목록 다시 받기).

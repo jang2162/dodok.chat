@@ -10,14 +10,7 @@ import { ProjectRow } from "@/features/runners/ProjectList";
 import { Section } from "@/features/setup/sections";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { AgentLinks } from "./ConnectionTreeList";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
@@ -147,10 +140,9 @@ function NewRunnerAgentDialog({
           에이전트 만들기
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[85svh] overflow-y-auto">
+      <DialogContent aria-describedby={undefined} className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>러너 에이전트 만들기</DialogTitle>
-          <DialogDescription>이 프로젝트에서 도는 에이전트를 만듭니다.</DialogDescription>
         </DialogHeader>
         {open && (
           <RunnerAgentForm

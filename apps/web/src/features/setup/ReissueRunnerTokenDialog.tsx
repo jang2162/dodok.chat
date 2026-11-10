@@ -96,10 +96,8 @@ export function ReissueRunnerTokenDialog({
               <DialogTitle>「{token.label}」 러너 토큰을 다시 발급할까요?</DialogTitle>
               <DialogDescription>
                 {connected
-                  ? "지금 이 토큰으로 러너가 붙어 있습니다. 다시 발급하면 옛 토큰은 곧바로 안 통하고 그 러너가 끊깁니다. "
-                  : "다시 발급하면 옛 토큰은 곧바로 안 통합니다. "}
-                프로젝트·에이전트는 그대로 남습니다. 러너 서비스를 먼저 멈추고 새 토큰을 넣은 뒤 다시
-                띄우세요.
+                  ? "옛 토큰은 곧바로 안 통하고 지금 붙은 러너가 끊깁니다."
+                  : "옛 토큰은 곧바로 안 통합니다."}
               </DialogDescription>
             </DialogHeader>
             {revokedMeanwhile && (

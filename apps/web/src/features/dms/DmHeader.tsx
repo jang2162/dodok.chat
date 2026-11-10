@@ -13,15 +13,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { usePatchChannel } from "@/features/settings/mutations";
 import { PROMPT_MAX, PROMPT_SAVED_NOTICE } from "@/features/settings/PromptSection";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { Textarea } from "@/ui/textarea";
 import { useOpenProfile } from "@/features/profile/openProfile";
 import { DmAgentAvatar } from "./DmSection";
@@ -193,11 +185,10 @@ function DmInstructionDialog({ channel, readOnly }: { channel: Channel; readOnly
           <NotebookPenIcon />
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <form onSubmit={submit} className="flex flex-col gap-3">
           <DialogHeader>
             <DialogTitle>{DM_INSTRUCTION_LABEL}</DialogTitle>
-            <DialogDescription>이 DM 의 에이전트가 매 턴 함께 받는 지시입니다.</DialogDescription>
           </DialogHeader>
           <Textarea
             aria-label={DM_INSTRUCTION_LABEL}

@@ -6,15 +6,7 @@ import { useChannelArchived } from "@/features/channels/archived";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { usePatchConversation } from "./mutations";
@@ -106,11 +98,10 @@ function RenameDialog({ conversation }: { conversation: Conversation }) {
           {conversation.title}
         </button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <form onSubmit={submit} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>세션 이름 바꾸기</DialogTitle>
-            <DialogDescription>이 채널의 모든 사람에게 바뀐 이름이 보입니다.</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
             <Input
@@ -176,7 +167,7 @@ export function CloseConversationButton({
         open={open}
         onOpenChange={setOpen}
         title="세션 닫기"
-        description={`「${conversation.title}」 세션을 닫습니다. 진행 중인 실행은 멈추고, 닫힌 세션은 읽기만 됩니다. 다시 열 수 있습니다.`}
+        description={`「${conversation.title}」 세션을 닫습니다 — 진행 중인 실행은 멈춥니다.`}
         confirmLabel="세션 닫기"
         pendingLabel="닫는 중…"
         pending={patch.isPending}

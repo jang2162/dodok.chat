@@ -17,7 +17,6 @@ import {
 } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
-import { HelpDetails } from "@/features/connections/HelpDetails";
 import { llmsHandoffLine } from "./llms";
 import { useIssueToken } from "./mutations";
 import { CopyBlock, PACK_COMMAND, pluginInstallCommand } from "./sections";
@@ -46,7 +45,6 @@ export function IssueDialog<T extends Issued>({
   triggerRef,
   triggerLabel,
   title,
-  description,
   path,
   listKey,
   config,
@@ -58,9 +56,8 @@ export function IssueDialog<T extends Issued>({
   onDone?: (issued: T) => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
-  /** 라벨 입력 화면의 제목·설명 */
+  /** 라벨 입력 화면의 제목 */
   title: string;
-  description: string;
   /** 발급 API 경로(`/api/v1` 뒤)와 다시 받을 목록 키 */
   path: string;
   listKey: QueryKey;
@@ -132,7 +129,12 @@ export function IssueDialog<T extends Issued>({
           {triggerLabel}
         </Button>
       </DialogTrigger>
-      <DialogContent showCloseButton={!issued} closeDisabled={issue.isPending}>
+      <DialogContent
+        showCloseButton={!issued}
+        closeDisabled={issue.isPending}
+        // 라벨 입력 화면에는 설명이 없다 — 발급 화면만 설명(원문 한 번)을 잇는다
+        {...(issued ? {} : { "aria-describedby": undefined })}
+      >
         {issued ? (
           <IssuedToken
             issued={issued}
@@ -146,7 +148,6 @@ export function IssueDialog<T extends Issued>({
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
-              <DialogDescription>{description}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-2">
               <Label htmlFor={labelId}>라벨</Label>
@@ -206,9 +207,7 @@ export function IssuedToken<T extends Issued>({
     <div className="grid min-w-0 gap-4">
       <DialogHeader>
         <DialogTitle>{title ?? `「${issued.record.label}」 토큰을 발급했습니다`}</DialogTitle>
-        <DialogDescription>
-          원문은 지금 한 번만 보입니다. 닫으면 다시 볼 수 없으니 복사해 두세요.
-        </DialogDescription>
+        <DialogDescription>닫으면 다시 볼 수 없습니다.</DialogDescription>
       </DialogHeader>
       <div className="grid min-w-0 gap-1.5">
         <p className="text-sm font-medium">토큰</p>
@@ -217,10 +216,6 @@ export function IssuedToken<T extends Issued>({
       {handoff && (
         <div className="grid min-w-0 gap-1.5">
           <p className="text-sm font-medium">AI 에게 맡기기</p>
-          <p className="text-xs text-muted-foreground">
-            설치할 머신에서 도는 AI 에게 이 한 줄을 건네면 안내서대로 설치합니다. 토큰이 들어 있으니 원문처럼
-            다루세요.
-          </p>
           <CopyBlock text={handoff(issued)} label="AI 에게 맡기기 복사" wrap testId="llms-handoff" />
         </div>
       )}
@@ -231,7 +226,6 @@ export function IssuedToken<T extends Issued>({
           className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
         >
           <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
-          <p>복사를 마쳤다면 「복사했습니다」를 누르세요. 닫고 이어서 이동합니다.</p>
           <div className="flex flex-wrap gap-2">
             <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
               머무르기
@@ -273,7 +267,6 @@ export function IssueTokenDialog({
       triggerRef={triggerRef}
       triggerLabel="새 토큰 발급"
       title="새 브리지 토큰"
-      description="알아볼 라벨(예: Gateway 호스트 이름)을 붙입니다. 원문은 발급 직후 한 번만 보입니다."
       path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
       handoff={(issued) => llmsHandoffLine("bridge", origin, issued.token)}
@@ -281,17 +274,6 @@ export function IssueTokenDialog({
         pluginFileAvailable ? (
           <div className="grid min-w-0 gap-1.5">
             <p className="text-sm font-medium">설치 명령</p>
-            <p className="text-xs text-muted-foreground">
-              Gateway 호스트에 붙여 넣으면 플러그인을 설치하고 이 토큰을 넣습니다. 토큰이 들어 있으니 원문처럼
-              다루세요.
-            </p>
-            <HelpDetails label="설치 명령">
-              <p>플러그인을 받아 설치하고 이 토큰을 넣은 뒤 Gateway 를 다시 올립니다.</p>
-              <p>
-                맨 앞 공백은 우분투 기본 bash 가 이 줄을 히스토리에 남기지 않게 합니다(다른 셸에서는 남을 수
-                있습니다).
-              </p>
-            </HelpDetails>
             <CopyBlock
               text={pluginInstallCommand(origin, issued.token)}
               label="설치 명령 복사"

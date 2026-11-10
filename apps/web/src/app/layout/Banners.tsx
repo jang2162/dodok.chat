@@ -68,10 +68,7 @@ export function Banners() {
           <Alert role={undefined} className="rounded-none border-x-0 border-t-0">
             <UnplugIcon />
             <AlertDescription>
-              <p>
-                OpenClaw Gateway {which}에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다. 메시지는
-                저장됩니다.
-              </p>
+              <p>OpenClaw Gateway {which}에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다.</p>
               {owner &&
                 (down.length === 1 && first ? (
                   <Link

@@ -70,7 +70,9 @@ describe("권한", () => {
     await userEvent.type(within(dialog).getByLabelText("토큰"), "gw-secret");
     await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(gatewayDetailPath(gatewayId(7))));
-    expect(await screen.findByText("승인 대기 — admin 이 승인하면 서버가 접속합니다")).toBeInTheDocument();
+    expect(
+      await within(await screen.findByTestId("gateway-detail")).findByText("승인 대기"),
+    ).toBeInTheDocument();
   });
 
   it("「연결 추가」 머리와 고르기 — 처음은 OpenClaw Gateway", async () => {
@@ -222,13 +224,12 @@ describe("두 번 보내지 않기(태스크 6 리뷰 Minor 1)", () => {
 });
 
 describe("러너", () => {
-  it("issuing a runner token shows the token once, the four exposure lines, then opens the runner detail", async () => {
+  it("issuing a runner token shows the token once, then opens the runner detail", async () => {
     const server = stubSetupServer();
     const qc = renderNew();
     await userEvent.click(await screen.findByRole("radio", { name: "러너" }));
-    // 발급 전에 「드러나는 것」 네 줄 전부가 펼친 채
-    const note = await screen.findByRole("note");
-    expect(within(note).getAllByRole("listitem")).toHaveLength(4);
+    // 「드러나는 것」 경고는 걷었다(2026-11-10 문구 걷기)
+    expect(screen.queryByRole("note")).toBeNull();
     await userEvent.click(await screen.findByRole("button", { name: "새 러너 토큰 발급" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("라벨"), " 맥북 ");

@@ -53,8 +53,7 @@ export function DeleteGatewayConfirm({
       <p className="font-medium">「{gateway.name}」 Gateway 를 삭제할까요?</p>
       {ready ? (
         <p>
-          이 Gateway 의 에이전트 {agentCount}개는 남고 연결이 비어 옮기기를 기다립니다 · 브리지 토큰{" "}
-          {tokenCount}개가 지워집니다
+          이 Gateway 의 에이전트 {agentCount}개는 남고 브리지 토큰 {tokenCount}개가 지워집니다
         </p>
       ) : agents.data === undefined ? (
         <Pending what="에이전트 목록" query={agents} />

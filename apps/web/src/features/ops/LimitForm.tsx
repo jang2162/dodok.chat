@@ -116,7 +116,7 @@ export function LimitForm({ status }: { status: OpsStatus }) {
           </span>
         </div>
         <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-          비우면 무제한. 서버 시각 0시에 다시 셉니다. 채널별 한도는 각 채널 설정의 「릴레이 정책」에 있습니다.
+          비우면 무제한.
         </p>
         {error && (
           <p id={`${id}-error`} role="alert" className="text-sm text-destructive">

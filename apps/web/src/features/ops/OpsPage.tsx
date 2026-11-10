@@ -51,9 +51,6 @@ export function OpsPage() {
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">운영</h1>
         </div>
-        <p className="text-sm text-muted-foreground">
-          서버·연결 상태, 오늘과 이번 주의 런, 워크스페이스 런 한도·시간대, 최근 사건을 봅니다.
-        </p>
       </header>
       {manager ? (
         <ManagerContent />

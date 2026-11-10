@@ -22,7 +22,6 @@ export function HomeRedirect() {
     body = (
       <>
         <h1 className="text-lg font-semibold">채널이 없습니다</h1>
-        <p className="text-sm text-muted-foreground">채널을 만들고 에이전트를 넣어 대화를 시작하세요.</p>
         <CreateChannelDialog>
           <Button>채널 만들기</Button>
         </CreateChannelDialog>

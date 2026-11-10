@@ -314,7 +314,8 @@ describe("브리지 토큰", () => {
     const row3 = within(br).getByRole("listitem", { name: "옛것" });
     expect(row3).toHaveTextContent("폐기됨");
     expect(within(row3).queryByRole("button", { name: /폐기/ })).not.toBeInTheDocument();
-    expect(br).toHaveTextContent(PUBLIC_URL);
+    // 브리지 주소는 설명 없이 라벨 + 값 한 줄로 남는다(2026-11-10 문구 걷기 리뷰)
+    expect(within(br).getByTestId("bridge-url")).toHaveTextContent(`브리지 주소${PUBLIC_URL}`);
   });
 
   it("활성 토큰이 0개면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 — 폐기된 줄과 함께 보여도 모순되지 않는다", async () => {

@@ -259,9 +259,7 @@ describe("삭제", () => {
     expect(menu).toHaveAttribute("aria-expanded", "true");
     expect(menu).toHaveAttribute("aria-controls", confirm.id);
     await waitFor(() =>
-      expect(confirm).toHaveTextContent(
-        "이 Gateway 의 에이전트 2개는 남고 연결이 비어 옮기기를 기다립니다 · 브리지 토큰 3개가 지워집니다",
-      ),
+      expect(confirm).toHaveTextContent("이 Gateway 의 에이전트 2개는 남고 브리지 토큰 3개가 지워집니다"),
     );
     expect(within(confirm).getByRole("button", { name: "취소" })).toHaveFocus();
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);

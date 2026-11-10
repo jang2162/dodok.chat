@@ -7,15 +7,7 @@ import { qk } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
@@ -110,13 +102,9 @@ export function AddProjectDialog({
           프로젝트 추가
         </Button>
       </DialogTrigger>
-      <DialogContent closeDisabled={create.isPending} className="sm:max-w-xl">
+      <DialogContent aria-describedby={undefined} closeDisabled={create.isPending} className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>프로젝트 추가 — {runner.label}</DialogTitle>
-          <DialogDescription>
-            러너의 루트 안에서 에이전트가 돌 디렉터리를 고릅니다. 이 러너의 에이전트는 이 디렉터리를 작업
-            디렉터리로 씁니다.
-          </DialogDescription>
         </DialogHeader>
         {!runner.connected || runner.revoked ? (
           // 열어 둔 사이에 러너가 끊겼다(둘러보기·확인 어느 단계든) — 다시 붙으면 고른 자리 그대로 돌아온다
@@ -251,7 +239,7 @@ function TypedPath({ rootLabel, onPick }: { rootLabel: string; onPick: (relPath:
         />
       </div>
       <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-        비우면 루트 자신입니다. 숨김 디렉터리도 경로를 적으면 고를 수 있습니다.
+        비우면 루트 자신입니다.
       </p>
       <FieldError id={`${id}-error`}>{error}</FieldError>
       <Button type="submit" size="sm" className="self-end">

@@ -21,10 +21,10 @@ import { ConversationList } from "@/features/conversations/ConversationList";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
 import { DirectHeader } from "@/features/directs/DirectHeader";
-import { GROUP_DM_FIRST_NOTICE, isDirectChannel, isOneStream, useDirect } from "@/features/directs/queries";
+import { isDirectChannel, isOneStream, useDirect } from "@/features/directs/queries";
 import { type DmView, DmViewContext } from "@/features/dms/context";
 import { DmHeader } from "@/features/dms/DmHeader";
-import { DM_FIRST_NOTICE, DmReadOnlyNotice } from "@/features/dms/DmNotices";
+import { DmReadOnlyNotice } from "@/features/dms/DmNotices";
 import { isDmChannel, useDm } from "@/features/dms/queries";
 import { captureEntryRead } from "@/features/reads/entryRead";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
@@ -296,23 +296,6 @@ export function ChannelPage() {
                               entryReadSeq={entryReadSeq}
                               bubbleRunIds={bubbleRunIds}
                               bubbles={(runId) => <StreamingBubble runId={runId} />}
-                              {...(directChannel
-                                ? {
-                                    // 세션이 하나도 없는 에이전트 그룹은 그룹 DM 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
-                                    emptyText:
-                                      sessions && direct?.lastMessageAt === null
-                                        ? GROUP_DM_FIRST_NOTICE
-                                        : "아직 메시지가 없습니다.",
-                                  }
-                                : dmChannel
-                                  ? {
-                                      // 빈 DM(세션이 하나도 없다 — 빈 세션은 만들지 않으니 글이 없다)은 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
-                                      emptyText:
-                                        dm?.lastMessageAt === null
-                                          ? DM_FIRST_NOTICE
-                                          : "아직 메시지가 없습니다.",
-                                    }
-                                  : {})}
                             />
                             <div data-slot="composer" ref={composerSlot}>
                               {notice}

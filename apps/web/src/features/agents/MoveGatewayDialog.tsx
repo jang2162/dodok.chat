@@ -2,17 +2,8 @@ import type { Agent } from "@dodok/shared";
 import { useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAdapterStatus } from "@/api/queries";
-import { josa } from "@/lib/josa";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { useMoveAgentGateway } from "./mutations";
@@ -47,7 +38,6 @@ export function MoveGatewayDialog({
   );
   const target = targets.some((g) => g.id === picked) ? picked : targets[0]?.id;
   const handle = `@${agent.handle}`;
-  const id = agent.providerAgentId;
   const error = move.isError ? moveErrorText(move.error) : undefined;
 
   function change(next: boolean) {
@@ -66,19 +56,12 @@ export function MoveGatewayDialog({
           Gateway 옮기기
         </Button>
       </DialogTrigger>
-      <DialogContent closeDisabled={move.isPending}>
+      <DialogContent aria-describedby={undefined} closeDisabled={move.isPending}>
         <DialogHeader>
           <DialogTitle>Gateway 옮기기</DialogTitle>
-          <DialogDescription>
-            {handle} {josa(agent.handle, "이", "가")} 답할 Gateway 를 고릅니다. 그 Gateway 에 OpenClaw
-            에이전트 {id} {josa(id, "이", "가")} 있어야 하고, 그 Gateway 로 이미 등록된 {id}{" "}
-            {josa(id, "이", "가")} 없어야 합니다.
-          </DialogDescription>
         </DialogHeader>
         {targets.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            옮길 다른 Gateway 가 없습니다 — 설정 → 연결의 「연결 추가」로 Gateway 를 추가하세요.
-          </p>
+          <p className="text-sm text-muted-foreground">옮길 다른 Gateway 가 없습니다.</p>
         ) : (
           <fieldset className="grid gap-2" disabled={move.isPending}>
             <legend className="mb-1 text-sm font-medium">옮길 Gateway</legend>

@@ -3,15 +3,7 @@ import { UserPlusIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { IssuedLink } from "./IssuedLink";
@@ -63,7 +55,12 @@ export function InviteDialog({ viewerRole }: { viewerRole: TeamRole }) {
           초대
         </Button>
       </DialogTrigger>
-      <DialogContent showCloseButton={!url} closeDisabled={issue.isPending}>
+      <DialogContent
+        // 발급 화면은 IssuedLink 의 DialogDescription 을 Radix 가 잇는다 — 설명이 없는 입력 화면에서만 끊는다
+        {...(url ? {} : { "aria-describedby": undefined })}
+        showCloseButton={!url}
+        closeDisabled={issue.isPending}
+      >
         {url ? (
           <IssuedLink
             title="초대 링크를 만들었습니다"
@@ -75,9 +72,6 @@ export function InviteDialog({ viewerRole }: { viewerRole: TeamRole }) {
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>멤버 초대</DialogTitle>
-              <DialogDescription>
-                가입 링크를 만들어 초대할 사람에게 건넵니다. 링크는 만든 직후 한 번만 보입니다.
-              </DialogDescription>
             </DialogHeader>
             {canPickRole ? (
               <fieldset className="grid gap-2">

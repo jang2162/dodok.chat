@@ -3,7 +3,6 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentDetail, agentPath, apiErr, dev, fin, renderPage, stubServer } from "../../../test/agentsPage";
-import { DM_ACCESS_EVERYONE_NOTE } from "./AgentRow";
 
 // 에이전트 DM 계획 태스크 5 Step 7 — 에이전트 설정의 DM 허용 범위(`dmAccess`, admin 이상)와 「DM 보내기」
 
@@ -32,12 +31,8 @@ describe("DM 허용", () => {
         .map((r) => r.closest("div")?.textContent),
     ).toEqual(["끔", "admin 이상", "모두"]);
     expect(within(group).getByRole("radio", { name: "admin 이상" })).toBeChecked();
-    expect(DM_ACCESS_EVERYONE_NOTE).toBe(
-      "member 도 이 에이전트와 DM 을 열고, 그 DM 의 도구 승인을 스스로 결정합니다.",
-    );
-    // 「모두」 가 설명 줄을 가리킨다
-    const everyone = within(group).getByRole("radio", { name: "모두" });
-    expect(everyone).toHaveAccessibleDescription(DM_ACCESS_EVERYONE_NOTE);
+    // 「모두」 아래 설명 줄은 걷었다(2026-11-10 문구 걷기)
+    expect(within(group).getByRole("radio", { name: "모두" })).not.toHaveAttribute("aria-describedby");
 
     await userEvent.click(within(group).getByRole("radio", { name: "모두" }));
     await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ dmAccess: "everyone" }]));
