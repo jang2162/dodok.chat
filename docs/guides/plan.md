@@ -607,6 +607,7 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
    - 러너가 설치된 claude 로 실행(결정 #27) → **완료**(2026-11-10, 런 0회 하네스까지) — 러너 0.3.0.
    - 러너 첫 실행 마법사(`dodok-runner`·`setup`·`token`)와 웹 러너 안내 줄이기 → **완료**(2026-11-11, pty·dev:fake 연결까지 — 모델 런 0회). 러너 판본 미배포(0.4.0 예정).
    - 러너 세션 설정(대화 × 에이전트의 모델·effort·권한, 작성기 위 상태 줄·컨텍스트 %) → **완료**(2026-11-11, 시험 8,145개·런 0회 하네스까지 — 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-11-runner-session-settings-design.md`, 계획 `docs/superpowers/plans/2026-11-11-runner-session-settings.md`. 마이그레이션 `0037`. 구현에서 더한 것: 새 세션 창용 `GET /api/v1/channels/:id/agent-ceilings`(채널을 읽는 누구나 — 러너 권한 상한), 대화 설정 응답의 `ceiling`. 러너 판본 미배포(0.5.0 예정).
+   - 사이드바 개인 섹션(채널·DM 을 내 분류로, 메뉴·끌어다 놓기) → **완료**(2026-11-11, 시험 8,197개·dev:fake 브라우저까지 — 실기기 터치 미확인) — 스펙 `docs/superpowers/specs/2026-11-11-sidebar-sections-design.md`, 계획 `docs/superpowers/plans/2026-11-11-sidebar-sections.md`. 마이그레이션 `0038`, 새 의존성 `@dnd-kit`.
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
 ### 이월 — 남은 문제(이월 정리 뒤 시점, 2026-11-01)
@@ -649,6 +650,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
   - **넓은 화면 패널을 브라우저 뒤로 가기로 내리면 초점이 `body` 로 떨어진다** — 초점 옮기기는 「닫기」 링크에만 걸려 있다(`app/layout/PanelTabs.tsx`). 같은 줄에 있던 수정자 클릭(Cmd/Ctrl/Shift/Alt 클릭에도 초점을 헤더로 옮김)은 이월 정리(2026-10-31)가 닫았다.
 - **끝난 런 타임라인 무효화는 활동 패널이 떠 있을 때만 돈다** — `ActivityPanel` 이 새로 빠진(`vanished`) 런의 `qk.runEvents` 를 무효화하는데 `vanished` 가 컴포넌트 ref 라, 패널을 닫은 채 끊겼다 붙으면 그 캐시는 낡은 채다. 다음 마운트가 REST 목록을 새로 받으므로 원래 증상(패널을 연 채 끊김)은 닫혔다. `seenVanished` 는 가지치기가 없지만 마운트 수명이다. 출처: `.superpowers/sdd/2026-10-31-carryover/web-timeline-review.md` 낮음 2.
 - **날짜 칸 키 롤오버 시험은 전이 흉내다** — `modal.test.tsx` 의 `dateSegment` 는 keydown 기본 동작을 흉내 낼 뿐 실브라우저의 세그먼트 입력이 아니다. 부분 입력끼리 바뀌는 것(`2026`→`2027`)은 새 판정(keydown·keyup 사이에 값이 달라졌나)이 못 본다 — 문구가 여전히 참이라 손해는 없다. 출처: `.superpowers/sdd/2026-10-31-carryover/web-timeline-review.md` 낮음 3.
+- **사이드바 섹션 뒤 남은 것** — ① `@dnd-kit` 이 진입 청크에 정적으로 들어간다(약 29KB gz — 지연 로딩 후보) ② `PUT /api/v1/me/sidebar` 응답이 걷힌 id 로 그 채널 id 의 존재 여부를 드러낸다(이름은 안 실린다 — 스펙이 정한 동작) ③ 계약 상한보다 Fastify 본문 상한(1 MiB)이 먼저 413 으로 막는다 ④ 섹션을 접으면 지금 연 채널도 숨는다(슬랙은 연 것은 보인다). 실기기 iOS·Android 길게 눌러 끌기는 사람이 볼 것. 출처: 2026-11-11 sidebar-sections 리뷰.
 
 **문서**
 
