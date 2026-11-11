@@ -16,6 +16,7 @@ import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
 import { useDmView } from "@/features/dms/context";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
+import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
 import { PendingAttachments } from "./PendingAttachments";
@@ -125,6 +126,13 @@ export function Composer({
     });
   }
   const carriedFrom = place.carriedFrom;
+  // 새 세션 창에서 바꾼 러너 에이전트 설정 — 화면에만 들고 있다가 첫 글과 함께 간다(세션 설정 스펙 S11). 자리가 바뀌면(창을 떠나면) 버린다
+  const isNewWindow = conversationId === NEW_CONVERSATION && threadRootId === undefined;
+  const [pendingSettings, setPendingSettings] = useState<{ n: number; byAgent: PendingAgentSettings }>({
+    n: place.n,
+    byAgent: {},
+  });
+  if (pendingSettings.n !== place.n) setPendingSettings({ n: place.n, byAgent: {} });
   const attachments = useComposerAttachments(channelId, String(place.n));
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
@@ -275,7 +283,11 @@ export function Composer({
     if (blocked) return;
     const bodyMd = toBodyMd(doc);
     if (!bodyMd && attachments.ready.length === 0) return;
-    void send(bodyMd, attachments.ready);
+    const agentSettings = isNewWindow
+      ? Object.entries(pendingSettings.byAgent).map(([agentId, patch]) => ({ agentId, ...patch }))
+      : [];
+    void send(bodyMd, attachments.ready, agentSettings);
+    if (agentSettings.length > 0) setPendingSettings({ n: place.n, byAgent: {} });
     attachments.clear();
     editor.commands.clearContent();
   };
@@ -296,6 +308,18 @@ export function Composer({
 
   return (
     <div className="px-4 pb-4">
+      <AgentSettingsBar
+        channelId={channelId}
+        conversationId={conversationId}
+        {...(threadRootId === undefined ? {} : { threadRootId })}
+        pending={pendingSettings.byAgent}
+        onPendingChange={(agentId, patch) =>
+          setPendingSettings((p) => ({
+            n: p.n,
+            byAgent: { ...p.byAgent, [agentId]: { ...p.byAgent[agentId], ...patch } },
+          }))
+        }
+      />
       <div
         className="rounded-lg border border-input bg-card px-3 py-1.5 shadow-xs focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30"
         onDragOver={onDragOver}

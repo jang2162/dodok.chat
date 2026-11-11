@@ -16,6 +16,7 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
+import { applyAgentSettings, invalidateAgentSettings } from "@/features/conversations/agentSettings";
 import { applyConversation } from "@/features/conversations/cache";
 import {
   bumpDirect,
@@ -33,7 +34,7 @@ import {
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { usePresenceStore } from "@/features/presence/store";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
-import { useRunStore } from "@/features/runs/runStore";
+import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
 import { getChannelSeq, noteChannelSeq, patchTimeline, updateThread } from "./timelineCache";
 import { useTypingStore } from "./typing";
@@ -255,6 +256,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "message.updated": (p) => applyMessage(p, true),
     "run.state": ({ run, resync }) => {
       useRunStore.getState().applyState(run);
+      // 끝난 실행은 상태 줄의 컨텍스트 % 를 바꾼다(세션 설정 스펙 S7) — 그 대화의 줄을 다시 받는다
+      if (TERMINAL.has(run.status)) invalidateAgentSettings(qc, run.conversationId);
       if (resync) void subscriptions.runReplay.resync(run);
     },
     "run.event": ({ event }) => subscriptions.runReplay.live(event),
@@ -343,6 +346,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      */
     "conversation.created": ({ conversation }) => applyConversation(qc, conversation),
     "conversation.updated": ({ conversation }) => applyConversation(qc, conversation),
+    /** 누가 러너 에이전트의 세션 설정을 바꿨다 — 그 대화의 상태 줄을 갈아 끼운다(세션 설정 스펙 5.2) */
+    "conversation.agent_settings": ({ conversationId, settings }) =>
+      applyAgentSettings(qc, conversationId, settings),
     /**
      * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —
      * 보관·되살리기는 서버가 channel.member.changed 를 내지 않는다(멤버 응답이 읽을 때 거른다). exact: 찾기 목록도 [agents] 아래라

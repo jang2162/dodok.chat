@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { agentSettingsKeys } from "@/features/conversations/agentSettings";
 import { fromLatest, jumpAround, threadFromPage } from "@/features/messages/timeline";
 import { conversationTimelineQuery } from "@/features/messages/useTimeline";
 import { threadQuery } from "@/features/threads/queries";
@@ -1134,5 +1135,45 @@ describe("작성 중·알림", () => {
     expect(toast.warning).toHaveBeenCalledWith("주의", { duration: 6_000 });
     expect(toast.error).toHaveBeenCalledWith("오류", { duration: Infinity });
     expect(NOTICE_DURATION_MS).toEqual({ info: 4_000, warn: 6_000, error: Infinity });
+  });
+});
+
+describe("러너 에이전트 세션 설정 [세션 설정 스펙 5.2·S9]", () => {
+  const row = (over: object = {}) => ({
+    agentId: AGENT,
+    model: null,
+    effort: null,
+    permissionMode: null,
+    contextPercent: 10,
+    ...over,
+  });
+
+  it("conversation.agent_settings — 대화 키는 줄 그대로, 스레드 키는 값만 바꾸고 그 스레드의 컨텍스트 % 는 둔다 [Review Focus 5]", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(agentSettingsKeys.of(CH), [row()]);
+    queryClient.setQueryData(agentSettingsKeys.of(CH, uid(77)), [row({ contextPercent: 70 })]);
+    queryClient.setQueryData(agentSettingsKeys.of(CH2), [row()]);
+    fake.serverEmit("conversation.agent_settings", {
+      channelId: CH,
+      conversationId: CH,
+      settings: row({ model: "opus", permissionMode: "plan", contextPercent: 42 }),
+    });
+    expect(queryClient.getQueryData(agentSettingsKeys.of(CH))).toEqual([
+      row({ model: "opus", permissionMode: "plan", contextPercent: 42 }),
+    ]);
+    expect(queryClient.getQueryData(agentSettingsKeys.of(CH, uid(77)))).toEqual([
+      row({ model: "opus", permissionMode: "plan", contextPercent: 70 }),
+    ]);
+    // 다른 대화는 그대로
+    expect(queryClient.getQueryData(agentSettingsKeys.of(CH2))).toEqual([row()]);
+  });
+
+  it("끝난 run.state 는 그 대화의 상태 줄을 낡게 둔다 — 컨텍스트 % 를 다시 받는다", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(agentSettingsKeys.of(CH), [row()]);
+    fake.serverEmit("run.state", { run: runState({ id: RUN, status: "streaming" }) });
+    expect(queryClient.getQueryState(agentSettingsKeys.of(CH))?.isInvalidated).toBe(false);
+    fake.serverEmit("run.state", { run: runState({ id: RUN, status: "done" }) });
+    expect(queryClient.getQueryState(agentSettingsKeys.of(CH))?.isInvalidated).toBe(true);
   });
 });

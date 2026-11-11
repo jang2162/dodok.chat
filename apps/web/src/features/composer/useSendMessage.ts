@@ -1,4 +1,4 @@
-import type { Attachment, ErrorCode, Message } from "@dodok/shared";
+import type { AgentSettingsEntry, Attachment, ErrorCode, Message } from "@dodok/shared";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
@@ -21,7 +21,11 @@ import { useWire } from "@/realtime/WireProvider";
 
 export type SendMessage = {
   /** 보내는 중 항목을 넣고 `message.send`. 실패는 던지지 않고 항목을 `failed` 로 둔다. 첨부가 있으면 본문은 비어도 된다 */
-  send(bodyMd: string, attachments?: readonly Attachment[]): Promise<void>;
+  send(
+    bodyMd: string,
+    attachments?: readonly Attachment[],
+    agentSettings?: readonly AgentSettingsEntry[],
+  ): Promise<void>;
   /** 같은 clientMsgId·같은 본문·같은 첨부로 다시(서버가 `(authorId, clientMsgId)` 로 멱등) */
   retry(clientMsgId: string): Promise<void>;
   /** 캐시에서만 지운다 */
@@ -41,6 +45,8 @@ type Creation = {
   clientMsgId: string;
   bodyMd: string;
   attachments: readonly Attachment[];
+  /** 새 세션 창에서 바꾼 러너 에이전트 설정(세션 설정 스펙 S11) — 첫 글과 함께 가서 그 대화의 설정이 된다 */
+  agentSettings?: readonly AgentSettingsEntry[];
   /** 나가 있거나 성공한 보내기. 없으면 결과 불명으로 끝나 다시 보내기를 기다린다 */
   attempt?: Promise<Created>;
 };
@@ -75,6 +81,20 @@ const settledOf = (qc: QueryClient) => {
   qc.setQueryData(settledKey, byChannel);
   return byChannel;
 };
+/**
+ * 새 세션 창의 보내는 중 글이 실은 설정(clientMsgId → 설정) — 실패한 첫 글의 「다시 보내기」가 같은 값을 다시 싣게. 표지와 같은 까닭으로
+ * QueryClient 캐시 안, gc 없음. 세션이 확정되면 지운다
+ */
+const pendingSettingsKey = ["composerAgentSettings"] as const;
+const pendingSettingsOf = (qc: QueryClient) => {
+  const held = qc.getQueryData<Map<string, readonly AgentSettingsEntry[]>>(pendingSettingsKey);
+  if (held) return held;
+  const byMessage = new Map<string, readonly AgentSettingsEntry[]>();
+  qc.setQueryDefaults(pendingSettingsKey, { gcTime: Infinity });
+  qc.setQueryData(pendingSettingsKey, byMessage);
+  return byMessage;
+};
+
 const markSettled = (qc: QueryClient, channelId: string, conversationId: string) =>
   settledOf(qc).set(channelId, conversationId);
 /** 이 채널의 새 세션 창이 옮겨 간 세션 — 없으면 undefined */
@@ -224,7 +244,7 @@ export function useSendMessage(
       const byChannel = creatingOf(qc);
       const own: Creation = { ...entry };
       byChannel.set(channelId, own);
-      const { clientMsgId, bodyMd, attachments } = entry;
+      const { clientMsgId, bodyMd, attachments, agentSettings } = entry;
       const ids = attachments.map((a) => a.id);
       own.attempt = emitAck(socket, "message.send", {
         channelId,
@@ -232,8 +252,10 @@ export function useSendMessage(
         bodyMd,
         newConversation: {},
         ...(ids.length > 0 ? { attachments: ids } : {}),
+        ...(agentSettings && agentSettings.length > 0 ? { agentSettings: [...agentSettings] } : {}),
       }).then(
         ({ message, conversation }): Created => {
+          pendingSettingsOf(qc).delete(clientMsgId);
           // 세션 머리가 곧바로 제목을 그리게(같은 세션이 wire `conversation.created` 로도 온다)
           if (conversation) applyConversation(qc, conversation);
           settleNew(clientMsgId, message, conversation?.lastSeq, () => {
@@ -259,7 +281,12 @@ export function useSendMessage(
   );
 
   const deliver = useCallback(
-    async (clientMsgId: string, bodyMd: string, attachments: readonly Attachment[] = []) => {
+    async (
+      clientMsgId: string,
+      bodyMd: string,
+      attachments: readonly Attachment[] = [],
+      agentSettings?: readonly AgentSettingsEntry[],
+    ) => {
       if (!socket || useWireStatus.getState().status !== "connected") return fail(clientMsgId, undefined);
       let target = isNew ? undefined : conversationId;
       // 새 세션 창: 세션을 만드는 첫 글이 있으면 그 세션으로 간다. 없으면(앞 글이 거절됐으면) 이 글이 만든다 — 표지는 기다리기 전에
@@ -280,7 +307,12 @@ export function useSendMessage(
         }
         // 표지가 없거나, 결과 불명으로 끝난 이 글 자신(그 항목의 「다시 보내기」)이면 이 글이 만든다
         if (!ahead || (ahead.clientMsgId === clientMsgId && !ahead.attempt)) {
-          await create(socket, { clientMsgId, bodyMd, attachments });
+          await create(socket, {
+            clientMsgId,
+            bodyMd,
+            attachments,
+            ...(agentSettings ? { agentSettings } : {}),
+          });
           return;
         }
         let created: Created;
@@ -329,16 +361,23 @@ export function useSendMessage(
   );
 
   const send = useCallback(
-    async (bodyMd: string, attachments: readonly Attachment[] = []) => {
+    async (
+      bodyMd: string,
+      attachments: readonly Attachment[] = [],
+      agentSettings?: readonly AgentSettingsEntry[],
+    ) => {
       const clientMsgId = crypto.randomUUID();
+      // 설정은 세션을 만드는 첫 글만 싣는다 — 새 세션 창이 아니면 버린다
+      const settings = isNew && agentSettings && agentSettings.length > 0 ? agentSettings : undefined;
+      if (settings) pendingSettingsOf(qc).set(clientMsgId, settings);
       const createdAt = new Date().toISOString();
       const withAttachments = attachments.length > 0 ? { attachments: [...attachments] } : {};
       update((t) =>
         addPending(t, { clientMsgId, channelId, bodyMd, createdAt, state: "sending", ...withAttachments }),
       );
-      await deliver(clientMsgId, bodyMd, attachments);
+      await deliver(clientMsgId, bodyMd, attachments, settings);
     },
-    [channelId, deliver, update],
+    [qc, isNew, channelId, deliver, update],
   );
 
   const retry = useCallback(
@@ -346,15 +385,18 @@ export function useSendMessage(
       const p = read()?.pending.find((x) => x.clientMsgId === clientMsgId);
       if (!p) return;
       update((t) => setPendingState(t, clientMsgId, "sending"));
-      await deliver(clientMsgId, p.bodyMd, p.attachments);
+      await deliver(clientMsgId, p.bodyMd, p.attachments, pendingSettingsOf(qc).get(clientMsgId));
     },
-    [read, update, deliver],
+    [qc, read, update, deliver],
   );
 
   const discard = useCallback(
     // 결과 불명으로 남은 첫 글을 지우면 그 표지는 다음 보내기가 버린다(창에 항목이 없다 — `deliver`)
-    (clientMsgId: string) => update((t) => removePending(t, clientMsgId)),
-    [update],
+    (clientMsgId: string) => {
+      pendingSettingsOf(qc).delete(clientMsgId);
+      update((t) => removePending(t, clientMsgId));
+    },
+    [qc, update],
   );
 
   return useMemo(() => ({ send, retry, discard }), [send, retry, discard]);
