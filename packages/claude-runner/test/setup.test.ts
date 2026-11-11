@@ -13,12 +13,13 @@ import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadRunnerConfig } from "../src/config";
 import {
-  chooseStart,
   createTerminalPrompter,
   detectClaudeForSetup,
   rootIdFromLabel,
   runSetupWizard,
+  runTokenCommand,
   SetupAborted,
+  tokenFileFor,
   type Prompter,
 } from "../src/setup";
 
@@ -58,11 +59,14 @@ beforeEach(() => {
   configPath = join(home, ".dodok-runner", "config.json");
 });
 
-function wizard(answers: string[], extra: { confirmOverwrite?: boolean; loggedIn?: boolean } = {}) {
+function wizard(
+  answers: string[],
+  extra: { confirmOverwrite?: boolean; loggedIn?: boolean; configPath?: string } = {},
+) {
   const s = scripted(answers);
   const run = runSetupWizard({
     prompter: s.prompter,
-    configPath,
+    configPath: extra.configPath ?? configPath,
     home,
     cwd: work,
     env: { HOME: home },
@@ -199,20 +203,209 @@ describe("runSetupWizard", () => {
   });
 });
 
-describe("chooseStart", () => {
-  it("설정이 없고 터미널이면 마법사, 터미널이 아니면 안내를 단 오류, 있으면 그대로 읽는다(깨졌어도)", () => {
-    expect(chooseStart({ setup: false, configExists: false, interactive: true })).toEqual({ kind: "wizard" });
-    const noTty = chooseStart({ setup: false, configExists: false, interactive: false });
-    expect(noTty.kind).toBe("error");
-    expect(noTty.kind === "error" && noTty.message).toContain(
-      "터미널에서 dodok-runner 를 실행하면 설정을 만듭니다",
-    );
-    expect(chooseStart({ setup: false, configExists: true, interactive: true })).toEqual({ kind: "load" });
-    expect(chooseStart({ setup: true, configExists: true, interactive: true })).toEqual({ kind: "wizard" });
-    expect(chooseStart({ setup: true, configExists: true, interactive: false })).toEqual({
-      kind: "error",
-      message: "setup 은 터미널에서 실행하세요",
+describe("runSetupWizard — 설정이 이미 있을 때(setup)", () => {
+  const tokenPath = () => join(home, ".dodok-runner", "token");
+  function existing(extra: Record<string, unknown> = {}) {
+    mkdirSync(join(home, ".dodok-runner"), { recursive: true });
+    writeFileSync(tokenPath(), `${TOKEN}\n`, { mode: 0o600 });
+    const prev = {
+      serverUrl: "https://old.example",
+      tokenFile: "~/.dodok-runner/token",
+      maxConcurrentRuns: 5,
+      roots: [
+        { id: "proj-a", path: "~/work", label: "작업" },
+        { id: "gone", path: "~/gone", label: "gone" },
+        { id: "proj-b", path: other },
+      ],
+      browse: false,
+      programs: {
+        claude: {
+          configDir: "~/.claude-alt",
+          executable: "/opt/claude",
+          maxPermissionMode: "plan",
+          disallowedTools: ["Bash"],
+          allowedToolsCeiling: ["Read"],
+        },
+      },
+      ...extra,
+    };
+    writeFileSync(configPath, `${JSON.stringify(prev)}\n`);
+    return prev;
+  }
+
+  it("Enter 만 치면 지금 값 그대로 — 루트 id 유지, 없는 루트는 빼고, 묻지 않는 키 보존, 토큰 파일은 안 건드린다", async () => {
+    const prev = existing();
+    const before = statSync(tokenPath()).mtimeMs;
+    const seen: unknown[] = [];
+    const s = scripted(["y", "", "", "", "", "", "", ""]);
+    const result = await runSetupWizard({
+      prompter: s.prompter,
+      configPath,
+      home,
+      cwd: work,
+      env: { HOME: home },
+      confirmOverwrite: true,
+      claude: async (ceiling) => {
+        seen.push(ceiling);
+        return { cli: "설치본 2.1.322 (/opt/claude)", loggedIn: true };
+      },
     });
+    expect(result.status).toBe("saved");
+    expect(s.asked.map((a) => a.question)).toEqual([
+      "설정 파일이 이미 있습니다. 덮어쓸까요? (y/N) ",
+      "서버 주소 [https://old.example]: ",
+      "러너 토큰 [그대로]: ",
+      "루트 작업 (~/work) 를 그대로 둘까요? (Y/n) ",
+      `루트 other dir (${other}) 를 그대로 둘까요? (Y/n) `,
+      "루트를 더 추가할까요? (y/N) ",
+      "선택 [3]: ",
+      "저장하고 시작할까요? (Y/n) ",
+    ]);
+    expect(s.printed).toContain("루트 gone (~/gone): 디렉터리가 없어 뺍니다.");
+    expect(s.printed).toContain("로그인: 전용 로그인(~/.claude-alt)");
+    expect(seen).toEqual([{ executable: "/opt/claude", configDir: join(home, ".claude-alt") }]);
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+      ...prev,
+      roots: [prev.roots[0], prev.roots[2]],
+    });
+    expect(JSON.parse(readFileSync(`${configPath}.bak`, "utf8"))).toEqual(prev);
+    expect(readFileSync(tokenPath(), "utf8").trim()).toBe(TOKEN);
+    expect(statSync(tokenPath()).mtimeMs).toBe(before);
+  });
+
+  it("값을 바꾸면 그 값만 — 새 루트 id 는 지금 id(뺀 것 포함)와 겹치지 않고, 새 토큰은 그 tokenFile 자리에", async () => {
+    existing();
+    mkdirSync(join(home, "gone2"));
+    const w = wizard(
+      [
+        "y",
+        "https://new.example",
+        "drn_new_token_value",
+        "n", // 작업 루트 빼기
+        "", // other dir 그대로
+        "y",
+        "~/gone2",
+        "proj-a", // 라벨이 뺀 루트 id 와 같다
+        "y",
+        "~/work",
+        "Gone",
+        "n",
+        "1",
+        "",
+      ],
+      { confirmOverwrite: true },
+    );
+    expect((await w.run).status).toBe("saved");
+    const saved = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(saved.serverUrl).toBe("https://new.example");
+    expect(saved.roots).toEqual([
+      { id: "proj-b", path: other },
+      { id: "proj-a-2", path: join(home, "gone2"), label: "proj-a" },
+      { id: "gone-2", path: work, label: "Gone" },
+    ]);
+    expect(saved.programs.claude.maxPermissionMode).toBe("default");
+    expect(saved.programs.claude.disallowedTools).toEqual(["Bash"]);
+    expect(saved.maxConcurrentRuns).toBe(5);
+    expect(readFileSync(tokenPath(), "utf8").trim()).toBe("drn_new_token_value");
+  });
+
+  it("지금 설정이 env 토큰이면 토큰을 꼭 묻고 설정 옆 token 에 둔다", async () => {
+    existing({ tokenFile: undefined });
+    const w = wizard(["y", "", "", "drn_env_replaced", "", "", "", "", ""], { confirmOverwrite: true });
+    expect((await w.run).status).toBe("saved");
+    expect(w.asked.filter((a) => a.question === "러너 토큰: ")).toHaveLength(2);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).tokenFile).toBe("~/.dodok-runner/token");
+    expect(readFileSync(tokenPath(), "utf8").trim()).toBe("drn_env_replaced");
+  });
+
+  it("지금 설정이 깨졌으면 처음부터 묻는다", async () => {
+    mkdirSync(join(home, ".dodok-runner"));
+    writeFileSync(configPath, "{ nope");
+    const w = wizard(["y", "https://chat.example.com", TOKEN, "", "", "", "", ""], {
+      confirmOverwrite: true,
+    });
+    expect((await w.run).status).toBe("saved");
+    expect(w.printed).toContain("지금 설정을 읽지 못해 처음부터 묻습니다.");
+    expect(w.asked[1]!.question).toBe("서버 주소: ");
+  });
+});
+
+describe("토큰 파일 자리", () => {
+  it("설정 파일과 같은 디렉터리의 token — --config 가 다르면 토큰도 갈린다", async () => {
+    expect(tokenFileFor(join(home, ".dodok-runner", "config.json"), home)).toBe("~/.dodok-runner/token");
+    expect(tokenFileFor("/etc/dodok/b.json", home)).toBe("/etc/dodok/token");
+    const second = join(home, "runner-b", "config.json");
+    const w = wizard(["https://chat.example.com", TOKEN, "", "", "", "", ""], { configPath: second });
+    expect((await w.run).status).toBe("saved");
+    expect(JSON.parse(readFileSync(second, "utf8")).tokenFile).toBe("~/runner-b/token");
+    expect(readFileSync(join(home, "runner-b", "token"), "utf8").trim()).toBe(TOKEN);
+    expect(existsSync(join(home, ".dodok-runner"))).toBe(false);
+  });
+});
+
+describe("runTokenCommand", () => {
+  function run(answers: string[]) {
+    const s = scripted(answers);
+    return { ...s, result: runTokenCommand({ prompter: s.prompter, configPath, home }) };
+  }
+
+  it("토큰만 그 tokenFile 자리에 0600 으로 쓰고 설정 파일은 건드리지 않는다", async () => {
+    mkdirSync(join(home, "rb"));
+    const cfg = `${JSON.stringify({ serverUrl: "https://x.example", tokenFile: "~/rb/tok", roots: [{ id: "w", path: work }], programs: {} })}\n`;
+    mkdirSync(join(home, ".dodok-runner"));
+    writeFileSync(configPath, cfg);
+    const t = run(["  ", " drn_reissued "]);
+    expect(await t.result).toEqual({ status: "saved" });
+    expect(t.asked.map((a) => [a.question, a.hidden])).toEqual([
+      ["새 러너 토큰: ", true],
+      ["새 러너 토큰: ", true],
+    ]);
+    expect(readFileSync(join(home, "rb", "tok"), "utf8")).toBe("drn_reissued\n");
+    expect(statSync(join(home, "rb", "tok")).mode & 0o777).toBe(0o600);
+    expect(readFileSync(configPath, "utf8")).toBe(cfg);
+    expect(existsSync(`${configPath}.bak`)).toBe(false);
+    expect(t.printed.join("\n")).not.toContain("drn_reissued");
+    expect(t.isClosed()).toBe(true);
+  });
+
+  it("설정이 없거나 깨졌거나 tokenFile 이 없으면 묻지 않고 한 줄로 알린다", async () => {
+    const none = run([TOKEN]);
+    expect(await none.result).toEqual({
+      status: "error",
+      message: "설정 파일이 없습니다 — 터미널에서 dodok-runner 를 실행해 설정을 만드세요",
+    });
+    expect(none.asked).toEqual([]);
+
+    mkdirSync(join(home, ".dodok-runner"));
+    writeFileSync(configPath, "{ nope");
+    expect((await run([TOKEN]).result).status).toBe("error");
+
+    writeFileSync(
+      configPath,
+      JSON.stringify({ serverUrl: "https://x.example", roots: [{ id: "w", path: work }], programs: {} }),
+    );
+    const env = run([TOKEN]);
+    expect(await env.result).toEqual({
+      status: "error",
+      message: "이 설정은 tokenFile 을 쓰지 않습니다 — 토큰을 둔 env DODOK_RUNNER_TOKEN 을 바꾸세요",
+    });
+    expect(env.asked).toEqual([]);
+    expect(existsSync(join(home, ".dodok-runner", "token"))).toBe(false);
+  });
+
+  it("Ctrl-C·EOF 면 쓰지 않는다", async () => {
+    mkdirSync(join(home, ".dodok-runner"));
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://x.example",
+        tokenFile: "~/.dodok-runner/token",
+        roots: [{ id: "w", path: work }],
+        programs: {},
+      }),
+    );
+    expect(await run([]).result).toEqual({ status: "aborted" });
+    expect(existsSync(join(home, ".dodok-runner", "token"))).toBe(false);
   });
 });
 
@@ -274,6 +467,42 @@ describe("createTerminalPrompter", () => {
     input.write(`${TOKEN}\r`);
     expect(await pending).toBe(TOKEN);
     expect(shown).toContain("러너 토큰: ");
+    expect(shown).not.toContain(TOKEN.slice(0, 8));
+    p.close();
+  });
+
+  it("터미널 — 서버 주소 칸에 주소와 토큰을 한꺼번에 붙여 넣어도 토큰은 찍히지 않는다", async () => {
+    const input = new PassThrough();
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    let shown = "";
+    output.on("data", (c) => (shown += String(c)));
+    const p = createTerminalPrompter(input, output);
+    const url = p.ask("서버 주소: ");
+    input.write(`https://a.example\r${TOKEN}\r`);
+    expect(await url).toBe("https://a.example");
+    expect(await p.ask("러너 토큰: ", { hidden: true })).toBe(TOKEN);
+    expect(shown).toContain("https://a.example");
+    expect(shown).not.toContain(TOKEN.slice(0, 8));
+    // 같이 붙여 넣은 다음 보이는 답은 질문 뒤에 보인다
+    input.write("~/src\r");
+    await new Promise((r) => setImmediate(r));
+    expect(await p.ask("루트 경로: ")).toBe("~/src");
+    expect(shown).toContain("루트 경로: ~/src\n");
+    p.close();
+  });
+
+  it("터미널 — 줄바꿈 없이 미리 친 토큰도 숨김 질문이 다시 그리지 않는다", async () => {
+    const input = new PassThrough();
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    let shown = "";
+    output.on("data", (c) => (shown += String(c)));
+    const p = createTerminalPrompter(input, output);
+    const url = p.ask("서버 주소: ");
+    input.write(`https://a.example\r${TOKEN}`);
+    expect(await url).toBe("https://a.example");
+    const pending = p.ask("러너 토큰: ", { hidden: true });
+    input.write("\r");
+    expect(await pending).toBe(TOKEN);
     expect(shown).not.toContain(TOKEN.slice(0, 8));
     p.close();
   });

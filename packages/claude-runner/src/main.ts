@@ -7,7 +7,13 @@ import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connec
 import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
-import { chooseStart, createTerminalPrompter, detectClaudeForSetup, runSetupWizard } from "./setup";
+import {
+  createTerminalPrompter,
+  detectClaudeForSetup,
+  planCli,
+  runSetupWizard,
+  runTokenCommand,
+} from "./setup";
 
 // 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다. Claude Code 판은 SDK 번들 CLI 의 것 — 설치본을 쓰면
 // 드라이버가 연결마다 그 실행 파일의 판을 읽어 로그 한 줄과 hello 에 싣는다(drivers/claude/index.ts)
@@ -22,7 +28,8 @@ const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 
 const USAGE = [
   `사용법: dodok-runner [--config <경로>]  (기본 ${DEFAULT_CONFIG_PATH})`,
-  "        dodok-runner setup [--config <경로>]  설정을 터미널에서 다시 만든다",
+  "        dodok-runner setup [--config <경로>]  설정을 터미널에서 다시 만든다(지금 값이 기본값)",
+  "        dodok-runner token [--config <경로>]  토큰만 바꾼다(다시 발급했을 때)",
   "설정 파일이 없으면 터미널에서 실행할 때 설정을 묻는다.",
 ].join("\n");
 
@@ -49,34 +56,54 @@ async function main(): Promise<void> {
     console.error(USAGE);
     process.exit(1);
   }
-  const setup = positionals[0] === "setup";
-  if (positionals.length > (setup ? 1 : 0)) {
+  const home = process.env.HOME || homedir();
+  const configPath = resolveConfigPath(args.config, home);
+  const plan = planCli({
+    positionals,
+    help: args.help,
+    version: args.version,
+    configExists: existsSync(configPath),
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+  });
+  if (plan.kind === "usage") {
     console.error(USAGE);
     process.exit(1);
   }
-  if (args.help) {
+  if (plan.kind === "help") {
     console.log(USAGE);
     return;
   }
-  if (args.version) {
+  if (plan.kind === "version") {
     console.log(
       `dodok-runner ${RUNNER_VERSION} (Claude Agent SDK ${SDK_VERSION}, 내장 Claude Code ${CLAUDE_CODE_VERSION})`,
     );
     return;
   }
-
-  const home = process.env.HOME || homedir();
-  const configPath = resolveConfigPath(args.config, home);
-
-  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
-
-  let loaded;
-  const start = chooseStart({ setup, configExists: existsSync(configPath), interactive });
-  if (start.kind === "error") {
-    console.error(`dodok-runner: ${start.message}`);
+  if (plan.kind === "error") {
+    console.error(`dodok-runner: ${plan.message}`);
     process.exit(1);
   }
-  if (start.kind === "wizard") {
+  if (plan.kind === "token") {
+    let result;
+    try {
+      result = await runTokenCommand({
+        prompter: createTerminalPrompter(process.stdin, process.stdout),
+        configPath,
+        home,
+      });
+    } catch {
+      console.error("dodok-runner: 토큰을 저장하지 못했습니다");
+      process.exit(1);
+    }
+    if (result.status === "error") {
+      console.error(`dodok-runner: ${result.message}`);
+      process.exit(1);
+    }
+    process.exit(result.status === "aborted" ? 130 : 0);
+  }
+
+  let loaded;
+  if (plan.kind === "wizard") {
     let result;
     try {
       result = await runSetupWizard({
@@ -85,8 +112,9 @@ async function main(): Promise<void> {
         home,
         cwd: process.cwd(),
         env: process.env,
-        confirmOverwrite: setup,
-        claude: () => detectClaudeForSetup({ env: process.env, bundledVersion: CLAUDE_CODE_VERSION }),
+        confirmOverwrite: plan.confirmOverwrite,
+        claude: (ceiling) =>
+          detectClaudeForSetup({ env: process.env, bundledVersion: CLAUDE_CODE_VERSION, ceiling }),
       });
     } catch (error) {
       console.error(
