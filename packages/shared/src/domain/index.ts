@@ -46,6 +46,10 @@ export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
 export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
 export const permissionModeRank = (mode: RunnerPermissionMode): number =>
   RUNNER_PERMISSION_MODES.indexOf(mode);
+/** 러너 실행의 노력치(effort) — SDK query() 의 effort 옵션. null 이면 프로그램 기본 */
+export const RUNNER_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const RunnerEffort = z.enum(RUNNER_EFFORTS);
+export type RunnerEffort = z.infer<typeof RunnerEffort>;
 /** 러너 에이전트의 허용·금지 도구 이름 목록 — run.start.agent 와 REST 본문이 같은 상한을 쓴다 */
 export const RunnerToolNames = z.array(z.string().min(1).max(200)).max(100);
 /** 프로그램 이름표 — 서버 카드 문구(PROVIDER_AUTH 등)·러너 오류 문구·웹이 같은 글을 쓴다 */

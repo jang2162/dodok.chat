@@ -6,6 +6,7 @@ import {
   ApprovalDecision,
   permissionModeRank,
   RUNNER_PERMISSION_MODES,
+  RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
   RunnerToolNames,
@@ -60,7 +61,16 @@ export const RunnerRunFinal = z.object({
   runId: Id,
   text: z.string(),
   stopReason: z.string(),
-  usage: z.object({ inputTokens: z.int().optional(), outputTokens: z.int().optional() }).optional(),
+  usage: z
+    .object({
+      inputTokens: z.int().optional(),
+      outputTokens: z.int().optional(),
+      /** 그 턴의 마지막 API 호출 입력(+캐시) 토큰 — 컨텍스트 사용률의 분자. 옛 러너는 싣지 않는다 */
+      contextTokens: z.int().min(0).optional(),
+      /** 그 모델의 컨텍스트 창 크기 — 사용률의 분모. 옛 러너는 싣지 않는다 */
+      contextWindow: z.int().min(1).optional(),
+    })
+    .optional(),
   costUsd: z.number().min(0).optional(),
   costKind: z.enum(["api", "subscription_estimate"]),
 });
@@ -243,7 +253,9 @@ export const RunnerRunAgent = z.object({
   /** null 이면 프로그램 기본 모델 */
   model: z.string().min(1).max(128).nullable(),
   permissionMode: RunnerPermissionMode,
-  /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본) */
+  /** null·없음이면 프로그램 기본. 옛 서버는 싣지 않는다 — strict 가 아니라 옛 러너는 이 키를 버린다 */
+  effort: RunnerEffort.nullable().optional(),
+  /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본). 서버는 늘 null 을 보낸다 — 옛 러너가 이 키를 요구한다 */
   allowedTools: RunnerToolNames.nullable(),
   disallowedTools: RunnerToolNames,
 });

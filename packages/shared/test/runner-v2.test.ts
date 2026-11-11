@@ -12,6 +12,7 @@ import {
   RunnerProjectRef,
   RunnerRelPath,
   RunnerRootId,
+  RunnerRunFinal,
   RunnerRunSession,
   RunnerRunStart,
 } from "../src";
@@ -215,6 +216,28 @@ describe("RunnerRunStart", () => {
   it("agent 가 없으면 거절 — 서버가 에이전트 정의를 통째로 싣는다", () => {
     const { agent: _, ...v1 } = START;
     expect(RunnerRunStart.safeParse(v1).success).toBe(false);
+  });
+});
+
+describe("세션 설정 — effort·컨텍스트 사용량", () => {
+  it("effort 없는 옛 run.start.agent 도 받고, 있으면 다섯 값만", () => {
+    expect(RunnerRunStart.parse(START).agent.effort).toBeUndefined();
+    expect(RunnerRunStart.parse({ ...START, agent: { ...AGENT, effort: "high" } }).agent.effort).toBe("high");
+    expect(RunnerRunStart.parse({ ...START, agent: { ...AGENT, effort: null } }).agent.effort).toBeNull();
+    expect(RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, effort: "extreme" } }).success).toBe(
+      false,
+    );
+  });
+
+  it("run.final usage 의 contextTokens·contextWindow — 선택, 창 크기 0 은 거절", () => {
+    const final = { runId: ID, text: "끝", stopReason: "end_turn", costKind: "api" };
+    const usage = { inputTokens: 10, outputTokens: 3, contextTokens: 32100, contextWindow: 200000 };
+    expect(RunnerRunFinal.parse({ ...final, usage }).usage).toEqual(usage);
+    expect(RunnerRunFinal.safeParse({ ...final, usage: { inputTokens: 1 } }).success).toBe(true);
+    expect(RunnerRunFinal.safeParse({ ...final, usage: { ...usage, contextWindow: 0 } }).success).toBe(false);
+    expect(RunnerRunFinal.safeParse({ ...final, usage: { ...usage, contextTokens: -1 } }).success).toBe(
+      false,
+    );
   });
 });
 

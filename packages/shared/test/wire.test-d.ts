@@ -35,6 +35,7 @@ describe("wire event maps", () => {
       | "channel.member.changed"
       | "conversation.created"
       | "conversation.updated"
+      | "conversation.agent_settings"
       | "conversation.read"
       | "channel.activity"
       | "people.changed"
