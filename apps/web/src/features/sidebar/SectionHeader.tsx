@@ -13,6 +13,7 @@ import {
 } from "@/ui/dropdown-menu";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import type { useSectionDnd } from "./dnd";
 import { moveSection, removeSection, renameSection, setCollapsed } from "./layout";
 import { useUpdateSidebar } from "./queries";
 
@@ -26,7 +27,7 @@ export function SectionHeader({
   count,
   unread,
   listId,
-  dragHandle,
+  dnd,
 }: {
   section: SidebarSection;
   index: number;
@@ -35,22 +36,31 @@ export function SectionHeader({
   unread: boolean;
   /** 접고 펴는 목록의 id(aria-controls) */
   listId: string;
-  /** 끌어다 놓기 손잡이 속성(끌기가 붙었을 때) */
-  dragHandle?: React.HTMLAttributes<HTMLElement>;
+  /** 끌어다 놓기 — 머리 전체가 마우스·터치 손잡이이자 항목을 놓는 자리, 키보드는 이름 단추에서 스페이스 */
+  dnd: Pick<ReturnType<typeof useSectionDnd>, "headerRef" | "headerProps" | "handleRef" | "handleProps">;
 }) {
   const update = useUpdateSidebar();
   const [renaming, setRenaming] = useState(false);
   const Chevron = section.collapsed ? ChevronRightIcon : ChevronDownIcon;
   const showDot = section.collapsed && unread;
   return (
-    <div className="group/section flex items-center gap-1 pt-2 pr-1 pl-1">
+    <div
+      ref={dnd.headerRef}
+      {...dnd.headerProps}
+      className="group/section flex touch-manipulation items-center gap-1 rounded-md pt-2 pr-1 pl-1 data-over:bg-sidebar-accent data-over:ring-1 data-over:ring-sidebar-ring"
+    >
       <button
+        ref={dnd.handleRef}
+        {...dnd.handleProps}
         type="button"
         aria-expanded={!section.collapsed}
         aria-controls={listId}
         onClick={() => update((l) => setCollapsed(l, section.id, !section.collapsed))}
+        // 스페이스는 끌기 들기·놓기다 — 단추의 스페이스 누르기(keyup 의 클릭)로 접히지 않게. 접기는 엔터·클릭
+        onKeyUp={(e) => {
+          if (e.code === "Space") e.preventDefault();
+        }}
         className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-0.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        {...dragHandle}
       >
         <Chevron className="size-3.5 shrink-0" aria-hidden />
         <span className={cn("truncate", showDot && "font-semibold text-sidebar-foreground")}>

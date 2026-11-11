@@ -11,6 +11,7 @@ import { DmLink } from "@/features/dms/DmSection";
 import { useDms } from "@/features/dms/queries";
 import { useUnread } from "@/features/reads/useUnread";
 import { Button } from "@/ui/button";
+import { ItemsContext, SectionsContext, useSectionDnd } from "./dnd";
 import { addSection } from "./layout";
 import { newSectionId, SidebarRow } from "./MoveToSectionMenu";
 import { useSidebarLayout, useUpdateSidebar } from "./queries";
@@ -73,18 +74,20 @@ export function SidebarSections({ onNavigate }: { onNavigate?: () => void }) {
   if (!layout || layout.sections.length === 0) return null;
   return (
     <div className="flex flex-col gap-1">
-      {layout.sections.map((section, index) => (
-        <SectionBlock
-          key={section.id}
-          section={section}
-          index={index}
-          count={layout.sections.length}
-          items={section.items.flatMap((id) => {
-            const item = items.get(id);
-            return item ? [item] : [];
-          })}
-        />
-      ))}
+      <SectionsContext ids={layout.sections.map((s) => s.id)}>
+        {layout.sections.map((section, index) => (
+          <SectionBlock
+            key={section.id}
+            section={section}
+            index={index}
+            count={layout.sections.length}
+            items={section.items.flatMap((id) => {
+              const item = items.get(id);
+              return item ? [item] : [];
+            })}
+          />
+        ))}
+      </SectionsContext>
     </div>
   );
 }
@@ -102,19 +105,34 @@ function SectionBlock({
 }) {
   const listId = useId();
   const unread = useAnyUnread(items.map((i) => i.id));
+  const dnd = useSectionDnd(section.id, section.name);
   return (
-    <nav aria-label={section.name} className="flex flex-col gap-1">
-      <SectionHeader section={section} index={index} count={count} unread={unread} listId={listId} />
+    <nav
+      ref={dnd.blockRef}
+      {...dnd.blockProps}
+      aria-label={section.name}
+      className="relative flex flex-col gap-1 rounded-md data-dragging:z-10 data-dragging:bg-sidebar data-dragging:opacity-90 data-dragging:shadow-sm"
+    >
+      <SectionHeader
+        section={section}
+        index={index}
+        count={count}
+        unread={unread}
+        listId={listId}
+        dnd={dnd}
+      />
       {!section.collapsed && (
-        <ul id={listId} className="flex flex-col gap-0.5">
-          {items.map((item) => (
-            <li key={item.id}>
-              <SidebarRow itemId={item.id} label={item.label}>
-                {item.node}
-              </SidebarRow>
-            </li>
-          ))}
-        </ul>
+        <ItemsContext ids={items.map((i) => i.id)} sectionId={section.id}>
+          <ul id={listId} className="flex flex-col gap-0.5">
+            {items.map((item) => (
+              <li key={item.id}>
+                <SidebarRow itemId={item.id} label={item.label} container={section.id}>
+                  {item.node}
+                </SidebarRow>
+              </li>
+            ))}
+          </ul>
+        </ItemsContext>
       )}
     </nav>
   );

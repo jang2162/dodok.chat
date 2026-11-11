@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
+import { useItemDnd } from "./dnd";
 import { addSection, moveItem, sectionOf } from "./layout";
 import { useSidebarLayout, useUpdateSidebar } from "./queries";
 import { SectionNameDialog } from "./SectionHeader";
@@ -79,18 +80,27 @@ export function MoveToSectionMenu({ itemId, label }: { itemId: string; label: st
   );
 }
 
-/** 사이드바 한 줄 틀 — 링크 옆에 「⋯」. 기본 두 절과 섹션이 함께 쓴다 */
+/**
+ * 사이드바 한 줄 틀 — 링크 옆에 「⋯」, 줄 전체가 끌린다(키보드는 링크에서 스페이스). 기본 두 절(`container` null)과 섹션이 함께 쓴다
+ */
 export function SidebarRow({
   itemId,
   label,
+  container,
   children,
 }: {
   itemId: string;
   label: string;
+  container: string | null;
   children: ReactNode;
 }) {
+  const dnd = useItemDnd(itemId, label, container);
   return (
-    <div className="group/row flex items-center gap-0.5">
+    <div
+      ref={dnd.rowRef}
+      {...dnd.rowProps}
+      className="group/row relative flex touch-manipulation items-center gap-0.5 rounded-md data-dragging:z-10 data-dragging:bg-sidebar-accent data-dragging:opacity-80 data-dragging:shadow-sm data-over:ring-1 data-over:ring-sidebar-ring"
+    >
       <div className="min-w-0 flex-1">{children}</div>
       <MoveToSectionMenu itemId={itemId} label={label} />
     </div>

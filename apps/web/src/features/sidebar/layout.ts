@@ -25,6 +25,8 @@ export function moveItem(
   to: { sectionId: string; index: number } | null,
 ): SidebarLayout {
   if (to && !layout.sections.some((s) => s.id === to.sectionId)) return layout;
+  // 섹션에 없는 것을 빼면 바뀌는 것이 없다 — 저장하지 않게 같은 배치를 돌려준다
+  if (!to && !layout.sections.some((s) => s.items.includes(itemId))) return layout;
   const sections = layout.sections.map((s) =>
     s.items.includes(itemId) ? { ...s, items: s.items.filter((id) => id !== itemId) } : s,
   );

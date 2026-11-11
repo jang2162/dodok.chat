@@ -353,3 +353,168 @@ describe("사이드바 개인 섹션 — 저장 실패·wire", () => {
     }
   });
 });
+
+describe("사이드바 개인 섹션 — 끌어다 놓기(키보드 센서)", () => {
+  /**
+   * jsdom 은 배치를 계산하지 않는다 — 끌기가 재는 줄([data-dnd-node])마다 문서 순서대로 40px 씩 아래에 둔다. 키보드 센서는 화살표마다
+   * 지금 자리의 바로 위·아래 놓을 자리로 옮긴다(끄지 않은 자리만 — 항목을 끌 때 섹션 묶음, 섹션을 끌 때 항목·머리는 꺼진다)
+   */
+  beforeEach(() => {
+    const original = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (!this.hasAttribute("data-dnd-node")) return original.call(this);
+      const index = [...document.querySelectorAll("[data-dnd-node]")].indexOf(this);
+      return DOMRect.fromRect({ x: 0, y: index * 40, width: 200, height: 32 });
+    });
+  });
+
+  const twoSections = () => ({
+    sections: [section(S1, "업무", [DEVCH.id, GENERAL.id]), section(S2, "개인", [RANDOM.id])],
+  });
+  const linkTo = (name: string) => screen.getByRole("link", { name: new RegExp(`^${name}`) });
+  async function lift(user: ReturnType<typeof userEvent.setup>, el: HTMLElement) {
+    el.focus();
+    await user.keyboard("[Space]");
+  }
+
+  it("같은 섹션 안 순서 — dev 를 들고 ↓ 한 번, 스페이스로 놓으면 general 뒤로", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    const work = await nav("업무");
+    await waitFor(() => expect(linkNames(work)).toEqual(["dev", "general"]));
+    await lift(user, linkTo("dev"));
+    await user.keyboard("[ArrowDown]");
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(server.puts).toHaveLength(1));
+    expect(server.puts[0]?.sections.map((s) => s.items)).toEqual([[GENERAL.id, DEVCH.id], [RANDOM.id]]);
+    await waitFor(() => expect(linkNames(work)).toEqual(["general", "dev"]));
+  });
+
+  it("다른 섹션으로 — 섹션 머리에 놓으면 그 섹션의 맨 아래", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    await waitFor(async () => expect(linkNames(await nav("업무"))).toEqual(["dev", "general"]));
+    await lift(user, linkTo("dev"));
+    await user.keyboard("[ArrowDown][ArrowDown]");
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(server.puts).toHaveLength(1));
+    expect(server.puts[0]?.sections.map((s) => s.items)).toEqual([[GENERAL.id], [RANDOM.id, DEVCH.id]]);
+  });
+
+  it("기본 절로(=섹션에서 빼기) — 「채널」 머리에 놓으면 기본 절의 원래 자리로", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    await waitFor(async () => expect(linkNames(await nav("개인"))).toEqual(["random"]));
+    await lift(user, linkTo("random"));
+    await user.keyboard("[ArrowDown]");
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(server.puts).toHaveLength(1));
+    expect(server.puts[0]?.sections.map((s) => s.items)).toEqual([[DEVCH.id, GENERAL.id], []]);
+    await waitFor(async () => expect(linkNames(await nav("채널"))).toEqual(["random", "lobby"]));
+  });
+
+  it("기본 절의 줄을 섹션으로 — lobby 를 들고 ↑ 로 「개인」 의 random 위에 놓으면 그 앞", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    await waitFor(async () => expect(linkNames(await nav("채널"))).toEqual(["lobby"]));
+    await lift(user, linkTo("lobby"));
+    // lobby → 「채널」 머리 → random
+    await user.keyboard("[ArrowUp][ArrowUp]");
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(server.puts).toHaveLength(1));
+    expect(server.puts[0]?.sections.map((s) => s.items)).toEqual([
+      [DEVCH.id, GENERAL.id],
+      [LOBBY.id, RANDOM.id],
+    ]);
+  });
+
+  it("섹션 순서 — 「개인」 머리에서 들고 ↑ 로 「업무」 앞에", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    await nav("개인");
+    await lift(user, await screen.findByRole("button", { name: /^개인$/ }));
+    await user.keyboard("[ArrowUp]");
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(server.puts).toHaveLength(1));
+    expect(server.puts[0]?.sections.map((s) => s.name)).toEqual(["개인", "업무"]);
+    // 스페이스로 접히지 않았다
+    expect(server.puts[0]?.sections.every((s) => !s.collapsed)).toBe(true);
+  });
+
+  it("Esc 는 취소 — 저장하지 않는다. 안내는 스크린 리더 라이브 영역에", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    renderRoute(`/c/${LOBBY.id}`);
+    await waitFor(async () => expect(linkNames(await nav("업무"))).toEqual(["dev", "general"]));
+    await lift(user, linkTo("dev"));
+    const live = () =>
+      screen
+        .getAllByRole("status")
+        .map((el) => el.textContent ?? "")
+        .join(" ");
+    await waitFor(() => expect(live()).toMatch(/dev 들기/));
+    await user.keyboard("[ArrowDown]");
+    await waitFor(() => expect(live()).toMatch(/dev → general/));
+    await user.keyboard("[Escape]");
+    await waitFor(() => expect(live()).toMatch(/dev 끌기 취소/));
+    expect(server.puts).toHaveLength(0);
+  });
+
+  it("끌기 중 온 me.sidebar 는 놓은 뒤 그린다 — 끌던 항목이 사라지지 않고, 놓은 자리는 새 배치 위에서", async () => {
+    const user = userEvent.setup();
+    const server = stubServer({ layout: twoSections() });
+    const fake = createFakeSocket();
+    fake.socket.connected = true;
+    fake.socket.active = true;
+    const queryClient = createQueryClient(() => undefined);
+    const detach = attachHandlers(fake.wire, {
+      queryClient,
+      subscriptions: createSubscriptions({ socket: fake.wire, queryClient }),
+      onUnauthorized: () => undefined,
+      notify: {
+        currentChannelId: () => undefined,
+        currentConversationId: () => undefined,
+        openActivity: () => {},
+      },
+    });
+    try {
+      renderRoute(`/c/${LOBBY.id}`, queryClient);
+      const work = await nav("업무");
+      await waitFor(() => expect(linkNames(work)).toEqual(["dev", "general"]));
+      await lift(user, linkTo("dev"));
+      await user.keyboard("[ArrowDown]");
+      // 다른 탭이 「업무」 에서 dev 를 빼고 새 섹션을 더했다
+      const S3 = uid(9_003);
+      act(() =>
+        fake.serverEmit("me.sidebar", {
+          layout: {
+            sections: [
+              section(S1, "업무", [GENERAL.id]),
+              section(S2, "개인", [RANDOM.id]),
+              section(S3, "새", []),
+            ],
+          },
+        }),
+      );
+      // 끌기 중에는 그대로 — 끌던 dev 는 손에 있다
+      expect(screen.queryByRole("navigation", { name: "새" })).toBeNull();
+      expect(linkNames(work)).toEqual(["dev", "general"]);
+      await user.keyboard("[Space]");
+      await waitFor(() => expect(server.puts).toHaveLength(1));
+      // 새 배치(새 섹션 포함) 위에 놓은 자리(general 뒤)
+      expect(server.puts[0]?.sections.map((s) => [s.name, s.items])).toEqual([
+        ["업무", [GENERAL.id, DEVCH.id]],
+        ["개인", [RANDOM.id]],
+        ["새", []],
+      ]);
+      expect(await nav("새")).toBeInTheDocument();
+    } finally {
+      detach();
+    }
+  });
+});

@@ -40,6 +40,8 @@ describe("sidebar layout — 순수 함수", () => {
       ["d", "z"],
     ]);
     expect(items(moveItem(base, "c", null))).toEqual([["a", "b"], ["d"]]);
+    // 섹션에 없는 것을 빼면 같은 배치(저장할 것이 없다)
+    expect(moveItem(base, "z", null)).toBe(base);
     // 없는 섹션으로는 옮기지 않는다 — 항목을 잃지 않게
     expect(moveItem(base, "a", { sectionId: S3, index: 0 })).toBe(base);
     // 받은 배치는 그대로

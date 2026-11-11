@@ -4,6 +4,7 @@ import { HashIcon } from "lucide-react";
 import { useChannels } from "@/api/queries";
 import { MENTIONS_MAX, useChannelUnread } from "@/features/reads/useUnread";
 import { sectionedIds } from "@/features/sidebar/layout";
+import { ItemsContext } from "@/features/sidebar/dnd";
 import { SidebarRow } from "@/features/sidebar/MoveToSectionMenu";
 import { useSidebarLayout } from "@/features/sidebar/queries";
 import { cn } from "@/lib/utils";
@@ -42,18 +43,19 @@ export function ChannelList({ onNavigate }: { onNavigate?: () => void }) {
     return <p className="px-2 py-1 text-xs text-muted-foreground">아직 채널이 없습니다</p>;
   }
   const sectioned = layout ? sectionedIds(layout) : new Set<string>();
+  const shown = live.filter((channel) => !sectioned.has(channel.id));
   return (
-    <ul className="flex flex-col gap-0.5">
-      {live
-        .filter((channel) => !sectioned.has(channel.id))
-        .map((channel) => (
+    <ItemsContext ids={shown.map((c) => c.id)} sectionId={null}>
+      <ul className="flex flex-col gap-0.5">
+        {shown.map((channel) => (
           <li key={channel.id}>
-            <SidebarRow itemId={channel.id} label={channel.name}>
+            <SidebarRow itemId={channel.id} label={channel.name} container={null}>
               <ChannelLink channel={channel} onNavigate={onNavigate} />
             </SidebarRow>
           </li>
         ))}
-    </ul>
+      </ul>
+    </ItemsContext>
   );
 }
 

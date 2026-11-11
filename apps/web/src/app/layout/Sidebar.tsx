@@ -6,6 +6,7 @@ import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
 import { DmSection } from "@/features/dms/DmSection";
 import { useOpenSearch } from "@/features/search/openSearch";
 import { OpsBadge } from "@/features/settings-shell/OpsBadge";
+import { SidebarDndProvider, useBaseZone } from "@/features/sidebar/dnd";
 import { CreateSectionButton, SidebarSections } from "@/features/sidebar/SidebarSections";
 import { Button } from "@/ui/button";
 import { ConnectionDots } from "./ConnectionDots";
@@ -56,22 +57,25 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
-        <SidebarSections onNavigate={onNavigate} />
-        <nav aria-label="채널" className="flex flex-col gap-1">
-          <p className="px-2 pt-1 text-xs font-medium text-muted-foreground">채널</p>
-          <ChannelList onNavigate={onNavigate} />
-          <CreateChannelDialog onCreated={onNavigate}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="justify-start px-2 font-normal text-muted-foreground"
-            >
-              <PlusIcon />
-              채널 만들기
-            </Button>
-          </CreateChannelDialog>
-        </nav>
-        <DmSection onNavigate={onNavigate} />
+        {/* 섹션·두 절을 한 판으로 — 섹션 사이·기본 절로 끌어 옮긴다(사이드바 섹션 스펙 B5) */}
+        <SidebarDndProvider>
+          <SidebarSections onNavigate={onNavigate} />
+          <nav aria-label="채널" className="flex flex-col gap-1">
+            <ChannelsHeading />
+            <ChannelList onNavigate={onNavigate} />
+            <CreateChannelDialog onCreated={onNavigate}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-start px-2 font-normal text-muted-foreground"
+              >
+                <PlusIcon />
+                채널 만들기
+              </Button>
+            </CreateChannelDialog>
+          </nav>
+          <DmSection onNavigate={onNavigate} />
+        </SidebarDndProvider>
         <CreateSectionButton />
       </div>
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-t pr-2 pl-4">
@@ -87,5 +91,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
     </div>
+  );
+}
+
+/** 「채널」 절 머리 — 섹션의 항목을 여기에 놓으면 섹션에서 빠진다 */
+function ChannelsHeading() {
+  const zone = useBaseZone("채널");
+  return (
+    <p
+      ref={zone.ref}
+      {...zone.props}
+      className="rounded-md px-2 pt-1 text-xs font-medium text-muted-foreground data-over:bg-sidebar-accent data-over:ring-1 data-over:ring-sidebar-ring"
+    >
+      채널
+    </p>
   );
 }
