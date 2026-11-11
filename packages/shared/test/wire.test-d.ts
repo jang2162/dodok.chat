@@ -4,6 +4,7 @@ import type { Conversation, Message } from "../src/domain";
 import type { OpsEvent, OpsUnacked } from "../src/ops";
 import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../src/reads";
 import type { SetupStatus } from "../src/setup";
+import type { SidebarLayout } from "../src/sidebar";
 import type { ClientToServerEvents, MessageSend, ServerToClientEvents } from "../src/wire";
 
 describe("wire event maps", () => {
@@ -49,7 +50,13 @@ describe("wire event maps", () => {
       | "presence.snapshot"
       | "presence.changed"
       | "me.status"
+      | "me.sidebar"
     >();
+  });
+  it("me.sidebar 페이로드는 { layout } 로 감싼다", () => {
+    expectTypeOf<Parameters<ServerToClientEvents["me.sidebar"]>[0]>().toEqualTypeOf<{
+      layout: SidebarLayout;
+    }>();
   });
   it("setup.status 페이로드는 { status } 로 감싼다", () => {
     expectTypeOf<Parameters<ServerToClientEvents["setup.status"]>[0]>().toEqualTypeOf<{
