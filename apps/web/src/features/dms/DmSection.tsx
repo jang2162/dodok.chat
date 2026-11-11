@@ -8,6 +8,10 @@ import {
   mergeDmEntries,
   useDirects,
 } from "@/features/directs/queries";
+import { directTitle } from "@/features/directs/queries";
+import { sectionedIds } from "@/features/sidebar/layout";
+import { SidebarRow } from "@/features/sidebar/MoveToSectionMenu";
+import { useSidebarLayout } from "@/features/sidebar/queries";
 import { Button } from "@/ui/button";
 import { useDms } from "./queries";
 
@@ -23,14 +27,18 @@ const useCurrentChannelId = () =>
  * 지금 연 것만 보인다 — 두 목록은 글 없는 것도 준다(에이전트 DM 계획 판정 PD1: 열 때 만든 빈 대화가 사이드바를 채우지 않게).
  * 굵게·배지는 채널 줄과 같은 읽지 않음 값(`useChannelUnread`)을 그대로 쓴다 — DM 의 글을 「나를 멘션한 글」로 세는 것은 서버다(PD10·PH14).
  * 「+」 는 「새 메시지」 대화상자다. 한 목록이라도 못 받았으면 받은 것은 그리고 아래에 「다시 시도」 한 줄. `onNavigate` 는 이동할 때마다
- * (좁은 화면 시트 닫기)
+ * (좁은 화면 시트 닫기). 개인 섹션에 든 것은 여기서 빠진다(사이드바 섹션 스펙 B3)
  */
 export function DmSection({ onNavigate }: { onNavigate?: () => void }) {
   const dms = useDms();
   const directs = useDirects();
   const current = useCurrentChannelId();
+  const layout = useSidebarLayout().data;
+  const sectioned = layout ? sectionedIds(layout) : new Set<string>();
   const shown = mergeDmEntries(dms.data, directs.data).filter(
-    (e) => dmEntryLastMessageAt(e) !== null || dmEntryChannelId(e) === current,
+    (e) =>
+      !sectioned.has(dmEntryChannelId(e)) &&
+      (dmEntryLastMessageAt(e) !== null || dmEntryChannelId(e) === current),
   );
   const failed = [dms, directs].filter((q) => q.isError && !q.data);
   return (
@@ -43,11 +51,16 @@ export function DmSection({ onNavigate }: { onNavigate?: () => void }) {
         <ul className="flex flex-col gap-0.5">
           {shown.map((e) => (
             <li key={dmEntryChannelId(e)}>
-              {e.kind === "dm" ? (
-                <DmLink dm={e.dm} onNavigate={onNavigate} />
-              ) : (
-                <DirectRow direct={e.direct} onNavigate={onNavigate} />
-              )}
+              <SidebarRow
+                itemId={dmEntryChannelId(e)}
+                label={e.kind === "dm" ? e.dm.agent.name : directTitle(e.direct)}
+              >
+                {e.kind === "dm" ? (
+                  <DmLink dm={e.dm} onNavigate={onNavigate} />
+                ) : (
+                  <DirectRow direct={e.direct} onNavigate={onNavigate} />
+                )}
+              </SidebarRow>
             </li>
           ))}
         </ul>
@@ -71,8 +84,8 @@ export function DmSection({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-/** 에이전트 DM 한 줄 — 에이전트 아바타·이름 */
-function DmLink({ dm, onNavigate }: { dm: DmSummary; onNavigate?: () => void }) {
+/** 에이전트 DM 한 줄 — 에이전트 아바타·이름. 개인 섹션도 이 줄을 그대로 쓴다 */
+export function DmLink({ dm, onNavigate }: { dm: DmSummary; onNavigate?: () => void }) {
   return (
     <DmRowLink
       channelId={dm.channel.id}

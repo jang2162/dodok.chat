@@ -6,6 +6,7 @@ import {
   type OpenClawGatewayStatus,
   type OpsStatus,
   type ServerToClientEvents,
+  SidebarLayout,
   UnreadSnapshot,
 } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
@@ -37,6 +38,7 @@ import {
 } from "@/features/dms/queries";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { usePresenceStore } from "@/features/presence/store";
+import { receiveSidebar, sidebarKey } from "@/features/sidebar/queries";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -373,6 +375,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "me.status": ({ status }) => {
       qc.setQueryData<MeResponse>(qk.me, (prev) => prev && { ...prev, status });
     },
+    // 개인 섹션(사이드바 섹션 스펙 B4) — 본인의 다른 탭·기기의 저장. 저장·끌기 중이면 끝난 뒤 그린다(`receiveSidebar`)
+    "me.sidebar": ({ layout }) => {
+      const parsed = SidebarLayout.safeParse(layout);
+      if (parsed.success) receiveSidebar(qc, parsed.data);
+    },
     /**
      * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의
      * 정본은 `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 비활성화됐으면(role 은 남는다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
@@ -511,6 +518,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void invalidateDms(qc);
       // 파일함은 channel.activity 로만 낡는다 — 끊긴 사이 올라온 첨부를 메운다(채널 탭 키·전체 화면 키 모두)
       void qc.invalidateQueries({ queryKey: ["files"] });
+      // 개인 섹션은 me.sidebar 로만 고친다 — 끊긴 사이 다른 탭의 저장을 메운다
+      void qc.invalidateQueries({ queryKey: sidebarKey });
     }
     connectedOnce = true;
   };
