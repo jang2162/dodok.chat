@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
@@ -6,6 +7,7 @@ import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connec
 import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
+import { chooseStart, createTerminalPrompter, detectClaudeForSetup, runSetupWizard } from "./setup";
 
 // 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다. Claude Code 판은 SDK 번들 CLI 의 것 — 설치본을 쓰면
 // 드라이버가 연결마다 그 실행 파일의 판을 읽어 로그 한 줄과 hello 에 싣는다(drivers/claude/index.ts)
@@ -18,7 +20,11 @@ const CLAUDE_CODE_VERSION = typeof __CLAUDE_CODE_VERSION__ === "string" ? __CLAU
 // 모듈 스코프에서 — 빌드 스크립트가 이 글자가 번들에 남았는지 확인한다
 const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 
-const USAGE = `사용법: dodok-runner [--config <경로>]  (기본 ${DEFAULT_CONFIG_PATH})`;
+const USAGE = [
+  `사용법: dodok-runner [--config <경로>]  (기본 ${DEFAULT_CONFIG_PATH})`,
+  "        dodok-runner setup [--config <경로>]  설정을 터미널에서 다시 만든다",
+  "설정 파일이 없으면 터미널에서 실행할 때 설정을 묻는다.",
+].join("\n");
 
 const stamp = () => new Date().toISOString();
 const logger: RunnerLogger = {
@@ -27,17 +33,24 @@ const logger: RunnerLogger = {
   error: (m) => console.error(`${stamp()} ${m}`),
 };
 
-function main(): void {
+async function main(): Promise<void> {
   let args;
+  let positionals: string[];
   try {
-    args = parseArgs({
+    ({ values: args, positionals } = parseArgs({
+      allowPositionals: true,
       options: {
         config: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },
-    }).values;
+    }));
   } catch {
+    console.error(USAGE);
+    process.exit(1);
+  }
+  const setup = positionals[0] === "setup";
+  if (positionals.length > (setup ? 1 : 0)) {
     console.error(USAGE);
     process.exit(1);
   }
@@ -55,9 +68,39 @@ function main(): void {
   const home = process.env.HOME || homedir();
   const configPath = resolveConfigPath(args.config, home);
 
+  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+
   let loaded;
+  const start = chooseStart({ setup, configExists: existsSync(configPath), interactive });
+  if (start.kind === "error") {
+    console.error(`dodok-runner: ${start.message}`);
+    process.exit(1);
+  }
+  if (start.kind === "wizard") {
+    let result;
+    try {
+      result = await runSetupWizard({
+        prompter: createTerminalPrompter(process.stdin, process.stdout),
+        configPath,
+        home,
+        cwd: process.cwd(),
+        env: process.env,
+        confirmOverwrite: setup,
+        claude: () => detectClaudeForSetup({ env: process.env, bundledVersion: CLAUDE_CODE_VERSION }),
+      });
+    } catch (error) {
+      console.error(
+        `dodok-runner: ${error instanceof RunnerConfigError ? error.message : "설정을 저장하지 못했습니다"}`,
+      );
+      process.exit(1);
+    }
+    if (result.status === "aborted") process.exit(130);
+    if (result.status !== "saved") return;
+    loaded = result.loaded;
+  }
+
   try {
-    loaded = loadRunnerConfig(configPath, process.env);
+    loaded ??= loadRunnerConfig(configPath, process.env);
   } catch (error) {
     // 설정 오류면 연결을 시도하지 않고 끝낸다(스펙 8장)
     console.error(
@@ -107,4 +150,4 @@ function main(): void {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-main();
+void main();

@@ -32,12 +32,15 @@ const ProgramCeiling = z.strictObject({
 });
 export type ProgramCeiling = z.infer<typeof ProgramCeiling>;
 
+/** 루트 개수 상한 — 첫 실행 마법사(setup.ts)도 이 수까지만 묻는다 */
+export const MAX_ROOTS = 16;
+
 // strict — 설정 파일 본문에 token 같은 키를 두면 거절한다(토큰은 tokenFile·env 에만)
 export const RunnerConfig = z.strictObject({
   serverUrl: z.url({ protocol: /^https?$/ }),
   tokenFile: z.string().min(1).optional(),
   maxConcurrentRuns: z.int().min(1).max(16).default(3),
-  roots: z.array(Root).min(1).max(16),
+  roots: z.array(Root).min(1).max(MAX_ROOTS),
   browse: z.boolean().default(true),
   // 적지 않은 프로그램은 꺼진 것이다
   programs: z.strictObject(
