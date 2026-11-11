@@ -31,7 +31,9 @@ import { getApproval } from "../modules/approvals/store";
 import { canReadChannel } from "../auth/channel-access";
 import { assertChannelWritable, getChannel, loadReadableChannel } from "../modules/channels/service";
 import { assertDmWritable } from "../modules/dms/service";
+import { assertSettingsWritable, upsertSettings } from "../modules/conversations/agent-settings";
 import { resolveSendConversation } from "../modules/conversations/service";
+import type { RunnerLiveApi } from "../modules/runners/live";
 import { getConversation } from "../modules/conversations/store";
 import { ipPrefix } from "../modules/ops/ip";
 import { LIMITS, type Limits } from "../modules/ops/limits";
@@ -62,6 +64,8 @@ export type WireContext = {
   route: (message: Message) => Promise<void>;
   /** 없으면 런 핸들러는 ADAPTER_UNAVAILABLE */
   runs: RunsFacade | null;
+  /** 새 세션 첫 글의 agentSettings 를 러너 상한과 대조한다(세션 설정 스펙 5.3). 없으면 대조를 건너뛴다 */
+  runners?: Pick<RunnerLiveApi, "runnerInfo"> | null;
   /** 쿠키 인증을 받을 출처(APP_ORIGIN). 핸드셰이크 Origin 이 같을 때만 쿠키를 읽는다 */
   appOrigin: string;
   /** 푸시 거르기(스펙 5.3) — 소켓별 「보이는가·보는 채널」. 없으면 presence.update 를 버린다 */
@@ -430,8 +434,8 @@ function sendMessage(
   const now = new Date();
   // 첨부는 서비스가 같은 트랜잭션에서 검사하고 묶는다(스펙 4.4) — 버리고 저장하면 「본문 없음 + 첨부」가 빈 메시지로 남는다
   const sent = sendUserMessage(ctx.db, ctx.bus, {
-    conversationId: (tx) =>
-      resolveSendConversation(
+    conversationId: (tx) => {
+      const picked = resolveSendConversation(
         tx,
         {
           channelId: input.channelId,
@@ -443,7 +447,31 @@ function sendMessage(
           threadRootId: input.threadRootId,
         },
         now,
-      ),
+      );
+      // 새 세션 창에서 바꾼 러너 에이전트 설정(S11) — 대화와 같은 트랜잭션에서 저장한다. 하나라도 권한·상한을 어기면 던져 글·대화·
+      // 설정이 함께 없던 일이 된다(Review Focus 1). 재전송은 이 함수를 부르지 않으므로 첫 전송의 값이 남는다(Review Focus 2)
+      if (picked.created) {
+        for (const { agentId, ...patch } of input.agentSettings ?? []) {
+          assertSettingsWritable(
+            tx,
+            {
+              workspaceId: ctx.workspaceId,
+              channelId: input.channelId,
+              agentId,
+              user: { id: userId, role },
+              permissionMode: patch.permissionMode,
+              runners: ctx.runners ?? null,
+            },
+            () =>
+              apiError("VALIDATION", "agentSettings 의 에이전트가 이 채널의 러너 에이전트가 아니다", {
+                field: "agentSettings",
+              }),
+          );
+          upsertSettings(tx, { conversationId: picked.conversationId, agentId, patch, userId });
+        }
+      }
+      return picked;
+    },
     authorId: userId,
     bodyMd: input.bodyMd,
     clientMsgId: input.clientMsgId,

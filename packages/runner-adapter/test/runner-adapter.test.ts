@@ -1140,6 +1140,38 @@ describe("런 이벤트", () => {
     expect(runEvents(h, runId)).toEqual([{ type: "STEP_STARTED", runId, stepName: "ok" }]);
   });
 
+  it("run.final usage 의 contextTokens·contextWindow 를 dodok.usage 에 싣는다 — 둘 중 하나만 오면 싣지 않는다 [세션 설정 스펙 5.1]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const both = await startRun(h, r);
+    r.send("run.final", {
+      runId: both.runId,
+      text: "끝",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 2, contextTokens: 32_100, contextWindow: 200_000 },
+      costKind: "api",
+    });
+    await until(() => signals(h, both.runId).includes("gateway_final"), "final");
+    expect(runEvents(h, both.runId)).toContainEqual(
+      expect.objectContaining({
+        name: "dodok.usage",
+        value: expect.objectContaining({ contextTokens: 32_100, contextWindow: 200_000 }),
+      }),
+    );
+    const half = await startRun(h, r);
+    r.send("run.final", {
+      runId: half.runId,
+      text: "끝",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, contextTokens: 5 },
+      costKind: "api",
+    });
+    await until(() => signals(h, half.runId).includes("gateway_final"), "final");
+    const usage = runEvents(h, half.runId).find((e) => e.type === "CUSTOM" && e.name === "dodok.usage");
+    expect(usage).toBeDefined();
+    expect(usage && "value" in usage ? usage.value : undefined).not.toHaveProperty("contextTokens");
+  });
+
   it("run.final 은 최종 답을 메시지로 만들고 dodok.usage 와 종료 신호를 낸다", async () => {
     const h = await setup();
     const r = await readyRunner(h);

@@ -35,6 +35,7 @@ import { tick } from "./modules/automations/scheduler";
 import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { registerAgentSettingsRoutes } from "./modules/conversations/agent-settings.routes";
 import { registerConversationRoutes } from "./modules/conversations/routes";
 import { registerDirectRoutes } from "./modules/directs/routes";
 import { registerDmRoutes } from "./modules/dms/routes";
@@ -540,6 +541,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerAgentRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
+    registerAgentSettingsRoutes(fastify, routeContext);
     registerDmRoutes(fastify, routeContext);
     registerDirectRoutes(fastify, routeContext);
     registerMemberManageRoutes(fastify, {
@@ -933,6 +935,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       route: (message) => services.router.routeMessage(message),
       runs: services.runs,
+      runners: runnerAdapter ?? null,
       appOrigin: config.APP_ORIGIN,
       presence,
       presenceSnapshot: () => hub.snapshot(),

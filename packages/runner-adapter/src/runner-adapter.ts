@@ -616,6 +616,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (final.usage?.inputTokens !== undefined) usage.inputTokens = final.usage.inputTokens;
     if (final.usage?.outputTokens !== undefined) usage.outputTokens = final.usage.outputTokens;
     if (final.costUsd !== undefined) usage.costUsd = final.costUsd;
+    // 상태 줄의 컨텍스트 %(세션 설정 스펙 5.1) — 둘 다 있을 때만. 옛 러너는 싣지 않는다
+    if (final.usage?.contextTokens !== undefined && final.usage.contextWindow !== undefined) {
+      usage.contextTokens = final.usage.contextTokens;
+      usage.contextWindow = final.usage.contextWindow;
+    }
     // 잴 것이 하나도 없으면(대기열에서 중지된 런 — init 을 못 봐 costKind 는 기본값) 내지 않는다 — 비용 없는 런이
     // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
     const measured =

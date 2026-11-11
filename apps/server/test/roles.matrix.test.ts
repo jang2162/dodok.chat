@@ -55,6 +55,7 @@ import {
   channelConversation,
   createDirectChannelForTest,
   createDmChannelForTest,
+  createRunnerAgentForTest,
   seedConversation,
 } from "./helpers/seed";
 
@@ -213,6 +214,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
       clientMsgId: `root-${++n}`,
     });
     return { channel, conversationId, root };
+  };
+  /** 러너 에이전트가 든 채널의 대화 — 세션 설정 경로(러너 runnerA 는 주인이 없다 — 누구도 그 연결의 주인이 아니다) */
+  const runnerConversation = () => {
+    const channel = newChannel();
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rn${++n}`,
+      runnerTokenId: runnerA(),
+    });
+    addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+    return { conversationId: seedConversation(app.db, channel.id), agentId: agent.id };
   };
   const channelRow = (id: string) => app.db.select().from(channels).where(eq(channels.id, id)).get();
   /** 에이전트가 들어간 새 채널의 에이전트 답 하나 */
@@ -577,6 +589,42 @@ describe("역할 매트릭스(스펙 2장)", () => {
       request: () => {
         const { conversationId, root } = ownerConversation();
         return { method: "GET", url: `/api/v1/conversations/${conversationId}/threads/${root.id}/messages` };
+      },
+    },
+    // 러너 에이전트의 세션 설정(세션 설정 스펙 S2) — default 이하는 누구나, acceptEdits 는 러너 주인·admin 이상
+    {
+      name: "GET /conversations/:id/agent-settings",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/conversations/${runnerConversation().conversationId}/agent-settings`,
+      }),
+    },
+    {
+      name: "PATCH /conversations/:id/agent-settings/:agentId {model,effort,permissionMode default}",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const { conversationId, agentId } = runnerConversation();
+        return {
+          method: "PATCH",
+          url: `/api/v1/conversations/${conversationId}/agent-settings/${agentId}`,
+          payload: { model: "opus", effort: "high", permissionMode: "default" },
+        };
+      },
+    },
+    {
+      name: "PATCH /conversations/:id/agent-settings/:agentId {permissionMode acceptEdits}",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        const { conversationId, agentId } = runnerConversation();
+        return {
+          method: "PATCH",
+          url: `/api/v1/conversations/${conversationId}/agent-settings/${agentId}`,
+          payload: { permissionMode: "acceptEdits" },
+        };
       },
     },
     // 남(owner)이 만든 세션 — member 는 만든 사람·세션 관리자가 아니라 거절, 자기 세션은 conversations.routes.test.ts
@@ -1422,6 +1470,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
         name: "GET /conversations/:id/messages",
         owner: 200,
         request: (fx) => ({ method: "GET", url: `/api/v1/conversations/${fx.conversationId}/messages` }),
+      },
+      {
+        name: "GET /conversations/:id/agent-settings",
+        owner: 200,
+        request: (fx) => ({
+          method: "GET",
+          url: `/api/v1/conversations/${fx.conversationId}/agent-settings`,
+        }),
       },
       {
         name: "GET /conversations/:id/messages?around",

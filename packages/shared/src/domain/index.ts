@@ -384,6 +384,9 @@ export const RunUsage = z.object({
   // 구독 로그인의 달러 값은 청구액이 아니라 공시 단가 환산이다(ADR 0007 4.8)
   costKind: z.enum(["api", "subscription_estimate"]).optional(),
   model: z.string().optional(),
+  // 러너 실행 끝의 컨텍스트 사용량(세션 설정 스펙 5.1) — 상태 줄의 컨텍스트 % 가 마지막 실행의 이 둘로 그린다
+  contextTokens: z.int().min(0).optional(),
+  contextWindow: z.int().min(1).optional(),
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 

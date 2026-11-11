@@ -1,4 +1,10 @@
-import { roleAtLeast, type SessionPolicy, type TeamRole } from "@dodok/shared";
+import {
+  permissionModeRank,
+  roleAtLeast,
+  type RunnerPermissionMode,
+  type SessionPolicy,
+  type TeamRole,
+} from "@dodok/shared";
 import { apiError } from "../http/errors";
 
 // 역할 정책 — 제어 도구에 대응하는 REST 경로마다 하나. REST 라우트(requirePolicy·핸들러)와 제어 서비스가 같은 함수를 불러
@@ -112,6 +118,36 @@ export function authorizeConversationManage(
   requireAtLeast(role, "member");
   if (actor.isCreator || actor.isManager || roleAtLeast(role, "admin")) return;
   throw apiError("FORBIDDEN", "만든 사람·세션 관리자·admin 이상만 이 세션을 바꿀 수 있다");
+}
+
+/**
+ * 러너 에이전트의 세션 설정(세션 설정 스펙 S2·5.3) — GET·PATCH /conversations/:id/agent-settings 와 새 세션 첫 글의 agentSettings 가
+ * 같은 판정을 쓴다. 그 대화를 못 읽으면 404. 권한 모드가 default 보다 높으면(acceptEdits) 그 러너(연결)의 주인·admin 이상 — 비교 기준은
+ * 지금 값이 아니라 default 다(내린 뒤 되돌리지 못하는 일이 없게). ceiling 은 그 러너가 hello 로 알린 상한 — 넘으면 누구도 못 고른다
+ * (VALIDATION, 러너가 끊겨 null 이면 대조를 건너뛴다 — 런에서 러너가 RUNNER_CEILING 으로 거절한다). permissionMode 가 undefined 면
+ * 권한을 바꾸지 않는 요청이다
+ */
+export function authorizeSessionSettings(input: {
+  canRead: boolean;
+  ownsConnection: boolean;
+  role: TeamRole | undefined;
+  permissionMode: RunnerPermissionMode | null | undefined;
+  ceiling: RunnerPermissionMode | null;
+}): void {
+  if (!input.canRead) throw apiError("NOT_FOUND", "conversation not found");
+  requireAtLeast(input.role, "member");
+  const mode = input.permissionMode;
+  if (mode === undefined || mode === null) return;
+  if (
+    permissionModeRank(mode) > permissionModeRank("default") &&
+    !input.ownsConnection &&
+    !roleAtLeast(input.role, "admin")
+  )
+    throw apiError("FORBIDDEN", "러너 주인·admin 만 default 보다 높은 권한 모드를 고를 수 있다");
+  if (input.ceiling !== null && permissionModeRank(mode) > permissionModeRank(input.ceiling))
+    throw apiError("VALIDATION", `러너 상한(${input.ceiling}) 위의 권한 모드입니다`, {
+      field: "permissionMode",
+    });
 }
 
 /** PUT·DELETE /channels/:id/session-managers/:userId(admin 이상). 세션 정책은 PATCH /channels/:id 의 필드 가르기가 본다(admin) */
