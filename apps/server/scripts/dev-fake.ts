@@ -867,6 +867,21 @@ export const RUNNER_CONTROL_TOPIC = "dev:fake 에이전트가 바꾼 주제";
 export const RUNNER_CONTROL_PROMPT = "dev:fake 에이전트가 넣은 채널 프롬프트";
 /** 러너 대본의 사용량 — 운영 화면이 Claude 런의 토큰·비용을 더한다(「구독」이면 공시 단가 환산값) */
 const RUNNER_USAGE = { inputTokens: 1_200, outputTokens: 80 };
+/** 가짜 러너의 컨텍스트 창 — 상태 줄의 컨텍스트 % 를 화면에서 보려고(세션 설정 스펙 5.1) */
+export const DEV_FAKE_CONTEXT_WINDOW = 200_000;
+const contextRuns = new Map<string, number>();
+/**
+ * 가짜 컨텍스트 사용량 — 같은 러너 세션의 n 번째 런이면 6% + 6%·(n-1)(창 넘지 않게). 세션마다 따로 세서 스레드·다른 세션의 % 가
+ * 갈리는 것을 화면에서 볼 수 있다
+ */
+export function fakeContextUsage(sessionKey: string): { contextTokens: number; contextWindow: number } {
+  const n = (contextRuns.get(sessionKey) ?? 0) + 1;
+  contextRuns.set(sessionKey, n);
+  return {
+    contextTokens: Math.min(DEV_FAKE_CONTEXT_WINDOW, 12_000 * n),
+    contextWindow: DEV_FAKE_CONTEXT_WINDOW,
+  };
+}
 const RUNNER_COST_USD = 0.02;
 
 /** ms 만큼 쉰다 — 런이 중지되면 곧바로 풀린다 */
@@ -934,7 +949,7 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   }
   if (run.isAborted) return;
   run.final(deltas.join(""), {
-    usage: RUNNER_USAGE,
+    usage: { ...RUNNER_USAGE, ...fakeContextUsage(d.sessionKey) },
     costUsd: RUNNER_COST_USD,
     costKind: text.includes("구독") ? "subscription_estimate" : "api",
   });
@@ -1872,6 +1887,12 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         tree: spec.tree(),
         script: (run) => {
           logInboundReactions(live, "runner", run.start.deliver);
+          // 세션 설정이 실행에 실렸는지(세션 설정 스펙 5.2) — 모델·effort·권한 모드(「기본」은 어댑터가 계산한 값)
+          const { model, effort, permissionMode } = run.start.agent;
+          live.logger.info(
+            { runId: run.start.deliver.runId, model, effort: effort ?? null, permissionMode },
+            "dev:fake runner settings",
+          );
           return fakeRunnerScript(run);
         },
       });

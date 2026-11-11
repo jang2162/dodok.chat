@@ -69,6 +69,7 @@ import {
   fakeAgentScript,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
+  DEV_FAKE_CONTEXT_WINDOW,
   DEV_FAKE_GATEWAYS,
   DEV_FAKE_HOME_GATEWAY_ID,
   DEV_FAKE_OFFICE_GATEWAY_ID,
@@ -2788,6 +2789,33 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
       .get();
     expect(stored?.usage).toMatchObject({ costUsd: 0.02, costKind: "api" });
   }, 20_000);
+
+  it("@coder 런 끝 usage 에 컨텍스트 사용량이 실려 상태 줄 GET 이 % 를 낸다 — 같은 세션의 다음 런은 더 크다 [세션 설정 스펙 5.1]", async () => {
+    const ch = await coderChannel("runner-context");
+    const answers = () =>
+      ch.created.filter((m) => m.authorType === "agent" && m.runId !== undefined && m.runId !== null);
+    expect((await ch.send(`<@a:${ch.coderId}> 하나`)).ok).toBe(true);
+    await vi.waitFor(() => expect(answers()).toHaveLength(1), { timeout: 10_000 });
+    expect((await ch.send(`<@a:${ch.coderId}> 둘`)).ok).toBe(true);
+    await vi.waitFor(() => expect(answers()).toHaveLength(2), { timeout: 10_000 });
+    const usageOf = (runId: string | null | undefined) =>
+      dev.app.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, runId ?? ""))
+        .get()?.usage;
+    const [first, second] = answers().map((m) => usageOf(m.runId));
+    expect(first).toMatchObject({ contextWindow: DEV_FAKE_CONTEXT_WINDOW });
+    expect(second?.contextTokens ?? 0).toBeGreaterThan(first?.contextTokens ?? 0);
+    const conversationId = answers()[1]?.conversationId ?? "";
+    const { settings } = await rest<{ settings: Array<{ agentId: string; contextPercent: number | null }> }>(
+      "GET",
+      `/conversations/${conversationId}/agent-settings`,
+    );
+    expect(settings.find((s) => s.agentId === ch.coderId)?.contextPercent).toBe(
+      Math.round(((second?.contextTokens ?? 0) / DEV_FAKE_CONTEXT_WINDOW) * 100),
+    );
+  }, 30_000);
 
   it("@coder 「제어」 → 시킨 owner 에게 dodok_control 확인 카드, 허용하면 채널 주제가 바뀌고 시스템 메시지·답이 온다", async () => {
     const ch = await coderChannel("runner-control");
