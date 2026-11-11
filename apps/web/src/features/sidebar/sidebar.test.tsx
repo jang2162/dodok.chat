@@ -362,8 +362,10 @@ describe("사이드바 개인 섹션 — 끌어다 놓기(키보드 센서)", ()
   beforeEach(() => {
     const original = Element.prototype.getBoundingClientRect;
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      if (!this.hasAttribute("data-dnd-node")) return original.call(this);
-      const index = [...document.querySelectorAll("[data-dnd-node]")].indexOf(this);
+      // 손을 따라가는 이름표는 끌던 줄의 자리에서 시작한다
+      const self = this.hasAttribute("data-dnd-overlay") ? document.querySelector("[data-dragging]") : this;
+      if (!self?.hasAttribute("data-dnd-node")) return original.call(this);
+      const index = [...document.querySelectorAll("[data-dnd-node]")].indexOf(self);
       return DOMRect.fromRect({ x: 0, y: index * 40, width: 200, height: 32 });
     });
   });

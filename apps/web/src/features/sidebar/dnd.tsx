@@ -3,6 +3,7 @@ import {
   closestCenter,
   DndContext,
   type DragEndEvent,
+  DragOverlay,
   type DragStartEvent,
   KeyboardSensor,
   MouseSensor,
@@ -119,7 +120,7 @@ function swallowNextClick() {
 export function SidebarDndProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const update = useUpdateSidebar();
-  const [activeKind, setActiveKind] = useState<DndData["kind"] | null>(null);
+  const [activeData, setActiveData] = useState<DndData | null>(null);
   const release = useRef<(() => void) | undefined>(undefined);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -133,13 +134,13 @@ export function SidebarDndProvider({ children }: { children: ReactNode }) {
   const finish = useCallback(() => {
     release.current?.();
     release.current = undefined;
-    setActiveKind(null);
+    setActiveData(null);
   }, []);
   const onDragStart = useCallback(
     ({ active }: DragStartEvent) => {
       release.current?.();
       release.current = holdSidebar(qc);
-      setActiveKind((active.data.current as DndData | undefined)?.kind ?? null);
+      setActiveData((active.data.current as DndData | undefined) ?? null);
     },
     [qc],
   );
@@ -155,7 +156,7 @@ export function SidebarDndProvider({ children }: { children: ReactNode }) {
     [finish, update],
   );
   return (
-    <ActiveKindContext.Provider value={activeKind}>
+    <ActiveKindContext.Provider value={activeData?.kind ?? null}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -165,6 +166,17 @@ export function SidebarDndProvider({ children }: { children: ReactNode }) {
         onDragCancel={finish}
       >
         {children}
+        {/* 손을 따라가는 이름표 — 끌던 줄은 제자리에 흐리게 남는다(목록 밖으로 나가도 손에서 사라지지 않게) */}
+        <DragOverlay dropAnimation={null}>
+          {activeData ? (
+            <div
+              data-dnd-overlay
+              className="truncate rounded-md border bg-sidebar px-2 py-1.5 text-sm font-medium text-sidebar-foreground shadow-md"
+            >
+              {activeData.label}
+            </div>
+          ) : null}
+        </DragOverlay>
       </DndContext>
     </ActiveKindContext.Provider>
   );

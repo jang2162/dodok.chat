@@ -111,7 +111,7 @@ function SectionBlock({
       ref={dnd.blockRef}
       {...dnd.blockProps}
       aria-label={section.name}
-      className="relative flex flex-col gap-1 rounded-md data-dragging:z-10 data-dragging:bg-sidebar data-dragging:opacity-90 data-dragging:shadow-sm"
+      className="relative flex flex-col gap-1 rounded-md data-dragging:opacity-40"
     >
       <SectionHeader
         section={section}

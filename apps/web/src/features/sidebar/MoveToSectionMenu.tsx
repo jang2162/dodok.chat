@@ -99,7 +99,7 @@ export function SidebarRow({
     <div
       ref={dnd.rowRef}
       {...dnd.rowProps}
-      className="group/row relative flex touch-manipulation items-center gap-0.5 rounded-md data-dragging:z-10 data-dragging:bg-sidebar-accent data-dragging:opacity-80 data-dragging:shadow-sm data-over:ring-1 data-over:ring-sidebar-ring"
+      className="group/row relative flex touch-manipulation items-center gap-0.5 rounded-md data-dragging:opacity-40 data-over:ring-1 data-over:ring-sidebar-ring"
     >
       <div className="min-w-0 flex-1">{children}</div>
       <MoveToSectionMenu itemId={itemId} label={label} />
