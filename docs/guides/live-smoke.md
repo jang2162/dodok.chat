@@ -899,11 +899,12 @@ api() {  # api <METHOD> <경로> [json]
 }
 api GET /api/v1/runners | jq -c '.runners[] | {id, name}'                              # 러너 id(= 러너 토큰 id) — 러너가 붙어 있어야 둘러보기·프로젝트 더하기가 된다
 api POST /api/v1/runners/$RID/projects '{"rootId":"src","relPath":"proj-a"}'           # → 프로젝트 id. 루트 밖은 400 outside_root, 없는 곳은 400 not_found
-api POST /api/v1/agents '{"provider":"runner","runnerProjectId":"<프로젝트 id>","program":"claude","handle":"hx","name":"hx","model":"sonnet","permissionMode":"acceptEdits","basePrompt":"HX-INSTR-ALPHA: 답은 한 줄로."}'
+api POST /api/v1/agents '{"provider":"runner","runnerProjectId":"<프로젝트 id>","program":"claude","handle":"hx","name":"hx","basePrompt":"HX-INSTR-ALPHA: 답은 한 줄로."}'
+api PATCH /api/v1/agents/<에이전트 id> '{"sessionDefaults":{"model":"sonnet","permissionMode":"acceptEdits"}}'   # 새 세션 시작값 — 대화별은 PATCH /api/v1/conversations/<CV>/agent-settings/<에이전트 id> '{"model":"sonnet","permissionMode":"acceptEdits","effort":"high"}'
 api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이전트 id>"}'
 ```
 
-- 러너 에이전트는 만들 때부터 그 프로젝트의 러너 토큰에 묶인다. `permissionMode` 를 빼면 `default`, `allowedTools` 를 빼면 상한 안에서 프로그램 기본이다. 러너의 `maxPermissionMode` 를 넘는 값은 400 `{field: "permissionMode"}` 다.
+- 러너 에이전트는 만들 때부터 그 프로젝트의 러너 토큰에 묶인다. 모델·effort·권한 모드는 만들 때 받지 않는다(보내면 무시). 대화마다 설정이 없으면 시작값, 시작값도 없으면 모델·effort 는 CLI 기본, 권한은 `min(default, 러너 상한)`. 상한을 넘는 `permissionMode` 는 시작값·대화 설정 PATCH 에서 400 `{field: "permissionMode"}`(러너가 붙어 있을 때만 — 끊겨 있으면 런에서 `RUNNER_CEILING`).
 - `curl -X DELETE` 에 `content-type: application/json` 을 붙이고 본문을 비우면 400 이다(빈 JSON 본문) — `api DELETE …` 처럼 그 머리 없이 부른다(러너 토큰 폐기 등).
 
 **러너 설정을 바꿔 띄우기** — 「머신 주인이 설정을 바꿈」은 설정 파일 사본을 `jq` 로 만들고 러너를 SIGTERM 으로 내린 뒤 그 사본으로 다시 띄운다: `.programs.claude.maxPermissionMode="default"`(상한 낮춤)·`.roots[0].id="src2"`(루트 id 바꿈)·`.programs={}`(프로그램 끔)·`. + {agents:[…]}`(옛 설정). 루트 밖은 저장한 프로젝트 디렉터리를 루트 밖을 가리키는 링크로 바꿔 만든다(되돌린 뒤 「다시 실행」).
@@ -926,7 +927,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 
 | # | 기준 | 어떻게 본다 |
 | --- | --- | --- |
-| 1 | 앱에서 더한 프로젝트 디렉터리에서 돈다(CLI `cwd`) | 감싸개 기록의 `cwd=` 가 그 프로젝트 디렉터리 · 요청 `messages[0]` 환경 블록의 `Primary working directory` · 오래 도는 런(`HX-SLOW`) 동안 `lsof -a -p <감싸개가 exec 한 claude pid> -d cwd`. argv 의 `--model`·`--permission-mode` 가 에이전트 정의 그대로 |
+| 1 | 앱에서 더한 프로젝트 디렉터리에서 돈다(CLI `cwd`) | 감싸개 기록의 `cwd=` 가 그 프로젝트 디렉터리 · 요청 `messages[0]` 환경 블록의 `Primary working directory` · 오래 도는 런(`HX-SLOW`) 동안 `lsof -a -p <감싸개가 exec 한 claude pid> -d cwd`. argv 의 `--model`·`--permission-mode` 가 그 대화의 세션 설정(없으면 시작값, 권한 「기본」은 `min(default, 상한)`) 그대로, effort 를 줬으면 그 값이 CLI 요청에 실린다 |
 | 2 | 시스템 프롬프트에 에이전트 지시(`<agent-instructions>`)·틀 입힌 채널 규칙이 **한 벌씩** | `system[]` 셋째 블록에 `# dodok agent instructions` → `<agent-instructions>` … → `# dodok channel settings` → `<channel-rules …>` 차례, 각 1. 지시·규칙 속 태그는 `&lt;` 로 이스케이프 |
 | 3 | 규칙·지시를 바꾼 뒤 런에 새 것만 | `PATCH /channels/<CH> {"prompt":…}` 또는 `PATCH /agents/<id> {"basePrompt":…}` 뒤 다음 런은 새 `--session-id`(러너 세션을 새로 연다) + 채널 시스템 글, 요청에 새 표식 1 · 옛 표식 0 |
 | 4 | `UserPromptSubmit` 훅 문맥 자리 | 프롬프트 뒤의 `role: "system"` 메시지 안 `<system-reminder>UserPromptSubmit hook additional context: [dodok context] 이 턴의 사실 — … 참여자: … 자리: 채널</system-reminder>` |
@@ -936,7 +937,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 | 8 | 러너를 죽이면 run_error 카드, 「다시 실행」은 같은 세션 `--resume` | 러너 PID 에 `SIGKILL` → `RUN_ERROR ADAPTER_UNAVAILABLE` + 「다시 실행」 → 러너를 다시 띄우고 누르면 새 런(`parentRunId`)이 `--resume` 으로 `done`. `SIGKILL` 은 러너가 CLI 를 멈출 틈이 없어 CLI 가 고아로 남아 그 턴을 끝까지 돈다 — 「다시 실행」의 `resume` 이력에 채널에 없던 답이 실린다(`docs/guides/docker-deploy.md` 「러너 설치」 절이 `kill -9` 를 막는 까닭) |
 | 9 | 서버 재시작 → 러너 재접속 | 서버 SIGINT → 러너 「서버와 끊겼습니다 …」 → 백오프 → 「연결됨」, 러너는 끝나지 않는다(종료 2 아님) |
 | 10 | 첨부 — 러너가 남의 첨부 GET 404 · 파일 보내기는 작업 디렉터리 안만 | 러너 토큰 `GET /runner/attachments/<id>`: 열린 런의 트리거 첨부·자기 업로드만 200, 나머지 404(같은 응답). `HX-POST-IN` 은 채널 파일 카드, `HX-POST-OUT`(`../…`)은 도구 결과 `is_error` 「작업 디렉터리 밖을 가리킵니다」 |
-| 11 | 천장 — 루트 밖·상한 넘는 권한·루트 id 바꿈·꺼진 프로그램이 `RUNNER_CEILING` 카드(「다시 실행」 포함), CLI 기동 0 | 「러너 설정을 바꿔 띄우기」의 넷 → `RUN_ERROR {code: "RUNNER_CEILING", message: path\|permissionMode\|root\|program}`, 러너 로그 「천장에 걸려 거절」 |
+| 11 | 천장 — 루트 밖·대화 설정에 저장된 `acceptEdits` 뒤 러너 상한을 `default` 로 낮춤·루트 id 바꿈·꺼진 프로그램이 `RUNNER_CEILING` 카드(「다시 실행」 포함), CLI 기동 0 | 「러너 설정을 바꿔 띄우기」의 넷 → `RUN_ERROR {code: "RUNNER_CEILING", message: path\|permissionMode\|root\|program}`, 러너 로그 「천장에 걸려 거절」 |
 | 12 | 로그 위생 — 시크릿·러너 머신 절대 경로 0, 모델 런 0 | 러너 토큰·세션 토큰·로컬 토큰 파일로 `grep -a -c -F -f`, 스크래치 루트의 절대 경로(앞 `/private` 를 뗀 꼴 포함)로도 같게 — 서버 로그·DB(`sqlite3 -readonly .dump` 와 파일 바이트)·러너 로그·wire 기록·REST 응답 전부 0, 양성 대조(토큰 파일·러너 설정 자신) ≥1. CLI 기동 수 = 감싸개 기록 줄 수에서 `argv=--version` 줄을 뺀 수(모두 `ANTHROPIC_BASE_URL=http://127.0.0.1:…`) = 런 수 |
 
 ### 절차 메모
