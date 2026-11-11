@@ -93,6 +93,7 @@ import { registerRunRoutes } from "./modules/runs/routes";
 import { registerReadRoutes } from "./modules/reads/routes";
 import { registerTokenRoutes } from "./modules/tokens/routes";
 import { registerSearchRoutes } from "./modules/search/routes";
+import { registerSidebarRoutes } from "./modules/sidebar/routes";
 import { renderLlmsTxt } from "./modules/setup/llms";
 import { renderPluginInstallScript } from "./modules/setup/plugin-install-script";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
@@ -504,6 +505,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 상태(프로필 스펙 3.2) — 수동 모드가 바뀌면(사람이 바꾸거나 만료가 지나면) 접속 점을 다시 계산한다
     const onModeChanged = (userId: string) => presenceHooks.modeChanged(userId);
     registerProfileRoutes(fastify, { auth, db, bus, workspaceId, onModeChanged });
+    registerSidebarRoutes(fastify, { auth, db, bus, workspaceId });
     // 아바타(프로필 스펙 3.6) — 첨부 디렉터리와 따로. 부팅 때 한 번 어느 행도 안 가리키는 파일을 치운다(첨부 청소와 따로)
     const avatarsDir = deps.avatarsDir ?? join(config.DATA_DIR, "avatars");
     const sweptAvatars = await sweepAvatars(db, avatarsDir);

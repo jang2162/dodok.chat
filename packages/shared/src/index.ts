@@ -23,4 +23,5 @@ export * from "./search";
 export * from "./reads";
 export * from "./reactions";
 export * from "./session-key";
+export * from "./sidebar";
 export * from "./runner";

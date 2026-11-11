@@ -20,6 +20,7 @@ import type { OpsEvent, OpsUnacked } from "../ops";
 import type { MyStatus, PresenceEntry } from "../profile";
 import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../reads";
 import type { SetupStatus } from "../setup";
+import type { SidebarLayout } from "../sidebar";
 
 // ── 클라이언트 → 서버 (ack 있음) ──
 export const ChannelSubscribe = z.object({ channelId: Id, lastSeq: z.int().min(0).optional() });
@@ -194,4 +195,5 @@ export interface ServerToClientEvents {
   "presence.snapshot": (p: { entries: PresenceEntry[] }) => void;
   "presence.changed": (p: { entries: PresenceEntry[] }) => void;
   "me.status": (p: { status: MyStatus }) => void; // user 룸 — 본인의 다른 탭·기기가 「내 계정」·내 패널을 맞춘다
+  "me.sidebar": (p: { layout: SidebarLayout }) => void; // user 룸 — PUT /me/sidebar 뒤 본인의 다른 탭·기기가 개인 섹션을 맞춘다
 }

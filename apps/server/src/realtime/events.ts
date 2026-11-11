@@ -222,6 +222,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     ),
     on("people.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("people.changed", p)),
     on("me.status", ({ userId, ...p }) => io.to(userRoom(userId)).emit("me.status", p)),
+    on("me.sidebar", ({ userId, ...p }) => io.to(userRoom(userId)).emit("me.sidebar", p)),
     on("presence.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("presence.changed", p)),
     on("agents.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("agents.changed", p)),
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),
