@@ -426,6 +426,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       workdir: ceiling.workdir,
       ...(programCeiling.configDir === undefined ? {} : { configDir: programCeiling.configDir }),
       model: agent.model,
+      effort: agent.effort ?? null,
       permissionMode: agent.permissionMode,
       allowedTools: agent.allowedTools,
       disallowedTools: [...new Set([...programCeiling.disallowedTools, ...agent.disallowedTools])],

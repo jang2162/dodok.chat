@@ -643,6 +643,19 @@ describe("startRunnerConnection", () => {
     expect(options.env?.CLAUDE_CONFIG_DIR).toBe(AGENT.configDir);
   });
 
+  it("run.start.agent.effort 가 CLI 옵션 effort 로 — 없으면(옛 서버) 키가 없다 [세션 설정 스펙 5.6]", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart({ agent: { model: "opus", effort: "xhigh" } }));
+    await waitFor(() => server.finals.length === 1);
+    expect(fake.calls[0]!.options).toMatchObject({ model: "opus", effort: "xhigh" });
+    fake.script(...script.textTurn("msg_2", ["y"]));
+    await sendStart(server.sockets[0]!, runStart({ runId: "0192f000-0000-7000-8000-0000000000e2" }));
+    await waitFor(() => server.finals.length === 2);
+    expect("effort" in fake.calls[1]!.options).toBe(false);
+  });
+
   it("providerSessionId 없는 claude 런은 VALIDATION — 서버가 세션 id 를 정하는 프로그램이다", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.hellos.length === 1);

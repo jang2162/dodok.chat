@@ -23,7 +23,13 @@ const ERROR_MESSAGE_MAX = 2000;
 export type RunnerRunFinalBody = {
   text: string;
   stopReason: string;
-  usage?: { inputTokens?: number; outputTokens?: number };
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    /** 그 턴 마지막 API 호출의 입력+캐시 토큰 — 상태 줄의 컨텍스트 %(세션 설정 스펙 5.6) */
+    contextTokens?: number;
+    contextWindow?: number;
+  };
   totalCostUsd?: number;
 };
 
@@ -56,7 +62,7 @@ type Loose = {
     content_block?: { type?: string; id?: string; name?: string };
     delta?: { type?: string; text?: string; partial_json?: string };
   };
-  message?: { content?: unknown };
+  message?: { content?: unknown; model?: string; usage?: Loose["usage"] };
   // result
   is_error?: boolean;
   num_turns?: number;
@@ -70,6 +76,7 @@ type Loose = {
     cache_read_input_tokens?: number | null;
   };
   errors?: string[];
+  modelUsage?: Record<string, { contextWindow?: number } | undefined>;
 };
 
 function toolResultText(content: unknown, mask: PathMasker): string {
@@ -93,8 +100,33 @@ function usageOf(u: Loose["usage"]): RunnerRunFinalBody["usage"] {
   return { inputTokens, outputTokens: u.output_tokens };
 }
 
-function finalOf(r: Loose, text: string, stopReason: string): RunnerRunFinalBody {
-  const usage = usageOf(r.usage);
+/** 본 스레드의 마지막 assistant 메시지 — 그 usage 가 마지막 API 호출의 것이다(result.usage 는 턴의 합이라 컨텍스트 크기가 아니다) */
+type LastCall = { model?: string; usage?: Loose["usage"] };
+
+/**
+ * 컨텍스트 사용량 — 마지막 호출의 input + cache_creation + cache_read, 창 크기는 result.modelUsage 의 그 모델(그 키가 없고 모델이 하나뿐이면
+ * 그것). 둘 중 하나라도 모르면 싣지 않는다
+ */
+function contextOf(r: Loose, last: LastCall): { contextTokens: number; contextWindow: number } | undefined {
+  const u = last.usage;
+  if (!u || u.input_tokens === undefined) return undefined;
+  const entries = Object.entries(r.modelUsage ?? {});
+  const entry =
+    (last.model === undefined ? undefined : r.modelUsage?.[last.model]) ??
+    (entries.length === 1 ? entries[0]?.[1] : undefined);
+  const contextWindow = entry?.contextWindow;
+  if (typeof contextWindow !== "number" || !Number.isInteger(contextWindow) || contextWindow < 1)
+    return undefined;
+  return {
+    contextTokens: u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
+    contextWindow,
+  };
+}
+
+function finalOf(r: Loose, text: string, stopReason: string, last: LastCall = {}): RunnerRunFinalBody {
+  const context = contextOf(r, last);
+  const summed = usageOf(r.usage);
+  const usage = summed || context ? { ...summed, ...context } : undefined;
   return {
     text,
     stopReason,
@@ -116,6 +148,7 @@ export function createStreamMapper(
   let interrupted = false;
   let interruptStopReason = ABORTED_STOP_REASON;
   let authFailed = false;
+  let lastCall: LastCall = {};
 
   const errorItem = (code: ErrorCode, message: string): MapItem => ({
     error: { code, message: mask(message).slice(0, ERROR_MESSAGE_MAX) },
@@ -253,10 +286,10 @@ export function createStreamMapper(
           errorItem(authFailed || isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL", text || "error"),
         ];
       }
-      return [{ final: finalOf(r, mask(r.result ?? ""), r.stop_reason ?? "end_turn") }];
+      return [{ final: finalOf(r, mask(r.result ?? ""), r.stop_reason ?? "end_turn", lastCall) }];
     }
     if (interrupted && r.subtype === "error_during_execution") {
-      return [{ final: finalOf(r, "", interruptStopReason) }];
+      return [{ final: finalOf(r, "", interruptStopReason, lastCall) }];
     }
     const text = (r.errors ?? []).join("; ") || r.subtype || "error";
     return [errorItem(authFailed || isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL", text)];
@@ -278,6 +311,7 @@ export function createStreamMapper(
           return mapToolResults(x.message?.content);
         case "assistant":
           if (x.error === "authentication_failed") authFailed = true;
+          if (x.message?.usage) lastCall = { model: x.message.model, usage: x.message.usage };
           return [];
         case "result":
           return mapResult(x);
