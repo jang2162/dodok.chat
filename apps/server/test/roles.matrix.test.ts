@@ -859,6 +859,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
         payload: { mode: "busy", modeUntil: null },
       }),
     },
+    // 사이드바 개인 섹션(사이드바 섹션 스펙 B4) — 누구나, 자기 것만
+    {
+      name: "GET /me/sidebar",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/me/sidebar" }),
+    },
+    {
+      name: "PUT /me/sidebar",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "PUT", url: "/api/v1/me/sidebar", payload: { sections: [] } }),
+    },
     // 개인 토큰(제어 MCP 스펙 「권한」 장) — 누구나, 자기 것만. DELETE 는 아래 「개인 토큰」 묶음이 주인별로 본다
     {
       name: "GET /me/tokens",

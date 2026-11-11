@@ -43,6 +43,8 @@ export type BusEvents = {
   "ops.event": Payload<"ops.event">;
   // 본인 상태가 바뀌었다 — 그 사람의 user 룸으로(다른 탭·기기가 맞춘다, events.ts). userId 는 팬아웃이 룸을 고르는 데만 쓴다
   "me.status": Payload<"me.status"> & { userId: Id };
+  // 개인 섹션 배치가 바뀌었다 — 그 사람의 user 룸으로(사이드바 섹션 스펙 B4). userId 는 팬아웃이 룸을 고르는 데만 쓴다
+  "me.sidebar": Payload<"me.sidebar"> & { userId: Id };
   // 접속 점이 바뀐 줄 — 워크스페이스 방으로(modules/presence/hub.ts)
   "presence.changed": Payload<"presence.changed">;
 };

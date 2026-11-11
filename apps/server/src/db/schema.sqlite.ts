@@ -17,6 +17,7 @@ import type {
   RunnerPermissionMode,
   RunnerProgram,
   SessionPolicy,
+  SidebarLayout,
   StatusMode,
   RunEvent,
   RunUsage,
@@ -809,3 +810,15 @@ export const automations = sqliteTable(
     index("automations_due").on(t.enabled, t.kind, t.nextRunAt),
   ],
 );
+
+/**
+ * 사이드바 개인 섹션(사이드바 섹션 스펙 5장) — 사람마다 배치 한 벌(SidebarLayout JSON), 본인만 읽고 쓴다. 통째로 읽고 쓴다: 끌어다
+ * 놓기 한 번이 여러 항목의 순서를 함께 바꾸고, 같은 사람의 두 탭은 나중 저장이 이긴다
+ */
+export const userSidebarLayouts = sqliteTable("user_sidebar_layouts", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  layoutJson: json<SidebarLayout>("layout_json").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
