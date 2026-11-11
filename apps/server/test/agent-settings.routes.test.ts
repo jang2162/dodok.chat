@@ -204,6 +204,61 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     });
   });
 
+  describe("권한 상한(ceiling) — 읽는 누구에게나 [5.3 · 리뷰 건 1]", () => {
+    const ceilingsOf = async (token: string, channelId: string) => {
+      const res = await call(token, "GET", `/api/v1/channels/${channelId}/agent-ceilings`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { ceilings: Array<{ agentId: string; ceiling: string | null }> }).ceilings;
+    };
+
+    it("member 에게도 남의 러너가 hello 로 알린 상한 — 대화 줄과 채널의 agent-ceilings 가 같은 값, 끊긴 러너는 null", async () => {
+      const { channel, agent, conversationId } = setup(runner.low);
+      const { agent: open } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `op${++n}`,
+        runnerTokenId: runner.open,
+      });
+      const offline = issueRunnerToken(app.db, app.workspaceId, `off${n}`, null).record.id;
+      const { agent: off } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `off${n}`,
+        runnerTokenId: offline,
+      });
+      for (const a of [open, off])
+        addMember(app.db, channel.id, { memberType: "agent", memberId: a.id }, app.logger);
+      const want = [
+        { agentId: agent.id, ceiling: "default" },
+        { agentId: open.id, ceiling: "acceptEdits" },
+        { agentId: off.id, ceiling: null },
+      ];
+      expect(
+        (await settingsOf(noah.token, conversationId)).map((s) => ({
+          agentId: s.agentId,
+          ceiling: s.ceiling,
+        })),
+      ).toEqual(want);
+      expect(await ceilingsOf(noah.token, channel.id)).toEqual(want);
+      const saved = await patch(noah.token, conversationId, agent.id, { model: "opus" });
+      expect(saved.json()).toMatchObject({ agentId: agent.id, ceiling: "default" });
+    });
+
+    it("남의 DM 채널의 agent-ceilings 는 404 — 주인은 읽는다", async () => {
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `dc${++n}`,
+        runnerTokenId: runner.mine,
+      });
+      const dm = createDmChannelForTest(app.db, {
+        workspaceId: app.workspaceId,
+        ownerId: mia.id,
+        agentId: agent.id,
+      });
+      for (const token of [noah.token, owner])
+        expect((await call(token, "GET", `/api/v1/channels/${dm.id}/agent-ceilings`)).statusCode).toBe(404);
+      expect(await ceilingsOf(mia.token, dm.id)).toEqual([{ agentId: agent.id, ceiling: "acceptEdits" }]);
+    });
+  });
+
   it("저장하면 그 채널 룸에 conversation.agent_settings 하나", async () => {
     const { channel, conversationId, agent } = setup();
     const socket = await connectWire(app, owner);
@@ -222,6 +277,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
         effort: null,
         permissionMode: null,
         contextPercent: null,
+        ceiling: "acceptEdits",
       },
     });
     // 같은 틱의 덤 이벤트가 없는지 — 응답 뒤에 한 번 더 기다려 본다

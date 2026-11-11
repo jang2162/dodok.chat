@@ -1,4 +1,4 @@
-import { AgentSettingsPatch, Id } from "@dodok/shared";
+import { type AgentCeiling, AgentSettingsPatch, Id } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Auth } from "../../auth";
@@ -9,9 +9,11 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
+import { loadReadableChannel } from "../channels/service";
 import type { RunnerLiveApi } from "../runners/live";
 import {
   assertSettingsWritable,
+  runnerPermissionCeiling,
   settingsAgentsOf,
   toConversationAgentSettings,
   upsertSettings,
@@ -50,13 +52,35 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
       return {
         settings: settingsAgentsOf(ctx.db, conversation.channelId).map((agent) =>
-          toConversationAgentSettings(ctx.db, {
-            conversationId: id,
-            agentId: agent.id,
-            ...(threadRootId === undefined ? {} : { threadRootId }),
-          }),
+          toConversationAgentSettings(
+            ctx.db,
+            {
+              conversationId: id,
+              agentId: agent.id,
+              ...(threadRootId === undefined ? {} : { threadRootId }),
+            },
+            ctx.runners,
+          ),
         ),
       };
+    },
+  );
+
+  /**
+   * 새 세션 창(대화가 아직 없다)의 권한 상한 — 상태 줄에 오르는 에이전트마다, 그 채널을 읽을 수 있는 누구에게나. 남의 DM 은 404
+   */
+  fastify.get(
+    "/api/v1/channels/:id/agent-ceilings",
+    { preHandler: requirePolicy(ctx, authorizeRead) },
+    async (request) => {
+      const { id } = parseParams(ConversationParams, request.params);
+      const user = sessionUser(request);
+      loadReadableChannel(ctx.db, id, user.workspaceId, user.id);
+      const ceilings: AgentCeiling[] = settingsAgentsOf(ctx.db, id).map((agent) => ({
+        agentId: agent.id,
+        ceiling: runnerPermissionCeiling(ctx.runners, agent),
+      }));
+      return { ceilings };
     },
   );
 
@@ -84,7 +108,7 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
           notFound,
         );
         upsertSettings(tx, { conversationId: id, agentId, patch, userId: user.id });
-        return toConversationAgentSettings(tx, { conversationId: id, agentId });
+        return toConversationAgentSettings(tx, { conversationId: id, agentId }, ctx.runners);
       });
       ctx.bus.emit("conversation.agent_settings", {
         channelId: conversation.channelId,

@@ -11,7 +11,7 @@ import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
 import { doc, flushEditorFrames, p, setDoc, t } from "../../../test/composerHarness";
-import { programOf, runnerId, runnerOf } from "../../../test/runnersServer";
+import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
 import { ABOVE_CEILING, RAISE_LOCKED } from "./AgentSettingsPopover";
 
@@ -76,6 +76,7 @@ const row = (agent: Agent, over: Partial<ConversationAgentSettings> = {}): Conve
   effort: null,
   permissionMode: null,
   contextPercent: null,
+  ceiling: null,
   ...over,
 });
 
@@ -84,7 +85,11 @@ let calls: Call[];
 let fake: FakeSocket;
 let restoreDom: () => void;
 
-/** 가짜 REST — 세션 설정·러너·연결. PATCH 는 보낸 칸을 얹은 줄을 돌려준다 */
+/**
+ * 가짜 REST — 세션 설정·채널의 권한 상한. 상한(`ceiling`, 기본 acceptEdits)은 서버가 대화 줄과 `agent-ceilings` 에 싣는다 — 줄에
+ * 따로 준 값이 우선. `GET /runners` 는 주지 않는다(member 는 남의 러너를 못 받는다 — 화면은 그것에 기대지 않는다). PATCH 는 보낸
+ * 칸을 얹은 줄을 돌려준다
+ */
 function serve(opts: {
   settings?: Record<string, ConversationAgentSettings[]>;
   ceiling?: "plan" | "dontAsk" | "default" | "acceptEdits";
@@ -99,11 +104,15 @@ function serve(opts: {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body });
       const json = (status: number, b: unknown) => new Response(JSON.stringify(b), { status });
+      const ceiling = opts.ceiling ?? "acceptEdits";
       const settings = url.match(/\/conversations\/([^/?]+)\/agent-settings(\?threadRootId=(.+))?$/);
       if (method === "GET" && settings) {
         const key = settings[3] ? `${settings[1]}:${settings[3]}` : (settings[1] ?? "");
-        return json(200, { settings: opts.settings?.[key] ?? [] });
+        const rows = (opts.settings?.[key] ?? []).map((r) => ({ ...r, ceiling: r.ceiling ?? ceiling }));
+        return json(200, { settings: rows });
       }
+      if (method === "GET" && url.endsWith(`/channels/${CH}/agent-ceilings`))
+        return json(200, { ceilings: [CODER, REVIEWER].map((a) => ({ agentId: a.id, ceiling })) });
       const patch = url.match(/\/conversations\/([^/]+)\/agent-settings\/([^/]+)$/);
       if (method === "PATCH" && patch) {
         if (opts.patchFails)
@@ -111,18 +120,6 @@ function serve(opts: {
         const before = opts.settings?.[patch[1] ?? ""]?.find((r) => r.agentId === patch[2]);
         return json(200, { ...before, agentId: patch[2], ...body });
       }
-      if (url.endsWith("/runners"))
-        return json(200, {
-          runners: [
-            runnerOf(1, {
-              programs: [
-                programOf({
-                  ceiling: { maxPermissionMode: opts.ceiling ?? "acceptEdits", allowedToolsCeiling: null },
-                }),
-              ],
-            }),
-          ],
-        });
       return json(404, { code: "NOT_FOUND", message: "없음" });
     }),
   );
@@ -265,6 +262,23 @@ describe("「변경」 팝오버 — 권한 [S2]", () => {
     );
   });
 
+  it("member 도 남의 러너 상한(plan) 위는 막힌다 — 상한은 서버가 줄에 싣는다 [리뷰 건 1]", async () => {
+    serve({ settings: { [CONV]: [row(CODER)] }, ceiling: "plan" });
+    renderAt(CONV, { agents: [CODER] });
+    const dialog = await openPopover("coder");
+    await waitFor(() =>
+      expect(modeOptions(dialog)).toEqual([
+        { value: "", disabled: false },
+        { value: "plan", disabled: false },
+        { value: "dontAsk", disabled: true },
+        { value: "default", disabled: true },
+        { value: "acceptEdits", disabled: true },
+      ]),
+    );
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "권한 모드" }), "plan");
+    expect(calls.some((c) => c.url.endsWith("/runners"))).toBe(false);
+  });
+
   it("저장하면 PATCH 하나 — 바뀐 칸만, 줄이 곧바로 바뀐다", async () => {
     serve({ settings: { [CONV]: [row(CODER, { contextPercent: 5 })] } });
     renderAt(CONV, { agents: [CODER] });
@@ -320,6 +334,25 @@ describe("새 세션 창 [S11]", () => {
       newConversation: {},
       agentSettings: [{ agentId: CODER.id, permissionMode: "plan" }],
     });
+  });
+
+  it("member 의 새 세션 창도 상한(plan) 위를 고를 수 없다 — 채널의 agent-ceilings 로 받는다 [리뷰 건 1]", async () => {
+    serve({ ceiling: "plan" });
+    renderAt(NEW_CONVERSATION, { agents: [CODER] });
+    const dialog = await openPopover("coder");
+    await waitFor(() =>
+      expect(
+        modeOptions(dialog)
+          .filter((o) => o.disabled)
+          .map((o) => o.value),
+      ).toEqual(["dontAsk", "default", "acceptEdits"]),
+    );
+    const mode = within(dialog).getByRole("combobox", { name: "권한 모드" });
+    expect(mode).toHaveAccessibleDescription(ABOVE_CEILING("plan"));
+    // 막힌 칸은 골라지지 않는다 — 저장해도 보류 값에 실리지 않는다
+    await userEvent.selectOptions(mode, "default");
+    expect(mode).toHaveValue("");
+    expect(calls.map((c) => c.url)).toContain(`/api/v1/channels/${CH}/agent-ceilings`);
   });
 
   it("보내지 않고 떠났다 돌아오면 시작값 — 바꾼 값은 버린다", async () => {

@@ -1,4 +1,4 @@
-import type { AgentSettingsPatch, ConversationAgentSettings } from "@dodok/shared";
+import type { AgentCeiling, AgentSettingsPatch, ConversationAgentSettings } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
@@ -11,7 +11,26 @@ export const agentSettingsKeys = {
   conversation: (conversationId: string) => ["agentSettings", conversationId] as const,
   of: (conversationId: string, threadRootId?: string) =>
     ["agentSettings", conversationId, threadRootId ?? null] as const,
+  /** 모든 대화의 줄(무효화용 앞머리) — 러너 상한(`ceiling`)은 러너가 붙거나 떨어질 때 바뀐다 */
+  all: ["agentSettings"] as const,
+  /** 새 세션 창의 권한 상한(`GET /channels/:id/agent-ceilings`) */
+  ceilings: (channelId: string) => ["agentCeilings", channelId] as const,
+  ceilingsAll: ["agentCeilings"] as const,
 };
+
+/**
+ * 새 세션 창(대화가 아직 없다)의 권한 상한 — 대화 줄의 `ceiling` 과 같은 값을 채널 단위로 받는다(스펙 5.3: 상한 위는 누구도 고르지
+ * 못한다). 대화가 있는 창은 부르지 않는다
+ */
+export function useAgentCeilings(channelId: string, { enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: agentSettingsKeys.ceilings(channelId),
+    queryFn: async () =>
+      (await api<{ ceilings: AgentCeiling[] }>("GET", `/channels/${channelId}/agent-ceilings`)).ceilings,
+    enabled,
+    meta: { silent: true },
+  });
+}
 
 /** 새 세션 창(대화가 아직 없다)에서는 부르지 않는다 — 그 창은 에이전트 시작값에서 출발한다(S11) */
 export function useAgentSettings(

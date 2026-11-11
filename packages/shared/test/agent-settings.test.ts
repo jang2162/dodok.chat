@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentSettingsPatch,
+  AgentCeiling,
   ConversationAgentSettings,
   MessageSend,
   RunnerEffort,
@@ -38,7 +39,14 @@ describe("AgentSettingsPatch", () => {
 
 describe("ConversationAgentSettings·SessionDefaults", () => {
   it("모두 null 인 행을 받는다", () => {
-    const row = { agentId: ID(1), model: null, effort: null, permissionMode: null, contextPercent: null };
+    const row = {
+      agentId: ID(1),
+      model: null,
+      effort: null,
+      permissionMode: null,
+      contextPercent: null,
+      ceiling: null,
+    };
     expect(ConversationAgentSettings.parse(row)).toEqual(row);
     expect(SessionDefaults.parse({ model: null, effort: null, permissionMode: null })).toEqual({
       model: null,
@@ -48,10 +56,25 @@ describe("ConversationAgentSettings·SessionDefaults", () => {
   });
 
   it("contextPercent 는 0~100 정수", () => {
-    const row = { agentId: ID(1), model: "opus", effort: "high", permissionMode: "plan", contextPercent: 42 };
+    const row = {
+      agentId: ID(1),
+      model: "opus",
+      effort: "high",
+      permissionMode: "plan",
+      contextPercent: 42,
+      ceiling: "default",
+    };
     expect(ConversationAgentSettings.parse(row)).toEqual(row);
     expect(ConversationAgentSettings.safeParse({ ...row, contextPercent: 101 }).success).toBe(false);
     expect(ConversationAgentSettings.safeParse({ ...row, contextPercent: 4.2 }).success).toBe(false);
+  });
+
+  it("ceiling 은 권한 모드나 null — 빠지면 거절, AgentCeiling 도 같다", () => {
+    const row = { agentId: ID(1), model: null, effort: null, permissionMode: null, contextPercent: null };
+    expect(ConversationAgentSettings.safeParse(row).success).toBe(false);
+    expect(ConversationAgentSettings.safeParse({ ...row, ceiling: "root" }).success).toBe(false);
+    expect(AgentCeiling.parse({ agentId: ID(1), ceiling: null })).toEqual({ agentId: ID(1), ceiling: null });
+    expect(AgentCeiling.safeParse({ agentId: ID(1), ceiling: "root" }).success).toBe(false);
   });
 });
 

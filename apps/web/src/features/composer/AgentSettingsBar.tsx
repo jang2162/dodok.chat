@@ -10,9 +10,12 @@ import { ApiRequestError } from "@/api/http";
 import { useAgents, useCachedMe, useMembers, useRole } from "@/api/queries";
 import { useConnectionList } from "@/features/connections/queries";
 import { agentOwnerOf } from "@/features/connections/useConnectionTree";
-import { useAgentSettings, usePatchAgentSettings } from "@/features/conversations/agentSettings";
+import {
+  useAgentCeilings,
+  useAgentSettings,
+  usePatchAgentSettings,
+} from "@/features/conversations/agentSettings";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
-import { useRunners } from "@/features/runners/queries";
 import { Button } from "@/ui/button";
 import { AgentSettingsPopover, DEFAULT_LABEL, RAISE_LOCKED } from "./AgentSettingsPopover";
 
@@ -73,13 +76,22 @@ export function AgentSettingsBar({
   });
   // 러너 에이전트가 없는 대화(OpenClaw 만·사람끼리)는 묻지 않는다
   const settings = useAgentSettings(conversationId, threadRootId, { enabled: runnerAgents.length > 0 });
+  // 대화가 없는 새 세션 창은 상한을 채널 단위로 받는다 — 대화가 있으면 줄에 실려 온다
+  const ceilings = useAgentCeilings(channelId, { enabled: isNew && runnerAgents.length > 0 });
   if (runnerAgents.length === 0) return null;
 
   const rowOf = (agent: Agent): ConversationAgentSettings => {
     const saved = settings.data?.find((s) => s.agentId === agent.id);
     if (!isNew && saved) return saved;
     const base = agent.sessionDefaults ?? NO_DEFAULTS;
-    return { agentId: agent.id, ...base, ...(isNew ? pending?.[agent.id] : {}), contextPercent: null };
+    const ceiling = ceilings.data?.find((c) => c.agentId === agent.id)?.ceiling ?? null;
+    return {
+      agentId: agent.id,
+      ...base,
+      ...(isNew ? pending?.[agent.id] : {}),
+      contextPercent: null,
+      ceiling,
+    };
   };
 
   const folded = runnerAgents.length > FOLD_OVER && !expanded;
@@ -150,15 +162,12 @@ function SettingsLine({
   const role = useRole();
   const meId = useCachedMe()?.user.id ?? null;
   const connections = useConnectionList();
-  const runners = useRunners();
   const patch = usePatchAgentSettings(conversationId);
   const [error, setError] = useState<string>();
   const owner = agentOwnerOf(agent, connections.data);
   const canRaise = roleAtLeast(role, "admin") || (meId !== null && owner === meId);
-  const runner = runners.data?.find((r) => r.id === agent.runner?.tokenId);
-  const ceiling = runner?.connected
-    ? runner.programs.find((p) => p.program === (agent.program ?? "claude"))?.ceiling.maxPermissionMode
-    : undefined;
+  // 상한은 서버가 싣는다(누구에게나) — 남의 러너는 `GET /runners` 에 없어 member 화면이 모른다(리뷰 건 1)
+  const ceiling = row.ceiling ?? undefined;
 
   async function save(change: AgentSettingsPatch): Promise<boolean> {
     setError(undefined);

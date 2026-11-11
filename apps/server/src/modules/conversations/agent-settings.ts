@@ -152,14 +152,30 @@ export function contextPercentOf(
   return null;
 }
 
+/** 그 에이전트의 권한 상한(runnerPermissionCeiling) — 에이전트 id 로 러너·프로그램을 찾는다. 러너 에이전트가 아니면 null */
+export function agentPermissionCeiling(
+  db: DbOrTx,
+  runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
+  agentId: string,
+): RunnerPermissionMode | null {
+  const agent = db
+    .select({ runnerTokenId: agents.runnerTokenId, program: agents.program })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .get();
+  return agent ? runnerPermissionCeiling(runners, agent) : null;
+}
+
 export function toConversationAgentSettings(
   db: DbOrTx,
   key: { conversationId: string; agentId: string; threadRootId?: string },
+  runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
 ): ConversationAgentSettings {
   return {
     agentId: key.agentId,
     ...getEffectiveSettings(db, key),
     contextPercent: contextPercentOf(db, key),
+    ceiling: agentPermissionCeiling(db, runners, key.agentId),
   };
 }
 

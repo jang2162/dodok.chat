@@ -602,6 +602,15 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }),
     },
     {
+      name: "GET /channels/:id/agent-ceilings",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/channels/${newChannel().id}/agent-ceilings`,
+      }),
+    },
+    {
       name: "PATCH /conversations/:id/agent-settings/:agentId {model,effort,permissionMode default}",
       min: "member",
       ok: 200,
@@ -1478,6 +1487,11 @@ describe("역할 매트릭스(스펙 2장)", () => {
           method: "GET",
           url: `/api/v1/conversations/${fx.conversationId}/agent-settings`,
         }),
+      },
+      {
+        name: "GET /channels/:id/agent-ceilings",
+        owner: 200,
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/agent-ceilings` }),
       },
       {
         name: "GET /conversations/:id/messages?around",

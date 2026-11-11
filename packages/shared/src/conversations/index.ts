@@ -7,12 +7,26 @@ import { RunnerEffort, RunnerPermissionMode, SessionDefaults } from "../domain";
 
 const SettingModel = z.string().min(1).max(128);
 
-/** GET /conversations/:id/agent-settings 의 한 줄. contextPercent 는 그 세션에서 그 에이전트의 마지막 실행 — 없으면 null */
+/**
+ * 그 에이전트 러너가 hello 로 알린 그 프로그램의 권한 상한 — 러너가 끊겼거나 모르면 null. 화면은 이 위의 권한 모드를 누구에게나
+ * 고르지 못하게 한다(스펙 5.3)
+ */
+const PermissionCeiling = RunnerPermissionMode.nullable();
+
+/**
+ * GET /conversations/:id/agent-settings 의 한 줄. contextPercent 는 그 세션에서 그 에이전트의 마지막 실행 — 없으면 null.
+ * ceiling 은 그 대화를 읽을 수 있는 누구에게나 싣는다
+ */
 export const ConversationAgentSettings = SessionDefaults.extend({
   agentId: Id,
   contextPercent: z.int().min(0).max(100).nullable(),
+  ceiling: PermissionCeiling,
 });
 export type ConversationAgentSettings = z.infer<typeof ConversationAgentSettings>;
+
+/** GET /channels/:id/agent-ceilings 의 한 줄 — 대화가 아직 없는 새 세션 창이 쓴다. 계산은 ConversationAgentSettings.ceiling 과 같다 */
+export const AgentCeiling = z.object({ agentId: Id, ceiling: PermissionCeiling });
+export type AgentCeiling = z.infer<typeof AgentCeiling>;
 
 const PATCH_FIELDS = {
   model: SettingModel.nullable().optional(),

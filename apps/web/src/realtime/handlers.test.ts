@@ -1088,6 +1088,17 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
   });
 
+  it("adapter.status(runner): 작성기 위 상태 줄의 권한 상한(대화 줄·새 세션 창의 agent-ceilings)도 낡게 한다 [리뷰 건 1]", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(agentSettingsKeys.of("c1"), []);
+    queryClient.setQueryData(agentSettingsKeys.ceilings("ch1"), []);
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [] });
+    expect(queryClient.getQueryState(agentSettingsKeys.of("c1"))?.isInvalidated).toBe(false);
+    fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 1, tokens: 1 } });
+    expect(queryClient.getQueryState(agentSettingsKeys.of("c1"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(agentSettingsKeys.ceilings("ch1"))?.isInvalidated).toBe(true);
+  });
+
   it("agents.changed: 「러너」 탭 프로젝트 줄(에이전트 수)을 낡게 한다 — 러너 목록·둘러보기는 그대로", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.runners(), []);

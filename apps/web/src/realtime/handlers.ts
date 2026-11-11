@@ -16,7 +16,11 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
-import { applyAgentSettings, invalidateAgentSettings } from "@/features/conversations/agentSettings";
+import {
+  agentSettingsKeys,
+  applyAgentSettings,
+  invalidateAgentSettings,
+} from "@/features/conversations/agentSettings";
 import { applyConversation } from "@/features/conversations/cache";
 import {
   bumpDirect,
@@ -406,6 +410,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         // 둘러보기는 낡게 하지 않는다 — 열린 목록을 다시 받으면 분당 60번 상한을 쓴다(「프로젝트 추가」를 열 때 버리고 새로 받는다)
         void qc.invalidateQueries({ queryKey: qk.runners() });
         void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
+        // 작성기 위 상태 줄의 권한 상한(`ceiling`)도 그 러너의 hello 를 따른다
+        void qc.invalidateQueries({ queryKey: agentSettingsKeys.all });
+        void qc.invalidateQueries({ queryKey: agentSettingsKeys.ceilingsAll });
       }
     },
     /**
