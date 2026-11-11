@@ -11,10 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/ui/dialog";
-import { RunnerTokenFile } from "./IssueRunnerTokenDialog";
 import { IssuedToken } from "./IssueTokenDialog";
 import { llmsHandoffLine } from "./llms";
 import { useReissueRunnerToken } from "./mutations";
+import { RunnerQuickStart } from "./RunnerSection";
 
 /**
  * 「다시 발급」(러너 일반화 계획 판정 PR7, owner) — 확인 → 새 원문을 한 번. 같은 러너(행)라 프로젝트·에이전트는 그대로 남고, 옛 원문의
@@ -85,7 +85,7 @@ export function ReissueRunnerTokenDialog({
             issued={issued}
             title={`「${issued.record.label}」 토큰을 다시 발급했습니다`}
             handoff={(r) => llmsHandoffLine("runner-reissue", r.runnerConfig.serverUrl, r.token)}
-            config={(r) => <RunnerTokenFile tokenFile={r.runnerConfig.tokenFile} />}
+            config={(r) => <RunnerQuickStart serverUrl={r.runnerConfig.serverUrl} reissue />}
             leave={leave}
             stayRef={stayRef}
             onDone={done}
