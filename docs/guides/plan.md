@@ -633,6 +633,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **`redactUrl` 의 토큰 꼴에 낱말 경계가 없어 우연한 낱말도 가린다** — `dit_`·`drt_`(그리고 앞서 있던 `whk_`·`dpt_`) 꼴이 낱말 안에서도 맞아 `edit_history`→`edit_hist…`, `credit_card`→`credit_card…` 처럼 로그가 과하게 잘린다(`apps/server/src/logger.ts`). 지금 라우트에는 해당하는 경로가 없다. 퍼센트 인코딩한 `/join/dit%5F…` 는 가리지 않는다(정상 링크에는 생기지 않는다). 출처: 2026-11-10 배포 전 수정 리뷰(`3bbd5de3`).
 - **운영 의존성 취약 권고가 전이 경로로 남았다(critical 1·high 10, 2026-11-10 `pnpm audit --prod`)** — `proxy-addr`(critical)·`body-parser` 는 `@modelcontextprotocol/sdk`>`express` 경유(서버와 `@anthropic-ai/claude-agent-sdk`), `undici`·`vite`·`source-map-js` 는 `better-auth` 의 peer `vitest` 경유, `seroval` 은 웹 `@tanstack/react-router` 경유다. 직접 의존성(better-auth 1.7.7·MCP SDK 1.32.0·zod 4.6.6)은 `3bbd5de3` 에서 올렸다. 상위 판 올림이나 `overrides` 로 닫는다.
 - **러너의 설치본 claude(결정 #27) 뒤 남은 것** — ① 판본은 재접속 hello 때만 갱신된다(사람이 claude 를 업데이트해도 러너를 다시 띄우기 전엔 옛 판이 보인다) ② connect 처리기가 `detect` 의 `--version`(최대 5초)을 기다려 세대 확인 없는 hello 경쟁 창이 넓어졌다 ③ 막는 도구 이름·MCP 시한·stderr 꼬리 해석이 내장 2.1.283 기준이라 설치본 판이 크게 바뀌면 다시 본다 ④ 런 시점에 설정 `executable` 경로를 다시 검사하지 않는다 ⑤ 실제 5초를 기다리는 시험이 하나 있다. 출처: 2026-11-10 runner-installed-cli 리뷰.
+- **러너 첫 실행 마법사(`dodok-runner`·`setup`·`token`) 뒤 남은 것** — ① `setup` 이 기존 `tokenFile` 을 존중하는 줄은 시험이 잡지 못한다(시험의 기존 값이 기본 자리와 같다 — 동작은 pty 로 확인) ② 루트 경로만 바꾸는 길이 없어 빼고 다시 더하면 새 id 다 ③ 새로 더한 루트 경로는 `~` 로 줄이지 않고 절대 경로로 저장한다. 출처: 2026-11-11 runner-setup-wizard 재리뷰.
 
 **웹**
 
@@ -778,7 +779,6 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **스펙 「열린 문제」** — SDK 라이선스(러너 공개 배포는 법무 판단), 계정 이메일을 문맥에서 빼는 법, 읽기 전용 Bash 자동 허용의 경계·`PreToolUse` 훅, 서버 호스트 안 러너. 미룬 까닭: 이번 범위 밖.
 - **사람이 볼 것** — 실제 러너 머신에서 `npm install -g` 부터 로그인·실행까지(`docker-deploy.md` 「러너 설치」).
 - **러너 로거 연결(`main.ts`)을 잠그는 시험이 없다** — `packages/claude-runner/src/main.ts` 가 `createClaudeDriver` 에 `logger` 를 넘기는 줄을 빼도 claude-runner 시험이 모두 통과한다(`run.test.ts` 는 `ctx.log` 를 직접 넘긴다). 그래서 세션 길 로그(`dodok-runner: 런 <runId> 세션 resume|새로 열기`)는 실연 때 눈으로 본다(`docs/guides/live-smoke.md`). 고칠 길: `drivers/claude/index.ts` 에서 `opts.logger` 가 `ctx.log` 로 가는 시험 하나. 출처: `.superpowers/sdd/2026-10-31-carryover/adapter-plugin-runner-review.md` 낮음 1.
-- **러너 설치 안내의 번들 CLI 로그인 명령 블록에 시험이 없다** — `apps/web/src/features/setup/RunnerSection.tsx` 의 그 `CopyBlock` 을 지워도 초록이다. 출처: `.superpowers/sdd/2026-10-31-carryover/web-settings-review.md` 낮음-3.
 - **`activity.test.tsx` 의 tiptap 플레이크 고침은 구분력이 없다** — `afterEach` 가 `cleanup()` 뒤 한 틱(5ms)을 넘겨 `Editor.destroy` 가 환경 해체 전에 돌게 했지만, 「window is not defined」는 단독으로 재현되지 않는 부하 플레이크라 되돌려 실패하는 시험이 없다(근거는 `Editor.prototype.destroy` 스파이 탐침). 다시 보이면 이월 정리(2026-10-31)가 지운 「테스트 빈틈 몇」의 그 항목을 실패 줄과 함께 되살린다. 출처: `.superpowers/sdd/2026-10-31-carryover/web-timeline-review.md` 낮음 1.
 
 **멀티 Gateway(2026-10-05)** — 스펙 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 「열린 문제」·「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t*·c*)와 원장은 `.superpowers/sdd/2026-10-04-multi-gateway/`(git 제외)에 있다.
