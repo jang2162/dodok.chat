@@ -10,7 +10,7 @@ import type {
 } from "@dodok/shared";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { and, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { conversationAgentSettings, conversations, runs } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
@@ -385,6 +385,27 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
         model: "opus",
         permissionMode: "plan",
       });
+    });
+
+    it("첫 글이 부른 실행의 run.start.agent 가 그 글의 agentSettings 값이다 [리뷰 건 3]", async () => {
+      const { channel, agent } = setup();
+      const socket = await wire(mia.token, channel.id);
+      const res = await socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        clientMsgId: `run-${++n}`,
+        bodyMd: `@${agent.handle} 새 세션`,
+        newConversation: {},
+        agentSettings: [{ agentId: agent.id, model: "opus", effort: "max", permissionMode: "plan" }],
+      });
+      if (!res.ok) throw new Error(res.error.code);
+      const conversationId = (res.data.conversation as Conversation).id;
+      const runner0 = fakeRunners[0];
+      if (!runner0) throw new Error("러너 없음");
+      await vi.waitFor(() =>
+        expect(runner0.runStarts.some((s) => s.deliver.conversationId === conversationId)).toBe(true),
+      );
+      const start = runner0.runStarts.find((s) => s.deliver.conversationId === conversationId);
+      expect(start?.agent).toMatchObject({ model: "opus", effort: "max", permissionMode: "plan" });
     });
 
     it("member 의 acceptEdits 는 글 전체를 거절한다 — 대화도 메시지도 설정 행도 없다 [Review Focus 1]", async () => {
