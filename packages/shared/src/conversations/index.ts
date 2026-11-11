@@ -1,19 +1,11 @@
 import { z } from "zod";
 import { Id } from "../common";
-import { RunnerEffort, RunnerPermissionMode } from "../domain";
+import { RunnerEffort, RunnerPermissionMode, SessionDefaults } from "../domain";
 
 // 러너 에이전트의 세션 설정(세션 설정 스펙 5장) — 대화 × 러너 에이전트마다 모델·effort·권한 모드. null 은 「기본」이다:
 // 모델·effort 는 프로그램 기본, 권한은 실행 때 min(default, 그 러너의 상한)
 
 const SettingModel = z.string().min(1).max(128);
-
-/** 에이전트의 「새 세션 시작값」 — 설정 행이 없는 대화가 이 값으로 돈다(S10) */
-export const SessionDefaults = z.object({
-  model: SettingModel.nullable(),
-  effort: RunnerEffort.nullable(),
-  permissionMode: RunnerPermissionMode.nullable(),
-});
-export type SessionDefaults = z.infer<typeof SessionDefaults>;
 
 /** GET /conversations/:id/agent-settings 의 한 줄. contextPercent 는 그 세션에서 그 에이전트의 마지막 실행 — 없으면 null */
 export const ConversationAgentSettings = SessionDefaults.extend({

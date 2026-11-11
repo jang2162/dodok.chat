@@ -24,7 +24,6 @@ export const agentOf = (id: string, handle: string, over: Partial<Agent> = {}): 
   dmAccess: "admins",
   program: null,
   createdBy: null,
-  model: null,
   ...over,
 });
 

@@ -36,9 +36,6 @@ const coder = (projectId?: string) =>
       ? {
           runnerAgent: {
             projectId,
-            model: null,
-            permissionMode: "default",
-            allowedTools: null,
             disallowedTools: [],
           },
         }

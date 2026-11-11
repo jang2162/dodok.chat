@@ -29,7 +29,6 @@ const agent = (id: string, handle: string, enabled = true): Agent => ({
   dmAccess: "admins",
   program: null,
   createdBy: null,
-  model: null,
 });
 const member = (memberId: string, extra: Partial<ChannelMember> = {}): ChannelMember => ({
   id: ID(20),

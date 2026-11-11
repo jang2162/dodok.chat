@@ -371,9 +371,6 @@ describe("DM 화면", () => {
           ? {
               runnerAgent: {
                 projectId: uid(78),
-                model: "opus",
-                permissionMode: "acceptEdits",
-                allowedTools: null,
                 disallowedTools: [],
               },
             }

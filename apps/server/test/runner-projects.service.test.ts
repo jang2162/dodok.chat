@@ -182,10 +182,7 @@ describe("createAgent — 러너 갈래(계획 판정 PR4)", () => {
   });
 
   it.each([
-    [{ model: "m".repeat(129) }, "model"],
-    [{ model: "" }, "model"],
-    [{ permissionMode: "bypassPermissions" }, "permissionMode"],
-    [{ allowedTools: ["x".repeat(201)] }, "allowedTools"],
+    [{ disallowedTools: ["x".repeat(201)] }, "disallowedTools"],
     [{ disallowedTools: Array.from({ length: 101 }, (_, i) => `t${i}`) }, "disallowedTools"],
   ])("RunnerRunAgent 필드 상한 밖이면 VALIDATION — %j", (over, field) => {
     const p = project();
@@ -240,7 +237,6 @@ describe("runnerAgentDefinition — run.start.agent 는 에이전트 행·프로
       relPath: "team/api",
       model: "opus",
       permissionMode: "acceptEdits",
-      allowedTools: ["Read"],
       disallowedTools: ["WebFetch"],
       basePrompt: "짧게 답한다",
     });

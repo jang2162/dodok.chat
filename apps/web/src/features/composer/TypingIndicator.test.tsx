@@ -31,7 +31,6 @@ const agentOf = (n: number, handle: string): Agent => ({
   dmAccess: "admins",
   program: null,
   createdBy: null,
-  model: null,
 });
 const DEV = agentOf(21, "dev");
 const personOf = (n: number, handle: string): Person => ({

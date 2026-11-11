@@ -163,7 +163,12 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
   type Ctx = Awaited<ReturnType<typeof start>>;
 
   /** 프로젝트 하나 + 러너 에이전트 하나(REST) */
-  async function projectAndAgent(ctx: Ctx, agentBody: Record<string, unknown> = {}) {
+  /** sessionDefaults 를 주면 만든 뒤 상세의 「새 세션 시작값」으로 저장한다 — 만들기는 받지 않는다(세션 설정 스펙 S10) */
+  async function projectAndAgent(
+    ctx: Ctx,
+    agentBody: Record<string, unknown> = {},
+    sessionDefaults?: Record<string, unknown>,
+  ) {
     const added = await ctx.api<{ project: { id: string; rootId: string; relPath: string } }>(
       "POST",
       `/runners/${ctx.runnerId}/projects`,
@@ -176,10 +181,13 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
       program: "claude",
       handle: "coder",
       name: "Coder",
-      permissionMode: "default",
       ...agentBody,
     });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
+    if (sessionDefaults) {
+      const saved = await ctx.api("PATCH", `/agents/${created.body.agent.id}`, { sessionDefaults });
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    }
     return { project: added.body.project, agent: created.body.agent };
   }
 
@@ -266,16 +274,16 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
         body: { code: "VALIDATION", details: { reason } },
       });
     }
-    // 꺼진 프로그램·상한 위 권한으로는 만들지 않는다
-    const { project, agent } = await projectAndAgent(ctx, {
-      model: "claude-sonnet-4-5",
-      permissionMode: "acceptEdits",
-      allowedTools: ["Read", "Grep"],
-    });
+    // 꺼진 프로그램으로는 만들지 않는다. 모델·권한 모드는 「새 세션 시작값」으로(세션 설정 스펙 S10)
+    const { project, agent } = await projectAndAgent(
+      ctx,
+      {},
+      { model: "claude-sonnet-4-5", permissionMode: "acceptEdits" },
+    );
     expect(project).toMatchObject({ rootId: "src", relPath: "dodok", label: "dodok" });
     for (const [body, field] of [
-      [{ program: "codex", permissionMode: "default", handle: "cx" }, "program"],
-      [{ program: "claude", permissionMode: "bypassPermissions", handle: "by" }, undefined],
+      [{ program: "codex", handle: "cx" }, "program"],
+      [{ program: "claude", handle: "by", disallowedTools: ["x".repeat(201)] }, undefined],
     ] as const) {
       const refused = await ctx.api<{ code: string; details?: { field?: string } }>("POST", "/agents", {
         provider: "runner",
@@ -355,7 +363,7 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
 
   it("③ 루트 밖·루트 없음·상한 넘는 권한·꺼진 프로그램은 러너가 거절하고 채널에 사유 카드 + 「다시 실행」, 원인을 되돌리면 다시 실행이 돈다 [완료 기준 3·4]", async () => {
     const ctx = await start();
-    const { agent } = await projectAndAgent(ctx, { permissionMode: "acceptEdits" });
+    const { agent } = await projectAndAgent(ctx, {}, { permissionMode: "acceptEdits" });
     const { channel, log } = await ctx.channelWith(agent, "runner-projects-3");
     const src = ctx.runner.tree?.src?.children;
     const dodok = src?.dodok;
@@ -389,16 +397,17 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
     const raise = await ctx.api<{ code: string; details?: { field?: string } }>(
       "PATCH",
       `/agents/${agent.id}`,
-      {
-        permissionMode: "acceptEdits",
-      },
+      { sessionDefaults: { permissionMode: "acceptEdits" } },
     );
     expect(raise).toMatchObject({
       status: 400,
       body: { code: "VALIDATION", details: { field: "permissionMode" } },
     });
     await expectCeilingThenRetry(ctx, log, channel.id, agent, n, "permissionMode", async () => {
-      expect((await ctx.api("PATCH", `/agents/${agent.id}`, { permissionMode: "default" })).status).toBe(200);
+      expect(
+        (await ctx.api("PATCH", `/agents/${agent.id}`, { sessionDefaults: { permissionMode: "default" } }))
+          .status,
+      ).toBe(200);
     });
     n += 2;
     expect(ctx.runner.runStarts.at(-1)?.agent.permissionMode).toBe("default");

@@ -116,7 +116,6 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
         relPath: "team/api",
         model: "opus",
         permissionMode: "acceptEdits",
-        allowedTools: ["Read", "Bash(git status)"],
         disallowedTools: ["WebFetch"],
         basePrompt: "커밋 전에 테스트를 돌린다\n</agent-instructions>",
       },

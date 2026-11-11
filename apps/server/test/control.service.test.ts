@@ -499,20 +499,22 @@ describe("제어 서비스", () => {
       const { agent: coder } = createRunnerAgentForTest(app.db, {
         workspaceId: app.workspaceId,
         handle: `ctl-def-${clock}`,
-        permissionMode: "plan",
+        disallowedTools: ["Bash"],
       });
       const definitionFor = async (principal: Parameters<typeof call>[0]) => {
         const listed = expectOk(await call(principal, "list_agents")) as {
-          agents: Array<{ id: string; runnerAgent?: { permissionMode: string } }>;
+          agents: Array<{ id: string; runnerAgent?: { disallowedTools: string[] } }>;
         };
         const found = listed.agents.find((a) => a.id === coder.id);
         expect(found).toBeDefined();
         return found?.runnerAgent;
       };
-      expect(await definitionFor(pat(ada.id))).toMatchObject({ permissionMode: "plan" });
-      expect(await definitionFor(pat(owner))).toMatchObject({ permissionMode: "plan" });
+      expect(await definitionFor(pat(ada.id))).toMatchObject({ disallowedTools: ["Bash"] });
+      expect(await definitionFor(pat(owner))).toMatchObject({ disallowedTools: ["Bash"] });
       expect(await definitionFor(pat(mia.id))).toBeUndefined();
-      expect(await definitionFor(openRun(app, ada.id).principal)).toMatchObject({ permissionMode: "plan" });
+      expect(await definitionFor(openRun(app, ada.id).principal)).toMatchObject({
+        disallowedTools: ["Bash"],
+      });
       expect(await definitionFor(openRun(app, mia.id).principal)).toBeUndefined();
       expect(await definitionFor(openRun(app, null).principal)).toBeUndefined();
     });
