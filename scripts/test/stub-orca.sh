@@ -445,6 +445,15 @@ case "$sub" in
       printf '{"ok":true,"result":{"dispatch":{"id":"ctx_stub"},"worker":{"state":"ready","stage":"input_accepted","agent_terminal_handle":"term_stub","effects":[{"kind":"dispatch_input","role":"agent","id":"term_stub","state":"accepted"}]},"mutation":{"requestId":"%s","replayed":false}}}\n' "$ws_request_id"
     fi
     ;;
+  ("worktree create")
+    # 기본은 id 가 빠진 응답(옛 판 — 스크립트가 목록에서 되찾는다). 실물 모양(`.result.worktree`)은
+    # STUB_ORCA_CREATE_FIXTURE 로 준다.
+    if [ -n "${STUB_ORCA_CREATE_FIXTURE:-}" ]; then
+      cat "$STUB_ORCA_CREATE_FIXTURE"
+    else
+      printf '{"ok":true,"result":{}}\n'
+    fi
+    ;;
   ("worktree ps")    cat "$PS_FIXTURE" ;;
   ("worktree list")  cat "$LIST_FIXTURE" ;;
   ("orchestration worker-list") stub_worker_list "$@" ;;
