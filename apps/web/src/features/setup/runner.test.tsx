@@ -19,11 +19,7 @@ import {
 } from "../../../test/setupServer";
 import { ME } from "../../../test/shellApi";
 import { llmsHandoffLine } from "./llms";
-import {
-  RUNNER_LOGIN_BUNDLED_COMMAND,
-  RUNNER_LOGIN_COMMAND,
-  RUNNER_NPM_INSTALL_COMMAND,
-} from "./RunnerSection";
+import { RUNNER_NPM_INSTALL_COMMAND, RUNNER_RUN_COMMAND, RUNNER_TOKEN_COMMAND } from "./RunnerSection";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -192,7 +188,11 @@ describe("러너 토큰 다시 발급", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "다시 발급" }));
     expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
     expect(dialog).toHaveTextContent("「맥북」 토큰을 다시 발급했습니다");
-    expect(dialog).toHaveTextContent("~/.dodok-runner/token");
+    // 이미 설치·설정한 러너 — 설치·서버 주소는 빼고 토큰만 바꾸는 명령(설정·루트 id 는 그대로)
+    expect(within(dialog).getByTestId("runner-run-command")).toHaveTextContent(RUNNER_TOKEN_COMMAND);
+    expect(within(dialog).queryByTestId("runner-server-url")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(RUNNER_NPM_INSTALL_COMMAND)).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("chmod");
     // 「AI 에게 맡기기」는 설치가 아니라 토큰 교체·다시 띄우기(태스크 5 리뷰 L10)
     expect(within(dialog).getByTestId("llms-handoff")).toHaveTextContent(
       llmsHandoffLine("runner-reissue", RUNNER_SERVER_URL, RAW_REISSUED_TOKEN),
@@ -314,51 +314,43 @@ describe("러너 설치 안내", () => {
     expect(await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND)).toBeInTheDocument();
   });
 
-  /** 설치 2단계(로그인) 줄 — 단계 이름으로 찾는다 */
-  async function loginStep() {
+  it("설치 → 실행 → 실행하면 묻는 값(서버 주소·러너 토큰) 셋뿐 — 로그인·설정 파일·전용 로그인은 걷었다", async () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    const body = await within(block).findByText(/Claude Code 로그인/);
-    return body.closest("li") as HTMLElement;
-  }
-
-  it("설치 2단계 — 평소 로그인을 쓰고 로그인돼 있으면 건너뛴다", async () => {
-    const step = await loginStep();
-    expect(step.parentElement?.children[1]).toBe(step);
-    expect(step).toHaveTextContent("돼 있으면 건너뜀");
-    expect(RUNNER_LOGIN_COMMAND).toBe("claude");
-    // 단계는 모두 러너 상세의 「설치 안내」 펼침 안 — 그 안에서 또 접힌 안내(전용 로그인·같은 빌드)는 뺀다
-    const outer = step.closest('details[aria-label="설치 안내"]');
-    const blocks = [...step.querySelectorAll("pre")].filter((pre) => pre.closest("details") === outer);
-    expect(blocks.map((pre) => pre.textContent)).toEqual([
-      RUNNER_LOGIN_COMMAND,
-      RUNNER_LOGIN_BUNDLED_COMMAND,
+    const first = (await within(block).findByText(RUNNER_NPM_INSTALL_COMMAND)).closest("li") as HTMLElement;
+    const steps = [...(first.parentElement as HTMLElement).children] as HTMLElement[];
+    expect(steps.map((li) => li.firstElementChild?.textContent)).toEqual([
+      "설치",
+      "실행",
+      "실행하면 묻는 값",
     ]);
-    // 접힌 안내 밖에는 전용 로그인 디렉터리가 없다 — 번들 CLI 도 평소 자리에 로그인
-    for (const pre of blocks) expect(pre.textContent).not.toContain("CLAUDE_CONFIG_DIR");
-    expect(within(step).getByRole("button", { name: "로그인 명령 복사" })).toBeInTheDocument();
+    // 접힌 「서버와 같은 빌드로 설치」 밖의 복사 블록
+    const outer = first.closest('details[aria-label="설치 안내"]');
+    const blocks = (li: HTMLElement) =>
+      [...li.querySelectorAll("pre")]
+        .filter((pre) => pre.closest("details") === outer)
+        .map((pre) => pre.textContent);
+    expect(steps.map(blocks)).toEqual([
+      [RUNNER_NPM_INSTALL_COMMAND],
+      [RUNNER_RUN_COMMAND],
+      [RUNNER_SERVER_URL],
+    ]);
+    expect(within(steps[1]!).getByRole("button", { name: "실행 명령 복사" })).toBeInTheDocument();
+    expect(within(steps[2]!).getByRole("button", { name: "서버 주소 복사" })).toBeInTheDocument();
+    expect(steps[2]).toHaveTextContent("러너 토큰");
+    for (const gone of [
+      "Claude Code 로그인",
+      "CLAUDE_CONFIG_DIR",
+      "config.json",
+      "~/.dodok-runner/token",
+      "configDir",
+    ])
+      expect(block).not.toHaveTextContent(gone);
+    expect(block.querySelector('details[aria-label="러너 전용 로그인을 따로 쓰려면"]')).toBeNull();
   });
 
-  it("설치 2단계 — 전용 로그인은 접힌 안내 안에", async () => {
-    const step = await loginStep();
-    const details = step.querySelector(
-      'details[aria-label="러너 전용 로그인을 따로 쓰려면"]',
-    ) as HTMLDetailsElement;
-    expect(details).not.toBeNull();
-    expect(details.open).toBe(false);
-    await userEvent.click(within(details).getByText("러너 전용 로그인을 따로 쓰려면"));
-    expect(details.open).toBe(true);
-    expect(details).toHaveTextContent("CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude");
-    expect(details).toHaveTextContent('"configDir": "~/.dodok-runner/claude"');
-  });
-
-  it("설치 2단계 — 이메일·--resume 경고는 걷었다(2026-11-10 문구 걷기)", async () => {
-    const step = await loginStep();
-    expect(step).not.toHaveTextContent("계정 이메일");
-  });
-
-  it("tgz 받기(서버가 준 이름) → 로그인 → 설정 파일 → dodok-runner", async () => {
+  it("tgz 받기(서버가 준 이름) → 그 이름으로 설치", async () => {
     const server = stubSetupServer({
       status: statusOf({
         runners: {
@@ -376,9 +368,6 @@ describe("러너 설치 안내", () => {
     renderConnection();
     const block = await runnerRegion();
     const button = await within(block).findByRole("button", { name: "러너 받기" });
-    expect(block).toHaveTextContent("CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude");
-    expect(block).toHaveTextContent("dodok-runner");
-    expect(block).toHaveTextContent("~/.dodok-runner/config.json");
     expect(block).toHaveTextContent(SHA_FILE);
     // 받은 파일 이름 그대로 설치한다
     expect(block).toHaveTextContent("npm install -g ./dodok-claude-runner-ffffffffffff.tgz");

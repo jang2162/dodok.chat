@@ -5,27 +5,18 @@ import { ApiRequestError } from "@/api/http";
 import { Button } from "@/ui/button";
 import { publicOriginOf } from "./llms";
 import { useDownloadRunner } from "./mutations";
-import { RUNNER_CLAUDE_DIR, RUNNER_CONFIG_PATH, runnerConfigExample } from "./runnerConfig";
 import { CopyBlock } from "./sections";
 
 /** 러너 tgz 를 만드는 명령 — 서버에 파일이 없을 때 */
 export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/runner run pack:runner";
-/** 평소 Claude Code 로그인 — 러너는 기본으로 이 머신의 `~/.claude` 로그인을 쓴다(설정에 configDir 이 없을 때) */
-export const RUNNER_LOGIN_COMMAND = "claude";
-/** 러너가 품은 번들 CLI — `claude` 가 PATH 에 없을 때. 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다(docker-deploy.md 「러너 설치」) */
-const RUNNER_BUNDLED_CLI = `"$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
-/** `claude` 가 PATH 에 없을 때 — 번들 CLI 로 같은 평소 자리에 로그인(docker-deploy.md 「러너 설치」와 같은 명령) */
-export const RUNNER_LOGIN_BUNDLED_COMMAND = RUNNER_BUNDLED_CLI;
-/** 러너 전용 로그인을 원할 때 — 그 디렉터리에 로그인하고 설정에 configDir 을 적는다 */
-export const RUNNER_DEDICATED_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
-/** 전용 로그인의 번들 CLI 판 */
-const RUNNER_DEDICATED_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} ${RUNNER_BUNDLED_CLI}`;
 /** npm 레지스트리 설치 명령 — 설치의 기본 길 */
 export const RUNNER_NPM_INSTALL_COMMAND = "npm i -g @dodok/runner";
 /** 받은 tgz 설치 명령(「서버와 같은 빌드로 설치」) */
 export const runnerInstallCommand = (fileName: string) => `npm install -g ./${fileName}`;
-/** 러너 토큰 파일의 권장 자리 — 서버 RUNNER_TOKEN_FILE 과 같다 */
-const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
+/** 실행 명령 — 설정 파일이 없으면 러너가 터미널에서 서버 주소·토큰·루트를 묻고 설정을 만든다 */
+export const RUNNER_RUN_COMMAND = "dodok-runner";
+/** 다시 발급한 토큰을 넣을 때 — 설정은 그대로 두고 토큰만 바꾼다(루트 id 가 바뀌면 프로젝트가 「루트 없음」이 된다) */
+export const RUNNER_TOKEN_COMMAND = "dodok-runner token";
 
 /** 이름·값 한 줄 */
 function Field({ name, children }: { name: string; children: ReactNode }) {
@@ -100,66 +91,79 @@ function SameBuildInstall({ file }: { file: SetupStatus["runners"]["runnerFile"]
   );
 }
 
-/**
- * 전용 로그인 — 원하는 사람만(러너 평소 로그인 스펙 4.4). 접어 둔다: 그 디렉터리에 로그인하고 설정에 configDir 을 적는다
- */
-function DedicatedLogin() {
+/** 라벨과 복사 블록 한 칸 — 토큰 대화상자의 칸과 같은 꼴 */
+function CopyField({
+  name,
+  text,
+  label,
+  testId,
+}: {
+  name: string;
+  text: string;
+  label: string;
+  testId?: string;
+}) {
   return (
-    <details aria-label="러너 전용 로그인을 따로 쓰려면" className="rounded-md border px-3 py-2">
-      <summary className="cursor-pointer select-none">러너 전용 로그인을 따로 쓰려면</summary>
-      <div className="mt-2 flex flex-col gap-1.5">
-        <CopyBlock text={RUNNER_DEDICATED_LOGIN_COMMAND} label="전용 로그인 명령 복사" />
-        <CopyBlock text={RUNNER_DEDICATED_LOGIN_BUNDLED_COMMAND} label="전용 로그인 번들 CLI 명령 복사" />
-        <p className="text-muted-foreground">
-          설정의 <code className="font-mono">programs.claude</code> 에{" "}
-          <code className="font-mono">"configDir": "{RUNNER_CLAUDE_DIR}"</code> 를 적습니다.
-        </p>
-      </div>
-    </details>
+    <div className="grid min-w-0 gap-1.5">
+      <p className="text-sm font-medium">{name}</p>
+      <CopyBlock text={text} label={label} testId={testId} />
+    </div>
   );
 }
 
 /**
- * 설치 안내(러너 스펙 5장) — npm 설치(서버와 같은 빌드는 접힌 대안) → 로그인(평소, 전용은 접힌 선택) → 설정 파일 → 실행. 러너 상세의
- * 「설치 안내」가 그린다(연결 탭 통합 스펙 3.3). 2단계(로그인)의 명령·문구는 러너 평소 로그인 작업의 것 그대로
+ * 토큰 발급·다시 발급 대화상자의 러너 안내 — 원문(「토큰」 칸) 아래에 설치·실행·서버 주소. 실행하면 러너가 서버 주소와 토큰을 묻는다.
+ * 다시 발급이면 이미 설치·설정한 러너라 설치·서버 주소를 빼고 토큰만 바꾸는 명령을 보인다
+ */
+export function RunnerQuickStart({ serverUrl, reissue = false }: { serverUrl: string; reissue?: boolean }) {
+  return (
+    <>
+      {!reissue && <CopyField name="설치" text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />}
+      <CopyField
+        name="실행"
+        text={reissue ? RUNNER_TOKEN_COMMAND : RUNNER_RUN_COMMAND}
+        label="실행 명령 복사"
+        testId="runner-run-command"
+      />
+      {!reissue && (
+        <CopyField name="서버 주소" text={serverUrl} label="서버 주소 복사" testId="runner-server-url" />
+      )}
+    </>
+  );
+}
+
+/**
+ * 설치 안내(러너 스펙 5장) — npm 설치(서버와 같은 빌드는 접힌 대안) → 실행 → 실행하면 묻는 값. 러너 상세의 「설치 안내」가 그린다
+ * (연결 탭 통합 스펙 3.3). 토큰 원문은 발급 대화상자에서만 보인다
  */
 export function InstallSteps({ status }: { status: SetupStatus }) {
-  const config = runnerConfigExample({
-    serverUrl: publicOriginOf(status.bridge.publicUrl),
-    tokenFile: RUNNER_TOKEN_FILE,
-  });
+  const serverUrl = publicOriginOf(status.bridge.publicUrl);
   return (
-    <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">설치</h3>
-      <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
-        <li className="flex flex-col gap-1.5">
-          <p>npm 으로 설치</p>
-          <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
-          <SameBuildInstall file={status.runners.runnerFile} />
-        </li>
-        <li className="flex flex-col gap-1.5">
-          <p>
-            Claude Code 로그인(<code className="font-mono">/login</code>, 돼 있으면 건너뜀)
-          </p>
-          <CopyBlock text={RUNNER_LOGIN_COMMAND} label="로그인 명령 복사" />
-          <p className="text-muted-foreground">
-            <code className="font-mono">claude</code> 가 없으면 번들 CLI
-          </p>
-          <CopyBlock text={RUNNER_LOGIN_BUNDLED_COMMAND} label="번들 CLI 로그인 명령 복사" />
-          <DedicatedLogin />
-        </li>
-        <li className="flex flex-col gap-1.5">
-          <p>
-            러너 토큰을 <code className="font-mono">{RUNNER_TOKEN_FILE}</code> 에 저장하고, 설정 파일을{" "}
-            <code className="font-mono">{RUNNER_CONFIG_PATH}</code> 에 둡니다.
-          </p>
-          <CopyBlock text={config} label="설정 예시 복사" />
-        </li>
-        <li className="flex flex-col gap-1.5">
-          <p>실행</p>
-          <CopyBlock text="dodok-runner" label="실행 명령 복사" />
-        </li>
-      </ol>
-    </div>
+    <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
+      <li className="flex flex-col gap-1.5">
+        <p>설치</p>
+        <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
+        <SameBuildInstall file={status.runners.runnerFile} />
+      </li>
+      <li className="flex flex-col gap-1.5">
+        <p>실행</p>
+        <CopyBlock text={RUNNER_RUN_COMMAND} label="실행 명령 복사" />
+      </li>
+      <li className="flex flex-col gap-1.5">
+        <p>실행하면 묻는 값</p>
+        <dl className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
+            <dt className="text-muted-foreground">서버 주소</dt>
+            <dd>
+              <CopyBlock text={serverUrl} label="서버 주소 복사" />
+            </dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">러너 토큰</dt>
+            <dd>발급할 때 받은 원문</dd>
+          </div>
+        </dl>
+      </li>
+    </ol>
   );
 }

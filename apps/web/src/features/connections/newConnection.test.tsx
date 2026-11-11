@@ -16,6 +16,7 @@ import {
   tokenId,
 } from "../../../test/setupServer";
 import { ME, json } from "../../../test/shellApi";
+import { llmsHandoffLine } from "../setup/llms";
 
 // 연결 추가(연결 탭 통합 스펙 3.3·5.2) — Gateway 는 폼 → 그 상세, 러너는 드러나는 것 넷 → 토큰 발급 → 그 상세. 멤버 누구나(member 의 Gateway 는 승인 대기)
 
@@ -240,27 +241,18 @@ describe("러너", () => {
       url: "/api/v1/setup/runner-tokens",
       body: { label: "맥북" },
     });
-    const config = JSON.parse(within(dialog).getByTestId("runner-config").textContent ?? "");
-    // 러너 RunnerConfig 꼴 — 에이전트는 앱에서 만든다(agents 키가 있으면 러너가 거절한다), 루트 label 을 적는 예
-    expect(config).toEqual({
-      serverUrl: RUNNER_SERVER_URL,
-      tokenFile: "~/.dodok-runner/token",
-      maxConcurrentRuns: 3,
-      roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
-      browse: true,
-      programs: {
-        claude: {
-          maxPermissionMode: "default",
-          disallowedTools: [],
-          allowedToolsCeiling: null,
-        },
-      },
-    });
-    // 기본은 평소 claude 로그인 — 예시에 configDir 이 없다(적으면 전용 로그인)
-    expect("configDir" in config.programs.claude).toBe(false);
-    // 설정 파일에는 원문을 두지 않는다 — tokenFile 에 둔다
-    expect(JSON.stringify(config)).not.toContain("drn_");
-    expect(dialog).toHaveTextContent("~/.dodok-runner/token");
+    // 원문 아래에 설치·실행·서버 주소만 — 실행하면 러너가 서버 주소와 토큰을 묻는다(설정 파일 예시·토큰 파일 명령은 걷었다)
+    expect([...dialog.querySelectorAll("pre")].map((pre) => pre.textContent)).toEqual([
+      RAW_RUNNER_TOKEN,
+      llmsHandoffLine("runner", RUNNER_SERVER_URL, RAW_RUNNER_TOKEN),
+      "npm i -g @dodok/runner",
+      "dodok-runner",
+      RUNNER_SERVER_URL,
+    ]);
+    for (const name of ["설치 명령 복사", "실행 명령 복사", "서버 주소 복사"])
+      expect(within(dialog).getByRole("button", { name })).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("config.json");
+    expect(dialog).not.toHaveTextContent("chmod");
     expect(cacheDump(qc)).not.toContain("drn_");
 
     // 원문이 보이는 동안은 Esc 로 닫히지 않는다

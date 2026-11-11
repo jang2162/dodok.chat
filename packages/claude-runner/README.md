@@ -19,24 +19,32 @@ npm 판은 서버와 다른 빌드일 수 있다 — 설정 → 연결의 러너
 
 ## 준비와 실행
 
-1. **러너 토큰** — dodok 앱 설정 → 연결(`/settings/connection`, owner)의 「＋ 연결 추가 → 러너」. 원문 `drn_…` 을 `~/.dodok-runner/token` 에 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(또는 env `DODOK_RUNNER_TOKEN`).
-2. **Claude 로그인** — 러너는 이 머신의 평소 Claude Code 로그인(`~/.claude`)을 쓴다. `claude` 로 로그인돼 있으면 건너뛰고, 아니면 `claude` 를 열어 `/login` 을 마치고 나온다. 러너 전용 로그인을 따로 쓰려면 그 디렉터리로 로그인하고 설정의 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다(대화 기록도 그 디렉터리에 따로 남는다).
-   ```bash
-   claude                                            # 평소 로그인 — /login 을 마치고 나온다
-   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude   # 전용 로그인을 원할 때만
-   ```
-3. **설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 토큰 발급 대화상자가 뼈대를 준다.
-   ```json
-   {
-     "serverUrl": "https://<도메인>",
-     "tokenFile": "~/.dodok-runner/token",
-     "roots": [{ "id": "src", "path": "~/src", "label": "내 저장소들" }],
-     "programs": {
-       "claude": { "maxPermissionMode": "default" }
-     }
-   }
-   ```
-4. **실행** — `dodok-runner`. `연결됨(서버 …)` 이 보이면 붙은 것이다. 끄기는 `Ctrl+C`.
+1. **러너 토큰** — dodok 앱 설정 → 연결(`/settings/connection`)의 「＋ 연결 추가 → 러너」. 원문 `drn_…` 은 한 번만 보인다. 그 대화상자의 「서버 주소」 값도 함께 둔다.
+2. **실행** — `dodok-runner`. 설정 파일(`~/.dodok-runner/config.json`)이 없으면 터미널에서 차례로 묻는다.
+   - 서버 주소 · 러너 토큰(화면에 찍히지 않는다 — 설정 파일 옆 `token`, 기본 `~/.dodok-runner/token` 0600 에 쓴다) · 루트(에이전트가 돌 디렉터리 — 경로와 라벨, 여럿 가능) · 권한 상한(`default`·`acceptEdits`·`plan`)
+   - 러너가 쓸 Claude Code(설치본·내장)와 로그인 유무도 보여 준다. 로그인이 없으면 다른 터미널에서 `claude` 를 열어 `/login` 한다 — 러너는 이 머신의 평소 Claude Code 로그인(`~/.claude`)을 쓴다.
+   - 「저장하고 시작할까요?」에 Enter 면 저장하고 곧바로 붙는다. `연결됨(서버 …)` 이 보이면 붙은 것이다. 끄기는 `Ctrl+C`.
+3. **토큰을 다시 발급했으면** — `dodok-runner token`. 새 토큰만 묻고(화면에 찍히지 않는다) 설정의 `tokenFile` 자리에 쓴다 — 설정 파일은 그대로다. 그다음 러너를 다시 띄운다. 설정이 없거나 `tokenFile` 대신 env `DODOK_RUNNER_TOKEN` 을 쓰면 무엇을 할지 한 줄로 알리고 끝난다.
+4. **다시 설정** — `dodok-runner setup`. 덮기 전에 묻고 옛 설정은 `config.json.bak` 으로 둔다. 지금 값(서버 주소·루트·권한 상한)이 기본값이라 Enter 면 그대로이고, 남긴 루트는 `id` 가 바뀌지 않는다(앱의 프로젝트가 그 `id` 로 루트를 가리킨다). 묻지 않는 키(`maxConcurrentRuns`·`browse`·도구 상한·`configDir`·`executable`)도 그대로 둔다.
+
+터미널이 아니면(서비스·파이프) 묻지 않고 끝난다 — 설정 파일을 먼저 만든다.
+
+### 고급 — 직접 쓰기
+
+설정 파일을 손으로 써도 된다(다른 자리면 `dodok-runner --config <경로>`). 토큰은 본문에 적지 않는다 — `tokenFile`(0600) 또는 env `DODOK_RUNNER_TOKEN`. 러너 전용 로그인을 쓰려면 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude` 로 로그인하고 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다.
+
+```json
+{
+  "serverUrl": "https://<도메인>",
+  "tokenFile": "~/.dodok-runner/token",
+  "roots": [{ "id": "src", "path": "~/src", "label": "내 저장소들" }],
+  "programs": {
+    "claude": { "maxPermissionMode": "default" }
+  }
+}
+```
+
+키 설명은 아래 「자세한 것」의 「러너 설치」 4번.
 
 ### 천장
 
