@@ -1,4 +1,5 @@
 import type {
+  RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
   RunnerProgramCapability,
@@ -19,6 +20,8 @@ export type RunSpec = {
   /** 그 프로그램의 전용 로그인 디렉터리(설정 programs.<program>.configDir). 없으면 평소 로그인(러너 프로세스의 CLAUDE_CONFIG_DIR 또는 ~/.claude) */
   configDir?: string;
   model: string | null;
+  /** null·없음이면 프로그램 기본 — 천장이 없다(세션 설정 스펙 5.6) */
+  effort?: RunnerEffort | null;
   permissionMode: RunnerPermissionMode;
   /** null 이면 미리 허용한 도구가 없다 */
   allowedTools: string[] | null;

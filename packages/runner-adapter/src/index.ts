@@ -7,4 +7,5 @@ export {
   type RunnerAgentDefinition,
   type RunnerLive,
   type RunnerTokenVerifier,
+  resolvePermissionMode,
 } from "./runner-adapter";

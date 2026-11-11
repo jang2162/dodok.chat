@@ -96,6 +96,8 @@ export function buildQueryOptions(
     cwd: spec.workdir,
     // null 이면 CLI 기본 모델
     ...(spec.model === null ? {} : { model: spec.model }),
+    // null·없음이면 CLI 기본 effort(세션 설정 스펙 5.6)
+    ...(spec.effort === null || spec.effort === undefined ? {} : { effort: spec.effort }),
     permissionMode: spec.permissionMode,
     // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2). 제어 도구의 쓰기는
     // 서버의 확인 카드가 묻는다(CONTROL_TOOL_FULL_NAMES)

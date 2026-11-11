@@ -1,4 +1,4 @@
-import type { Agent } from "@dodok/shared";
+import type { Agent, SessionDefaults } from "@dodok/shared";
 import { cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import {
   stubServer as serve,
 } from "../../../test/agentsPage";
 import { programOf, projectOf, runnerOf, runnersRoutes } from "../../../test/runnersServer";
-import { CEILING_REFUSED } from "./RunnerAgentForm";
+import { ABOVE_CEILING, CEILING_REFUSED } from "./RunnerAgentForm";
 
 /** 시험마다 첫 에이전트의 상세를 띄운다 — 러너 에이전트 줄은 「연결」 탭의 에이전트 상세가 그린다 */
 let shown: Agent | undefined;
@@ -30,9 +30,14 @@ afterEach(() => {
 });
 
 /** 러너-1(맥북)의 dodok 프로젝트에서 도는 러너 에이전트 — admin 이상이면 정의(`runnerAgent`)가 실린다 */
-function coder(over: Partial<NonNullable<Agent["runnerAgent"]>> = {}, withDefinition = true): Agent {
+function coder(
+  over: Partial<NonNullable<Agent["runnerAgent"]>> = {},
+  withDefinition = true,
+  defaults: Partial<SessionDefaults> = {},
+): Agent {
   const runner = runnerOf(1);
   return makeAgent({
+    sessionDefaults: { model: null, effort: null, permissionMode: null, ...defaults },
     provider: "runner",
     providerAgentId: "r-0123456789",
     handle: "coder",
@@ -43,9 +48,6 @@ function coder(over: Partial<NonNullable<Agent["runnerAgent"]>> = {}, withDefini
       ? {
           runnerAgent: {
             projectId: projectOf(1).id,
-            model: "sonnet",
-            permissionMode: "default",
-            allowedTools: ["Read"],
             disallowedTools: [],
             ...over,
           },
@@ -71,7 +73,7 @@ const routes = (max: "plan" | "dontAsk" | "default" | "acceptEdits" = "acceptEdi
 
 async function openEdit() {
   const row = await agentDetail();
-  await userEvent.click(within(row).getByRole("button", { name: "@coder 러너 설정 고치기" }));
+  await userEvent.click(within(row).getByRole("button", { name: "@coder 시작값 고치기" }));
   return row;
 }
 
@@ -80,19 +82,20 @@ const modeOptions = (row: HTMLElement) =>
     .getAllByRole("option")
     .map((o) => ({ value: (o as HTMLOptionElement).value, disabled: (o as HTMLOptionElement).disabled }));
 
-describe("러너 에이전트 줄", () => {
-  it("admin 은 정의 요약과 「러너 설정 고치기」 — member 의 Agent 에는 정의가 없어 줄에 없다 [PR11]", async () => {
-    stubServer({ agents: [coder()], runners: routes() });
+describe("러너 에이전트 줄 — 새 세션 시작값 [세션 설정 스펙 S10]", () => {
+  it("고칠 수 있는 사람은 시작값 요약과 「시작값 고치기」 — 「기본」은 「기본」, 모델·권한·허용 도구 정의 요약은 없다", async () => {
+    stubServer({ agents: [coder({}, true, { model: "sonnet", effort: "high" })], runners: routes() });
     renderPage(
       createQueryClient(() => {}),
       "admin",
     );
     const row = await agentDetail();
-    expect(row).toHaveTextContent("권한 default · 모델 sonnet · 허용 도구 Read");
-    expect(within(row).getByRole("button", { name: "@coder 러너 설정 고치기" })).toBeInTheDocument();
+    expect(row).toHaveTextContent("새 세션 시작값 · 모델 sonnet · effort high · 권한 기본");
+    expect(row).not.toHaveTextContent("허용 도구");
+    expect(within(row).getByRole("button", { name: "@coder 시작값 고치기" })).toBeInTheDocument();
   });
 
-  it("member — 프로그램·러너 줄만, 정의 요약·고치기 없음", async () => {
+  it("고칠 수 없는 사람(member) — 프로그램·러너 줄만, 시작값 고치기 없음", async () => {
     stubServer({ agents: [coder({}, false)] });
     renderPage(
       createQueryClient(() => {}),
@@ -100,8 +103,8 @@ describe("러너 에이전트 줄", () => {
     );
     const row = await agentDetail();
     expect(row).toHaveTextContent("Claude Code · 러너 맥북");
-    expect(row).not.toHaveTextContent("권한");
-    expect(within(row).queryByRole("button", { name: /러너 설정 고치기/ })).toBeNull();
+    expect(row).not.toHaveTextContent("새 세션 시작값");
+    expect(within(row).queryByRole("button", { name: /시작값 고치기/ })).toBeNull();
   });
 });
 
@@ -130,90 +133,69 @@ describe("러너 에이전트의 지시(basePrompt) — 만들 때와 같은 「
   });
 });
 
-describe("러너 에이전트 고치기 — 만들기와 같은 칸", () => {
-  it("프로그램·프로젝트는 읽기만, 권한 모드는 붙은 러너의 상한까지", async () => {
+describe("새 세션 시작값 고치기", () => {
+  it("프로그램·프로젝트는 읽기만, 권한 모드는 「기본」+넷 — 상한(default) 위는 막고 사유 한 줄", async () => {
     stubServer({ agents: [coder()], runners: routes("default") });
     renderPage();
     const row = await openEdit();
     await waitFor(() => expect(row).toHaveTextContent("프로젝트dodok · 내 저장소들/dodok"));
     expect(row).toHaveTextContent("프로그램Claude Code");
     expect(within(row).queryByRole("radio", { name: /Claude Code/ })).toBeNull();
-    expect(within(row).queryByRole("combobox", { name: "프로젝트" })).toBeNull();
     await waitFor(() =>
       expect(modeOptions(row)).toEqual([
-        { value: "plan", disabled: false },
-        { value: "dontAsk", disabled: false },
-        { value: "default", disabled: false },
-      ]),
-    );
-  });
-
-  it("상한이 저장된 값 아래로 내려갔으면 지금 값은 「(상한 초과)」로 고를 수 없게 보이고 경고 — 다른 칸만 바꾸는 저장은 된다 [Review Focus 3]", async () => {
-    const server = stubServer({
-      agents: [coder({ permissionMode: "acceptEdits" })],
-      runners: routes("default"),
-    });
-    renderPage();
-    const row = await openEdit();
-    const mode = within(row).getByRole("combobox", { name: "권한 모드" });
-    await waitFor(() =>
-      expect(modeOptions(row)).toEqual([
+        { value: "", disabled: false },
         { value: "plan", disabled: false },
         { value: "dontAsk", disabled: false },
         { value: "default", disabled: false },
         { value: "acceptEdits", disabled: true },
       ]),
     );
-    expect(mode).toHaveValue("acceptEdits");
-    expect(mode).toHaveAccessibleDescription(/러너 상한\(default\)보다 높습니다/);
-    const model = within(row).getByLabelText("모델");
-    await userEvent.clear(model);
-    await userEvent.type(model, "opus");
-    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
-    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ model: "opus" }]));
-  });
-
-  it("PATCH 는 바뀐 정의 칸만 — 프로그램·프로젝트는 싣지 않는다 [Step 3b′]", async () => {
-    const server = stubServer({ agents: [coder()], runners: routes() });
-    renderPage();
-    const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
-    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "acceptEdits");
-    const tools = within(row).getByLabelText("허용 도구");
-    await userEvent.clear(tools);
-    const model = within(row).getByLabelText("모델");
-    await userEvent.clear(model);
-    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
-    await waitFor(() => expect(server.bodies("PATCH")).toHaveLength(1));
-    const body = server.bodies("PATCH")[0] as Record<string, unknown>;
-    expect(body).toEqual({ model: null, permissionMode: "acceptEdits", allowedTools: null });
-    expect(body).not.toHaveProperty("program");
-    expect(body).not.toHaveProperty("runnerProjectId");
-  });
-
-  it("권한 모드만 바꾸면 PATCH 는 { permissionMode } 하나 — 모델·도구는 싣지 않는다", async () => {
-    const server = stubServer({ agents: [coder()], runners: routes() });
-    renderPage();
-    const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
-    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "dontAsk");
-    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
-    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ permissionMode: "dontAsk" }]));
-  });
-
-  it("러너가 끊겨 있으면 상한을 모른다 — 넷 다 고를 수 있고 그렇다고 알린다", async () => {
-    stubServer({ agents: [coder()], runners: routes("default", false) });
-    renderPage();
-    const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
     expect(within(row).getByRole("combobox", { name: "권한 모드" })).toHaveAccessibleDescription(
-      /러너가 끊겨 있어 상한을 모릅니다/,
+      ABOVE_CEILING("default"),
     );
   });
 
-  it("서버가 천장으로 거절하면 그 칸 아래 고정 문구", async () => {
+  it("셋을 고쳐 저장하면 PATCH 본문은 { sessionDefaults } — 바뀐 칸만, 프로그램·프로젝트는 싣지 않는다", async () => {
+    const server = stubServer({ agents: [coder({}, true, { effort: "low" })], runners: routes() });
+    renderPage();
+    const row = await openEdit();
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
+    await userEvent.type(within(row).getByLabelText("모델"), "opus");
+    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "effort" }), "max");
+    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "acceptEdits");
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() =>
+      expect(server.bodies("PATCH")).toEqual([
+        { sessionDefaults: { model: "opus", effort: "max", permissionMode: "acceptEdits" } },
+      ]),
+    );
+  });
+
+  it("「기본」으로 되돌리면 null 로 싣는다 — 바꾸지 않은 칸은 빠진다", async () => {
+    const server = stubServer({
+      agents: [coder({}, true, { model: "sonnet", permissionMode: "plan" })],
+      runners: routes(),
+    });
+    renderPage();
+    const row = await openEdit();
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
+    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "");
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() =>
+      expect(server.bodies("PATCH")).toEqual([{ sessionDefaults: { permissionMode: null } }]),
+    );
+  });
+
+  it("러너가 끊겨 있으면 상한을 모른다 — 넷 다 고를 수 있다", async () => {
     stubServer({ agents: [coder()], runners: routes("default", false) });
-    // 서버 400 의 details.field — 이 가짜 서버의 apiErr 는 details 를 싣지 않는다
+    renderPage();
+    const row = await openEdit();
+    await waitFor(() => expect(modeOptions(row).every((o) => !o.disabled)).toBe(true));
+    expect(modeOptions(row)).toHaveLength(5);
+  });
+
+  it("서버가 천장으로 거절하면 권한 칸 아래 고정 문구", async () => {
+    stubServer({ agents: [coder()], runners: routes("default", false) });
     const fetchFn = globalThis.fetch;
     vi.stubGlobal(
       "fetch",
@@ -232,7 +214,7 @@ describe("러너 에이전트 고치기 — 만들기와 같은 칸", () => {
     );
     renderPage();
     const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
     await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "acceptEdits");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     await waitFor(() =>
@@ -240,47 +222,6 @@ describe("러너 에이전트 고치기 — 만들기와 같은 칸", () => {
         CEILING_REFUSED,
       ),
     );
-    expect(row).not.toHaveTextContent("허용하지 않습니다(permissionMode)");
-  });
-});
-
-describe("러너 에이전트 고치기 — 기다림·빈 도구 [리뷰 L8]", () => {
-  it("러너 목록을 받는 동안은 「끊겨 있어 상한을 모릅니다」가 아니라 기다림 — 권한 모드는 잠긴다", async () => {
-    const handle = routes("default");
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    stubServer({
-      agents: [coder()],
-      runners: (method, url, body) =>
-        method === "GET" && url === "/api/v1/runners"
-          ? gate.then(() => handle(method, url, body) as Response)
-          : handle(method, url, body),
-    });
-    renderPage();
-    const row = await openEdit();
-    const mode = within(row).getByRole("combobox", { name: "권한 모드" });
-    expect(mode).toHaveAccessibleDescription("러너 상한을 불러오는 중…");
-    expect(mode).toBeDisabled();
-    expect(row).not.toHaveTextContent("러너가 끊겨 있어 상한을 모릅니다");
-    release();
-    await waitFor(() => expect(mode).toHaveAccessibleDescription(/러너 상한은 default/));
-    expect(mode).toBeEnabled();
-  });
-
-  it("allowedTools: [] 는 요약에 「없음」, 다른 칸만 바꾼 저장은 [] 를 null 로 바꾸지 않는다", async () => {
-    const server = stubServer({ agents: [coder({ allowedTools: [] })], runners: routes() });
-    renderPage();
-    const summary = await agentDetail();
-    expect(summary).toHaveTextContent("허용 도구 없음");
-    const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
-    const model = within(row).getByLabelText("모델");
-    await userEvent.clear(model);
-    await userEvent.type(model, "opus");
-    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
-    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ model: "opus" }]));
   });
 });
 

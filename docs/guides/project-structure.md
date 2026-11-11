@@ -388,10 +388,15 @@ src/
 │  │                      (최근 활동순 CONVERSATION_PAGE 20, status open|closed|all, q 는 LIKE — `%`·`_`·`\` 는 글자, cursor `<활동 ms>_<id>`)) ·
 │  │                      routes.ts(`GET /channels/:id/conversations`·`GET`·`PATCH /conversations/:id { title?, closed? }` — 만들기 REST 는 없다(빈 세션을 만들지 않는다), 정책은 auth/policies.ts).
 │  │                      wire `conversation.created`·`conversation.updated`(제목·닫기·다시 열기만)는 realtime/events.ts 가 채널 룸으로
+│  │                      러너 에이전트의 세션 설정(세션 설정 스펙 docs/superpowers/specs/2026-11-11-runner-session-settings-design.md): agent-settings.ts(conversation_agent_settings 행 —
+│  │                      getEffectiveSettings(행이 없으면 에이전트의 새 세션 시작값)·upsertSettings(보낸 칸만)·settingsAgentsOf(상태 줄의 에이전트 = 채널의 러너 에이전트 멤버)·
+│  │                      contextPercentOf(그 세션·스레드의 마지막 실행 runs.usage 의 contextTokens/contextWindow)·assertSettingsWritable(정책 auth/policies.ts authorizeSessionSettings)) ·
+│  │                      agent-settings.routes.ts(`GET /conversations/:id/agent-settings[?threadRootId]`·`PATCH …/:agentId` → wire `conversation.agent_settings` 채널 룸). 새 세션 첫 글의
+│  │                      agentSettings 는 realtime/socket.ts 의 message.send 가 대화를 만드는 같은 트랜잭션에서 저장한다(어기면 글·대화·행이 함께 없다)
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상 — OpenClaw 만, provider=runner 는 400).
-│  │                      러너 에이전트는 가져오지 않고 만든다: `POST /agents { provider: "runner", runnerProjectId, program, … }`(프로젝트의 러너가 붙어 있고 프로그램이 available·권한 모드·허용 도구가
-│  │                      그 러너 천장 안 — 아니면 400 field program·permissionMode·allowedTools, 끊김 503), providerAgentId 는 서버가 `r-` + hex 10 으로 짓는다. PATCH 의 러너 필드(모델·권한·도구)는
-│  │                      바꾸는 필드만 붙은 러너 천장과 대조(끊겼으면 건너뛰고 런에서 러너가 거절), program·runnerProjectId 는 400(프로젝트는 runners 의 옮기기로만). 응답의 Agent.runnerAgent(정의)는 admin 이상에게만. 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
+│  │                      러너 에이전트는 가져오지 않고 만든다: `POST /agents { provider: "runner", runnerProjectId, program, … }`(프로젝트의 러너가 붙어 있고 프로그램이 available —
+│  │                      아니면 400 field program, 끊김 503 — 옛 클라이언트의 model·permissionMode·allowedTools 는 본문 스키마가 버린다), providerAgentId 는 서버가 `r-` + hex 10 으로 짓는다. PATCH 의
+│  │                      sessionDefaults(새 세션 시작값 — 보낸 칸만)는 권한 모드만 붙은 러너 천장과 대조(끊겼으면 건너뛰고 런에서 러너가 거절), program·runnerProjectId 는 400(프로젝트는 runners 의 옮기기로만). 응답의 Agent.sessionDefaults 는 모두에게, Agent.runnerAgent(프로젝트·금지 도구)는 admin 이상에게만. 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
 │  │                      OpenClaw 는 등록·찾기 모두 gatewayId 필수(워크스페이스의 Gateway 가 아니면 400, 찾기는 꺼진 Gateway 면 ADAPTER_UNAVAILABLE), 같은 Gateway 에 같은 id 면 409.
 │  │                      `PUT /agents/:id/gateway`(owner) — 다른 Gateway 로 옮기기(대상에 같은 id 409, 러너 에이전트 400). 응답 Agent 에 OpenClaw 면 gateway({id,name} 또는 null),
 │  │                      조회는 `providerAgentIdIs`(lower() 비교 — 승인 findAgentId·런 없는 정본 agentIdFor 가 같이 쓴다: 코어가 세션 키를 소문자로 접는다).
@@ -528,7 +533,7 @@ src/
 │  │                      `GET`·`POST /api/v1/runners/:id/projects`(더하기 전에 러너 project.check — 실패 400 details.reason, 같은 자리 409)·`PATCH /api/v1/runner-projects/:id`·`POST …/archive`·`…/check`·
 │  │                      `…/move { runnerId }`(대상 러너가 붙어 있고 check 가 ok·천장 밖 에이전트 없음(400 details.agentIds)일 때만, 프로젝트·에이전트 runner_token_id 를 한 트랜잭션에서, 그 에이전트들의
 │  │                      agent_sessions.provider_session_id 를 비운다)) · live.ts(askRunner·liveRunner·assertWithinCeiling — 어댑터 AdapterError 코드를 그대로 API 코드로) ·
-│  │                      definition.ts(runnerAgentDefinition — run.start.agent 를 에이전트 행·프로젝트 행 그대로, 프로젝트 토큰이 에이전트 토큰과 다르면 null — 어댑터 옵션 agentDefinition).
+│  │                      definition.ts(runnerAgentDefinition — run.start.agent 를 에이전트 행·프로젝트 행과 그 대화의 세션 설정(모델·effort·권한 모드 — 권한 「기본」 null 은 어댑터가 min(default, 러너 상한)으로), 프로젝트 토큰이 에이전트 토큰과 다르면 null — 어댑터 옵션 agentDefinition).
 │  │                      러너 어댑터(@dodok/runner-adapter)는 app.ts 가 만든다(deps.adapters 를 안 주면 늘 — 테스트는 runnerAdapter: true). 러너 첨부 HTTP
 │  │                      (`/runner/attachments`)는 attachments/routes.ts 가 브리지와 같은 가드·같은 제한으로 연다(업로더는 bridge — 에이전트 쪽)
 │  ├─ ops/                Phase 3 ③. 운영 사건·런 수 상한·레이트리밋·안정성 — API 는 전부 admin 이상(`requireRole(ctx, "admin")`, 아니면 403).
@@ -956,7 +961,7 @@ src/
 │  ├─ WireProvider.tsx     로그인(me 캐시)이 확인되면 소켓을 만들어 붙인다 + `useChannelSubscription`. presence.update(연결마다 강제, visibilitychange·채널 이동 때 값이 바뀌면,
 │  │                       끊겨 있으면 안 보냄, 채널 id 는 uuid 일 때만) · 로그인 확인 때 syncPushSubscription · 세션 정리 훅과 「값 없는 me 의 401」에서 dropLocalPush ·
 │  │                       소켓마다 읽음 전송기(`features/reads/readSender.ts` createReadSender — `ReadSenderContext` 로 내린다, 소켓을 버리면 dispose)·세션 정리 때 읽지 않음 현황 reset
-│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태. `system.notice` 토스트 지속시간.
+│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태(`conversation.agent_settings` → features/conversations/agentSettings.ts, 끝난 run.state 는 그 대화의 상태 줄을 다시 받게). `system.notice` 토스트 지속시간.
 │  │                       메시지 분배: 루트 → 그 대화의 타임라인 캐시(`message.conversationId` — 캐시가 있을 때만, + 연 스레드의 루트), 답글 → 채널 seq 커서만(noteSeq)·캐시가 있는 스레드에 upsert.
 │  │                       `conversation.created`·`conversation.updated` → 세션 하나·세션 목록 캐시(`features/conversations/cache.ts`).
 │  │                       `ops.event` → 상태 캐시의 unacked 를 곧바로 덮고(상태를 아직 안 받았으면 만들지 않는다) opsStatus·사건 목록 무효화.
@@ -1064,7 +1069,7 @@ src/
 │  │                       `conversations/dateGroups.ts` — 브라우저 시간대, 스레드·설정 패널·@ 후보 없음)
 │  ├─ conversations/       채널 세션. ConversationList.tsx(세션 목록 칸·좁은 화면 시트 — 「열림」·「닫힘」, 제목 검색은 서버 q, 「더 보기」, 줄마다 읽지 않음 점·멘션 배지)·ConversationTitle.tsx
 │  │                       (머리의 세션 제목 — 권한이 있으면 「세션 이름 바꾸기」 대화상자, 「세션 닫기」 확인)·ClosedNotice.tsx(작성기 자리 「닫힌 세션입니다」·「다시 열기」, 「세션 관리자만」 정책의
-│  │                       새 세션 창 안내 CannotCreateNotice)·closed.ts(지금 세션이 닫혔는가 — 목록·카드·스레드 패널에 내린다)·permissions.ts(서버 auth/policies.ts 의 세션 쪽 판정을 흉내 — 숨기기는 편의)·
+│  │                       새 세션 창 안내 CannotCreateNotice)·closed.ts(지금 세션이 닫혔는가 — 목록·카드·스레드 패널에 내린다)·permissions.ts(서버 auth/policies.ts 의 세션 쪽 판정을 흉내 — 숨기기는 편의)·agentSettings.ts(상태 줄의 쿼리·PATCH·wire 갈아 끼우기 — 키는 대화·스레드마다, 스레드 키는 값만 바꾸고 컨텍스트 % 는 둔다)·
 │  │                       cache.ts(`qk.conversation`·`qk.conversationList` 캐시, noteConversationActivity — 목록 순서는 message.created 로 올린다, 시스템 메시지는 아니다)·queries.ts·mutations.ts
 │  ├─ messages/            채널 화면은 `/c/<ch>/s/<conv>` 아래(설정·활동·`t/<root>`), `/c/<ch>` 는 ChannelRedirect.tsx 가 최근 열린 세션 또는 `/s/new` 로 넘긴다(목록을 받을 수 없으면 오프라인 사본의 최근 세션 —
 │  │                       4xx 는 사본으로 가리지 않는다, 로딩·없음·오프라인 화면은 ChannelStatus.tsx). ChannelPage.tsx — 머리·세션 목록·그 세션의 MessageList·작성기(닫힌 세션·만들 수 없는 새 세션 창은 숨긴다 — 언마운트하지 않아 세션마다의 초안이 남는다).
@@ -1125,13 +1130,15 @@ src/
 │  │                       member: 에이전트 + wire Gateway, admin: + `GET /runners`·러너마다 프로젝트, owner: + `GET /setup/status`) · ConnectionTreeList.tsx(줄 = 링크, 「연결 없음」·접힌 「삭제된 에이전트 N」) ·
 │  │                       GatewayDetail·RunnerDetail·ProjectDetail(admin 이상)·AgentDetail·NewConnection(owner) — 상세 주소마다, 없는 id 는 NotFoundDetail 「이 연결을 찾을 수 없습니다」 ·
 │  │                       DetailHeader(h1 — 트리 줄을 눌러 오면 초점) · context.ts(트리 머리 라이브 영역·초점 돌려주기)
-│  ├─ composer/            Composer.tsx(Tiptap — `/stop` 은 그 세션(스레드 작성기면 그 스레드)의 런만, `/new` 는 명령이 아니다. 새 세션 창에서 첫 ack 뒤 그 세션으로 넘어가면 초안·첨부를 들고 간다 —
+│  ├─ composer/            AgentSettingsBar.tsx(작성기 위 러너 에이전트 상태 줄 — 에이전트마다 모델·effort·권한·컨텍스트 %, 넷 이상이면 접힘, 새 세션 창이면 시작값 + 화면에서 바꾼 값(Composer 가 쥐고 첫 글의
+│  │                       agentSettings 로 — useSendMessage `composerAgentSettings` 표가 「다시 보내기」에 같은 값을 싣는다)) · AgentSettingsPopover.tsx(「변경」 — 권한은 주인·admin 이 아니면 acceptEdits 막힘, 러너 상한 위 막힘) ·
+│  │                       Composer.tsx(Tiptap — `/stop` 은 그 세션(스레드 작성기면 그 스레드)의 런만, `/new` 는 명령이 아니다. 새 세션 창에서 첫 ack 뒤 그 세션으로 넘어가면 초안·첨부를 들고 간다 —
 │  │                       `useSendMessage` 의 settleNew 가 남기는 표 `["composerSettled"]`, 메인 작성기가 `new` 를 떠날 때 지운다) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(membership 없는 사람·비활성 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
 │  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`) · useSendMessage(channelId, conversationId, threadRootId? — conversationId 가 NEW_CONVERSATION("new")이면 newConversation 으로 보내고 ack 의 세션 주소로 바꿔 간다, 같은 틱의 둘째 글은 그 세션으로(「만드는 중」 표지 `composerCreating` — 결과 불명(TIMEOUT)인 첫 글은 그 항목이 `/s/new` 창에 있을 때만 같은 clientMsgId 로 다시 보낸다), ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, CHANNEL_ARCHIVED 면 사유 channel_archived(토스트 없이)·채널 다시 받기, CONVERSATION_CLOSED 면 사유 conversation_closed(「다시 보내기」 없음)·세션 다시 받기, FORBIDDEN 이면 「다시 보내기」 없음, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 세션 단위) ·
 │  │                       PendingAttachments.tsx(「첨부할 파일」 칩 — 사진은 미리보기(서버가 file 로 판별하거나 못 그리면 파일 칩), 그 밖은 아이콘·크기, 진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「파일 첨부」로). Composer 는 「파일 첨부」 버튼(accept 없음)·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「파일을 올리는 중입니다」 → 「올리지 못한 파일을 빼 주세요」). 놓은 폴더는 거르고 「폴더는 보낼 수 없습니다」. 글 없이 첨부만 보낼 수 있다
-│  ├─ agents/              에이전트 부품 — 「연결」 탭의 에이전트 상세(features/connections AgentDetail)가 쓴다. AgentRow(`as="div"` 로 상세 본문 — 사용 토글·기본 프롬프트 — member 에게는 값만 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 그 러너 상세 링크와 옮기라는 안내), admin 이상이면 RunnerDefinition(정의 요약 + 「러너 설정 고치기」 → RunnerAgentForm.tsx RunnerDefinitionForm — 프로그램·프로젝트는 읽기만)) · RunnerAgentForm(프로젝트 상세의 「에이전트 만들기」 — 러너·프로젝트 고정(runnerId·projectId) → 프로그램 → 핸들·이름·모델·권한 모드(상한까지)·허용 도구(상한 부분집합)·지시·DM 허용, 폼을 연 뒤 러너가 끊기거나 폐기되거나 프로젝트가 보관되면 잠김) · DiscoverDialog(Gateway 상세의 「에이전트 가져오기」 — 그 Gateway 하나로 고정(gatewayId), 같은 Gateway·같은 id 만 숨김,
+│  ├─ agents/              에이전트 부품 — 「연결」 탭의 에이전트 상세(features/connections AgentDetail)가 쓴다. AgentRow(`as="div"` 로 상세 본문 — 사용 토글·기본 프롬프트 — member 에게는 값만 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 그 러너 상세 링크와 옮기라는 안내), 주인·admin 이상이면 RunnerSessionDefaults(새 세션 시작값 요약 + 「시작값 고치기」 → RunnerAgentForm.tsx SessionDefaultsForm — 모델·effort·권한 모드(상한까지), 프로그램·프로젝트는 읽기만)) · RunnerAgentForm(프로젝트 상세의 「에이전트 만들기」 — 러너·프로젝트 고정(runnerId·projectId) → 프로그램 → 핸들·이름·지시·DM 허용(모델·권한·도구는 묻지 않는다), 폼을 연 뒤 러너가 끊기거나 폐기되거나 프로젝트가 보관되면 잠김) · DiscoverDialog(Gateway 상세의 「에이전트 가져오기」 — 그 Gateway 하나로 고정(gatewayId), 같은 Gateway·같은 id 만 숨김,
 │  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
 │  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
 │  │                       admin·member 「…owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다」) · ManualAgentForm·handleFrom ·

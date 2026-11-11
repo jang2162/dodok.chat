@@ -90,6 +90,12 @@ describe("buildQueryOptions", () => {
     expect(o.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
   });
 
+  it("effort — 값이면 SDK 옵션 effort, null·없음이면 키가 없다 [세션 설정 스펙 5.6]", () => {
+    expect(buildQueryOptions(runSpec({ effort: "high" }), deps(false)).effort).toBe("high");
+    expect(buildQueryOptions(runSpec({ effort: null }), deps(false))).not.toHaveProperty("effort");
+    expect(buildQueryOptions(runSpec(), deps(false))).not.toHaveProperty("effort");
+  });
+
   it("allowedTools null — 미리 허용한 도구 없음, dodok 도구만(태스크 2 리뷰 M2)", () => {
     const o = buildQueryOptions(runSpec({ allowedTools: null }), deps(false));
     expect(o.allowedTools).toEqual([POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]);

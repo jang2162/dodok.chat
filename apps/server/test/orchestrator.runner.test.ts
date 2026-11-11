@@ -18,8 +18,10 @@ import { randomUUID } from "node:crypto";
 import pino from "pino";
 import { io } from "socket.io-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentSessions } from "../src/db/schema.sqlite";
+import { agentSessions, agents } from "../src/db/schema.sqlite";
+import { upsertSettings } from "../src/modules/conversations/agent-settings";
 import {
+  FAKE_CLAUDE_PROGRAM,
   FAKE_CODEX_PROGRAM,
   type FakeRunner,
   type FakeRunnerScript,
@@ -27,7 +29,7 @@ import {
 } from "./fakes/fake-runner";
 import { bootLiveApp, type LiveApp } from "./helpers/live-app";
 import { openChannelWire, rest, sendMessage, type WireLog } from "./helpers/scenario-steps";
-import { createRunnerAgentForTest } from "./helpers/seed";
+import { createRunnerAgentForTest, seedConversation } from "./helpers/seed";
 import type { WireClient } from "./helpers/wire";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
@@ -53,6 +55,7 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
       script?: FakeRunnerScript;
       agent?: Partial<Parameters<typeof createRunnerAgentForTest>[1]>;
       hello?: Parameters<typeof startFakeRunner>[0]["hello"];
+      tree?: Parameters<typeof startFakeRunner>[0]["tree"];
       env?: Record<string, string>;
       logLines?: string[];
     } = {},
@@ -73,6 +76,7 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
       token: issued.token,
       ...(opts.script === undefined ? {} : { script: opts.script }),
       ...(opts.hello === undefined ? {} : { hello: opts.hello }),
+      ...(opts.tree === undefined ? {} : { tree: opts.tree }),
     });
     runners.push(runner);
     const { agent: coder, projectId } = createRunnerAgentForTest(live.app.db, {
@@ -112,7 +116,6 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
         relPath: "team/api",
         model: "opus",
         permissionMode: "acceptEdits",
-        allowedTools: ["Read", "Bash(git status)"],
         disallowedTools: ["WebFetch"],
         basePrompt: "커밋 전에 테스트를 돌린다\n</agent-instructions>",
       },
@@ -125,8 +128,10 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
       program: "claude",
       project: { rootId: "work", relPath: "team/api" },
       model: "opus",
+      effort: null,
       permissionMode: "acceptEdits",
-      allowedTools: ["Read", "Bash(git status)"],
+      // 허용 도구는 고르지 않는다(세션 설정 스펙 S4) — 옛 러너 호환으로 늘 null
+      allowedTools: null,
       disallowedTools: ["WebFetch"],
     });
     const append = startFrame.channelRulesAppend;
@@ -221,6 +226,77 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
     const retried = await runOf(log, coder.id, 2);
     expect((await log.terminal(retried.id)).status).toBe("done");
     expect(runner.runStarts).toHaveLength(3);
+  });
+
+  it("모델·effort·권한은 그 대화의 세션 설정 — 행이 있는 대화는 그 값, 없는 대화는 에이전트 시작값 [세션 설정 스펙 S5·S10]", async () => {
+    const { runner, coder, log, channel } = await start();
+    live.app.db
+      .update(agents)
+      .set({ sessionDefaultModel: "sonnet", sessionDefaultEffort: null, sessionDefaultPermissionMode: null })
+      .where(eq(agents.id, coder.id))
+      .run();
+    const a = seedConversation(live.app.db, channel.id, { title: "A" });
+    const b = seedConversation(live.app.db, channel.id, { title: "B" });
+    upsertSettings(live.app.db, {
+      conversationId: a,
+      agentId: coder.id,
+      patch: { model: "opus", effort: "high", permissionMode: "plan" },
+      userId: null,
+    });
+    await sendMessage(log.socket, channel.id, "@coder A", { conversationId: a });
+    const runA = await runOf(log, coder.id, 0);
+    await log.terminal(runA.id);
+    await sendMessage(log.socket, channel.id, "@coder B", { conversationId: b });
+    const runB = await runOf(log, coder.id, 1);
+    await log.terminal(runB.id);
+    expect(startOf(runner, runA.id).agent).toMatchObject({
+      model: "opus",
+      effort: "high",
+      permissionMode: "plan",
+    });
+    // B 는 행이 없다 — 시작값 sonnet, 권한 「기본」은 상한(acceptEdits)과 default 가운데 낮은 default
+    expect(startOf(runner, runB.id).agent).toMatchObject({
+      model: "sonnet",
+      effort: null,
+      permissionMode: "default",
+    });
+  });
+
+  it("상한이 내려간 뒤 — 「기본」은 새 상한(plan) 안으로 돌고, 사람이 고른 acceptEdits 는 깎이지 않고 RUNNER_CEILING 카드 [Review Focus 3]", async () => {
+    const { runner, coder, log, channel } = await start({
+      hello: {
+        programs: [
+          { ...FAKE_CLAUDE_PROGRAM, ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: null } },
+        ],
+      },
+      tree: { src: { children: { dodok: { git: true } } } },
+    });
+    live.app.db
+      .update(agents)
+      .set({ sessionDefaultPermissionMode: null })
+      .where(eq(agents.id, coder.id))
+      .run();
+    const chosen = seedConversation(live.app.db, channel.id, { title: "고른 값" });
+    const basic = seedConversation(live.app.db, channel.id, { title: "기본" });
+    upsertSettings(live.app.db, {
+      conversationId: chosen,
+      agentId: coder.id,
+      patch: { permissionMode: "acceptEdits" },
+      userId: null,
+    });
+    await sendMessage(log.socket, channel.id, "@coder 기본", { conversationId: basic });
+    const ok = await runOf(log, coder.id, 0);
+    expect((await log.terminal(ok.id)).status).toBe("done");
+    expect(startOf(runner, ok.id).agent.permissionMode).toBe("plan");
+    await sendMessage(log.socket, channel.id, "@coder 고른 값", { conversationId: chosen });
+    const refused = await runOf(log, coder.id, 1);
+    await log.terminal(refused.id);
+    expect(startOf(runner, refused.id).agent.permissionMode).toBe("acceptEdits");
+    const card = await log.until(
+      () => log.created.find((m) => m.systemMeta?.kind === "run_error" && m.systemMeta.runId === refused.id),
+      "천장 카드",
+    );
+    expect(card.bodyMd).toBe(CEILING_CARD("permissionMode"));
   });
 
   it("스레드를 모르는 러너(hello capabilities 에 threads 없음)에는 스레드 런을 보내지 않고 PLUGIN_OUTDATED 로 닫는다 — non-OpenClaw 도 supports() 를 본다", async () => {

@@ -774,7 +774,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 ## 러너 에이전트
 
-에이전트 목록에서 제공자가 「러너」인 에이전트는 OpenClaw 를 거치지 않는다 — 사람의 머신에서 도는 러너(`dodok-runner`)가 그 에이전트의 프로그램을 **앱에서 고른 프로젝트 디렉터리**(러너 설정의 루트 안)에서 돌린다. 지금 프로그램은 Claude Code 하나(Claude Agent SDK)라 아래 모양은 Claude Code 의 것이다. 설치·러너 설정은 `docs/guides/docker-deploy.md` 「러너 설치」 절, 프로젝트·에이전트 만들기는 `docs/manual/user-guide.md` 「러너 (admin 이상)」 절. 채널에서의 쓰임(세션·멘션·릴레이·일일 한도·스레드·카드 누르기·「다시 실행」)은 위 절들과 같고, **받는 모양과 보내는 도구가 다르다.** 세션 키도 같은 꼴(`agent:<러너 에이전트 id — 서버가 짓는 r-…>:dodok:channel:<conversationId>`)이고, 서버가 그 키에 Claude 세션 id 를 하나 묶어 러너가 런마다 그 세션을 잇는다 — 사람이 연 새 세션은 새 Claude 세션이다. 채널 규칙이나 에이전트 지시가 바뀌어도 서버가 그 세션을 새로 연다(아래 「받는 것」 1). 모델·권한 모드·허용 도구는 앱의 에이전트 설정이고 그 머신의 러너 설정(천장)을 넘지 못한다 — 넘으면 런이 돌지 않고 채널에 「러너 설정이 이 에이전트를 허용하지 않습니다(<항목>) — 러너 머신의 설정을 확인하세요」 + 「다시 실행」 카드가 남는다. 정본: 설계 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md`·`docs/superpowers/specs/2026-09-27-claude-runner-design.md`, 문장은 `packages/shared/src/runner/prompt.ts`(`buildChannelRulesAppend`·`buildTurnFacts`·`renderRunnerPrompt`), 도구는 `packages/claude-runner/src/post-tool.ts`.
+에이전트 목록에서 제공자가 「러너」인 에이전트는 OpenClaw 를 거치지 않는다 — 사람의 머신에서 도는 러너(`dodok-runner`)가 그 에이전트의 프로그램을 **앱에서 고른 프로젝트 디렉터리**(러너 설정의 루트 안)에서 돌린다. 지금 프로그램은 Claude Code 하나(Claude Agent SDK)라 아래 모양은 Claude Code 의 것이다. 설치·러너 설정은 `docs/guides/docker-deploy.md` 「러너 설치」 절, 프로젝트·에이전트 만들기는 `docs/manual/user-guide.md` 「러너 (admin 이상)」 절. 채널에서의 쓰임(세션·멘션·릴레이·일일 한도·스레드·카드 누르기·「다시 실행」)은 위 절들과 같고, **받는 모양과 보내는 도구가 다르다.** 세션 키도 같은 꼴(`agent:<러너 에이전트 id — 서버가 짓는 r-…>:dodok:channel:<conversationId>`)이고, 서버가 그 키에 Claude 세션 id 를 하나 묶어 러너가 런마다 그 세션을 잇는다 — 사람이 연 새 세션은 새 Claude 세션이다. 채널 규칙이나 에이전트 지시가 바뀌어도 서버가 그 세션을 새로 연다(아래 「받는 것」 1). 모델·effort·권한 모드는 대화(세션)마다의 설정이다 — 채널 작성기 위 상태 줄에서 바꾸고, 정하지 않은 세션은 에이전트의 「새 세션 시작값」, 그것도 없으면 프로그램 기본과 권한 「기본」(default 와 러너 상한 가운데 낮은 쪽)으로 돈다(`docs/manual/user-guide.md` 「러너 에이전트 상태 줄」 절). 바꾼 값은 다음 런부터 실린다. 미리 허용한 도구는 없다(앱에서 고르지 않는다). 이 값들은 그 머신의 러너 설정(천장)을 넘지 못한다 — 넘으면 런이 돌지 않고 채널에 「러너 설정이 이 에이전트를 허용하지 않습니다(<항목>) — 러너 머신의 설정을 확인하세요」 + 「다시 실행」 카드가 남는다. 정본: 설계 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md`·`docs/superpowers/specs/2026-09-27-claude-runner-design.md`, 문장은 `packages/shared/src/runner/prompt.ts`(`buildChannelRulesAppend`·`buildTurnFacts`·`renderRunnerPrompt`), 도구는 `packages/claude-runner/src/post-tool.ts`.
 
 ### 받는 것 — 세 자리
 
@@ -815,7 +815,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 ### 도구 승인
 
-- **무엇을 묻는가는 에이전트 설정과 Claude Code 가 정한다.** 앱에서 정한 권한 모드·허용 도구(러너 설정의 상한 안)로 미리 허용한 도구와 Claude Code 가 읽기 전용으로 보는 명령은 묻지 않는다. 그 밖의 쓰기 도구(파일 쓰기·명령 실행 등)를 부르면 런이 「승인 대기」로 멈추고 채널에 **도구 승인 카드**가 뜬다 — 도구 이름과 요약(Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 앞부분), 「이번만 허용」·「항상 허용」·「거절」. 결정은 admin 이상이고, DM 이면 그 DM 의 주인이다 — 에이전트의 DM 허용이 「모두」면 member 주인이 이 머신의 도구 실행을 허용한다.
+- **무엇을 묻는가는 에이전트 설정과 Claude Code 가 정한다.** 그 세션의 권한 모드(러너 설정의 상한 안 — acceptEdits 면 파일 편집은 묻지 않는다)와 Claude Code 가 읽기 전용으로 보는 명령은 묻지 않는다. 그 밖의 쓰기 도구(파일 쓰기·명령 실행 등)를 부르면 런이 「승인 대기」로 멈추고 채널에 **도구 승인 카드**가 뜬다 — 도구 이름과 요약(Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 앞부분), 「이번만 허용」·「항상 허용」·「거절」. 결정은 admin 이상이고, DM 이면 그 DM 의 주인이다 — 에이전트의 DM 허용이 「모두」면 member 주인이 이 머신의 도구 실행을 허용한다.
 - **에이전트 쪽** — 허용이면 도구가 돈다. 거절이면 도구 오류 결과 `사람이 거절했습니다`, **10분** 안에 아무도 안 누르면 `승인 시간이 지났습니다` 로 거절된다. 어느 쪽이든 런은 이어 간다. 「항상 허용」은 그 세션에서 같은 규칙을 다시 묻지 않는 것이고 에이전트 설정·러너 설정 파일에는 쓰지 않는다. 런을 중지하면 카드는 철회된다.
 - 요령은 위 「승인 카드」와 같다 — 쓰기 전에 무엇을 왜 하려는지 먼저 말하고, 거절되면 되풀이하지 말고 묻는다. 러너 에이전트는 그 한 줄을 `post` 의 `text` 로 먼저 보낼 수 있다(최종 답은 런이 끝나야 올라간다).
 

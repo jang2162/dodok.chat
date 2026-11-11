@@ -222,15 +222,14 @@ export function activeProjectAgents(
 ): {
   id: string;
   program: RunnerProgram | null;
-  permissionMode: RunnerPermissionMode;
-  allowedTools: string[] | null;
+  /** 새 세션 시작값의 권한 — null 이면 「기본」(그 러너 상한 안으로 계산된다 — 대조할 것이 없다) */
+  permissionMode: RunnerPermissionMode | null;
 }[] {
   return db
     .select({
       id: agents.id,
       program: agents.program,
-      permissionMode: agents.permissionMode,
-      allowedTools: agents.allowedToolsJson,
+      permissionMode: agents.sessionDefaultPermissionMode,
     })
     .from(agents)
     .where(and(eq(agents.runnerProjectId, projectId), isNull(agents.archivedAt)))

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Ack } from "../common";
 import { Id } from "../common";
+import { AgentSettingsEntry, type ConversationAgentSettings } from "../conversations";
 import {
   ATTACHMENT_LIMITS,
   Approval,
@@ -49,6 +50,8 @@ export const MessageSend = z
     // 둘 중 정확히 하나 — 그 채널의 세션(스레드 답글이면 루트의 세션과 같아야 한다), 또는 서버가 만들 새 세션
     conversationId: Id.optional(),
     newConversation: NewConversation.optional(),
+    // 새 세션 창에서 바꾼 러너 에이전트 설정(세션 설정 스펙 S11) — newConversation 과 함께일 때만, 에이전트마다 한 번
+    agentSettings: z.array(AgentSettingsEntry).max(8).optional(),
   })
   .refine((v) => v.bodyMd.trim() !== "" || (v.attachments?.length ?? 0) > 0, {
     message: "본문이나 첨부 중 하나는 있어야 한다",
@@ -57,7 +60,17 @@ export const MessageSend = z
   .refine((v) => (v.conversationId === undefined) !== (v.newConversation === undefined), {
     message: "conversationId 와 newConversation 가운데 정확히 하나가 있어야 한다",
     path: ["conversationId"],
-  });
+  })
+  .refine((v) => v.agentSettings === undefined || v.newConversation !== undefined, {
+    message: "agentSettings 는 newConversation 과 함께일 때만",
+    path: ["agentSettings"],
+  })
+  .refine(
+    (v) =>
+      v.agentSettings === undefined ||
+      new Set(v.agentSettings.map((s) => s.agentId)).size === v.agentSettings.length,
+    { message: "agentSettings 의 agentId 가 겹친다", path: ["agentSettings"] },
+  );
 export type MessageSend = z.infer<typeof MessageSend>;
 
 export const RunAbort = z.object({ runId: Id });
@@ -158,6 +171,12 @@ export interface ServerToClientEvents {
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   "conversation.created": (p: { conversation: Conversation }) => void; // 채널 룸
   "conversation.updated": (p: { conversation: Conversation }) => void; // 채널 룸 — 제목·닫기·다시 열기
+  // 채널 룸 — 러너 에이전트의 세션 설정을 누가 바꿨다(세션 설정 스펙 5.2). 받은 쪽은 그 줄을 갈아 끼운다
+  "conversation.agent_settings": (p: {
+    channelId: Id;
+    conversationId: Id;
+    settings: ConversationAgentSettings;
+  }) => void;
   "conversation.read": (p: ConversationReadUpdate) => void; // user 룸 — 같은 사용자의 다른 기기·탭이 읽음을 맞춘다(보낸 소켓도 받는다)
   "channel.activity": (p: ChannelActivity) => void; // workspace 룸 — 본문 없음, 구독하지 않은 채널·보지 않는 세션의 새 글을 사이드바·세션 목록이 안다
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록

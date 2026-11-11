@@ -235,6 +235,55 @@ describe("createStreamMapper — ADR 0007 6.4 대응표", () => {
   });
 });
 
+describe("createStreamMapper — 컨텍스트 사용량 [세션 설정 스펙 5.6]", () => {
+  const MODEL = "claude-opus-4-7";
+  const assistant = (input: number, creation: number, read: number, model = MODEL) =>
+    sdkMsg({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        model,
+        content: [],
+        usage: {
+          input_tokens: input,
+          output_tokens: 1,
+          cache_creation_input_tokens: creation,
+          cache_read_input_tokens: read,
+        },
+      },
+    });
+
+  it("마지막 assistant 의 입력+캐시 토큰과 result.modelUsage 의 창 크기 — result 합계가 아니다", () => {
+    const m = mapper();
+    m.map(assistant(1000, 0, 500));
+    m.map(assistant(2000, 100, 30_000));
+    const [item] = m.map(script.success("답", { modelUsage: { [MODEL]: { contextWindow: 200_000 } } }));
+    expect(item?.final?.usage).toMatchObject({ contextTokens: 32_100, contextWindow: 200_000 });
+  });
+
+  it("서브에이전트(parent_tool_use_id)의 assistant 는 세지 않는다", () => {
+    const m = mapper();
+    m.map(assistant(2000, 0, 0));
+    m.map(sdkMsg({ ...(assistant(9000, 0, 0) as object), parent_tool_use_id: "toolu_x" }));
+    const [item] = m.map(script.success("답", { modelUsage: { [MODEL]: { contextWindow: 100_000 } } }));
+    expect(item?.final?.usage?.contextTokens).toBe(2000);
+  });
+
+  it("modelUsage 가 없으면 둘 다 싣지 않는다", () => {
+    const m = mapper();
+    m.map(assistant(2000, 100, 30_000));
+    const [item] = m.map(script.success("답"));
+    expect(item?.final?.usage).not.toHaveProperty("contextTokens");
+    expect(item?.final?.usage).not.toHaveProperty("contextWindow");
+  });
+
+  it("assistant 가 없으면(사용량 모름) 싣지 않는다", () => {
+    const m = mapper();
+    const [item] = m.map(script.success("답", { modelUsage: { [MODEL]: { contextWindow: 200_000 } } }));
+    expect(item?.final?.usage).not.toHaveProperty("contextTokens");
+  });
+});
+
 describe("createPathMasker", () => {
   const mask = createPathMasker(["/home/u/src/repo", "/private/home/u/src/repo"]);
   it("작업 디렉터리 안은 상대 경로로, 밖은 표지로", () => {

@@ -1,4 +1,4 @@
-import type { Agent, DmAccess, RunnerPermissionMode, RunnerProgram } from "@dodok/shared";
+import type { Agent, DmAccess, RunnerProgram, SessionDefaults } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
 import { api, apiBytes } from "@/api/http";
@@ -16,7 +16,7 @@ export type CreateOpenClawAgentInput = {
 };
 /**
  * 러너 에이전트는 러너 프로젝트 안에서 만든다(shared `CreateRunnerAgentBody` — 러너 일반화 스펙 7장). id 는 서버가 짓고, 그 프로젝트의
- * 러너에 묶인다. model·allowedTools 의 null 은 「프로그램 기본」이다
+ * 러너에 묶인다. 모델·권한 모드는 만들 때 정하지 않는다 — 대화마다의 세션 설정이고, 「새 세션 시작값」은 상세에서(세션 설정 스펙 S10)
  */
 export type CreateRunnerAgentInput = {
   provider: "runner";
@@ -24,9 +24,6 @@ export type CreateRunnerAgentInput = {
   program: RunnerProgram;
   handle: string;
   name: string;
-  model?: string | null;
-  permissionMode: RunnerPermissionMode;
-  allowedTools?: string[] | null;
   basePrompt?: string;
   dmAccess?: DmAccess;
 };
@@ -40,12 +37,10 @@ export type AgentPatch = {
   /** 누가 이 에이전트와 DM 을 여나(admin 이상 — 에이전트 DM 계획 판정 PD13: REST 로만) */
   dmAccess?: DmAccess;
   /**
-   * 러너 에이전트의 정의(admin 이상, REST 로만). 프로그램·프로젝트는 싣지 않는다 — 서버가 400 으로 거절한다(러너 일반화 계획 판정
-   * PR10: 프로젝트는 「다른 러너로 옮기기」로만, 프로그램을 바꾸려면 새 에이전트)
+   * 러너 에이전트의 「새 세션 시작값」(그 연결의 주인·admin 이상, REST 로만) — 보낸 필드만 바뀌고 null 은 「기본」. 프로그램·프로젝트는
+   * 싣지 않는다 — 서버가 400 으로 거절한다(러너 일반화 계획 판정 PR10)
    */
-  model?: string | null;
-  permissionMode?: RunnerPermissionMode;
-  allowedTools?: string[] | null;
+  sessionDefaults?: Partial<SessionDefaults>;
 };
 /** archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다) */
 export type DiscoveredAgent = {

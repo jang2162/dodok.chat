@@ -8,7 +8,6 @@ import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { isDeactivated } from "@/features/members/deactivated";
 import { PRESENCE_LABEL, WithPresence } from "@/features/presence/PresenceDot";
 import { usePresence } from "@/features/presence/store";
-import { PERMISSION_MODE_LABEL } from "@/features/runners/copy";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
@@ -70,7 +69,6 @@ export function AgentProfile({ agentId }: { agentId: string }) {
       <dl className="flex flex-col gap-3">
         <Field label="상태">{stateLabel}</Field>
         <Field label="연결">{connectionOf(agent)}</Field>
-        {agent.provider === "runner" && <Field label="모델">{agent.model ?? "기본"}</Field>}
         <Field label="소유자">
           {agent.createdBy === null ? (
             "기록 없음"
@@ -86,10 +84,6 @@ export function AgentProfile({ agentId }: { agentId: string }) {
         <Field label="DM 허용">{DM_ACCESS_LABEL[agent.dmAccess]}</Field>
         {canManage && runner && (
           <>
-            <Field label="권한 모드">{PERMISSION_MODE_LABEL[runner.permissionMode]}</Field>
-            <Field label="허용 도구">
-              {runner.allowedTools?.length ? runner.allowedTools.join(", ") : "없음"}
-            </Field>
             <Field label="금지 도구">
               {runner.disallowedTools.length ? runner.disallowedTools.join(", ") : "없음"}
             </Field>

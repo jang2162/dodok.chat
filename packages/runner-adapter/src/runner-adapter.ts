@@ -22,6 +22,7 @@ import {
   ErrorCode,
   type InboundDeliver,
   type OutboundMessage,
+  permissionModeRank,
   type RunEventBody,
   type RunEventType,
   RUNNER_NAMESPACE,
@@ -39,6 +40,7 @@ import {
   RunnerProjectCheckResult,
   RunnerProjectRef,
   RunnerRunAck,
+  type RunnerPermissionMode,
   type RunnerRunAgent,
   RunnerRunError,
   RunnerRunEvent,
@@ -90,8 +92,22 @@ export type RunnerFrameLimit = {
 export type RunnerAgentDefinition = {
   name: string;
   instructions: string | null;
-  agent: RunnerRunAgent;
+  /** permissionMode null 은 권한 「기본」 — send 가 그 러너의 hello 상한으로 min(default, 상한)을 채운다(세션 설정 스펙 S5) */
+  agent: Omit<RunnerRunAgent, "permissionMode"> & { permissionMode: RunnerPermissionMode | null };
 };
+
+/**
+ * 권한 「기본」(null) — default 와 그 러너가 그 프로그램에 알린 상한 가운데 낮은 쪽. 사람이 고른 값은 상한을 넘어도 깎지 않는다 —
+ * 러너가 RUNNER_CEILING 으로 거절해 카드가 된다(S5). 프로그램을 알리지 않았으면 default(러너가 program 천장으로 닫는다)
+ */
+export function resolvePermissionMode(
+  chosen: RunnerPermissionMode | null,
+  ceiling: RunnerPermissionMode | undefined,
+): RunnerPermissionMode {
+  if (chosen !== null) return chosen;
+  if (ceiling === undefined) return "default";
+  return permissionModeRank(ceiling) < permissionModeRank("default") ? ceiling : "default";
+}
 
 /** fs.list·project.check 의 ack 상한 — 러너가 디렉터리 하나를 읽는 시간 */
 export const RUNNER_FS_ACK_TIMEOUT_MS = 10_000;
@@ -126,7 +142,11 @@ export type RunnerAdapterOptions = {
    * 그 토큰의 러너가 맡는 러너 에이전트(providerAgentId)의 정의. 없으면(그 토큰의 러너 에이전트가 아니다·프로젝트가 없다) null.
    * 던지지 않는다
    */
-  agentDefinition: (providerAgentId: string, tokenId: string) => RunnerAgentDefinition | null;
+  agentDefinition: (
+    providerAgentId: string,
+    tokenId: string,
+    conversationId?: string,
+  ) => RunnerAgentDefinition | null;
   frameLimit: RunnerFrameLimit;
 };
 
@@ -314,9 +334,13 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   }
 
   /** 정의를 읽다 던지면 없는 것으로 — 런은 send 가 닫고, 능력은 어댑터 전체 값으로 */
-  function definitionOf(providerAgentId: string, tokenId: string): RunnerAgentDefinition | null {
+  function definitionOf(
+    providerAgentId: string,
+    tokenId: string,
+    conversationId?: string,
+  ): RunnerAgentDefinition | null {
     try {
-      return opts.agentDefinition(providerAgentId, tokenId);
+      return opts.agentDefinition(providerAgentId, tokenId, conversationId);
     } catch (error) {
       logger.error(
         { err: error, agentId: providerAgentId, tokenId },
@@ -592,6 +616,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (final.usage?.inputTokens !== undefined) usage.inputTokens = final.usage.inputTokens;
     if (final.usage?.outputTokens !== undefined) usage.outputTokens = final.usage.outputTokens;
     if (final.costUsd !== undefined) usage.costUsd = final.costUsd;
+    // 상태 줄의 컨텍스트 %(세션 설정 스펙 5.1) — 둘 다 있을 때만. 옛 러너는 싣지 않는다
+    if (final.usage?.contextTokens !== undefined && final.usage.contextWindow !== undefined) {
+      usage.contextTokens = final.usage.contextTokens;
+      usage.contextWindow = final.usage.contextWindow;
+    }
     // 잴 것이 하나도 없으면(대기열에서 중지된 런 — init 을 못 봐 costKind 는 기본값) 내지 않는다 — 비용 없는 런이
     // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
     const measured =
@@ -1080,8 +1109,13 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       // 러너 에이전트는 만들 때부터 러너 토큰에 묶인다 — 그 토큰의 러너만 맡는다
       const runner = sendOpts.connectionId === null ? undefined : registry.byToken(sendOpts.connectionId);
       if (!runner) throw new AdapterError("ADAPTER_UNAVAILABLE", "the agent's runner is not connected");
-      const definition = definitionOf(input.agentId, runner.tokenId);
+      const definition = definitionOf(input.agentId, runner.tokenId, input.conversationId);
       if (!definition) throw new AdapterError("NOT_FOUND", "no runner agent with a project for this runner");
+      const ceiling = runner.programs.find((p) => p.program === definition.agent.program)?.ceiling;
+      const agent = {
+        ...definition.agent,
+        permissionMode: resolvePermissionMode(definition.agent.permissionMode, ceiling?.maxPermissionMode),
+      };
       const serverSessionIds = capabilitiesFor(input.agentId, runner.tokenId).serverSessionIds;
       if (serverSessionIds && sendOpts.providerSessionId === undefined) {
         throw new AdapterError("INTERNAL", "this runner program needs a server-chosen providerSessionId");
@@ -1115,7 +1149,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           `${input.dm || input.groupDm ? "DM" : channelName} · ${definition.name}`,
           SESSION_TITLE_MAX,
         ),
-        agent: definition.agent,
+        agent,
       });
       if (!start.success) throw new AdapterError("INTERNAL", `run.start invalid: ${issues(start.error)}`);
 

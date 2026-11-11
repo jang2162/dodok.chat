@@ -63,9 +63,6 @@ describe("buildConnectionTree", () => {
     const agent = coder({
       runnerAgent: {
         projectId: p1.id,
-        model: null,
-        permissionMode: "default",
-        allowedTools: null,
         disallowedTools: [],
       },
     });

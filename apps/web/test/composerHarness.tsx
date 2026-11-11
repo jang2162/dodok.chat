@@ -25,7 +25,6 @@ export const DEV: Agent = {
   dmAccess: "admins",
   program: null,
   createdBy: null,
-  model: null,
 };
 export const FIN: Agent = {
   ...DEV,

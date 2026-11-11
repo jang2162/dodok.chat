@@ -46,6 +46,20 @@ export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
 export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
 export const permissionModeRank = (mode: RunnerPermissionMode): number =>
   RUNNER_PERMISSION_MODES.indexOf(mode);
+/** 러너 실행의 노력치(effort) — SDK query() 의 effort 옵션. null 이면 프로그램 기본 */
+export const RUNNER_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const RunnerEffort = z.enum(RUNNER_EFFORTS);
+export type RunnerEffort = z.infer<typeof RunnerEffort>;
+/**
+ * 러너 에이전트의 「새 세션 시작값」(세션 설정 스펙 S10) — 설정 행이 없는 대화가 이 값으로 돈다. null 은 「기본」: 모델·effort 는
+ * 프로그램 기본, 권한은 실행 때 min(default, 그 러너의 상한). 대화마다의 설정(conversations ConversationAgentSettings)도 같은 값 규칙이다
+ */
+export const SessionDefaults = z.object({
+  model: z.string().min(1).max(128).nullable(),
+  effort: RunnerEffort.nullable(),
+  permissionMode: RunnerPermissionMode.nullable(),
+});
+export type SessionDefaults = z.infer<typeof SessionDefaults>;
 /** 러너 에이전트의 허용·금지 도구 이름 목록 — run.start.agent 와 REST 본문이 같은 상한을 쓴다 */
 export const RunnerToolNames = z.array(z.string().min(1).max(200)).max(100);
 /** 프로그램 이름표 — 서버 카드 문구(PROVIDER_AUTH 등)·러너 오류 문구·웹이 같은 글을 쓴다 */
@@ -85,18 +99,18 @@ export const Agent = z.object({
   program: RunnerProgram.nullable().default(null),
   /** 만든 사람(소유자) — 기록 전에 만든 에이전트는 null. 소유자에게 따로 권한은 없다(프로필 스펙 결정 2) */
   createdBy: Id.nullable().default(null),
-  /** 러너 에이전트의 모델(없으면 null = 기본) — 모두에게 싣는다. OpenClaw 는 null(dodok 이 Gateway 쪽 모델을 모른다) */
-  model: z.string().nullable().default(null),
   /**
-   * 러너 에이전트의 정의(러너 일반화 스펙 5장) — REST 에이전트 응답에만, 러너 에이전트에만 키가 있다. 고치기 화면이 지금 값을 보인다.
-   * projectId 가 null 이면 프로젝트가 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다)
+   * 러너 에이전트의 「새 세션 시작값」 — 러너 에이전트에만 키가 있고 모두에게 싣는다(새 세션 창의 상태 줄이 이 값에서 출발한다 — S11).
+   * 모델·권한 모드는 에이전트 정의가 아니라 대화마다다(세션 설정 스펙)
+   */
+  sessionDefaults: SessionDefaults.optional(),
+  /**
+   * 러너 에이전트의 정의(러너 일반화 스펙 5장) — REST 에이전트 응답에만, 러너 에이전트에만 키가 있다. projectId 가 null 이면 프로젝트가
+   * 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다). 금지 도구는 화면에서 고르지 않지만 이미 값이 있으면 런에 실린다
    */
   runnerAgent: z
     .object({
       projectId: Id.nullable(),
-      model: z.string().nullable(),
-      permissionMode: RunnerPermissionMode,
-      allowedTools: RunnerToolNames.nullable(),
       disallowedTools: RunnerToolNames,
     })
     .optional(),
@@ -380,6 +394,9 @@ export const RunUsage = z.object({
   // 구독 로그인의 달러 값은 청구액이 아니라 공시 단가 환산이다(ADR 0007 4.8)
   costKind: z.enum(["api", "subscription_estimate"]).optional(),
   model: z.string().optional(),
+  // 러너 실행 끝의 컨텍스트 사용량(세션 설정 스펙 5.1) — 상태 줄의 컨텍스트 % 가 마지막 실행의 이 둘로 그린다
+  contextTokens: z.int().min(0).optional(),
+  contextWindow: z.int().min(1).optional(),
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 

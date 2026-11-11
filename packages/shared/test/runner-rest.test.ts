@@ -17,30 +17,34 @@ const ID = "01a09fc9-d204-7551-89d6-38544d07a101";
 describe("러너 에이전트 본문", () => {
   const base = { provider: "runner", runnerProjectId: ID, program: "claude", handle: "coder", name: "Coder" };
 
-  it("정의 필드는 RunnerRunAgent 와 같은 상한 — bypassPermissions·129자 모델·101개 도구는 거절", () => {
+  it("금지 도구는 RunnerRunAgent 와 같은 상한, 옛 모델·권한 모드·허용 도구는 버린다(400 아님) [세션 설정 스펙 5.5]", () => {
     expect(CreateRunnerAgentBody.parse(base)).toMatchObject({ enabled: true });
-    for (const extra of [
-      { permissionMode: "bypassPermissions" },
-      { model: "m".repeat(129) },
-      { allowedTools: Array.from({ length: 101 }, (_, i) => `T${i}`) },
-      { disallowedTools: [""] },
-      { program: "gpt" },
-    ]) {
+    for (const extra of [{ disallowedTools: [""] }, { program: "gpt" }]) {
       expect(CreateRunnerAgentBody.safeParse({ ...base, ...extra }).success, JSON.stringify(extra)).toBe(
         false,
       );
-      const [field] = Object.keys(extra);
-      if (field !== "program")
-        expect(
-          RunnerRunAgent.shape[field as keyof typeof RunnerRunAgent.shape].safeParse(Object.values(extra)[0])
-            .success,
-        ).toBe(false);
     }
-    expect(UpdateAgentBody.safeParse({ permissionMode: "bypassPermissions" }).success).toBe(false);
-    expect(UpdateAgentBody.parse({ model: null, allowedTools: null })).toEqual({
-      model: null,
-      allowedTools: null,
+    expect(RunnerRunAgent.shape.disallowedTools.safeParse([""]).success).toBe(false);
+    const legacy = CreateRunnerAgentBody.parse({
+      ...base,
+      model: "opus",
+      permissionMode: "bypassPermissions",
+      allowedTools: ["Read"],
     });
+    expect(legacy).not.toHaveProperty("model");
+    expect(legacy).not.toHaveProperty("permissionMode");
+    expect(legacy).not.toHaveProperty("allowedTools");
+    expect(UpdateAgentBody.parse({ model: "opus", permissionMode: "acceptEdits" })).toEqual({});
+  });
+
+  it("UpdateAgentBody.sessionDefaults — 보낸 필드만, null 은 「기본」, bypassPermissions·모르는 effort 는 거절", () => {
+    expect(UpdateAgentBody.parse({ sessionDefaults: { model: null, effort: "high" } })).toEqual({
+      sessionDefaults: { model: null, effort: "high" },
+    });
+    expect(
+      UpdateAgentBody.safeParse({ sessionDefaults: { permissionMode: "bypassPermissions" } }).success,
+    ).toBe(false);
+    expect(UpdateAgentBody.safeParse({ sessionDefaults: { effort: "extreme" } }).success).toBe(false);
   });
 
   it("POST /agents 는 OpenClaw·러너 합집합 — provider 없으면 OpenClaw", () => {

@@ -99,7 +99,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 31개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 32개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -117,6 +117,7 @@ describe("db", () => {
       "channel_members",
       "channels",
       "component_interactions",
+      "conversation_agent_settings",
       "conversation_reads",
       "conversations",
       "gateways",
@@ -1580,9 +1581,9 @@ describe("러너 프로젝트 마이그레이션(0031)", () => {
         expect(rows.get(dev)?.archivedAt).toBeNull();
         expect(rows.get(coder)).toMatchObject({
           runnerProjectId: null,
-          model: null,
-          permissionMode: "default",
-          allowedToolsJson: null,
+          // 0037 이 옛 model·permission_mode 를 시작값 열로 옮겼다
+          sessionDefaultModel: null,
+          sessionDefaultPermissionMode: "default",
           disallowedToolsJson: [],
           instructionsRevision: 0,
         });
@@ -1822,6 +1823,101 @@ describe("사람 간 DM 마이그레이션(0035)", () => {
         expect(sqlite.prepare("SELECT count(*) AS n FROM channels WHERE direct_key IS NULL").get()).toEqual({
           n: 4,
         });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("세션 설정 마이그레이션(0037)", () => {
+  it("_attachments_channel_message 까지 적용된 DB 에 얹으면 러너 에이전트의 옛 모델·권한이 세션 있는 대화마다 한 번, 시작값에도 옮겨지고 옛 열은 사라진다 — OpenClaw 는 행이 없다 [세션 설정 스펙 S8]", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_attachments_channel_message");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const agentCols = () =>
+          (sqlite.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>).map((c) => c.name);
+        expect(agentCols()).toEqual(
+          expect.arrayContaining(["model", "permission_mode", "allowed_tools_json"]),
+        );
+
+        // 대화·에이전트 행만 넣는다(새 표의 FK 가 이 둘을 가리킨다) — 채널·워크스페이스는 FK 를 잠시 끄고 건너뛴다
+        sqlite.pragma("foreign_keys = OFF");
+        const t = Date.UTC(2026, 10, 1);
+        const [c1, c2, c3, ws, ch] = [uuid(), uuid(), uuid(), uuid(), uuid()];
+        for (const c of [c1, c2, c3])
+          sqlite
+            .prepare(
+              "INSERT INTO conversations (id, channel_id, title, title_source, created_by_type, created_by_id, created_at) VALUES (?, ?, 't', 'user', 'user', 'u', ?)",
+            )
+            .run(c, ch, t);
+        const insertAgent = (
+          provider: string,
+          handle: string,
+          model: string | null,
+          mode: string,
+          program: string | null,
+        ) => {
+          const id = uuid();
+          sqlite
+            .prepare(
+              "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, created_at, program, model, permission_mode, allowed_tools_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .run(id, ws, provider, `p-${handle}`, handle, handle, t, program, model, mode, '["Read"]');
+          return id;
+        };
+        const coder = insertAgent("runner", "coder", "opus", "acceptEdits", "claude");
+        const idle = insertAgent("runner", "idle", null, "default", "claude");
+        const dev = insertAgent("openclaw", "dev", null, "default", null);
+        const session = (conv: string, agent: string, thread: string | null) =>
+          sqlite
+            .prepare(
+              "INSERT INTO agent_sessions (id, channel_id, conversation_id, agent_id, session_key, prompt_revision_at_start, thread_root_id) VALUES (?, ?, ?, ?, ?, 0, ?)",
+            )
+            .run(uuid(), ch, conv, agent, `k-${uuid()}`, thread);
+        session(c1, coder, null);
+        session(c1, coder, uuid()); // 같은 대화의 스레드 세션 — 행은 대화마다 하나
+        session(c2, coder, null);
+        session(c1, dev, null);
+        sqlite.pragma("foreign_keys = ON");
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(agentCols()).not.toEqual(expect.arrayContaining(["model"]));
+        expect(agentCols()).not.toContain("permission_mode");
+        expect(agentCols()).not.toContain("allowed_tools_json");
+        expect(agentCols()).toContain("disallowed_tools_json");
+        const rows = db
+          .select()
+          .from(schema.conversationAgentSettings)
+          .all()
+          .map((r) => [r.conversationId, r.agentId, r.model, r.effort, r.permissionMode, r.updatedBy]);
+        expect(rows).toHaveLength(2);
+        expect(rows).toEqual(
+          expect.arrayContaining([
+            [c1, coder, "opus", null, "acceptEdits", null],
+            [c2, coder, "opus", null, "acceptEdits", null],
+          ]),
+        );
+        const defaults = new Map(
+          db
+            .select()
+            .from(agents)
+            .all()
+            .map((a) => [
+              a.id,
+              [a.sessionDefaultModel, a.sessionDefaultEffort, a.sessionDefaultPermissionMode],
+            ]),
+        );
+        expect(defaults.get(coder)).toEqual(["opus", null, "acceptEdits"]);
+        expect(defaults.get(idle)).toEqual([null, null, "default"]);
+        expect(defaults.get(dev)).toEqual([null, null, null]);
       } finally {
         sqlite.close();
       }

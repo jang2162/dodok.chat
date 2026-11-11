@@ -1,4 +1,4 @@
-import { type Agent, type DmAccess, RUNNER_PROGRAM_NAME } from "@dodok/shared";
+import { type Agent, type DmAccess, RUNNER_PROGRAM_NAME, type SessionDefaults } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { MessageCircleIcon } from "lucide-react";
 import { type FormEvent, type Ref, useId, useRef, useState } from "react";
@@ -19,7 +19,7 @@ import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { AvatarPicker } from "@/features/account/AvatarPicker";
 import { useAgentAvatar, useArchiveAgent, usePatchAgent } from "./mutations";
 import { providerIdLabel } from "./providerLabels";
-import { RunnerDefinitionForm } from "./RunnerAgentForm";
+import { DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
 
@@ -109,7 +109,13 @@ export function AgentRow({
           />
         </div>
       </div>
-      {!readOnly && agent.runnerAgent && <RunnerDefinition agent={agent} definition={agent.runnerAgent} />}
+      {!readOnly && agent.sessionDefaults && (
+        <RunnerSessionDefaults
+          agent={agent}
+          defaults={agent.sessionDefaults}
+          projectId={agent.runnerAgent?.projectId ?? null}
+        />
+      )}
       <BasePromptEditor agent={agent} readOnly={readOnly} />
       <DmAccessField agent={agent} readOnly={readOnly} />
       {!readOnly && <AgentAvatarField agent={agent} />}
@@ -267,52 +273,48 @@ function RunnerLine({ agent }: { agent: Agent }) {
   );
 }
 
+/** 「기본」 또는 값 — 상태 줄과 같은 표기 */
+const orDefault = (v: string | null) => v ?? DEFAULT_LABEL;
+
 /**
- * 러너 에이전트의 정의(admin 이상 — 서버가 아래 역할에는 `runnerAgent` 를 싣지 않는다, 러너 일반화 계획 판정 PR11): 요약 한 줄과
- * 「러너 설정 고치기」. 고치기는 만들기와 같은 칸이고 프로그램·프로젝트는 읽기만(`RunnerDefinitionForm`)
+ * 러너 에이전트의 「새 세션 시작값」(세션 설정 스펙 S10 — 그 연결의 주인·admin 이상, 읽기 전용이면 그리지 않는다): 요약 한 줄과
+ * 「시작값 고치기」. 고치면 그 뒤 새 세션부터 — 이미 있는 대화는 그 대화의 설정을 따른다
  */
-function RunnerDefinition({
+function RunnerSessionDefaults({
   agent,
-  definition,
+  defaults,
+  projectId,
 }: {
   agent: Agent;
-  definition: NonNullable<Agent["runnerAgent"]>;
+  defaults: SessionDefaults;
+  projectId: string | null;
 }) {
   const save = usePatchAgent();
   const [editing, setEditing] = useState(false);
   const [refocus, setRefocus] = useState(false);
   const handle = `@${agent.handle}`;
-  const tools = definition.allowedTools;
+  const close = () => {
+    setEditing(false);
+    setRefocus(true);
+  };
 
   if (editing)
     return (
       <div className="flex flex-col gap-2 rounded-md border p-3">
-        <p className="text-sm font-medium">러너 설정</p>
-        <RunnerDefinitionForm
+        <p className="text-sm font-medium">새 세션 시작값</p>
+        <SessionDefaultsForm
           agent={agent}
-          definition={definition}
+          defaults={defaults}
+          projectId={projectId}
           pending={save.isPending}
           serverError={save.error ?? undefined}
           onCancel={() => {
             save.reset();
-            setEditing(false);
-            setRefocus(true);
+            close();
           }}
-          onSave={(patch) => {
-            if (Object.keys(patch).length === 0) {
-              setEditing(false);
-              setRefocus(true);
-              return;
-            }
-            save.mutate(
-              { id: agent.id, patch },
-              {
-                onSuccess: () => {
-                  setEditing(false);
-                  setRefocus(true);
-                },
-              },
-            );
+          onSave={(sessionDefaults) => {
+            if (Object.keys(sessionDefaults).length === 0) return close();
+            save.mutate({ id: agent.id, patch: { sessionDefaults } }, { onSuccess: close });
           }}
         />
       </div>
@@ -320,21 +322,20 @@ function RunnerDefinition({
   return (
     <div className="flex items-start justify-between gap-3">
       <p className="min-w-0 text-sm break-words text-muted-foreground">
-        권한 <code className="font-mono text-xs">{definition.permissionMode}</code> · 모델{" "}
-        {definition.model ?? "기본"} · 허용 도구{" "}
-        {tools === null || tools.length === 0 ? "없음" : tools.join(", ")}
+        새 세션 시작값 · 모델 {orDefault(defaults.model)} · effort {orDefault(defaults.effort)} · 권한{" "}
+        {orDefault(defaults.permissionMode)}
       </p>
       <Button
         variant="outline"
         size="sm"
-        aria-label={`${handle} 러너 설정 고치기`}
+        aria-label={`${handle} 시작값 고치기`}
         autoFocus={refocus}
         onClick={() => {
           save.reset();
           setEditing(true);
         }}
       >
-        러너 설정 고치기
+        시작값 고치기
       </Button>
     </div>
   );

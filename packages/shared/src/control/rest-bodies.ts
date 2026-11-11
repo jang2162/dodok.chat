@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id } from "../common";
-import { Agent, Channel, ChannelMember, RunnerProgram, SessionPolicy } from "../domain";
+import { Agent, Channel, ChannelMember, RunnerProgram, SessionDefaults, SessionPolicy } from "../domain";
 import { RunnerRunAgent } from "../runner";
 import { isRegistrableAgentId } from "../session-key";
 
@@ -87,16 +87,12 @@ export type CreateOpenClawAgentBody = z.infer<typeof CreateOpenClawAgentBody>;
  * 오류로 런을 소리 없이 버린다(러너 일반화 계획 Task 3 Step 2). 러너 천장(권한·도구 상한·프로그램)과의 대조는 서버 라우트가 붙은
  * 러너의 hello 로 한다
  */
-const RunnerAgentFields = RunnerRunAgent.pick({
-  model: true,
-  permissionMode: true,
-  allowedTools: true,
-  disallowedTools: true,
-});
+const RunnerAgentFields = RunnerRunAgent.pick({ disallowedTools: true });
 
 /**
  * 러너 에이전트 만들기(POST /agents { provider: "runner" }) — 러너 프로젝트 안에서, 그 프로젝트의 러너 토큰에 묶인다.
- * providerAgentId 는 서버가 짓는다. permissionMode 를 빼면 default, allowedTools 를 빼면 null(상한 안에서 프로그램 기본)
+ * providerAgentId 는 서버가 짓는다. 모델·권한 모드·허용 도구는 받지 않는다(세션 설정 스펙 5.5) — 옛 클라이언트가 보내면 z.object 가
+ * 버려 무시된다(400 이 아니다 — 옛 화면이 만들기를 못 하게 되지 않게). 「새 세션 시작값」도 만들 때는 묻지 않는다(S10)
  */
 export const CreateRunnerAgentBody = Agent.pick({
   handle: true,
@@ -109,9 +105,6 @@ export const CreateRunnerAgentBody = Agent.pick({
   program: RunnerProgram,
   enabled: Agent.shape.enabled.default(true),
   dmAccess: Agent.shape.dmAccess.unwrap().optional(),
-  model: RunnerAgentFields.shape.model.optional(),
-  permissionMode: RunnerAgentFields.shape.permissionMode.optional(),
-  allowedTools: RunnerAgentFields.shape.allowedTools.optional(),
   disallowedTools: RunnerAgentFields.shape.disallowedTools.optional(),
 });
 export type CreateRunnerAgentBody = z.infer<typeof CreateRunnerAgentBody>;
@@ -122,19 +115,18 @@ export type CreateAgentBody = z.infer<typeof CreateAgentBody>;
 
 /**
  * avatarUrl·basePrompt 는 null 로 지운다. dmAccess 는 REST 에만 — 제어 도구 update_agent 는 뺀다(에이전트 DM 계획 판정 PD13: 채널 안
- * 에이전트가 확인 카드 하나로 DM 범위를 넓히지 못하게). model·permissionMode·allowedTools·disallowedTools 는 러너 에이전트만(OpenClaw
- * 에이전트면 VALIDATION), 역시 REST 에만 — 제어 도구는 러너 구성을 바꾸지 못한다(러너 일반화 스펙 6장)
+ * 에이전트가 확인 카드 하나로 DM 범위를 넓히지 못하게). sessionDefaults(새 세션 시작값 — 보낸 필드만, null 은 「기본」)·
+ * disallowedTools 는 러너 에이전트만(OpenClaw 에이전트면 VALIDATION), 역시 REST 에만 — 제어 도구는 러너 구성을 바꾸지 못한다(러너
+ * 일반화 스펙 6장). 옛 model·permissionMode·allowedTools 는 받지 않는다 — 보내면 버려진다(세션 설정 스펙 5.5)
  */
 export const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: true }).partial().extend({
   avatarUrl: Agent.shape.avatarUrl.unwrap().nullable().optional(),
   basePrompt: Agent.shape.basePrompt.unwrap().nullable().optional(),
   dmAccess: Agent.shape.dmAccess.unwrap().optional(),
-  model: RunnerAgentFields.shape.model.optional(),
-  permissionMode: RunnerAgentFields.shape.permissionMode.optional(),
-  allowedTools: RunnerAgentFields.shape.allowedTools.optional(),
+  sessionDefaults: SessionDefaults.partial().optional(),
   disallowedTools: RunnerAgentFields.shape.disallowedTools.optional(),
 });
 export type UpdateAgentBody = z.infer<typeof UpdateAgentBody>;
 
 /** 러너 에이전트 정의 필드의 이름 — 제어 도구가 받지 않는 키를 가를 때 쓴다 */
-export const RUNNER_AGENT_FIELDS = ["model", "permissionMode", "allowedTools", "disallowedTools"] as const;
+export const RUNNER_AGENT_FIELDS = ["sessionDefaults", "disallowedTools"] as const;

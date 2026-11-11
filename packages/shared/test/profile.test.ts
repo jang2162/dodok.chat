@@ -102,10 +102,10 @@ describe("Person·User·Agent 의 새 필드", () => {
     createdAt: "2026-11-02T00:00:00.000Z",
     archivedAt: null,
   };
-  it("Agent 에 createdBy·model 이 없으면 null 로 채운다", () => {
+  it("Agent 에 createdBy 가 없으면 null 로 채운다 — sessionDefaults 는 러너 에이전트만이라 없으면 없다", () => {
     const a = Agent.parse(agentBase);
     expect(a.createdBy).toBeNull();
-    expect(a.model).toBeNull();
+    expect(a.sessionDefaults).toBeUndefined();
   });
   it("Agent.avatarUrl 이 올린 사진의 상대 경로를 받는다", () => {
     expect(Agent.safeParse({ ...agentBase, avatarUrl: `/api/v1/avatars/${SHA}.webp` }).success).toBe(true);

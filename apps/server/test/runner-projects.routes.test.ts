@@ -358,6 +358,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         runnerProjectId: project.id,
         handle: "maker",
         name: "Maker",
+        // 옛 클라이언트가 보내는 모델·권한 모드·허용 도구는 버린다 — 400 이 아니다(세션 설정 스펙 5.5)
         model: "opus",
         permissionMode: "acceptEdits",
         allowedTools: ["Read"],
@@ -374,31 +375,23 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         basePrompt: "테스트를 돌린다",
         dmAccess: "everyone",
         runner: { tokenId: id, label: "agent-ok", revoked: false },
-        runnerAgent: {
-          projectId: project.id,
-          model: "opus",
-          permissionMode: "acceptEdits",
-          allowedTools: ["Read"],
-          disallowedTools: ["WebFetch"],
-        },
+        runnerAgent: { projectId: project.id, disallowedTools: ["WebFetch"] },
+        sessionDefaults: { model: null, effort: null, permissionMode: null },
       });
       expect(agent.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
       const listed = (await call(admin, "GET", `/runners/${id}/projects`)).json() as {
         projects: RunnerProject[];
       };
       expect(listed.projects.find((p) => p.id === project.id)?.agentCount).toBe(1);
-      // 빼면 default·null·[]
+      // 빼면 []
       const plain = await createRunnerAgent({ runnerProjectId: project.id, handle: "plain", name: "Plain" });
       expect((plain.json().agent as Agent).runnerAgent).toEqual({
         projectId: project.id,
-        model: null,
-        permissionMode: "default",
-        allowedTools: null,
         disallowedTools: [],
       });
     });
 
-    it("천장 밖은 400 VALIDATION + 항목 이름 — 꺼진·없는 프로그램, 상한 위 권한 모드(기본값 default 도), 상한 밖 허용 도구", async () => {
+    it("천장 밖은 400 VALIDATION + 항목 이름 — 꺼진·없는 프로그램. 권한 모드·허용 도구는 만들 때 받지 않아 상한과 상관없다 [세션 설정 스펙 5.5]", async () => {
       const { id } = await runnerWith("agent-ceiling", {
         programs: [
           {
@@ -412,8 +405,6 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       const cases: Array<[string, object]> = [
         ["program", { program: "codex" }],
         ["program", { program: "opencode" }],
-        ["permissionMode", { permissionMode: "acceptEdits" }],
-        ["allowedTools", { allowedTools: ["Read", "Bash"] }],
       ];
       for (const [field, extra] of cases) {
         const res = await createRunnerAgent({
@@ -429,8 +420,8 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         runnerProjectId: project.id,
         handle: "within",
         name: "W",
-        permissionMode: "plan",
-        allowedTools: ["Grep"],
+        permissionMode: "acceptEdits",
+        allowedTools: ["Read", "Bash"],
       });
       expect(ok.statusCode, ok.body).toBe(201);
 
@@ -445,15 +436,16 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         handle: "deflt",
         name: "D",
       });
-      expect(defaulted.json()).toMatchObject({ code: "VALIDATION", details: { field: "permissionMode" } });
+      // 상한 plan 러너에도 만들어진다 — 권한 「기본」은 실행 때 min(default, 상한)(S5)
+      expect(defaulted.statusCode, defaulted.body).toBe(201);
     });
 
-    it("끊긴 러너 503, 보관한·없는 프로젝트는 러너를 묻기 전에 400(runnerProjectId), bypassPermissions·긴 모델 이름은 400", async () => {
+    it("끊긴 러너 503, 보관한·없는 프로젝트는 러너를 묻기 전에 400(runnerProjectId), 긴 금지 도구 이름은 400", async () => {
       const { id, runner } = await runnerWith("agent-down");
       const project = await projectOf(id, "down");
       const archived = await projectOf(id, "archived");
       await call(admin, "POST", `/runner-projects/${archived.id}/archive`);
-      for (const extra of [{ permissionMode: "bypassPermissions" }, { model: "m".repeat(129) }]) {
+      for (const extra of [{ disallowedTools: ["x".repeat(201)] }]) {
         const res = await createRunnerAgent({
           runnerProjectId: project.id,
           handle: "bad1",
@@ -475,7 +467,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       }
     });
 
-    it("PATCH 러너 필드 — 붙은 러너의 상한 안이면 저장, 위면 400(permissionMode·allowedTools), 끊겨 있으면 대조를 건너뛴다, OpenClaw 에이전트면 400", async () => {
+    it("PATCH 러너 필드 — 새 세션 시작값은 붙은 러너의 상한 안이면 저장, 위면 400(permissionMode), 끊겨 있으면 대조를 건너뛴다, 옛 필드는 버린다, OpenClaw 에이전트면 400", async () => {
       const { id, runner } = await runnerWith("patch", {
         programs: [
           {
@@ -491,25 +483,32 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       });
       const patch = (body: object) => call(admin, "PATCH", `/agents/${agent.id}`, body);
       const saved = await patch({
-        model: "sonnet",
-        permissionMode: "plan",
-        allowedTools: ["Read"],
+        sessionDefaults: { model: "sonnet", effort: "high", permissionMode: "plan" },
         disallowedTools: ["Bash"],
       });
       expect(saved.statusCode, saved.body).toBe(200);
-      expect((saved.json().agent as Agent).runnerAgent).toMatchObject({
-        model: "sonnet",
-        permissionMode: "plan",
-        allowedTools: ["Read"],
-        disallowedTools: ["Bash"],
+      expect(saved.json().agent as Agent).toMatchObject({
+        runnerAgent: { disallowedTools: ["Bash"] },
+        sessionDefaults: { model: "sonnet", effort: "high", permissionMode: "plan" },
       });
-      expect((await patch({ permissionMode: "acceptEdits" })).json()).toMatchObject({
+      // 보낸 필드만 — effort 는 그대로
+      const partial = await patch({ sessionDefaults: { model: null } });
+      expect((partial.json().agent as Agent).sessionDefaults).toEqual({
+        model: null,
+        effort: "high",
+        permissionMode: "plan",
+      });
+      expect((await patch({ sessionDefaults: { permissionMode: "acceptEdits" } })).json()).toMatchObject({
         code: "VALIDATION",
         details: { field: "permissionMode" },
       });
-      expect((await patch({ allowedTools: ["Read", "Write"] })).json()).toMatchObject({
-        code: "VALIDATION",
-        details: { field: "allowedTools" },
+      // 옛 클라이언트의 model·permissionMode·allowedTools — 버리고 200, 아무것도 바뀌지 않는다
+      const legacy = await patch({ model: "opus", permissionMode: "acceptEdits", allowedTools: ["Write"] });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect((legacy.json().agent as Agent).sessionDefaults).toEqual({
+        model: null,
+        effort: "high",
+        permissionMode: "plan",
       });
       // 이름만 바꾸는 것은 상한과 상관없다
       expect((await patch({ name: "새 이름" })).statusCode).toBe(200);
@@ -517,12 +516,9 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       await vi.waitFor(async () =>
         expect((await summaries()).find((r) => r.id === id)?.connected).toBe(false),
       );
-      const offline = await patch({ permissionMode: "acceptEdits", model: null });
+      const offline = await patch({ sessionDefaults: { permissionMode: "acceptEdits" } });
       expect(offline.statusCode).toBe(200);
-      expect((offline.json().agent as Agent).runnerAgent).toMatchObject({
-        permissionMode: "acceptEdits",
-        model: null,
-      });
+      expect((offline.json().agent as Agent).sessionDefaults?.permissionMode).toBe("acceptEdits");
 
       const oc = await call(admin, "POST", "/agents", {
         providerAgentId: "oc-patch",
@@ -532,10 +528,10 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       });
       expect(oc.statusCode).toBe(201);
       const ocPatch = await call(admin, "PATCH", `/agents/${(oc.json().agent as Agent).id}`, {
-        model: "opus",
+        sessionDefaults: { model: "opus" },
       });
       expect(ocPatch.statusCode).toBe(400);
-      expect(ocPatch.json()).toMatchObject({ code: "VALIDATION", details: { field: "model" } });
+      expect(ocPatch.json()).toMatchObject({ code: "VALIDATION", details: { field: "sessionDefaults" } });
       expect((oc.json().agent as Agent).runnerAgent).toBeUndefined();
     });
 
@@ -574,9 +570,11 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         runnerTokenId: id,
         permissionMode: "acceptEdits",
       });
-      const res = await call(admin, "PATCH", `/agents/${agent.id}`, { permissionMode: "default" });
+      const res = await call(admin, "PATCH", `/agents/${agent.id}`, {
+        sessionDefaults: { permissionMode: "default" },
+      });
       expect(res.statusCode, res.body).toBe(200);
-      expect((res.json().agent as Agent).runnerAgent?.permissionMode).toBe("default");
+      expect((res.json().agent as Agent).sessionDefaults?.permissionMode).toBe("default");
     });
 
     it("러너 에이전트 정의(runnerAgent)는 admin 이상에게만 — GET /agents·GET /dms 에서 member 에게는 빠지고 나머지는 그대로 [태스크 4 리뷰 L2]", async () => {
@@ -586,7 +584,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         handle: "defs",
         runnerTokenId: id,
         permissionMode: "plan",
-        allowedTools: ["Read"],
+        disallowedTools: ["Bash"],
       });
       expect((await call(admin, "PATCH", `/agents/${agent.id}`, { dmAccess: "everyone" })).statusCode).toBe(
         200,
@@ -599,10 +597,9 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       const forMember = await listedBy(member);
       expect(forMember).toMatchObject({ provider: "runner", program: "claude", runner: { tokenId: id } });
       expect(forMember).not.toHaveProperty("runnerAgent");
-      expect((await listedBy(admin))?.runnerAgent).toMatchObject({
-        permissionMode: "plan",
-        allowedTools: ["Read"],
-      });
+      expect((await listedBy(admin))?.runnerAgent).toMatchObject({ disallowedTools: ["Bash"] });
+      // 시작값은 모두에게 — 새 세션 창의 상태 줄이 이 값에서 출발한다(S11)
+      expect((await listedBy(member))?.sessionDefaults?.permissionMode).toBe("plan");
 
       const dmAgentFor = async (headers: Record<string, string>) => {
         expect((await call(headers, "POST", "/dms", { agentId: agent.id })).statusCode).toBe(200);
@@ -613,7 +610,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       const dmForMember = await dmAgentFor(member);
       expect(dmForMember).toMatchObject({ id: agent.id, provider: "runner" });
       expect(dmForMember).not.toHaveProperty("runnerAgent");
-      expect((await dmAgentFor(admin))?.runnerAgent).toMatchObject({ permissionMode: "plan" });
+      expect((await dmAgentFor(admin))?.runnerAgent).toMatchObject({ disallowedTools: ["Bash"] });
     });
 
     it("프로젝트 없는 옛 러너 에이전트(0031 이 보관)는 REST 로 되살릴 수 없다 — 400", async () => {
@@ -777,9 +774,9 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
           relPath: "repo4",
           ...extra,
         }).agent;
-      const ok = seed("ceil-ok", { allowedTools: ["Read"] });
+      const ok = seed("ceil-ok", {});
       const high = seed("ceil-mode", { permissionMode: "acceptEdits" });
-      const tools = seed("ceil-tools", { allowedTools: ["Read", "Bash"] });
+      const tools = seed("ceil-tools", {});
       const codex = seed("ceil-codex", { program: "codex" });
       const archived = seed("ceil-archived", { permissionMode: "acceptEdits" });
       app.db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, archived.id)).run();
@@ -789,7 +786,8 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(refused.statusCode).toBe(400);
       expect(refused.json()).toMatchObject({
         code: "VALIDATION",
-        details: { field: "runnerId", agentIds: [high.id, tools.id, codex.id], item: "permissionMode" },
+        // 허용 도구는 저장하지 않아(세션 설정 스펙 S4) tools 는 걸리지 않는다
+        details: { field: "runnerId", agentIds: [high.id, codex.id], item: "permissionMode" },
       });
       expect(to.runner.fsRequests).toEqual([]);
       expect(
@@ -802,14 +800,9 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
 
       // 사람이 먼저 낮춘다 — 남은 것의 항목이 details.item
       expect(
-        (await call(admin, "PATCH", `/agents/${high.id}`, { permissionMode: "default" })).statusCode,
+        (await call(admin, "PATCH", `/agents/${high.id}`, { sessionDefaults: { permissionMode: "default" } }))
+          .statusCode,
       ).toBe(200);
-      expect((await move()).json()).toMatchObject({
-        details: { agentIds: [tools.id, codex.id], item: "allowedTools" },
-      });
-      expect((await call(admin, "PATCH", `/agents/${tools.id}`, { allowedTools: ["Read"] })).statusCode).toBe(
-        200,
-      );
       expect((await move()).json()).toMatchObject({ details: { agentIds: [codex.id], item: "program" } });
       expect((await call(admin, "DELETE", `/agents/${codex.id}`)).statusCode).toBe(200);
       const moved = await move();

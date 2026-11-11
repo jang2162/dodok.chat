@@ -1,11 +1,13 @@
 import {
   type Agent,
   type DmAccess,
+  RUNNER_EFFORTS,
   RUNNER_PERMISSION_MODES,
   RUNNER_PROGRAM_NAME,
+  type RunnerEffort,
   type RunnerPermissionMode,
   type RunnerProgram,
-  type RunnerProgramStatus,
+  type SessionDefaults,
   permissionModeRank,
 } from "@dodok/shared";
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
@@ -18,6 +20,7 @@ import {
   runnerRequestError,
 } from "@/features/runners/copy";
 import { useRunnerProjects, useRunners } from "@/features/runners/queries";
+import { ReasonHint } from "@/features/components/DisabledHint";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { FieldError } from "@/ui/field-error";
@@ -55,53 +58,19 @@ export const CREATE_FAILED = "에이전트를 만들지 못했습니다 — 다�
 /** DM 허용 선택지 — 에이전트 줄의 `DmAccessField` 와 같은 글 */
 const DM_ACCESS_LABEL: Record<DmAccess, string> = { off: "끔", admins: "admin 이상", everyone: "모두" };
 
+/** 「기본」(null) — 모델·effort 는 프로그램 기본, 권한은 실행 때 min(default, 그 러너의 상한)(세션 설정 스펙 S5) */
+export const DEFAULT_LABEL = "기본";
+/** 권한 모드 선택지가 러너 상한 위라 막혔다 */
+export const ABOVE_CEILING = (ceiling: RunnerPermissionMode) => `러너 상한(${ceiling}) 위는 고를 수 없습니다`;
+
 type PermissionOption = { mode: RunnerPermissionMode; disabled: boolean };
 
-/**
- * 권한 모드 선택지 — 러너 상한(`ceiling`)까지만(Review Focus 3). 상한을 모르면(러너 끊김) 넷 다. 지금 값이 상한 위면(머신 주인이
- * 상한을 낮춤) 그 값을 고를 수 없는 줄로 남겨 지금 상태가 보이게 한다 — 서버는 상한 위로 바꾸는 PATCH 를 거절한다
- */
-export function permissionOptions(
-  ceiling: RunnerPermissionMode | undefined,
-  current?: RunnerPermissionMode,
-): PermissionOption[] {
-  return RUNNER_PERMISSION_MODES.flatMap((mode): PermissionOption[] => {
-    const within = ceiling === undefined || permissionModeRank(mode) <= permissionModeRank(ceiling);
-    if (within) return [{ mode, disabled: false }];
-    return mode === current ? [{ mode, disabled: true }] : [];
-  });
-}
-
-/**
- * 상한 안으로 내린 권한 모드 — 상한 위면 상한 자신, 상한을 모르면 그대로. 선택지 밖 값을 상태로 두면 React 가 첫 option 을 고른 것처럼
- * 보이고 그 option 은 다시 고를 수 없다(change 가 나지 않는다)
- */
-export function fitPermissionMode(
-  mode: RunnerPermissionMode,
-  ceiling: RunnerPermissionMode | undefined,
-): RunnerPermissionMode {
-  return ceiling !== undefined && permissionModeRank(mode) > permissionModeRank(ceiling) ? ceiling : mode;
-}
-
-/** 저장된 허용 도구와 칸의 목록이 같은가 — `[]` 와 null 은 둘 다 「미리 허용한 도구 없음」이라 같게 본다 */
-const sameTools = (a: readonly string[] | null, b: readonly string[] | null) =>
-  JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
-
-/** 허용 도구 칸의 글 → 목록. 쉼표·공백으로 나눈다. 비우면 null(미리 허용한 도구 없음 — 상한 안에서 프로그램 기본) */
-export function parseTools(text: string): string[] | null {
-  const tools = text.split(/[\s,]+/).filter((t) => t !== "");
-  return tools.length === 0 ? null : [...new Set(tools)];
-}
-
-/** 허용 도구 칸의 문제 — 상한이 목록이면 그 부분집합이어야 한다 */
-export function toolsProblem(
-  tools: string[] | null,
-  ceiling: string[] | null | undefined,
-): string | undefined {
-  if (tools === null || !ceiling) return undefined;
-  if (tools.length > 100) return "도구는 100개까지입니다";
-  const outside = tools.filter((t) => !ceiling.includes(t));
-  return outside.length > 0 ? `러너 상한에 없는 도구입니다: ${outside.join(", ")}` : undefined;
+/** 권한 모드 선택지 넷 — 러너 상한(`ceiling`) 위는 막는다. 상한을 모르면(러너 끊김) 넷 다 고른다(서버도 대조를 건너뛴다) */
+export function permissionOptions(ceiling: RunnerPermissionMode | undefined): PermissionOption[] {
+  return RUNNER_PERMISSION_MODES.map((mode) => ({
+    mode,
+    disabled: ceiling !== undefined && permissionModeRank(mode) > permissionModeRank(ceiling),
+  }));
 }
 
 /** 라벨·칸·안내·오류 한 벌 — 칸은 `children(id, describedBy)` 로 받는다(select·textarea 도 같은 꼴로) */
@@ -132,139 +101,19 @@ function Row({
   );
 }
 
-type DefinitionDraft = { model: string; permissionMode: RunnerPermissionMode; tools: string };
-type DefinitionErrors = Partial<Record<"model" | "permissionMode" | "allowedTools", string>>;
-
-/** 모델·권한 모드·허용 도구 — 만들기와 고치기가 같은 칸을 쓴다(러너 일반화 스펙 7장) */
-function DefinitionFields({
-  draft,
-  onChange,
-  ceiling,
-  ceilingPending = false,
-  current,
-  errors,
-  disabled,
-}: {
-  draft: DefinitionDraft;
-  onChange: (patch: Partial<DefinitionDraft>) => void;
-  /** 그 러너·그 프로그램의 천장 — 러너가 끊겼으면 undefined(모른다) */
-  ceiling: RunnerProgramStatus["ceiling"] | undefined;
-  /** 러너 목록을 받는 중 — 상한을 아직 모른다(끊김이 아니다). 그동안 권한 모드는 잠근다 */
-  ceilingPending?: boolean;
-  /** 고치기의 저장된 권한 모드 */
-  current?: RunnerPermissionMode;
-  errors: DefinitionErrors;
-  disabled: boolean;
-}) {
-  const options = permissionOptions(ceiling?.maxPermissionMode, current);
-  const toolCeiling = ceiling?.allowedToolsCeiling;
-  const overCeiling =
-    ceiling !== undefined &&
-    permissionModeRank(draft.permissionMode) > permissionModeRank(ceiling.maxPermissionMode);
-  return (
-    <>
-      <Row label="모델" hint="비우면 기본 모델(예: sonnet, opus)" error={errors.model}>
-        {(id, describedBy) => (
-          <Input
-            id={id}
-            value={draft.model}
-            maxLength={MODEL_MAX}
-            autoCapitalize="none"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={errors.model !== undefined}
-            aria-describedby={describedBy}
-            disabled={disabled}
-            onChange={(e) => onChange({ model: e.target.value })}
-          />
-        )}
-      </Row>
-      <Row
-        label="권한 모드"
-        hint={
-          ceilingPending
-            ? "러너 상한을 불러오는 중…"
-            : overCeiling
-              ? `지금 값이 러너 상한(${ceiling?.maxPermissionMode})보다 높습니다 — 낮추지 않으면 런이 거절됩니다`
-              : ceiling
-                ? `러너 상한은 ${ceiling.maxPermissionMode} 입니다 — 그 위는 고를 수 없습니다`
-                : "러너가 끊겨 있어 상한을 모릅니다 — 다음 런에서 러너가 다시 봅니다"
-        }
-        error={errors.permissionMode}
-      >
-        {(id, describedBy) => (
-          <select
-            id={id}
-            className={SELECT}
-            value={draft.permissionMode}
-            aria-invalid={errors.permissionMode !== undefined}
-            aria-describedby={describedBy}
-            disabled={disabled || ceilingPending}
-            onChange={(e) => onChange({ permissionMode: e.target.value as RunnerPermissionMode })}
-          >
-            {options.map(({ mode, disabled: above }) => (
-              <option key={mode} value={mode} disabled={above}>
-                {PERMISSION_MODE_LABEL[mode]}
-                {above ? " (상한 초과)" : ""}
-              </option>
-            ))}
-          </select>
-        )}
-      </Row>
-      <Row
-        label="허용 도구"
-        hint={
-          toolCeiling
-            ? `쉼표로 나눕니다. 러너 상한: ${toolCeiling.length === 0 ? "없음" : toolCeiling.join(", ")}`
-            : "쉼표로 나눕니다(예: Read, Grep, Glob)"
-        }
-        error={errors.allowedTools}
-      >
-        {(id, describedBy) => (
-          <Input
-            id={id}
-            value={draft.tools}
-            autoCapitalize="none"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={errors.allowedTools !== undefined}
-            aria-describedby={describedBy}
-            disabled={disabled}
-            onChange={(e) => onChange({ tools: e.target.value })}
-          />
-        )}
-      </Row>
-    </>
-  );
-}
-
-/** 클라이언트 검사 — 서버가 붙은 러너의 hello 로 보는 천장과 같은 규칙(권한 순서·허용 도구 부분집합) */
-function definitionErrors(
-  draft: DefinitionDraft,
-  ceiling: RunnerProgramStatus["ceiling"] | undefined,
-): DefinitionErrors {
-  const errors: DefinitionErrors = {};
-  const tools = toolsProblem(parseTools(draft.tools), ceiling?.allowedToolsCeiling);
-  if (tools) errors.allowedTools = tools;
-  if (ceiling && permissionModeRank(draft.permissionMode) > permissionModeRank(ceiling.maxPermissionMode))
-    errors.permissionMode = `러너 상한(${ceiling.maxPermissionMode}) 위입니다 — 낮추세요`;
-  return errors;
-}
-
-/** 서버 400 의 칸 — 천장(program·permissionMode·allowedTools)은 고정 문구, model 은 서버 문구 */
-function serverDefinitionError(err: unknown): { field: string; message: string } | undefined {
+/** 서버 400 의 칸 — 천장(program)은 고정 문구, 프로젝트는 PROJECT_GONE */
+function serverCreateError(err: unknown): { field: string; message: string } | undefined {
   if (!(err instanceof ApiRequestError) || err.code !== "VALIDATION") return undefined;
-  const field = detailField(err, ["program", "permissionMode", "allowedTools", "model", "runnerProjectId"]);
+  const field = detailField(err, ["program", "runnerProjectId"]);
   if (field === undefined) return undefined;
-  if (field === "runnerProjectId") return { field, message: PROJECT_GONE };
-  if (field === "model") return { field, message: "모델 이름은 1~128자입니다" };
-  return { field, message: CEILING_REFUSED };
+  return { field, message: field === "runnerProjectId" ? PROJECT_GONE : CEILING_REFUSED };
 }
 
 /**
  * 러너 에이전트 만들기(러너 일반화 스펙 7장) — 프로젝트 상세의 「에이전트 만들기」가 그 러너·프로젝트로 고정해 연다(연결 탭 통합 스펙
- * 3.3). 프로그램 → 이름·핸들·모델·권한 모드·허용 도구·지시·DM 허용. 프로그램은 그 러너가 알린 것만, 못 쓰는 것은 흐리게 사유와
- * 함께. 권한 모드는 그 프로그램의 상한까지만 고른다. 서버 400 의 천장 칸은 그 칸 아래, 핸들 409 는 핸들 칸 아래, 그 밖은 폼 아래.
+ * 3.3). 프로그램 → 이름·핸들·지시·DM 허용. 모델·권한 모드·허용 도구는 묻지 않는다 — 대화마다 작성기 위 상태 줄에서 고르고, 새 세션
+ * 시작값은 에이전트 상세에서(세션 설정 스펙 S4·S10). 프로그램은 그 러너가 알린 것만, 못 쓰는 것은 흐리게 사유와 함께. 서버 400 의 천장
+ * 칸은 그 칸 아래, 핸들 409 는 핸들 칸 아래, 그 밖은 폼 아래.
  * 러너·프로젝트는 고정이고 프로그램은 처음 한 번만 첫 것을 고른다 — 러너가 끊기거나 폐기되거나 프로젝트가 보관되거나 프로그램을 못 쓰게
  * 되면 그 칸에 사유를 보이며 「만들기」를 잠근다(에이전트가 어느 머신에서 돌지가 모르는 사이에 바뀌지 않게)
  */
@@ -286,11 +135,6 @@ export function RunnerAgentForm({
   const [programPick, setProgramPick] = useState<RunnerProgram>();
   const [handle, setHandle] = useState("");
   const [name, setName] = useState<string>(); // undefined 면 핸들을 따른다
-  const [definition, setDefinition] = useState<DefinitionDraft>({
-    model: "",
-    permissionMode: "default",
-    tools: "",
-  });
   const [prompt, setPrompt] = useState("");
   const [dmAccess, setDmAccess] = useState<DmAccess>("admins");
   const [serverError, setServerError] = useState<{ field: string; message: string }>();
@@ -319,13 +163,7 @@ export function RunnerAgentForm({
   const program = usable.find((p) => p.program === programPick);
   const programIssue =
     live && programPick !== undefined && program === undefined ? PICKED_PROGRAM_UNAVAILABLE : undefined;
-  const ceiling = program?.ceiling;
-  // 권한 모드는 늘 그 프로그램의 상한 안이다 — 처음 값 default 가 상한(plan·dontAsk) 위이거나, 러너·프로그램을 바꿔(또는 러너가
-  // 다시 붙어) 상한이 내려가면 상한으로 내린다
-  const fitted = fitPermissionMode(definition.permissionMode, ceiling?.maxPermissionMode);
-  if (fitted !== definition.permissionMode) setDefinition((d) => ({ ...d, permissionMode: fitted }));
   const currentName = name ?? handle;
-  const clientErrors = definitionErrors(definition, ceiling);
   const pending = create.isPending;
 
   const handleError =
@@ -335,12 +173,6 @@ export function RunnerAgentForm({
         ? handleIssue(handle, takenHandles)
         : undefined;
   const nameError = handle !== "" || name !== undefined ? nameProblem(currentName) : undefined;
-  const definitionServer =
-    serverError && ["model", "permissionMode", "allowedTools"].includes(serverError.field);
-  const errors: DefinitionErrors = {
-    ...clientErrors,
-    ...(definitionServer ? { [serverError.field]: serverError.message } : {}),
-  };
   const ready =
     runner !== undefined &&
     runnerIssue === undefined &&
@@ -349,7 +181,6 @@ export function RunnerAgentForm({
     handle !== "" &&
     handleIssue(handle, takenHandles) === undefined &&
     nameProblem(currentName) === undefined &&
-    Object.keys(clientErrors).length === 0 &&
     !pending;
 
   const clear = () => setServerError(undefined);
@@ -358,23 +189,19 @@ export function RunnerAgentForm({
     e.preventDefault();
     if (!ready || !project || !program) return;
     clear();
-    const model = definition.model.trim();
     const input: CreateRunnerAgentInput = {
       provider: "runner",
       runnerProjectId: project.id,
       program: program.program,
       handle,
       name: currentName.trim(),
-      ...(model === "" ? {} : { model }),
-      permissionMode: definition.permissionMode,
-      allowedTools: parseTools(definition.tools),
       ...(prompt.trim() === "" ? {} : { basePrompt: prompt }),
       dmAccess,
     };
     create.mutate(input, {
       onSuccess: onCreated,
       onError: (err) => {
-        const field = serverDefinitionError(err);
+        const field = serverCreateError(err);
         if (field) return setServerError(field);
         if (err instanceof ApiRequestError && err.code === "CONFLICT")
           return setServerError({ field: "handle", message: HANDLE_TAKEN });
@@ -496,16 +323,6 @@ export function RunnerAgentForm({
               disabled={pending}
             />
           </div>
-          <DefinitionFields
-            draft={definition}
-            onChange={(patch) => {
-              clear();
-              setDefinition((d) => ({ ...d, ...patch }));
-            }}
-            ceiling={ceiling}
-            errors={errors}
-            disabled={pending}
-          />
           <Row label="지시">
             {(id, describedBy) => (
               <Textarea
@@ -550,26 +367,29 @@ export function RunnerAgentForm({
   );
 }
 
+/** effort 선택지 — 「기본」 뒤 다섯(shared RUNNER_EFFORTS) */
+export const EFFORT_OPTIONS = RUNNER_EFFORTS;
+
+type DefaultsDraft = { model: string; effort: RunnerEffort | ""; permissionMode: RunnerPermissionMode | "" };
+
 /**
- * 러너 에이전트 고치기(admin 이상) — 만들기와 같은 정의 칸(모델·권한 모드·허용 도구). 프로그램·프로젝트는 읽기만 한다 — 프로젝트는
- * 프로젝트 상세의 옮기기로만, 프로그램을 바꾸려면 새 에이전트(러너 일반화 계획 판정 PR10). PATCH 는 바뀐 정의 칸만 싣고 프로그램·
- * 프로젝트는 싣지 않는다(서버 400). 권한 모드는 지금 붙은 러너의 상한까지 — 끊겨 있으면 넷 다(서버도 건너뛰고 런에서 러너가 거절한다)
+ * 러너 에이전트의 「새 세션 시작값」(세션 설정 스펙 S10) — 설정 행이 없는 새 세션이 이 값으로 돈다. 모델·effort·권한 모드 모두 비워 둘
+ * 수 있다(「기본」). 권한은 지금 붙은 러너의 상한까지 — 위는 막고 사유 한 줄, 끊겨 있으면 넷 다(서버도 건너뛰고 런에서 러너가 거절한다).
+ * PATCH 는 바뀐 칸만 sessionDefaults 로 싣는다. 프로그램·프로젝트는 읽기만 한다(러너 일반화 계획 판정 PR10)
  */
-export function RunnerDefinitionForm({
+export function SessionDefaultsForm({
   agent,
-  definition,
+  defaults,
+  projectId,
   onSave,
   onCancel,
   pending,
   serverError,
 }: {
   agent: Agent;
-  definition: NonNullable<Agent["runnerAgent"]>;
-  onSave: (patch: {
-    model?: string | null;
-    permissionMode?: RunnerPermissionMode;
-    allowedTools?: string[] | null;
-  }) => void;
+  defaults: SessionDefaults;
+  projectId: string | null;
+  onSave: (patch: Partial<SessionDefaults>) => void;
   onCancel: () => void;
   pending: boolean;
   serverError: unknown;
@@ -578,37 +398,36 @@ export function RunnerDefinitionForm({
   const tokenId = agent.runner?.tokenId;
   const runner = runners.data?.find((r) => r.id === tokenId);
   const projects = useRunnerProjects(tokenId);
-  const project = projects.data?.find((p) => p.id === definition.projectId);
+  const project = projects.data?.find((p) => p.id === projectId);
   const program = agent.program ?? "claude";
-  const ceiling = runner?.connected ? runner.programs.find((p) => p.program === program)?.ceiling : undefined;
+  const ceiling = runner?.connected
+    ? runner.programs.find((p) => p.program === program)?.ceiling.maxPermissionMode
+    : undefined;
   const ceilingPending = tokenId !== undefined && runners.isPending;
-  const [draft, setDraft] = useState<DefinitionDraft>({
-    model: definition.model ?? "",
-    permissionMode: definition.permissionMode,
-    tools: (definition.allowedTools ?? []).join(", "),
+  const ids = useId();
+  const [draft, setDraft] = useState<DefaultsDraft>({
+    model: defaults.model ?? "",
+    effort: defaults.effort ?? "",
+    permissionMode: defaults.permissionMode ?? "",
   });
   const model = draft.model.trim() === "" ? null : draft.model.trim();
-  const tools = parseTools(draft.tools);
-  const permissionChanged = draft.permissionMode !== definition.permissionMode;
-  const toolsChanged = !sameTools(tools, definition.allowedTools);
-  // 상한이 낮아져 저장된 값이 상한 위인 것(Review Focus 3)은 고칠 거리일 뿐 다른 칸의 저장을 막지 않는다 — 서버도 바꾸는 칸만 본다
-  const client = definitionErrors(draft, ceiling);
-  const errors: DefinitionErrors = {
-    ...(toolsChanged && client.allowedTools ? { allowedTools: client.allowedTools } : {}),
-    ...(permissionChanged && client.permissionMode ? { permissionMode: client.permissionMode } : {}),
-  };
-  const ready = Object.keys(errors).length === 0 && !pending;
-  const server = serverDefinitionError(serverError);
-  if (server && server.field !== "program" && server.field !== "runnerProjectId")
-    errors[server.field as keyof DefinitionErrors] = server.message;
+  const effort = draft.effort === "" ? null : draft.effort;
+  const permissionMode = draft.permissionMode === "" ? null : draft.permissionMode;
+  const options = permissionOptions(ceiling);
+  const blocked = options.some((o) => o.disabled);
+  const server =
+    serverError instanceof ApiRequestError && serverError.code === "VALIDATION"
+      ? detailField(serverError, ["permissionMode", "sessionDefaults"])
+      : undefined;
+  const permissionError = server === "permissionMode" ? CEILING_REFUSED : undefined;
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ready) return;
+    if (pending) return;
     onSave({
-      ...(model === definition.model ? {} : { model }),
-      ...(permissionChanged ? { permissionMode: draft.permissionMode } : {}),
-      ...(toolsChanged ? { allowedTools: tools } : {}),
+      ...(model === defaults.model ? {} : { model }),
+      ...(effort === defaults.effort ? {} : { effort }),
+      ...(permissionMode === defaults.permissionMode ? {} : { permissionMode }),
     });
   }
 
@@ -632,15 +451,69 @@ export function RunnerDefinitionForm({
           </dd>
         </div>
       </dl>
-      <DefinitionFields
-        draft={draft}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-        ceiling={ceiling}
-        ceilingPending={ceilingPending}
-        current={definition.permissionMode}
-        errors={errors}
-        disabled={pending}
-      />
+      <Row label="모델">
+        {(id, describedBy) => (
+          <Input
+            id={id}
+            value={draft.model}
+            placeholder={DEFAULT_LABEL}
+            maxLength={MODEL_MAX}
+            autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby={describedBy}
+            disabled={pending}
+            onChange={(e) => setDraft((d) => ({ ...d, model: e.target.value }))}
+          />
+        )}
+      </Row>
+      <Row label="effort">
+        {(id, describedBy) => (
+          <select
+            id={id}
+            className={SELECT}
+            value={draft.effort}
+            aria-describedby={describedBy}
+            disabled={pending}
+            onChange={(e) => setDraft((d) => ({ ...d, effort: e.target.value as DefaultsDraft["effort"] }))}
+          >
+            <option value="">{DEFAULT_LABEL}</option>
+            {EFFORT_OPTIONS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        )}
+      </Row>
+      <Row label="권한 모드" error={permissionError}>
+        {(id, describedBy) => (
+          <>
+            <select
+              id={id}
+              className={SELECT}
+              value={draft.permissionMode}
+              aria-invalid={permissionError !== undefined}
+              aria-describedby={
+                [describedBy, blocked && ceiling ? `${ids}-ceiling` : undefined].filter(Boolean).join(" ") ||
+                undefined
+              }
+              disabled={pending || ceilingPending}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, permissionMode: e.target.value as DefaultsDraft["permissionMode"] }))
+              }
+            >
+              <option value="">{DEFAULT_LABEL}</option>
+              {options.map(({ mode, disabled }) => (
+                <option key={mode} value={mode} disabled={disabled}>
+                  {PERMISSION_MODE_LABEL[mode]}
+                </option>
+              ))}
+            </select>
+            {blocked && ceiling && <ReasonHint id={`${ids}-ceiling`} text={ABOVE_CEILING(ceiling)} />}
+          </>
+        )}
+      </Row>
       {serverError !== undefined && server === undefined && formError(serverError) !== undefined && (
         <Alert variant="destructive">
           <AlertDescription>{formError(serverError)}</AlertDescription>
@@ -650,7 +523,7 @@ export function RunnerDefinitionForm({
         <Button type="button" variant="ghost" disabled={pending} onClick={onCancel}>
           취소
         </Button>
-        <Button type="submit" disabled={!ready}>
+        <Button type="submit" disabled={pending}>
           {pending ? "저장 중…" : "저장"}
         </Button>
       </div>

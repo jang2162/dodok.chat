@@ -188,9 +188,6 @@ describe("삭제·되살리기 뒤 초점 — 누른 단추가 사라져도 body
       archivedAt: ARCHIVED_AT,
       runnerAgent: {
         projectId: null,
-        model: null,
-        permissionMode: "default",
-        allowedTools: null,
         disallowedTools: [],
       },
     });

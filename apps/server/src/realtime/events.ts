@@ -214,6 +214,9 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("conversation.created", (p) =>
       io.to(channelRoom(p.conversation.channelId)).emit("conversation.created", p),
     ),
+    on("conversation.agent_settings", (p) =>
+      io.to(channelRoom(p.channelId)).emit("conversation.agent_settings", p),
+    ),
     on("conversation.updated", (p) =>
       io.to(channelRoom(p.conversation.channelId)).emit("conversation.updated", p),
     ),

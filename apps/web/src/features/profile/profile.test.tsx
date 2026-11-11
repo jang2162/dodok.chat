@@ -41,16 +41,13 @@ const CODER: Agent = agentOf(uid(60), "coder", {
   name: "코더",
   provider: "runner",
   program: "claude",
-  model: "claude-sonnet-5-5",
+  sessionDefaults: { model: "claude-sonnet-5-5", effort: null, permissionMode: "acceptEdits" },
   createdBy: ME.user.id,
   dmAccess: "admins",
   runner: { tokenId: RUNNER_TOKEN, label: "laptop", revoked: false },
   basePrompt: "늘 짧게 답한다",
   runnerAgent: {
     projectId: uid(61),
-    model: "claude-sonnet-5-5",
-    permissionMode: "acceptEdits",
-    allowedTools: ["Read"],
     disallowedTools: ["Bash"],
   },
 });
@@ -97,14 +94,15 @@ afterEach(() => {
 });
 
 describe("에이전트 프로필", () => {
-  it("member — 연결·모델·소유자·DM 허용은 보이고 권한·도구·기본 프롬프트는 없다", async () => {
+  it("member — 연결·소유자·DM 허용은 보이고 모델·권한·도구·기본 프롬프트는 없다(모델·권한은 대화마다 — 세션 설정 스펙 5.5)", async () => {
     serve("member");
     open("a", CODER.id);
     const p = await panel();
     expect(await p.findByRole("heading", { name: "코더" })).toBeInTheDocument();
     expect(p.getByText("에이전트")).toBeInTheDocument();
     expect(p.getByText("laptop · Claude Code")).toBeInTheDocument();
-    expect(p.getByText("claude-sonnet-5-5")).toBeInTheDocument();
+    expect(p.queryByText("claude-sonnet-5-5")).toBeNull();
+    expect(p.queryByText("모델")).toBeNull();
     expect(p.getByText("@owner")).toBeInTheDocument();
     expect(p.getByText("admin 이상")).toBeInTheDocument();
     expect(p.queryByText("권한 모드")).toBeNull();
@@ -117,13 +115,14 @@ describe("에이전트 프로필", () => {
     expect(p.getByRole("button", { name: "멘션" })).toBeInTheDocument();
   });
 
-  it("admin 이상 — 권한 모드·허용·금지 도구·기본 프롬프트와 「에이전트 설정」·「DM 열기」", async () => {
+  it("admin 이상 — 금지 도구·기본 프롬프트와 「에이전트 설정」·「DM 열기」, 모델·권한 모드·허용 도구 줄은 없다", async () => {
     serve("owner");
     open("a", CODER.id);
     const p = await panel();
-    expect(await p.findByText("권한 모드")).toBeInTheDocument();
-    expect(p.getByText("허용 도구")).toBeInTheDocument();
-    expect(p.getByText("금지 도구")).toBeInTheDocument();
+    expect(await p.findByText("금지 도구")).toBeInTheDocument();
+    expect(p.queryByText("권한 모드")).toBeNull();
+    expect(p.queryByText("허용 도구")).toBeNull();
+    expect(p.queryByText("모델")).toBeNull();
     expect(p.getByText("기본 프롬프트")).toBeInTheDocument();
     expect(p.getByRole("link", { name: "에이전트 설정" })).toHaveAttribute(
       "href",
@@ -134,7 +133,7 @@ describe("에이전트 프로필", () => {
     expect(p.getByLabelText("사진 고르기")).toBeInTheDocument();
   });
 
-  it("소유자 기록이 없으면 「기록 없음」, OpenClaw 에는 모델 줄이 없다(러너만)", async () => {
+  it("소유자 기록이 없으면 「기록 없음」, OpenClaw 에도 모델 줄이 없다", async () => {
     serve("member");
     open("a", LEGACY.id);
     const p = await panel();

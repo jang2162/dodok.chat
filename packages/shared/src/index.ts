@@ -4,6 +4,7 @@ export * from "./bridge";
 export * from "./common";
 export * from "./components";
 export * from "./control";
+export * from "./conversations";
 export * from "./domain";
 export * from "./dms";
 export * from "./directs";

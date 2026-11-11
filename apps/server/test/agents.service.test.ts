@@ -38,11 +38,11 @@ describe("agents service", () => {
       gatewayId,
     });
     expect(legacy.createdBy).toBeNull();
-    // OpenClaw 에이전트의 모델은 dodok 이 모른다
-    expect(made.model).toBeNull();
+    // OpenClaw 에이전트에는 새 세션 시작값이 없다(러너만 — 세션 설정 스펙 S1)
+    expect(made.sessionDefaults).toBeUndefined();
   });
 
-  it("러너 에이전트의 모델은 member 에게도 실리고 정의(runnerAgent)는 admin 이상에게만", () => {
+  it("러너 에이전트의 새 세션 시작값은 member 에게도 실리고 정의(runnerAgent)는 admin 이상에게만 [세션 설정 스펙 S10·S11]", () => {
     const { db, workspaceId } = setup();
     const { agent } = createRunnerAgentForTest(db, {
       workspaceId,
@@ -50,11 +50,19 @@ describe("agents service", () => {
       model: "claude-sonnet-5-5",
     });
     const forMember = agentForRole(agent, "member");
-    expect(forMember.model).toBe("claude-sonnet-5-5");
+    expect(forMember.sessionDefaults).toEqual({
+      model: "claude-sonnet-5-5",
+      effort: null,
+      permissionMode: null,
+    });
     expect(forMember.runnerAgent).toBeUndefined();
-    expect(agentForRole(agent, "admin").runnerAgent?.model).toBe("claude-sonnet-5-5");
+    expect(agentForRole(agent, "admin").runnerAgent).toBeDefined();
     const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain" }).agent;
-    expect(agentForRole(plain, "member").model).toBeNull();
+    expect(agentForRole(plain, "member").sessionDefaults).toEqual({
+      model: null,
+      effort: null,
+      permissionMode: null,
+    });
   });
 
   it("기본 프롬프트(basePrompt)는 admin 이상에게만 — member 에게는 OpenClaw·러너 에이전트 모두 키가 없다", () => {

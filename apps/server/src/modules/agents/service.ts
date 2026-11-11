@@ -3,9 +3,9 @@ import {
   AvatarUrl,
   type DmAccess,
   RUNNER_AGENT_FIELDS,
-  type RunnerPermissionMode,
   type RunnerProgram,
   RunnerRunAgent,
+  SessionDefaults,
   roleAtLeast,
   type TeamRole,
 } from "@dodok/shared";
@@ -13,6 +13,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "dri
 import { alias } from "drizzle-orm/sqlite-core";
 import { randomBytes } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
+import { z } from "zod";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, gateways, runnerProjects, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -56,17 +57,14 @@ export type CreateOpenClawAgentInput = CreateAgentCommon & {
 };
 
 /**
- * 러너 에이전트(러너 일반화 계획 판정 PR4) — 프로젝트의 러너 토큰에 묶이고 providerAgentId 는 서버가 짓는다. 모델·권한·도구는 shared
- * RunnerRunAgent 의 필드 스키마로 거른다(run.start.agent 와 같은 상한). 러너 천장(권한 상한·도구 상한·프로그램)과의 대조는 붙어
- * 있는 러너를 아는 호출자(REST) 몫이고, 런마다 러너가 다시 본다
+ * 러너 에이전트(러너 일반화 계획 판정 PR4) — 프로젝트의 러너 토큰에 묶이고 providerAgentId 는 서버가 짓는다. 모델·권한 모드는 만들 때
+ * 받지 않는다 — 대화마다의 세션 설정이고, 「새 세션 시작값」은 상세에서 고친다(세션 설정 스펙 S10). 금지 도구는 shared RunnerRunAgent
+ * 의 필드 스키마로 거른다. 러너 천장(프로그램)과의 대조는 붙어 있는 러너를 아는 호출자(REST) 몫이고, 런마다 러너가 다시 본다
  */
 export type CreateRunnerAgentInput = CreateAgentCommon & {
   provider: "runner";
   runnerProjectId: string;
   program: RunnerProgram;
-  model?: string | null;
-  permissionMode?: RunnerPermissionMode;
-  allowedTools?: string[] | null;
   disallowedTools?: string[];
 };
 
@@ -83,11 +81,9 @@ export type AgentPatch = {
   dmAccess?: DmAccess;
   /**
    * 러너 에이전트의 정의 — REST PATCH 만(제어 도구는 러너 구성을 바꾸지 못한다 — 러너 일반화 스펙 6장), OpenClaw 에이전트면 VALIDATION.
-   * 러너 천장과의 대조는 붙은 러너를 아는 REST 라우트 몫이다(만들기와 같다)
+   * 러너 천장과의 대조는 붙은 러너를 아는 REST 라우트 몫이다(만들기와 같다). sessionDefaults 는 보낸 필드만 바꾸고 null 은 「기본」
    */
-  model?: string | null;
-  permissionMode?: RunnerPermissionMode;
-  allowedTools?: string[] | null;
+  sessionDefaults?: Partial<SessionDefaults>;
   disallowedTools?: string[];
 };
 
@@ -127,7 +123,15 @@ export function rowToAgent(row: AgentRow): Agent {
       program: row.program,
       createdBy: row.createdBy,
       // 모델은 모두에게 — 권한 모드·도구는 runnerAgent(admin 이상)에만 남는다(프로필 스펙 결정 3)
-      model: row.provider === "runner" ? row.model : null,
+      ...(row.provider === "runner"
+        ? {
+            sessionDefaults: {
+              model: row.sessionDefaultModel,
+              effort: row.sessionDefaultEffort,
+              permissionMode: row.sessionDefaultPermissionMode,
+            },
+          }
+        : {}),
     },
     "agent",
   );
@@ -169,9 +173,6 @@ function toApiAgent(
       ? {
           runnerAgent: {
             projectId: row.runnerProjectId,
-            model: row.model,
-            permissionMode: row.permissionMode,
-            allowedTools: row.allowedToolsJson,
             disallowedTools: row.disallowedToolsJson,
           },
         }
@@ -338,11 +339,9 @@ function commonValues(input: CreateAgentCommon) {
   };
 }
 
-const RunnerAgentFields = RunnerRunAgent.pick({
-  model: true,
-  permissionMode: true,
-  allowedTools: true,
-  disallowedTools: true,
+const RunnerAgentFields = z.object({
+  sessionDefaults: SessionDefaults.partial(),
+  disallowedTools: RunnerRunAgent.shape.disallowedTools,
 });
 
 function invalidRunnerField(error: { issues: Array<{ path: PropertyKey[] }> }) {
@@ -366,10 +365,7 @@ function newRunnerAgentId(tx: DbOrTx, workspaceId: string): string {
 }
 
 function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
-  const fields = RunnerAgentFields.safeParse({
-    model: input.model ?? null,
-    permissionMode: input.permissionMode ?? "default",
-    allowedTools: input.allowedTools ?? null,
+  const fields = RunnerAgentFields.pick({ disallowedTools: true }).safeParse({
     disallowedTools: input.disallowedTools ?? [],
   });
   if (!fields.success) throw invalidRunnerField(fields.error);
@@ -395,9 +391,6 @@ function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
         program: input.program,
         runnerTokenId: project.runnerTokenId,
         runnerProjectId: input.runnerProjectId,
-        model: fields.data.model,
-        permissionMode: fields.data.permissionMode,
-        allowedToolsJson: fields.data.allowedTools,
         disallowedToolsJson: fields.data.disallowedTools,
       })
       .returning()
@@ -473,9 +466,10 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
         Object.fromEntries(runnerFields.map((key) => [key, patch[key]])),
       );
       if (!fields.success) throw invalidRunnerField(fields.error);
-      if (fields.data.model !== undefined) set.model = fields.data.model;
-      if (fields.data.permissionMode !== undefined) set.permissionMode = fields.data.permissionMode;
-      if (fields.data.allowedTools !== undefined) set.allowedToolsJson = fields.data.allowedTools;
+      const defaults = fields.data.sessionDefaults;
+      if (defaults?.model !== undefined) set.sessionDefaultModel = defaults.model;
+      if (defaults?.effort !== undefined) set.sessionDefaultEffort = defaults.effort;
+      if (defaults?.permissionMode !== undefined) set.sessionDefaultPermissionMode = defaults.permissionMode;
       if (fields.data.disallowedTools !== undefined) set.disallowedToolsJson = fields.data.disallowedTools;
     }
     if (Object.keys(set).length === 0) return apiAgent(tx, current);

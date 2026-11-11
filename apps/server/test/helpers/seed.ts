@@ -1,4 +1,10 @@
-import { type Agent, dodokSessionKey, type RunnerPermissionMode, type RunnerProgram } from "@dodok/shared";
+import {
+  type Agent,
+  dodokSessionKey,
+  type RunnerEffort,
+  type RunnerPermissionMode,
+  type RunnerProgram,
+} from "@dodok/shared";
 import { randomBytes } from "node:crypto";
 import { v7 as uuid } from "uuid";
 import { session, user } from "../../src/db/auth-schema";
@@ -14,7 +20,7 @@ import {
   users,
   workspaces,
 } from "../../src/db/schema.sqlite";
-import { createAgent } from "../../src/modules/agents/service";
+import { createAgent, getAgent } from "../../src/modules/agents/service";
 import { createProject, listProjects } from "../../src/modules/runners/projects";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
@@ -238,9 +244,10 @@ export function createRunnerAgentForTest(
     relPath?: string;
     program?: RunnerProgram;
     basePrompt?: string;
+    /** 「새 세션 시작값」(세션 설정 스펙 S10) — 만들기 API 는 받지 않아 만든 뒤 행에 쓴다 */
     model?: string | null;
-    permissionMode?: RunnerPermissionMode;
-    allowedTools?: string[] | null;
+    effort?: RunnerEffort | null;
+    permissionMode?: RunnerPermissionMode | null;
     disallowedTools?: string[];
     enabled?: boolean;
   },
@@ -266,12 +273,26 @@ export function createRunnerAgentForTest(
     handle: opts.handle,
     name: opts.name ?? opts.handle,
     ...(opts.basePrompt === undefined ? {} : { basePrompt: opts.basePrompt }),
-    ...(opts.model === undefined ? {} : { model: opts.model }),
-    ...(opts.permissionMode === undefined ? {} : { permissionMode: opts.permissionMode }),
-    ...(opts.allowedTools === undefined ? {} : { allowedTools: opts.allowedTools }),
     ...(opts.disallowedTools === undefined ? {} : { disallowedTools: opts.disallowedTools }),
     ...(opts.enabled === undefined ? {} : { enabled: opts.enabled }),
   });
+  if (opts.model !== undefined || opts.effort !== undefined || opts.permissionMode !== undefined) {
+    db.update(agents)
+      .set({
+        ...(opts.model === undefined ? {} : { sessionDefaultModel: opts.model }),
+        ...(opts.effort === undefined ? {} : { sessionDefaultEffort: opts.effort }),
+        ...(opts.permissionMode === undefined ? {} : { sessionDefaultPermissionMode: opts.permissionMode }),
+      })
+      .where(eq(agents.id, agent.id))
+      .run();
+    const fresh = getAgent(db, agent.id, opts.workspaceId);
+    if (!fresh) throw new Error("createRunnerAgentForTest: agent vanished");
+    return {
+      agent: { ...agent, ...(fresh.sessionDefaults ? { sessionDefaults: fresh.sessionDefaults } : {}) },
+      runnerTokenId,
+      projectId: project.id,
+    };
+  }
   return { agent, runnerTokenId, projectId: project.id };
 }
 

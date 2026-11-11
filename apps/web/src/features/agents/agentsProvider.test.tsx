@@ -1,4 +1,3 @@
-import type { RunnerPermissionMode } from "@dodok/shared";
 import { createQueryClient } from "@/app/queryClient";
 import { qk } from "@/api/queries";
 import { RUNNER_OFFLINE } from "@/features/runners/copy";
@@ -42,7 +41,7 @@ async function openCreate(
   await userEvent.click(await screen.findByRole("button", { name: "에이전트 만들기" }));
   const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 만들기" });
   await within(dialog)
-    .findByRole("combobox", { name: "권한 모드" })
+    .findByRole("radio", { name: /Claude Code/ })
     .catch(() => undefined);
   return dialog;
 }
@@ -96,23 +95,21 @@ describe("에이전트 만들기 — 프로젝트 상세", () => {
     expect(codex).toHaveAccessibleDescription("쓸 수 없음 — 설치되지 않음");
   });
 
-  it("권한 모드는 그 프로그램의 상한까지만 고른다 [Review Focus 3]", async () => {
+  it("모델·권한 모드·허용 도구 칸이 없다 — 대화마다 상태 줄에서 고른다 [세션 설정 스펙 S4·S10]", async () => {
     stubServer({ runners: runnerServer().handle });
     const dialog = await openCreate();
-    const mode = await within(dialog).findByRole("combobox", { name: "권한 모드" });
-    expect(
-      within(mode)
-        .getAllByRole("option")
-        .map((o) => (o as HTMLOptionElement).value),
-    ).toEqual(["plan", "dontAsk", "default"]);
-    expect(mode).toHaveAccessibleDescription(/러너 상한은 default/);
+    await within(dialog).findByLabelText("핸들");
+    expect(within(dialog).queryByLabelText("모델")).toBeNull();
+    expect(within(dialog).queryByLabelText("권한 모드")).toBeNull();
+    expect(within(dialog).queryByLabelText("허용 도구")).toBeNull();
+    expect(dialog).not.toHaveTextContent("권한 모드");
+    expect(dialog).not.toHaveTextContent("허용 도구");
   });
 
-  it("만들기 — POST 본문은 프로젝트·프로그램·정의(빈 모델은 싣지 않는다·빈 도구는 null)·DM 허용, 만들면 닫는다", async () => {
+  it("만들기 — POST 본문은 프로젝트·프로그램·이름·지시·DM 허용(모델·권한·도구 없음), 만들면 닫는다", async () => {
     const server = stubServer({ runners: runnerServer().handle });
     const dialog = await openCreate();
     await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
-    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "권한 모드" }), "dontAsk");
     await userEvent.type(within(dialog).getByLabelText("지시"), "테스트를 먼저 돌린다");
     await userEvent.click(within(dialog).getByRole("radio", { name: "모두" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
@@ -124,43 +121,25 @@ describe("에이전트 만들기 — 프로젝트 상세", () => {
         program: "claude",
         handle: "coder",
         name: "coder",
-        permissionMode: "dontAsk",
-        allowedTools: null,
         basePrompt: "테스트를 먼저 돌린다",
         dmAccess: "everyone",
       },
     ]);
   });
 
-  it("허용 도구가 러너 상한 밖이면 칸 아래에 그 도구 이름, 만들기는 잠긴다 — 상한 안이면 목록으로 보낸다", async () => {
-    const server = stubServer({ runners: runnerServer().handle });
-    const dialog = await openCreate();
-    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
-    const tools = within(dialog).getByLabelText("허용 도구");
-    await userEvent.type(tools, "Read, Bash");
-    expect(tools).toHaveAccessibleDescription("러너 상한에 없는 도구입니다: Bash");
-    expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
-    await userEvent.clear(tools);
-    await userEvent.type(tools, "Read Grep");
-    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
-    await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
-    expect(server.bodies("POST")[0]).toMatchObject({ allowedTools: ["Read", "Grep"] });
-  });
-
-  it("서버가 천장으로 거절하면(400 details.field) 그 칸 아래 고정 문구 — 서버 문구는 보이지 않는다", async () => {
+  it("서버가 천장(program)으로 거절하면(400 details.field) 프로그램 칸 아래 고정 문구 — 서버 문구는 보이지 않는다", async () => {
     stubServer({
       runners: runnerServer().handle,
       create: () =>
-        apiErr(400, "VALIDATION", "러너 설정이 이 에이전트를 허용하지 않습니다(permissionMode)", {
-          field: "permissionMode",
+        apiErr(400, "VALIDATION", "러너 설정이 이 에이전트를 허용하지 않습니다(program)", {
+          field: "program",
         }),
     });
     const dialog = await openCreate();
     await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
     await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
-    const mode = within(dialog).getByRole("combobox", { name: "권한 모드" });
-    await waitFor(() => expect(mode).toHaveAccessibleDescription(CEILING_REFUSED));
-    expect(dialog).not.toHaveTextContent("허용하지 않습니다(permissionMode)");
+    await waitFor(() => expect(dialog).toHaveTextContent(CEILING_REFUSED));
+    expect(dialog).not.toHaveTextContent("허용하지 않습니다(program)");
   });
 
   it("끊긴 러너의 프로젝트면 사유를 보이고 「만들기」를 잠근다", async () => {
@@ -195,54 +174,6 @@ describe("에이전트 만들기 — 프로젝트 상세", () => {
     expect(within(dialog).getByLabelText("핸들")).toHaveValue("");
     expect(qc.getQueryData(qk.agents)).toBeDefined();
     expect(qc.getQueryData(qk.runners())).toBeDefined();
-  });
-});
-
-/** 상한을 정한 Claude Code */
-const claudeUpTo = (max: RunnerPermissionMode) =>
-  programOf({ ceiling: { maxPermissionMode: max, allowedToolsCeiling: null } });
-
-const modeOf = (dialog: HTMLElement) =>
-  within(dialog).getByRole("combobox", { name: "권한 모드" }) as HTMLSelectElement;
-
-// 러너 일반화 태스크 5 리뷰 H1 — 처음 값 default 가 상한 밖이면 select 는 첫 option 을 보이는데 상태는 default 라 만들 수 없었다
-describe("권한 모드는 늘 상한 안", () => {
-  it.each(["plan", "dontAsk"] as const)(
-    "상한이 %s 인 프로그램이면 처음 값이 상한 자신이고 바로 만들 수 있다",
-    async (max) => {
-      const server = stubServer({
-        runners: runnersRoutes({
-          runners: [runnerOf(1, { programs: [claudeUpTo(max)] })],
-          projects: [projectOf(1)],
-        }).handle,
-      });
-      const dialog = await openCreate();
-      await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
-      const mode = modeOf(dialog);
-      expect(mode.value).toBe(max);
-      expect(mode).not.toHaveAttribute("aria-invalid", "true");
-      await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
-      await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
-      expect(server.bodies("POST")[0]).toMatchObject({ permissionMode: max });
-    },
-  );
-
-  it("상한이 높을 때 acceptEdits 를 고른 뒤 러너가 상한을 default 로 낮추면 default 가 된다", async () => {
-    const runners = [runnerOf(1, { programs: [claudeUpTo("acceptEdits")] })];
-    const server = stubServer({ runners: runnersRoutes({ runners, projects: [projectOf(1)] }).handle });
-    const qc = createQueryClient(() => {});
-    const dialog = await openCreate(qc);
-    await userEvent.selectOptions(modeOf(dialog), "acceptEdits");
-    runners[0] = runnerOf(1, { programs: [claudeUpTo("default")] });
-    await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
-    await waitFor(() => expect(modeOf(dialog).value).toBe("default"));
-    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
-    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
-    await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
-    expect(server.bodies("POST")[0]).toMatchObject({
-      permissionMode: "default",
-      runnerProjectId: projectOf(1).id,
-    });
   });
 });
 
