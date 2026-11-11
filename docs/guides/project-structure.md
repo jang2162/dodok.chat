@@ -140,6 +140,8 @@ src/
 │                 ConversationReadUpdate({ conversationId, channelId, lastReadSeq } — 서버 → 그 사용자의 user 룸)·
 │                 ChannelActivity({ channelId, conversationId, seq, threadRootId?, authorType user|agent|automation(자동화면 authorId 는 자동화 id), authorId, mentionedUserIds } — 본문 없음, workspace 룸). 이벤트 이름은 `wire/` 에.
 │                 공용 `Channel` 에는 읽음 값을 넣지 않는다 — `channel.updated` 는 워크스페이스 전원(DM 이면 주인)에게 가서 사람마다 다른 값을 실을 수 없다
+├─ sidebar/       사이드바 개인 섹션 — SidebarSection(id 클라이언트 UUID·name trim 1~40·collapsed·items 채널 id ≤1000)·SidebarLayout({ sections ≤50 } — 섹션 id·항목 id 는
+│                 섹션 사이에서도 겹치면 거절)·EMPTY_SIDEBAR_LAYOUT·SIDEBAR_LIMITS. wire server→client `me.sidebar`({ layout } — user 룸)는 `wire/` 에
 ├─ reactions/     리액션. `formatReactionFacts(reactions, omitted?)` — 에이전트가 받는 「반응(지난 턴 뒤 네 메시지에 달린 것):」 블록을 만드는 **유일한** 자리
 │                 (플러그인 헤더와 러너 턴 사실이 같이 쓴다 — 두 어댑터 문구가 갈라지지 않게, 비면 "", 줄은 at 오름차순·끝에 「(외 n개)」)
 ├─ automations/   자동화. AutomationSchedule(repeat daily·weekdays·weekly(weekday 0 = 일요일)·hourly(minute), time `HH:MM`)·AutomationKind(schedule·webhook)·AutomationStatus(ok·skipped·error)·
@@ -438,6 +440,9 @@ src/
 │  │                      행이 없으면 R = 0, 결과 순서는 정하지 않는다 — 웹은 conversationId 로 찾는다, 스냅숏에 보관하지 않은 채널 id 목록도. 쓰는 인덱스와 다시 재는 법은 그 함수 머리 주석) ·
 │  │                      routes.ts(`GET /api/v1/me/unread` — requireSession, 사용자 id 는 세션에서만).
 │  │                      wire 는 realtime/ 이 맡는다 — `conversation.read` 처리기와 작성자 읽음은 socket.ts, `channel.activity`·`conversation.read` 팬아웃은 events.ts
+│  ├─ sidebar/            사이드바 개인 섹션(0038 user_sidebar_layouts — user_id 기본 키·FK ON DELETE CASCADE, layout_json, updated_at). store.ts(getSidebarLayout — 행이 없으면 빈 배치 ·
+│  │                      saveSidebarLayout — 통째로 upsert, DB 에 없는 채널 id 만 걷는다: 보관·읽을 수 없게 된 채널 id 는 남겨 되살아나면 그 자리로) · routes.ts(`GET`·`PUT /api/v1/me/sidebar` —
+│  │                      requireSession, 본인 것만, PUT 뒤 버스 `me.sidebar` → events.ts 가 그 사람의 user 룸으로)
 │  ├─ reactions/          리액션. service.ts(setReaction — normal 메시지만(아니면 VALIDATION), 없는 메시지·다른 워크스페이스는 NOT_FOUND, 보관한 채널은 assertChannelWritable 로 409,
 │  │                      켜기는 ON CONFLICT DO NOTHING·끄기는 그 한 행 DELETE, 바뀐 행이 있을 때만 버스 message.updated(하이드레이션 전 — 반응은 wire 팬아웃이 붙인다) ·
 │  │                      withReactions — 메시지 id IN 질의 한 번, REACTION_EMOJIS 순서·userIds 는 단 순서(동률 rowid) · pendingReactionsFor — 그 에이전트가 쓴 그 세션 범위(대화 조건 conversation_id 에 더해 채널 세션은
@@ -1052,6 +1057,12 @@ src/
 │  │                       다음 요청이 다시 보낸다 — `docs/guides/docker-deploy.md` 「운영 화면」 레이트리밋 표의 conversation.read 줄이 같은 규칙을 가르친다 · useReadAtEnd — 끝이 보이고 탭이 보이고 연결돼
 │  │                       있으면 타임라인 lastSeq 를 요청, 끝 보임을 activity 처리에 알린다) · entryRead.ts(captureEntryRead — 세션에 들어갈 때의 읽음 위치, 현황이 `ready` 가 아니거나 그 세션 항목이
 │  │                       없으면 undefined(구분선 없음))
+│  ├─ sidebar/             사이드바 개인 섹션. layout.ts(순수 — moveItem·addSection·renameSection·removeSection·moveSection·setCollapsed·sectionedIds·sectionOf) · queries.ts(GET·PUT
+│  │                       `/me/sidebar` — useUpdateSidebar 는 지금 배치에 바꿈을 적용해 낙관적으로 그리고 PUT, 실패면 서버가 아는 마지막 배치로 되돌리고 토스트, 늦게 끝난 앞 저장은 뒤 저장의 화면을
+│  │                       덮지 않는다 · holdSidebar/receiveSidebar — 저장·끌기 중 온 wire `me.sidebar` 는 끝난 뒤 그린다) · SidebarSections.tsx(섹션들 — 줄은 ChannelList 의 ChannelLink·
+│  │                       DmSection 의 DmLink·DirectRow 를 그대로, 지금 목록에 없는 id(보관 등)는 그리지 않는다, 접힌 섹션의 안 읽음 점, 「섹션 만들기」) · SectionHeader.tsx(접기·「⋯」·이름 대화상자) ·
+│  │                       MoveToSectionMenu.tsx(줄의 「⋯」 「섹션으로 옮기기」 · SidebarRow — 기본 두 절과 섹션이 함께 쓰는 줄 틀) · dnd.tsx(@dnd-kit — 마우스 6px·터치 300ms·키보드 스페이스,
+│  │                       놓을 자리 계산 dropChange, 한국어 안내, 손을 따라가는 DragOverlay). 기본 두 절(ChannelList·DmSection)은 섹션에 든 id 를 빼고 그린다
 │  ├─ reactions/           리액션. ReactionPicker.tsx(「반응 추가」 버튼 + Radix DropdownMenu 의 8개 한 줄 — ↑·↓·Home·End·Enter·Esc·초점 복귀는 Radix, ←·→ 는 moveAcross, 끝에서 멈춤.
 │  │                       메시지 행 동작 줄에 「스레드에서 답하기」와 같은 보임 규칙(`group-hover`·`group-focus-within`, `(hover: none)` 이면 늘), 열린 동안 `data-[state=open]` 으로 붙든다) ·
 │  │                       ReactionChips.tsx(`👍 3` — 내 것은 `aria-pressed`, 툴팁은 사람 목록으로 「@mia, @owner」·비활성은 「@핸들 (비활성)」, 보관한 채널은 `aria-disabled` + 누름 무시 —
