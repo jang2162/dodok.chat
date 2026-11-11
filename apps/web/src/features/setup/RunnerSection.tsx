@@ -137,34 +137,31 @@ export function RunnerQuickStart({ serverUrl, reissue = false }: { serverUrl: st
 export function InstallSteps({ status }: { status: SetupStatus }) {
   const serverUrl = publicOriginOf(status.bridge.publicUrl);
   return (
-    <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">설치</h3>
-      <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
-        <li className="flex flex-col gap-1.5">
-          <p>설치</p>
-          <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
-          <SameBuildInstall file={status.runners.runnerFile} />
-        </li>
-        <li className="flex flex-col gap-1.5">
-          <p>실행</p>
-          <CopyBlock text={RUNNER_RUN_COMMAND} label="실행 명령 복사" />
-        </li>
-        <li className="flex flex-col gap-1.5">
-          <p>실행하면 묻는 값</p>
-          <dl className="flex flex-col gap-1.5">
-            <div className="flex flex-col gap-1.5">
-              <dt className="text-muted-foreground">서버 주소</dt>
-              <dd>
-                <CopyBlock text={serverUrl} label="서버 주소 복사" />
-              </dd>
-            </div>
-            <div className="flex flex-wrap gap-x-2">
-              <dt className="text-muted-foreground">러너 토큰</dt>
-              <dd>발급할 때 받은 원문</dd>
-            </div>
-          </dl>
-        </li>
-      </ol>
-    </div>
+    <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
+      <li className="flex flex-col gap-1.5">
+        <p>설치</p>
+        <CopyBlock text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />
+        <SameBuildInstall file={status.runners.runnerFile} />
+      </li>
+      <li className="flex flex-col gap-1.5">
+        <p>실행</p>
+        <CopyBlock text={RUNNER_RUN_COMMAND} label="실행 명령 복사" />
+      </li>
+      <li className="flex flex-col gap-1.5">
+        <p>실행하면 묻는 값</p>
+        <dl className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
+            <dt className="text-muted-foreground">서버 주소</dt>
+            <dd>
+              <CopyBlock text={serverUrl} label="서버 주소 복사" />
+            </dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">러너 토큰</dt>
+            <dd>발급할 때 받은 원문</dd>
+          </div>
+        </dl>
+      </li>
+    </ol>
   );
 }
