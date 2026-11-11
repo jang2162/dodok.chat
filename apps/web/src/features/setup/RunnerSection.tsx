@@ -15,8 +15,8 @@ export const RUNNER_NPM_INSTALL_COMMAND = "npm i -g @dodok/runner";
 export const runnerInstallCommand = (fileName: string) => `npm install -g ./${fileName}`;
 /** 실행 명령 — 설정 파일이 없으면 러너가 터미널에서 서버 주소·토큰·루트를 묻고 설정을 만든다 */
 export const RUNNER_RUN_COMMAND = "dodok-runner";
-/** 다시 발급한 토큰을 넣을 때 — 설정이 이미 있으니 마법사를 다시 연다(덮기 전에 묻고 옛 파일은 .bak) */
-export const RUNNER_SETUP_COMMAND = "dodok-runner setup";
+/** 다시 발급한 토큰을 넣을 때 — 설정은 그대로 두고 토큰만 바꾼다(루트 id 가 바뀌면 프로젝트가 「루트 없음」이 된다) */
+export const RUNNER_TOKEN_COMMAND = "dodok-runner token";
 
 /** 이름·값 한 줄 */
 function Field({ name, children }: { name: string; children: ReactNode }) {
@@ -113,7 +113,7 @@ function CopyField({
 
 /**
  * 토큰 발급·다시 발급 대화상자의 러너 안내 — 원문(「토큰」 칸) 아래에 설치·실행·서버 주소. 실행하면 러너가 서버 주소와 토큰을 묻는다.
- * 다시 발급이면 이미 설치·설정한 러너라 설치를 빼고 마법사를 다시 여는 명령을 보인다
+ * 다시 발급이면 이미 설치·설정한 러너라 설치·서버 주소를 빼고 토큰만 바꾸는 명령을 보인다
  */
 export function RunnerQuickStart({ serverUrl, reissue = false }: { serverUrl: string; reissue?: boolean }) {
   return (
@@ -121,11 +121,13 @@ export function RunnerQuickStart({ serverUrl, reissue = false }: { serverUrl: st
       {!reissue && <CopyField name="설치" text={RUNNER_NPM_INSTALL_COMMAND} label="설치 명령 복사" />}
       <CopyField
         name="실행"
-        text={reissue ? RUNNER_SETUP_COMMAND : RUNNER_RUN_COMMAND}
+        text={reissue ? RUNNER_TOKEN_COMMAND : RUNNER_RUN_COMMAND}
         label="실행 명령 복사"
         testId="runner-run-command"
       />
-      <CopyField name="서버 주소" text={serverUrl} label="서버 주소 복사" testId="runner-server-url" />
+      {!reissue && (
+        <CopyField name="서버 주소" text={serverUrl} label="서버 주소 복사" testId="runner-server-url" />
+      )}
     </>
   );
 }

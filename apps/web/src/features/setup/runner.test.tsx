@@ -19,7 +19,7 @@ import {
 } from "../../../test/setupServer";
 import { ME } from "../../../test/shellApi";
 import { llmsHandoffLine } from "./llms";
-import { RUNNER_NPM_INSTALL_COMMAND, RUNNER_RUN_COMMAND, RUNNER_SETUP_COMMAND } from "./RunnerSection";
+import { RUNNER_NPM_INSTALL_COMMAND, RUNNER_RUN_COMMAND, RUNNER_TOKEN_COMMAND } from "./RunnerSection";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -188,9 +188,9 @@ describe("러너 토큰 다시 발급", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "다시 발급" }));
     expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
     expect(dialog).toHaveTextContent("「맥북」 토큰을 다시 발급했습니다");
-    // 이미 설치·설정한 러너 — 설치는 빼고 마법사를 다시 여는 명령과 서버 주소(토큰 파일 명령은 걷었다)
-    expect(within(dialog).getByTestId("runner-run-command")).toHaveTextContent(RUNNER_SETUP_COMMAND);
-    expect(within(dialog).getByTestId("runner-server-url")).toHaveTextContent(RUNNER_SERVER_URL);
+    // 이미 설치·설정한 러너 — 설치·서버 주소는 빼고 토큰만 바꾸는 명령(설정·루트 id 는 그대로)
+    expect(within(dialog).getByTestId("runner-run-command")).toHaveTextContent(RUNNER_TOKEN_COMMAND);
+    expect(within(dialog).queryByTestId("runner-server-url")).not.toBeInTheDocument();
     expect(within(dialog).queryByText(RUNNER_NPM_INSTALL_COMMAND)).not.toBeInTheDocument();
     expect(dialog).not.toHaveTextContent("chmod");
     // 「AI 에게 맡기기」는 설치가 아니라 토큰 교체·다시 띄우기(태스크 5 리뷰 L10)
