@@ -13,6 +13,7 @@ import type {
   OpsEventKind,
   OpsSeverity,
   RelayPolicy,
+  RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
   SessionPolicy,
@@ -145,14 +146,14 @@ export const agents = sqliteTable(
     // 러너 에이전트가 돌리는 프로그램 — 러너면 값(서비스가 지킨다), OpenClaw 면 null
     program: text("program").$type<RunnerProgram>(),
     // 러너 에이전트의 프로젝트(러너 일반화 계획 판정 PR4). DB 는 nullable — 「보관되지 않은 러너 에이전트는 프로젝트가 있다」는 서비스가
-    // 지킨다(0031 이 프로젝트 없는 옛 러너 에이전트를 보관했다). 아래 넷과 함께 run.start.agent 의 정본
+    // 지킨다(0031 이 프로젝트 없는 옛 러너 에이전트를 보관했다). 금지 도구와 함께 run.start.agent 의 에이전트 쪽 정본 — 모델·effort·권한
+    // 모드는 대화마다(conversation_agent_settings), 없으면 아래 「새 세션 시작값」(세션 설정 스펙 S10)
     runnerProjectId: text("runner_project_id").references((): AnySQLiteColumn => runnerProjects.id),
-    // null 이면 프로그램 기본 모델
-    model: text("model"),
-    permissionMode: text("permission_mode").$type<RunnerPermissionMode>().notNull().default("default"),
-    // null 이면 미리 허용한 도구 없음(러너 천장 안에서 프로그램 기본)
-    allowedToolsJson: json<string[]>("allowed_tools_json"),
     disallowedToolsJson: json<string[]>("disallowed_tools_json").notNull().default([]),
+    // 새 세션 시작값 — 설정 행이 없는 대화가 이 값으로 돈다. 모두 null 이면 프로그램 기본·권한 「기본」(min(default, 러너 상한))
+    sessionDefaultModel: text("session_default_model"),
+    sessionDefaultEffort: text("session_default_effort").$type<RunnerEffort>(),
+    sessionDefaultPermissionMode: text("session_default_permission_mode").$type<RunnerPermissionMode>(),
     // 만든 사람(소유자) — 기록 전에 만든 에이전트는 null(마이그레이션이 채우지 않는다 — 사실이 아닌 기록이 생긴다). 따로 권한은 없다
     createdBy: text("created_by").references((): AnySQLiteColumn => users.id),
     // base_prompt(에이전트 지시)가 바뀔 때만 +1 — 러너 세션이 이 값과 다르게 시작했으면 새로 연다(계획 판정 PR2)
@@ -266,6 +267,28 @@ export const agentSessions = sqliteTable(
       .on(t.conversationId, t.agentId)
       .where(sql`thread_root_id IS NULL`),
   ],
+);
+
+/**
+ * 대화 × 러너 에이전트의 세션 설정(세션 설정 스펙 5.1) — 행이 없으면 에이전트의 「새 세션 시작값」. null 은 「기본」이다. 채널에서
+ * 에이전트를 빼거나 보관해도 남고(다시 넣으면 돌아온다), 대화와 함께 지워진다
+ */
+export const conversationAgentSettings = sqliteTable(
+  "conversation_agent_settings",
+  {
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    model: text("model"),
+    effort: text("effort").$type<RunnerEffort>(),
+    permissionMode: text("permission_mode").$type<RunnerPermissionMode>(),
+    updatedBy: text("updated_by").references((): AnySQLiteColumn => users.id, { onDelete: "set null" }),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.agentId] })],
 );
 
 export const channelMembers = sqliteTable(

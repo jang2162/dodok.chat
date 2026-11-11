@@ -295,7 +295,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
           : ceilingMiss(
               target,
               agent.program,
-              { permissionMode: agent.permissionMode, allowedTools: agent.allowedTools },
+              agent.permissionMode === null ? {} : { permissionMode: agent.permissionMode },
               { requireAvailable: true },
             );
       return item ? [{ agentId: agent.id, item }] : [];

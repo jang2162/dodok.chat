@@ -172,9 +172,9 @@ describe("createAgent — 러너 갈래(계획 판정 PR4)", () => {
       program: "claude",
       runnerTokenId: token,
       runnerProjectId: p.id,
-      model: null,
-      permissionMode: "default",
-      allowedToolsJson: null,
+      sessionDefaultModel: null,
+      sessionDefaultEffort: null,
+      sessionDefaultPermissionMode: null,
       disallowedToolsJson: [],
       instructionsRevision: 0,
     });
@@ -251,8 +251,9 @@ describe("runnerAgentDefinition — run.start.agent 는 에이전트 행·프로
         program: "claude",
         project: { rootId: "work", relPath: "team/api" },
         model: "opus",
+        effort: null,
         permissionMode: "acceptEdits",
-        allowedTools: ["Read"],
+        allowedTools: null,
         disallowedTools: ["WebFetch"],
       },
     });

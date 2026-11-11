@@ -378,7 +378,8 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
           projectId: project.id,
           model: "opus",
           permissionMode: "acceptEdits",
-          allowedTools: ["Read"],
+          // 허용 도구는 저장하지 않는다(세션 설정 스펙 S4)
+          allowedTools: null,
           disallowedTools: ["WebFetch"],
         },
       });
@@ -500,7 +501,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect((saved.json().agent as Agent).runnerAgent).toMatchObject({
         model: "sonnet",
         permissionMode: "plan",
-        allowedTools: ["Read"],
+        allowedTools: null,
         disallowedTools: ["Bash"],
       });
       expect((await patch({ permissionMode: "acceptEdits" })).json()).toMatchObject({
@@ -601,7 +602,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(forMember).not.toHaveProperty("runnerAgent");
       expect((await listedBy(admin))?.runnerAgent).toMatchObject({
         permissionMode: "plan",
-        allowedTools: ["Read"],
+        allowedTools: null,
       });
 
       const dmAgentFor = async (headers: Record<string, string>) => {
@@ -789,7 +790,8 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(refused.statusCode).toBe(400);
       expect(refused.json()).toMatchObject({
         code: "VALIDATION",
-        details: { field: "runnerId", agentIds: [high.id, tools.id, codex.id], item: "permissionMode" },
+        // 허용 도구는 저장하지 않아(세션 설정 스펙 S4) tools 는 걸리지 않는다
+        details: { field: "runnerId", agentIds: [high.id, codex.id], item: "permissionMode" },
       });
       expect(to.runner.fsRequests).toEqual([]);
       expect(
@@ -804,12 +806,6 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(
         (await call(admin, "PATCH", `/agents/${high.id}`, { permissionMode: "default" })).statusCode,
       ).toBe(200);
-      expect((await move()).json()).toMatchObject({
-        details: { agentIds: [tools.id, codex.id], item: "allowedTools" },
-      });
-      expect((await call(admin, "PATCH", `/agents/${tools.id}`, { allowedTools: ["Read"] })).statusCode).toBe(
-        200,
-      );
       expect((await move()).json()).toMatchObject({ details: { agentIds: [codex.id], item: "program" } });
       expect((await call(admin, "DELETE", `/agents/${codex.id}`)).statusCode).toBe(200);
       const moved = await move();

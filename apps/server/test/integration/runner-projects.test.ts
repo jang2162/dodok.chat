@@ -295,8 +295,9 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
       program: "claude",
       project: { rootId: project.rootId, relPath: project.relPath },
       model: "claude-sonnet-4-5",
+      effort: null,
       permissionMode: "acceptEdits",
-      allowedTools: ["Read", "Grep"],
+      allowedTools: null,
       disallowedTools: [],
     });
     expect(start0.providerSessionId).toMatch(UUID);

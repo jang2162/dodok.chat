@@ -14,6 +14,7 @@ import {
   type ProviderApproval,
   type RunEventBody,
   type RunnerControlCall,
+  type RunnerPermissionMode,
 } from "@dodok/shared";
 import { Server } from "socket.io";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -69,6 +70,8 @@ type Harness = {
   ): void;
   /** agentDefinition 이 받은 것 — [에이전트 id, 토큰 id] */
   definitionCalls: Array<[string, string]>;
+  /** agentDefinition 이 받은 대화 id — definitionCalls 와 같은 순서 */
+  definitionConversations: Array<string | undefined>;
   /** onControlCall 이 받은 것 — [연결 id, 호출] */
   controlCalls: Array<[string, RunnerControlCall]>;
   runner(token: string): Promise<FakeRunner>;
@@ -123,6 +126,7 @@ async function setup(
   const owners = new Map<string, string | null>(Object.entries(opts.owners ?? {}));
   const definitions = new Map<string, RunnerAgentDefinition>();
   const definitionCalls: Array<[string, string]> = [];
+  const definitionConversations: Array<string | undefined> = [];
   const controlCalls: Array<[string, RunnerControlCall]> = [];
   const control =
     opts.control === null
@@ -160,8 +164,9 @@ async function setup(
             return control(connectionId, call);
           },
         }),
-    agentDefinition: (agentId, tokenId) => {
+    agentDefinition: (agentId, tokenId, conversationId) => {
       definitionCalls.push([agentId, tokenId]);
+      definitionConversations.push(conversationId);
       if (owners.has(agentId) && owners.get(agentId) !== tokenId) return null;
       return definitions.get(agentId) ?? definition(agentId);
     },
@@ -194,6 +199,7 @@ async function setup(
     limited,
     owners,
     definitionCalls,
+    definitionConversations,
     defineAgent(agentId, over) {
       const base = definitions.get(agentId) ?? definition(agentId);
       const { instructions, name, ...agent } = over;
@@ -741,6 +747,51 @@ describe("send", () => {
       disallowedTools: ["WebFetch"],
     });
     expect(r.runStarts[0]?.sessionTitle).toBe("general · 코더");
+  });
+
+  describe("세션 설정 — 권한 「기본」·effort·허용 도구 [세션 설정 스펙 S4·S5]", () => {
+    const helloWithCeiling = (maxPermissionMode: RunnerPermissionMode) => ({
+      programs: [
+        {
+          program: "claude" as const,
+          available: true,
+          version: "2.1.283",
+          auth: "unknown" as const,
+          capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
+          ceiling: { maxPermissionMode, allowedToolsCeiling: null },
+        },
+      ],
+    });
+
+    it.each([
+      ["plan", "plan"],
+      ["dontAsk", "dontAsk"],
+      ["default", "default"],
+      ["acceptEdits", "default"],
+    ] as const)("권한 「기본」(null) + 러너 상한 %s → run.start 의 %s", async (ceiling, expected) => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, helloWithCeiling(ceiling));
+      h.defineAgent("coder", { permissionMode: null });
+      await startRun(h, r);
+      expect(r.runStarts[0]?.agent.permissionMode).toBe(expected);
+    });
+
+    it("사람이 고른 acceptEdits 는 상한(default)보다 높아도 깎지 않고 그대로 보낸다 — 러너가 RUNNER_CEILING 으로 거절한다 [Review Focus 3]", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, helloWithCeiling("default"));
+      h.defineAgent("coder", { permissionMode: "acceptEdits" });
+      await startRun(h, r);
+      expect(r.runStarts[0]?.agent.permissionMode).toBe("acceptEdits");
+    });
+
+    it("effort 를 싣고, 허용 도구는 늘 null — 정의를 그 대화 id 로 묻는다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h);
+      h.defineAgent("coder", { effort: "high", allowedTools: null });
+      const input = await startRun(h, r);
+      expect(r.runStarts[0]?.agent).toMatchObject({ effort: "high", allowedTools: null });
+      expect(h.definitionConversations).toContain(input.conversationId);
+    });
   });
 
   it("정의가 계약(RunnerRunAgent) 밖이면 보내지 않고 INTERNAL — 러너가 runId 를 읽고도 버리는 꼴을 만들지 않는다", async () => {

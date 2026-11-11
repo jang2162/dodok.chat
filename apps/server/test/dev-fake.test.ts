@@ -2736,21 +2736,18 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     expect((await ch.send(`<@a:${ch.coderId}> 루트 빼고`)).ok).toBe(true);
     await ceilingCard("root");
 
-    // 상한을 coder 의 권한(default) 아래로 — 실제 러너처럼 permissionMode 로 거절
+    // 상한을 default 아래로 — coder 의 권한은 「기본」(null)이라 그 상한(plan)으로 계산돼 거절되지 않는다(세션 설정 스펙 S5)
     expect(await hook({ connected: true, roots: ["src", "work"], maxPermissionMode: "plan" })).toMatchObject({
       status: 200,
       body: { ok: true },
     });
     const before = ch.created.filter((m) => m.systemMeta?.kind === "run_error").length;
+    const answered = () =>
+      ch.created.filter((m) => m.authorType === "agent" && m.bodyMd.includes("잘 받았어요")).length;
+    const answersBefore = answered();
     expect((await ch.send(`<@a:${ch.coderId}> 상한 낮추고`)).ok).toBe(true);
-    await vi.waitFor(
-      () => {
-        const cards = ch.created.filter((m) => m.systemMeta?.kind === "run_error");
-        expect(cards).toHaveLength(before + 1);
-        expect(cards.at(-1)?.bodyMd).toContain("허용하지 않습니다(permissionMode)");
-      },
-      { timeout: 10_000 },
-    );
+    await vi.waitFor(() => expect(answered()).toBe(answersBefore + 1), { timeout: 10_000 });
+    expect(ch.created.filter((m) => m.systemMeta?.kind === "run_error")).toHaveLength(before);
 
     expect(await hook({ connected: true, maxPermissionMode: "acceptEdits" })).toMatchObject({ status: 200 });
     expect((await ch.send(`<@a:${ch.coderId}> 상한 되돌리고`)).ok).toBe(true);

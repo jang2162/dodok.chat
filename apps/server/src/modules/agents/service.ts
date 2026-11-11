@@ -127,7 +127,7 @@ export function rowToAgent(row: AgentRow): Agent {
       program: row.program,
       createdBy: row.createdBy,
       // 모델은 모두에게 — 권한 모드·도구는 runnerAgent(admin 이상)에만 남는다(프로필 스펙 결정 3)
-      model: row.provider === "runner" ? row.model : null,
+      model: row.provider === "runner" ? row.sessionDefaultModel : null,
     },
     "agent",
   );
@@ -169,9 +169,10 @@ function toApiAgent(
       ? {
           runnerAgent: {
             projectId: row.runnerProjectId,
-            model: row.model,
-            permissionMode: row.permissionMode,
-            allowedTools: row.allowedToolsJson,
+            // 모델·권한 모드는 「새 세션 시작값」으로 옮겨 갔다(세션 설정 스펙 S10) — 허용 도구는 고르지 않는다(S4)
+            model: row.sessionDefaultModel,
+            permissionMode: row.sessionDefaultPermissionMode ?? "default",
+            allowedTools: null,
             disallowedTools: row.disallowedToolsJson,
           },
         }
@@ -395,9 +396,8 @@ function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
         program: input.program,
         runnerTokenId: project.runnerTokenId,
         runnerProjectId: input.runnerProjectId,
-        model: fields.data.model,
-        permissionMode: fields.data.permissionMode,
-        allowedToolsJson: fields.data.allowedTools,
+        sessionDefaultModel: fields.data.model,
+        sessionDefaultPermissionMode: input.permissionMode ?? null,
         disallowedToolsJson: fields.data.disallowedTools,
       })
       .returning()
@@ -473,9 +473,9 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
         Object.fromEntries(runnerFields.map((key) => [key, patch[key]])),
       );
       if (!fields.success) throw invalidRunnerField(fields.error);
-      if (fields.data.model !== undefined) set.model = fields.data.model;
-      if (fields.data.permissionMode !== undefined) set.permissionMode = fields.data.permissionMode;
-      if (fields.data.allowedTools !== undefined) set.allowedToolsJson = fields.data.allowedTools;
+      if (fields.data.model !== undefined) set.sessionDefaultModel = fields.data.model;
+      if (fields.data.permissionMode !== undefined)
+        set.sessionDefaultPermissionMode = fields.data.permissionMode;
       if (fields.data.disallowedTools !== undefined) set.disallowedToolsJson = fields.data.disallowedTools;
     }
     if (Object.keys(set).length === 0) return apiAgent(tx, current);
