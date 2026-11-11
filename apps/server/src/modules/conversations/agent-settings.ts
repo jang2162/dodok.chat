@@ -112,7 +112,10 @@ export function settingsAgentsOf(
   return ids.flatMap((id) => rows.filter((r) => r.id === id));
 }
 
-/** 그 러너가 그 프로그램에 대해 hello 로 알린 권한 상한 — 러너가 붙어 있지 않거나 모르면 null(대조를 건너뛴다) */
+/**
+ * 그 러너가 그 프로그램에 대해 hello 로 알린 권한 상한 — 러너가 붙어 있지 않거나 모르면 null(대조를 건너뛴다). 끊긴 러너의 상한을
+ * 서버는 모르지만 실행은 그 러너가 붙어야 돌고, 그때 러너가 자기 천장으로 RUNNER_CEILING 거절한다 — 저장을 막지 않아도 상한 위로 돌지 않는다
+ */
 export function runnerPermissionCeiling(
   runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
   agent: { runnerTokenId: string | null; program: RunnerProgram | null },
