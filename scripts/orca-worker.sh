@@ -228,8 +228,16 @@ collect_worktrees() {
         | @tsv'
 }
 
-# 워크트리들이 모여 있는 디렉터리. 워크트리 안에서 실행돼도 최상위 체크아웃을
-# 기준으로 잡아야 한다 — git-common-dir 은 어느 워크트리에서 불러도 최상위의
+# 슬러그로 이 저장소 워크트리의 경로를 낸다(collect_worktrees 기준 — 슬러그는 경로의 마지막 이름).
+# 없으면 아무것도 내지 않는다.
+worktree_path_for_slug() {
+  collect_worktrees | awk -F'\t' -v s="$1" '$1 == s { print $4; exit }'
+}
+
+# 옛 Orca 자리(`<최상위>/.worktrees/<저장소>`). **워크트리를 찾는 데 쓰지 않는다** — 지금 자리는
+# Orca 설정이 정하고(worktree_id_for_slug 주석), 스크립트는 Orca 응답으로 찾는다. 여기서는
+# collect_orphans 가 옛 자리의 잔해도 훑게 하는 데만 쓴다. 워크트리 안에서 실행돼도 최상위
+# 체크아웃을 기준으로 잡아야 한다 — git-common-dir 은 어느 워크트리에서 불러도 최상위의
 # .git 을 가리킨다(2026-08-28 실측).
 worktrees_dir() {
   if [ -n "${ORCA_WORKER_WORKTREES_DIR:-}" ]; then
@@ -260,50 +268,92 @@ main_checkout() {
 # collect_worktrees 는 Orca 가 보고하는 워크트리만 센다. 이미 제거된 워크트리의
 # 껍데기(node_modules·.turbo 같은 산출물만 남은 디렉터리)는 Orca 도 git 도 모르므로 열거되지
 # 않았고, 그래서 실제로 쌓인 잔해에 status 도 reap 도 닿지 못했다.
-# 사용: collect_orphans [<이미 아는 슬러그 목록(줄바꿈 구분)>]
+# 사용: collect_orphans [<collect_worktrees 행(탭 구분, 줄바꿈 구분)>]
 # 호출자가 collect_worktrees 결과를 이미 갖고 있으면 넘겨라 — 안 넘기면
 # Orca 왕복이 한 번 더 생기고, 훅은 이것을 매 프롬프트마다 문다.
 collect_orphans() {
-  local dir parent live_list known d slug
+  local dir main repo_name rows live_list known scan sd p d slug
   dir="$(worktrees_dir)"
-
-  # 워크트리는 두 경로에 쌓인다 — Orca 는 .worktrees/<저장소>/<슬러그> 에,
-  # git worktree add 는 .worktrees/<슬러그> 에 만든다(AGENTS.md 의 대체 절차).
-  # 한쪽만 훑으면 옛 경로의 잔해가 영원히 보이지 않는다: 2026-08-28 실측으로
-  # .worktrees/ 바로 아래 껍데기 12개가 status·reap 양쪽에서 누락돼 있었다.
-  parent="$(dirname "$dir")"
+  main="$(main_checkout)"
+  repo_name="$(basename "$main")"
 
   live_list="$(git -C "$(repo_root)" worktree list --porcelain 2>/dev/null \
     | sed -n 's|^worktree ||p')"
   if [ $# -gt 0 ]; then
-    known="$1"
+    rows="$1"
   else
-    known="$(collect_worktrees | cut -f1)"
+    rows="$(collect_worktrees)"
   fi
+  known="$(printf '%s\n' "$rows" | cut -f1)"
 
-  for d in "$dir"/* "$parent"/*; do
-    [ -d "$d" ] || continue
-    # 저장소별 디렉터리 자신은 워크트리가 아니라 상위 묶음이다.
-    [ "$d" = "$dir" ] && continue
-    # 실물 git 워크트리면 고아가 아니다.
+  # 훑는 디렉터리:
+  #   - 옛 Orca 자리 `.worktrees/<저장소>` 와 그 부모 `.worktrees` — git worktree add 는
+  #     `.worktrees/<슬러그>` 에 만든다(AGENTS.md 의 대체 절차). 한쪽만 훑으면 옛 경로의 잔해가 영원히
+  #     보이지 않는다: 2026-08-28 실측으로 .worktrees/ 바로 아래 껍데기 12개가 status·reap 양쪽에서
+  #     누락돼 있었다.
+  #   - **Orca 가 아는 워크트리들의 부모 디렉터리** — 자리는 Orca 설정이 정하므로(기본
+  #     `~/orca/workspaces/<저장소>/`) 지금 자리의 잔해는 거기 쌓인다.
+  # 부모 디렉터리는 **이름이 이 저장소 이름일 때만** 훑는다. 여기서 낸 것은 reap 이 지우므로, 저장소와
+  # 무관한 디렉터리(예: 워크트리를 홈 바로 아래에 두는 설정이면 홈 전체)를 잔해로 읽으면 안 된다 —
+  # 옛 `.worktrees/<저장소>/` 와 같은 안전 조건이다(Orca 는 저장소마다 `<기준>/<저장소>/<슬러그>` 로 만든다).
+  # 그 디렉터리가 체크아웃 자신(`.git` 이 있다 — 최상위·워크트리)이면 훑지 않는다 — 그 안의
+  # `apps/`·`packages/` 가 잔해로 읽힌다.
+  scan="$dir
+$(dirname "$dir")"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    # 실물 경로로 맞춘다 — Orca 가 준 표기와 git 이 준 표기(`/var` 대 `/private/var`)가 다르면
+    # 같은 디렉터리를 두 번 훑어 잔해를 두 번 낸다.
+    sd="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || continue
+    [ "$(basename "$sd")" = "$repo_name" ] || continue
+    [ -e "$sd/.git" ] && continue
     case "
-$live_list
+$scan
 " in
       (*"
+$sd
+"*) continue ;;
+    esac
+    scan="$scan
+$sd"
+  done <<EOF
+$(printf '%s\n' "$rows" | cut -f4)
+EOF
+
+  while IFS= read -r sd; do
+    [ -n "$sd" ] || continue
+    for d in "$sd"/*; do
+      [ -d "$d" ] || continue
+      # 훑는 디렉터리 자신(`.worktrees/<저장소>`)은 워크트리가 아니라 상위 묶음이다.
+      case "
+$scan
+" in
+        (*"
 $d
 "*) continue ;;
-    esac
-    # Orca 가 알고 있으면 고아가 아니다(collect_worktrees 가 이미 다룬다).
-    slug="$(basename "$d")"
-    case "
+      esac
+      # 실물 git 워크트리면 고아가 아니다.
+      case "
+$live_list
+" in
+        (*"
+$d
+"*) continue ;;
+      esac
+      # Orca 가 알고 있으면 고아가 아니다(collect_worktrees 가 이미 다룬다).
+      slug="$(basename "$d")"
+      case "
 $known
 " in
-      (*"
+        (*"
 $slug
 "*) continue ;;
-    esac
-    printf '%s\t%s\n' "$slug" "$d"
-  done
+      esac
+      printf '%s\t%s\n' "$slug" "$d"
+    done
+  done <<EOF
+$scan
+EOF
 }
 
 # 브랜치가 기준 브랜치에 전부 들어갔는지.
@@ -452,7 +502,7 @@ EOF
         "$(next_action "$token" "$slug" "$live")"
     fi
   done <<EOF
-$(collect_orphans "$(printf '%s' "$rows" | cut -f1)")
+$(collect_orphans "$rows")
 EOF
 
   [ "$unsettled" -eq 0 ]
@@ -1037,7 +1087,7 @@ EOF
     printf '%s 잔해 정리\n' "$slug"
     prune_leftovers "$path" "$root" "$force" || refused=$((refused + 1))
   done <<EOF
-$(collect_orphans "$(printf '%s' "$rows" | cut -f1)")
+$(collect_orphans "$rows")
 EOF
 
   # F10: 슬러그 오타가 "정리 완료"로 보고되던 것을 막는다.
@@ -1216,17 +1266,63 @@ worktree_id_for_path() {
     | head -1
 }
 
+# 슬러그로 이 저장소의 워크트리 id 를 Orca 목록에서 찾는다. 경로를 조립하지 않는다.
+# 사용: worktree_id_for_slug <슬러그> [<브랜치>]
+#
+# **워크트리 자리는 Orca 설정이 정한다** — 앱의 글로벌 worktree 경로(기본
+# `~/orca/workspaces/<저장소>/<슬러그>`) 또는 repo 별 `worktreeBasePath`. 예전에는
+# `<최상위>/.worktrees/<저장소>/<슬러그>` 를 가정하고 그 경로로 id 를 찾았는데, 설정이 기본값으로
+# 바뀌자(2026-11-11) Orca 는 워크트리를 만들고도 spawn 이 「워크트리 생성 실패」로 멈췄다.
+# 그래서 같은 저장소(repoId — 없으면 id 의 `<repoId>::` 앞부분)·경로의 마지막 이름(슬러그 —
+# collect_worktrees 와 같은 규칙)·브랜치로 거른다. 브랜치는 주면 정확 일치, 안 주면
+# `<슬러그>` 또는 `<접두>/<슬러그>`(Orca 가 붙이는 사용자 접두 — 실물 `jang2162/<슬러그>`)다.
+worktree_id_for_slug() {
+  local slug="$1" branch="${2:-}" repo
+  repo="$(repo_id)"
+  [ -n "$repo" ] || return 0
+  "$(orca_cli)" worktree list --limit 500 --json 2>/dev/null \
+    | jq -r --arg s "$slug" --arg b "$branch" --arg repo "$repo" '
+        (.result.worktrees? // .result)[]?
+        | select(type == "object" and (.id | type) == "string")
+        | select((.repoId // (.id | split("::") | first)) == $repo)
+        | select((.path // "" | sub("/+$"; "") | split("/") | last) == $s)
+        | ((.branch // "") | sub("^refs/heads/"; "")) as $br
+        | select(if $b != "" then $br == $b
+                 else ($br == $s or ($br | endswith("/" + $s))) end)
+        | .id' \
+    | head -1
+}
+
+# 워크트리를 만들고 그 id(`<repoId>::<경로>`)를 낸다. 자리는 Orca 가 정한다 — 경로를 가정하지 않는다.
+#
+# 생성 응답의 꼴은 런타임 판마다 다르다(worktree_id_for_path 주석). 받는 꼴:
+#   `.result.worktree.{id,path,branch}`(2026-11-11 실물) · `.result.{id,path,branch}`(옛 판)
+# id 가 `<repoId>::<경로>` 꼴이면 그대로 쓰고(spawn 이 `::` 뒤를 경로로 쓴다), 아니면 응답의 path 로
+# 목록에서 찾고, 그것도 없으면 슬러그·브랜치로 목록에서 찾는다.
 create_worktree() {
-  local slug="$1" base="$2" root
+  local slug="$1" base="$2" root out wt id path branch
   root="$(repo_root)"
-  "$(orca_cli)" worktree create \
+  out="$("$(orca_cli)" worktree create \
       --name "$slug" \
       --repo "path:$root" \
       --base-branch "$base" \
       --setup run \
-      --json >/dev/null 2>&1
+      --json 2>/dev/null)"
 
-  worktree_id_for_path "$root/.worktrees/$(basename "$root")/$slug"
+  wt='(.result.worktree? // .result?) | if type == "object" then . else {} end'
+  id="$(printf '%s' "$out" | jq -r "$wt | .id // .worktreeId // empty | strings" 2>/dev/null | head -1)"
+  path="$(printf '%s' "$out" | jq -r "$wt | .path // empty | strings" 2>/dev/null | head -1)"
+  branch="$(printf '%s' "$out" \
+    | jq -r "$wt | .branch // empty | strings | sub(\"^refs/heads/\"; \"\")" 2>/dev/null | head -1)"
+
+  case "$id" in
+    (?*::/*) printf '%s\n' "$id"; return 0 ;;
+  esac
+  if [ -n "$path" ]; then
+    id="$(worktree_id_for_path "$path")"
+    [ -z "$id" ] || { printf '%s\n' "$id"; return 0; }
+  fi
+  worktree_id_for_slug "$slug" "$branch"
 }
 
 # 새 브랜치가 기준과 같은 커밋에 서 있는지 확인하고, 아니면 되감는다.
@@ -2114,9 +2210,10 @@ cmd_attach() {
   model="$(resolve_model "$role" "$model_override")" || return 1
   require_orca || return 1
 
-  path="$(worktrees_dir)/$slug"
-  [ -d "$path" ] || {
-    printf 'attach: 워크트리가 없다: %s (붙일 대상이 없으면 spawn 을 쓴다)\n' "$path" >&2
+  # 자리는 Orca 가 정하므로 경로를 조립하지 않고 Orca 목록(collect_worktrees)에서 슬러그로 찾는다.
+  path="$(worktree_path_for_slug "$slug")"
+  [ -n "$path" ] && [ -d "$path" ] || {
+    printf 'attach: 워크트리가 없다: %s (붙일 대상이 없으면 spawn 을 쓴다)\n' "${path:-$slug}" >&2
     return 1
   }
   wt_id="$(worktree_id_for_path "$path")"

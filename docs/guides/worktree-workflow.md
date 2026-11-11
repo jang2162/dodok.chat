@@ -20,9 +20,9 @@ IDE, 실행 중인 `pnpm dev`(Vite 개발 서버·서버 프로세스), 다른 �
 - **superpowers 는 브레인스토밍·스펙·구현계획까지만 쓴다.** 그 뒤의 구현·리뷰·검증은 워커에게 간다.
   `subagent-driven-development` 의 Agent 디스패치, `EnterWorktree`, 백그라운드 서브에이전트(Agent 도구)는
   **Orca 가 살아 있는 동안 구현 경로로 쓰지 않는다** — 서브에이전트는 컨텍스트가 조율자 안에 숨어 사람이 볼 수
-  없고, `EnterWorktree` 가 만드는 `.claude/worktrees/` 는 이 저장소의 워크트리 규약(`.worktrees/dodok.chat/<슬러그>`)
-  밖이라 `status`·`reap`·훅이 알지 못한다.
-- **Orca 가 없거나 죽어 있거나, 살아 있어도 이 저장소의 워크트리를 다룰 수 없으면**(Orca 가 만드는 자리가 `.worktrees/dodok.chat/<슬러그>` 가 아닐 때 — 2절)
+  없고, `EnterWorktree` 가 만드는 `.claude/worktrees/` 는 Orca 가 모르는 워크트리라 `status`·`reap`·훅이
+  알지 못한다(스크립트는 워크트리를 Orca 목록으로 찾는다 — 2절).
+- **Orca 가 없거나 죽어 있거나, 살아 있어도 이 저장소의 워크트리를 다룰 수 없으면**(`spawn` 이 Orca 가 만든 워크트리를 찾지 못할 때 — 2절)
   그때만 superpowers 의 실행 경로(`subagent-driven-development`, 필요하면 `EnterWorktree`, 또는 손으로 만든
   `.worktrees/dodok.chat/<슬러그>` 안에서 도는 서브에이전트)로 내려간다. 내려갈 때는 그 이유를 사용자에게 말한다. 그 경우에도 5절(커밋)과 0절(판단)은 그대로 적용된다.
 - 구현계획(`docs/superpowers/plans/*.md`)이 있으면 **브리프는 그 계획의 태스크를 가리키고**, 워커가 계획 문서를
@@ -153,14 +153,18 @@ Orca 1.4.246 부터 `orca orchestration … --json` 기본 응답이 짧아졌�
 `worker-start` 가 실패했는데 성공 요약을 내지 않는다. 그런 워커는 supervised 로 잡히지 않아
 `worker-release` 로 회수할 터미널 자원이 없다.
 
-**⚠ spawn 이 재지 않는 것이 하나 있다 — 워크트리가 생기는 자리.** 스크립트는 워크트리 경로를
-`<최상위>/.worktrees/dodok.chat/<슬러그>` 로 알고 그 자리에서 id 를 되찾는다. 그 자리는 Orca 의 worktree 경로 설정이
-정한다 — **앱의 글로벌 설정이 기본이고 repo 별 `worktreeBasePath` 가 있으면 그것이 덮는다.** 이 머신은 글로벌 설정이
-`.worktrees` 라 repo 별 값이 비어 있어도 `.worktrees/dodok.chat/<슬러그>` 에 만들어진다(실측: `orca worktree create` 의
-반환 `path`). 둘 다 다른 값이면 Orca 는 다른 자리에 만들고 스크립트는 아무것도 찾지 못해 `spawn: 워크트리 생성 실패` 로
-끝난다 — 워크트리는 실제로 만들어졌고 엉뚱한 자리에 잔해로 남는다. 이 메시지를 만나면 생성이 아니라 **설정을 의심한다.**
-아래 「만드는 방법」의 경로 항목대로 재고 고친 뒤, `orca worktree list --json` 으로 잘못된 자리의 잔해를 찾아
-`orca worktree rm` 으로 지우고 다시 spawn 한다.
+**워크트리가 생기는 자리는 Orca 가 정한다 — 스크립트는 자리를 가정하지 않고 Orca 응답으로 찾는다.** 자리는 Orca 의
+worktree 경로 설정이 정한다 — 앱의 글로벌 설정(기본 `~/orca/workspaces/<저장소>/<슬러그>`)이 기본이고 repo 별
+`worktreeBasePath` 가 있으면 그것이 덮는다. 저장소 밖이어도 된다. `spawn` 은 `orca worktree create --json` 의 응답
+(`.result.worktree.{id,path,branch}` — 옛 판의 `.result.{id,path}` 도 받는다)에서 id 를 읽고, 응답에 id 가 없으면 응답의
+`path` 로, 그것도 없으면 `orca worktree list` 에서 같은 저장소(repoId)·슬러그(경로의 마지막 이름)·브랜치로 찾는다.
+`attach`·`stop`·`keep`·`reap`·`status` 도 슬러그를 Orca 목록(`worktree ps`)에서 찾는다. 예전에는 스크립트가
+`<최상위>/.worktrees/dodok.chat/<슬러그>` 를 조립해 그 경로로 id 를 찾았고, 설정이 기본값으로 바뀌자(2026-11-11)
+Orca 는 워크트리를 만들고도 `spawn: 워크트리 생성 실패` 로 멈춰 엉뚱한 자리에 잔해가 남았다.
+
+그래도 `spawn: 워크트리 생성 실패` 를 만나면 `orca worktree list --json` 으로 이번 슬러그의 워크트리가 생겼는지 본다 —
+생겼으면 응답 꼴이 또 바뀐 것이니 스크립트(`create_worktree`)를 고치고, 그 워크트리는 `orca worktree rm` 으로 지우고
+다시 spawn 한다.
 
 ### 붙이기 — 터미널을 직접 만들지 않는 이유
 
@@ -382,7 +386,7 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 
 `git worktree add` 보다 나은 점 셋:
 
-1. **Orca 가 곧바로 등록한다** — 반환 JSON 에 `id` 가 들어 있어 `orca worktree list --json` 으로 다시 찾을 필요가 없다.
+1. **Orca 가 곧바로 등록한다** — 반환 JSON(`.result.worktree.id`)에 `id` 가 들어 있어 `orca worktree list --json` 으로 다시 찾을 필요가 없다.
    그 id 가 3절의 `worker-start --worktree id:<fullId>` 에 그대로 들어간다.
 2. **`--setup run` 이 저장소 루트 `orca.yaml` 의 셋업을 돌린다** — mise·의존성 설치·`ruler apply`·`.env` 복사·codegraph 인덱스(아래).
 3. `--agent` · `--prompt` 로 워크트리 생성과 워커 기동을 한 번에 할 수 있다(3절 참고).
@@ -425,32 +429,13 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
     | jq '.result.repo.hookSettings | {commandSourcePolicy, setupRunPolicy}'
   ```
 - **경로는 Orca 가 정한다 — 글로벌 설정 또는 repo 별 `worktreeBasePath`.** 워크트리 위치는 앱의 글로벌 worktree 경로
-  설정이 기본이고, repo 설정의 `worktreeBasePath` 가 있으면 그것이 덮는다. **repo 를 Orca 에 등록해도 repo 별 값은 자동으로
-  채워지지 않으며, 글로벌 값은 CLI 로 보이지 않는다**(`repo show` 에는 repo 별 값만 나온다). 어느 쪽도 `.worktrees` 가
-  아니면 워크트리가 저장소 루트 밖으로 나갈 수 있고, 그렇게 생긴 워크트리는 **다른 에이전트가 찾지 못하고 `.gitignore` 도
-  덮지 못한다**(아래 「Orca 가 없을 때」의 위치 규약).
+  설정(기본 `~/orca/workspaces/<저장소>/<슬러그>`)이 기본이고, repo 설정의 `worktreeBasePath` 가 있으면 그것이 덮는다.
+  **어느 자리든 맞다** — 저장소 밖이어도 된다. 스크립트·훅은 자리를 가정하지 않는다(`scripts/orca-worker.sh` 는 Orca
+  응답과 목록으로 찾고, 훅은 git 으로 워크트리인지 가른다). 자리를 알아야 하면 짐작하지 말고 반환 JSON 의
+  `.result.worktree.path` 나 `scripts/orca-worker.sh status` 를 본다. 손으로 다른 자리를 고르려고 CLI 로 우회하지 않는다 —
+  `worktree create` 에는 생성 위치를 받는 옵션이 없다(`--name` 은 이름이지 경로가 아니다).
 
-  **설정을 읽지 말고 실물로 잰다** — 일회용 워크트리를 만들어 반환 `path` 를 보고 바로 지운다.
-
-  ```bash
-  orca worktree create --name probe-path --repo path:/Users/jang2162/IdeaProjects/dodok.chat \
-      --base-branch main --setup skip --no-parent --json | jq -r '.result.worktree.path // .result.path'
-  # /Users/jang2162/IdeaProjects/dodok.chat/.worktrees/dodok.chat/probe-path   ← 이 자리여야 한다
-  orca worktree rm --worktree "id:<repoId>::<위 path>" --json && git worktree prune
-  ```
-
-  이 머신의 글로벌 설정은 `.worktrees` 이고 위 실측이 그 자리를 냈다. 다른 자리가 나오면 **Orca 앱 설정**(글로벌 또는
-  그 repo 의 worktree 경로)에서 `.worktrees` 로 맞추고 다시 잰다. ⚠ **CLI 로는 이 값을 쓸 수 없다** — `repo add` 는
-  경로만 받고, `repo set-base-ref` 는 기준 ref 를, `worktree set` 은 이름·이슈·부모 같은 메타데이터만 바꾼다.
-  `worktree create` 에도 생성 위치를 받는 옵션이 없다(`--name` 은 이름이지 경로가 아니다). **고칠 수 있는 자리는 앱 설정뿐이므로,
-  자리가 틀리면 거기서 멈추고 사람에게 설정을 바꿔 달라고 알린다** — CLI 로 우회하려다 엉뚱한 자리에 만들지 마라.
-
-  `rm` 뒤에는 `.worktrees/dodok.chat/.orca-worktree-trash/` 가 남을 수 있다 — Orca 의 휴지통이지 잔해가 아니다.
-
-  설정이 맞더라도 **만든 뒤 반환 JSON 의 `path` 를 보고** 그 자리가
-  `<최상위>/.worktrees/dodok.chat/<슬러그>` 인지 확인한다 — `scripts/orca-worker.sh` 가 아는 자리가 여기다.
-  아니면 **워커를 띄우기 전에** `orca worktree rm` 으로 지우고 설정을 고친 뒤 다시 만든다 — 잘못된 자리에
-  워커를 붙이고 나면 그 워커가 만든 커밋까지 함께 옮겨야 한다.
+  `rm` 뒤에는 그 자리의 `<기준>/<저장소>/.orca-worktree-trash/` 가 남을 수 있다 — Orca 의 휴지통이지 잔해가 아니다.
 
 ### Orca 가 없을 때 (또는 위가 실패할 때)
 
@@ -458,10 +443,11 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 ```
 
-- **위치**: `.worktrees/dodok.chat/<슬러그>/` (저장소 루트 하위, gitignore 됨). Orca 가 만드는 자리와 같은 규약을 쓴다 —
-  그래야 `status`·`reap`·훅이 손으로 만든 것도 다룬다. 저장소 바깥이나 임의 경로에 만들지 않는다.
+- **위치**: `.worktrees/dodok.chat/<슬러그>/` (저장소 루트 하위, gitignore 됨). 손으로 만들 때만 이 자리를 쓴다 — 옛 Orca
+  자리라 `status`·`reap` 의 잔해 탐지가 계속 훑는다. 저장소 바깥이나 임의 경로에 만들지 않는다. Orca 로 만드는 워크트리는
+  Orca 설정이 정한 자리에 생긴다(위 「경로는 Orca 가 정한다」).
 - ⚠ **손으로(`git worktree add`) 만든 워크트리는 Orca 가 목록에 올리지 않는다**(이 저장소에서 실측 — 글로벌 설정이
-  `.worktrees` 이고 자리도 규약대로였는데 `orca worktree list --json` 에 나오지 않았다). 그러면 `attach` 도
+  `.worktrees` 이고 자리도 `.worktrees/dodok.chat/<슬러그>` 였는데 `orca worktree list --json` 에 나오지 않았다). 그러면 `attach` 도
   「Orca 가 워크트리로 모른다」로 실패한다. **Orca 워커를 붙일 워크트리는 Orca 로 만든다(= `spawn`).** 손으로 만든
   워크트리에서 일해야 하면 그 안의 실행 주체는 문서 첫머리의 폴백(서브에이전트)이고, 그 이유를 사용자에게 말한다.
 - 기준 브랜치를 명시해야 하면 마지막 인자로 준다(`... .worktrees/dodok.chat/x base2`). 기본은 현재 `HEAD` 다.
@@ -806,7 +792,7 @@ scripts/orca-worker.sh stop <슬러그>           # 끝난 워커 회수 뒤 그
 scripts/orca-worker.sh stop --all --dry-run   # 무엇이 정지될지 먼저 본다
 ```
 
-슬러그는 워크트리 경로의 마지막 이름(`.worktrees/dodok.chat/<슬러그>`)이다 — Orca 의 `displayName` 이 아니다. Orca 는 워커의 브랜치 이름을 바꾸며 `displayName` 도 바꾸므로(예: `orca-1246` 이 「Fix orca worker orca」가 됐다), 그 이름을 쓰면 spawn 이 준 슬러그로 `reap`·`stop`·`keep` 이 「없다」가 된다.
+슬러그는 워크트리 경로의 마지막 이름(`<Orca 가 정한 자리>/<슬러그>`)이다 — Orca 의 `displayName` 이 아니다. Orca 는 워커의 브랜치 이름을 바꾸며 `displayName` 도 바꾸므로(예: `orca-1246` 이 「Fix orca worker orca」가 됐다), 그 이름을 쓰면 spawn 이 준 슬러그로 `reap`·`stop`·`keep` 이 「없다」가 된다.
 
 `status` 는 **미정리가 하나라도 있으면 exit 1**, 없으면 exit 0 이다.
 `.claude/hooks/orca-worker-check.sh` 가 세션 시작과 매 프롬프트마다 이 종료코드만 보고 세션에 현황을 알린다
@@ -858,7 +844,10 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 **`status` 와 `reap` 은 Orca 가 모르는 고아 디렉터리도 다룬다.** 이미 제거된 워크트리의
 껍데기(`node_modules`·`.turbo`·`dist` 만 남은 디렉터리)는 `git worktree list` 에도
 `orca worktree ps` 에도 없어서 열거되지 않는다. 스크립트는 `orphan` 토큰으로 보고하고 `reap <슬러그>` 로 치운다 —
-내용이 의존성·빌드 산출물뿐일 때만 지우고, 아니면 목록을 내고 거부한다.
+내용이 의존성·빌드 산출물뿐일 때만 지우고, 아니면 목록을 내고 거부한다. 훑는 자리는 옛 자리(`.worktrees/dodok.chat/`·
+`.worktrees/`)와 **Orca 가 아는 워크트리들의 부모 디렉터리**(기본 `~/orca/workspaces/dodok.chat/`)다. 부모 디렉터리는
+이름이 저장소 이름(`dodok.chat`)일 때만, 그리고 체크아웃 자신(`.git` 이 있다)이 아닐 때만 훑는다 — 워크트리를 홈
+바로 아래에 두는 설정이면 홈 전체를 잔해로 읽게 되기 때문이다.
 
 **잔해 디렉터리에도 터미널이 붙어 있을 수 있다.** 워크트리 등록이 사라져도 그 디렉터리에서
 돌던 터미널은 남는다. Orca 의 워크트리 목록에 없으니 `liveTerminalCount` 로는 세지지 않고,
@@ -871,7 +860,7 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 
 `reap` 의 실행 순서는 **회수 → 터미널 정지 → 폐기 → 잔해 제거**다. 터미널이 살아 있으면
 `worktree rm` 이 실패하므로 순서가 곧 요구사항이다. 마지막 잔해 제거(`git worktree list` 에
-없는 껍데기 디렉터리 + `git worktree prune`)가 빠지면 `.worktrees/` 에 껍데기가 쌓인다.
+없는 껍데기 디렉터리 + `git worktree prune`)가 빠지면 워크트리 자리에 껍데기가 쌓인다.
 **`reap` 은 자기가 서 있는 워크트리를 건너뛴다** — 워크트리 안의 워커가 `--all-merged` 를
 돌리는 일이 실제로 생기고, 가드가 없으면 자기 발밑이 무너진다.
 

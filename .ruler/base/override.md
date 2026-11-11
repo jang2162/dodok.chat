@@ -1,4 +1,4 @@
-# base 바꿈 — 이 프로젝트에서 더하는 브리프 규칙
+# base 바꿈 — 이 프로젝트에서 바꾸는 규칙
 
 ## 브리프의 건드릴 파일은 호출자와 시험 파일 이름까지 적는다
 바꾸는 절: `base/09-worker-brief.md`
@@ -11,3 +11,14 @@
   - 「무엇을 어떻게」에 적은 시험 파일은 글롭이 아니라 같은 이름으로 목록에 싣는다 — 글롭으로만 적으면 워커가 목록을 좁게 읽어 새 파일을 만든다.
   - 줄이 wire·계약 페이로드(예: `RunnerApprovalRequested`)에 필드를 더하거나 그 필드가 다른 칸으로 옮겨 가면, 그 페이로드를 통째로 단언하는 기존 시험 파일도 건드릴 파일에 적는다 — 이웃 필드의 시험 값(예: `summary: "npm test`)으로 `grep -rn` 하면 나온다. 결정 배치(2026-10-31)에서 러너 `run.test.ts`·`adapter-integration.test.ts` 가 목록에 없어 워커가 멈추고 물었다.
   - 레이트 키·한도·공통 검사처럼 여러 시험이 함께 지나는 동작을 바꾸는 줄은, 그 동작을 가장 많이 부르는 시험(서버는 `apps/server/test/roles.matrix.test.ts`)도 건드릴 파일에 적는다 — 빠지면 워커가 전체 시험에서 막혀 묻는다.
+
+## Orca 로 만드는 워크트리의 자리는 Orca 설정이 정한 대로 둔다
+바꾸는 절: `base/06-worktree-setup.md` 「워크트리는 저장소 안에 만들고, 하나의 작업이 하나를 갖는다」
+
+그 절의 **위치 항목만** 바꾼다. Orca 로 만드는 워크트리의 자리는 Orca 설정(앱의 worktree 경로 — 기본 `~/orca/workspaces/<저장소>/<슬러그>`, repo 별 `worktreeBasePath` 가 있으면 그것)이 정한 대로 둔다 — 저장소 밖이어도 된다. `scripts/orca-worker.sh` 는 자리를 가정하지 않고 Orca 응답·목록으로 찾는다. 하나의 작업 = 하나의 워크트리·브랜치·정리 규칙은 그 절을 따른다. Orca 없이 손으로(`git worktree add`) 만들 때만 저장소 안 `.worktrees/<슬러그>` 에 만든다.
+
+- **Why:** 그 절의 「저장소 안에 만든다」는 다른 에이전트가 워크트리를 찾게 하려는 것인데, Orca 로 만든 워크트리는 Orca 목록이 그 일을 한다. 자리를 `.worktrees/` 로 고정하면 Orca 앱 설정과 묶인다 — 설정이 기본값으로 바뀌자(2026-11-11) Orca 는 워크트리를 만들고도 자리를 가정한 `spawn` 이 「워크트리 생성 실패」로 멈췄고 엉뚱한 자리에 잔해가 남았다. 그 설정은 CLI 로 바꿀 수 없다.
+- **How to apply:**
+  - 워크트리 경로는 짐작하지 말고 `orca worktree create --json` 의 `.result.worktree.path` 나 `scripts/orca-worker.sh status` 로 본다. 스크립트·훅에 `.worktrees/<저장소>/<슬러그>` 같은 경로를 조립해 넣지 않는다 — 워크트리인지는 git(`--git-dir` 대 `--git-common-dir`)으로, 슬러그는 Orca 목록의 경로 마지막 이름으로 가른다.
+  - Orca 가 저장소 밖에 만든 워크트리는 저장소의 `.gitignore` 가 덮지 않아도 된다 — 저장소 작업 트리 밖이라 `git status` 에 나오지 않는다.
+  - 손으로 만든 워크트리는 Orca 가 목록에 올리지 않으므로 Orca 워커를 붙이지 않는다(`docs/guides/worktree-workflow.md` 2절 「Orca 가 없을 때」).

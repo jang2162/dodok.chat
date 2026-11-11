@@ -10,8 +10,15 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # 워커 세션(워크트리 안)에서는 침묵한다 — 회수는 메인 세션의 일이고, 워커에게는 자기 워크트리를 지우라는 말이 된다.
 # ORCA_WORKER_REPO_ROOT 로 저장소를 따로 준 호출(테스트)은 훅 파일 자리와 무관하므로 거르지 않는다 —
 # 거르면 워커가 워크트리 안에서 돌린 orca-worker.test.sh 의 훅 사례만 실패한다
+# 워크트리인지는 경로가 아니라 git 으로 가른다 — 자리는 Orca 설정이 정해 `.worktrees/` 밖(기본
+# `~/orca/workspaces/<저장소>/<슬러그>`)일 수 있다. 워크트리에서는 git-dir(`.git/worktrees/<이름>`)과
+# git-common-dir(최상위의 `.git`)이 다르고, 최상위에서는 같다. git 이 답하지 못하면 거르지 않는다.
 if [ -z "${ORCA_WORKER_REPO_ROOT:-}" ]; then
-  case "$ROOT" in */.worktrees/*) exit 0 ;; esac
+  git_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null)"
+  common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+    exit 0
+  fi
 fi
 SCRIPT="$ROOT/scripts/orca-worker.sh"
 EVENT="${1:-UserPromptSubmit}"

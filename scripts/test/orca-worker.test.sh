@@ -301,16 +301,29 @@ printf 'x\n' > "$P/f.txt"; git -C "$P" add f.txt
 git -C "$P" -c user.email=t@t -c user.name=t commit -qm base
 ORCA_WORKER_REPO_ROOT="$P"; export ORCA_WORKER_REPO_ROOT
 
-# create_worktree 는 생성 응답이 아니라 경로로 id 를 되찾는다.
-# 그래서 worktree list 픽스처가 그 경로를 갖고 있어야 spawn 이 이어진다.
+# 스텁의 생성 응답은 비어 있다(id 가 빠진 옛 판). 그러면 create_worktree 는 경로를 조립하지 않고
+# worktree list 에서 같은 저장소(id 의 `repo1::`)·슬러그(경로의 마지막 이름)·브랜치로 되찾는다.
+# 그래서 list 픽스처가 그 워크트리를 갖고 있어야 spawn 이 이어진다. attach 는 슬러그를 worktree ps
+# (collect_worktrees)에서 찾으므로 ps 픽스처에도 싣는다 — 최상위 항목은 repo_id 가 repoId 를 읽는 자리다.
 # 그리고 verify_base 가 그 경로에서 git 을 부르므로 **실물 워크트리**여야 한다.
 PB="$(basename "$P")"
 git -C "$P" worktree add -q "$P/.worktrees/$PB/probe"  -b probe
 git -C "$P" worktree add -q "$P/.worktrees/$PB/probe2" -b probe2
 jq -n --arg a "$P/.worktrees/$PB/probe" --arg b "$P/.worktrees/$PB/probe2" \
-  '{ok:true,result:[{id:("repo1::"+$a),path:$a},{id:("repo1::"+$b),path:$b}]}' \
+  '{ok:true,result:[{id:("repo1::"+$a),path:$a,branch:"refs/heads/probe"},
+                    {id:("repo1::"+$b),path:$b,branch:"refs/heads/probe2"}]}' \
   > "$P/list.json"
 STUB_ORCA_LIST_FIXTURE="$P/list.json"; export STUB_ORCA_LIST_FIXTURE
+jq -n --arg r "$P" --arg a "$P/.worktrees/$PB/probe" --arg b "$P/.worktrees/$PB/probe2" '
+  {ok:true,result:{worktrees:[
+    {worktreeId:("repo1::"+$r),repoId:"repo1",path:$r,branch:"refs/heads/main",isMainWorktree:true,
+     liveTerminalCount:0,agents:[]},
+    {worktreeId:("repo1::"+$a),repoId:"repo1",path:$a,branch:"refs/heads/probe",isMainWorktree:false,
+     liveTerminalCount:0,agents:[]},
+    {worktreeId:("repo1::"+$b),repoId:"repo1",path:$b,branch:"refs/heads/probe2",isMainWorktree:false,
+     liveTerminalCount:0,agents:[]}
+  ]}}' > "$P/ps.json"
+STUB_ORCA_PS_FIXTURE="$P/ps.json"; export STUB_ORCA_PS_FIXTURE
 
 assert_status 0 "정상 경로는 exit 0 으로 끝난다" cmd_spawn probe chore --base main
 : > "$STUB_ORCA_LOG"
@@ -2581,9 +2594,9 @@ printf 'x\n' > "$NS/f.txt"; git -C "$NS" add f.txt
 git -C "$NS" -c user.email=t@t -c user.name=t commit -qm base
 NSB="$(basename "$NS")"
 git -C "$NS" worktree add -q "$NS/.worktrees/$NSB/probe" -b probe
-jq -n --arg a "$NS/.worktrees/$NSB/probe" '{ok:true,result:[{id:("repo1::"+$a),path:$a}]}' > "$NS/list.json"
+jq -n --arg a "$NS/.worktrees/$NSB/probe" '{ok:true,result:[{id:("repo1::"+$a),path:$a,branch:"refs/heads/probe"}]}' > "$NS/list.json"
 : > "$STUB_ORCA_LOG"
-out="$(STUB_ORCA_FORCE_SHORT=1 STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" \
+out="$(STUB_ORCA_FORCE_SHORT=1 STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" ORCA_WORKER_REPO_ID=repo1 \
   cmd_spawn probe chore --base main 2>&1)"
 assert_eq "$?" "0" "짧은 응답만 오는 Orca 에서도 spawn 이 끝까지 간다"
 assert_eq "$(printf '%s\n' "$out" | grep -c 'task-create 실패')" "0" \
@@ -2593,9 +2606,9 @@ assert_eq "$(printf '%s\n' "$out" | grep -c '^터미널: term_stub$')" "1" \
 
 # 실물 모양대로 답하는 스텁에서 spawn·attach·wait·목록을 돌리고, 파싱하는 호출이 모두 --full 인지 잰다.
 : > "$STUB_ORCA_LOG"
-STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" \
+STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" ORCA_WORKER_REPO_ID=repo1 \
   cmd_spawn probe chore --base main >/dev/null 2>&1
-STUB_ORCA_NO_RUN=1 STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" \
+STUB_ORCA_NO_RUN=1 STUB_ORCA_LIST_FIXTURE="$NS/list.json" ORCA_WORKER_REPO_ROOT="$NS" ORCA_WORKER_REPO_ID=repo1 \
   cmd_spawn probe chore --base main >/dev/null 2>&1
 STUB_ORCA_BOUND_RUN=run_a all_workers >/dev/null 2>&1
 STUB_ORCA_WS_FAIL_MODE=pending STUB_ORCA_REQUEST_STATE=completed STUB_ORCA_WS_REPLAY_OK=1 \
@@ -2847,5 +2860,139 @@ assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0
 assert_eq "$(env $DENV STUB_ORCA_FAIL="orchestration worker-list" bash -c '. "$0"; cmd_stop --all --dry-run' "$SUT" 2>&1 | grep -c '정지 대상')" "0" \
   "stop --all 은 목록을 못 읽으면 아무것도 정지 대상으로 내지 않는다"
 rm -rf "$DT"; unset STUB_ORCA_LOG
+
+# ---------------------------------------------------------------------------
+# Orca 가 저장소 밖에 만든 워크트리 — 자리를 가정하지 않는다
+#
+# 2026-11-11 Orca 앱의 worktree 경로 설정이 기본값(`~/orca/workspaces/<저장소>/<슬러그>`)으로 바뀌자
+# spawn 이 「워크트리 생성 실패」로 멈췄다 — 스크립트가 `<최상위>/.worktrees/<저장소>/<슬러그>` 를 조립해
+# 그 경로로 id 를 찾았기 때문이다. Orca 는 실제로 만들었고 엉뚱한 자리에 잔해가 남았다.
+# 아래는 그 꼴(최상위 `…/IdeaProjects/anyrepo`, 워크트리 `…/orca/workspaces/anyrepo/<슬러그>`)을 재현한다.
+# ---------------------------------------------------------------------------
+echo "Orca 가 다른 자리에 만든 워크트리"
+AW="$(mktemp -d)"
+AWR="$(cd "$AW" && pwd -P)"
+AM="$AWR/IdeaProjects/anyrepo"
+AO="$AWR/orca/workspaces/anyrepo"
+mkdir -p "$AM" "$AO" "$AWR/flat"
+git -C "$AM" init -q -b main
+printf 'x\n' > "$AM/f.txt"
+# spawn 의 셋업(verify_setup)이 만드는 것 — 실물처럼 gitignore 해야 status 가 미커밋으로 읽지 않는다.
+printf '.codegraph/\n.env\nnode_modules/\n' > "$AM/.gitignore"
+git -C "$AM" add f.txt .gitignore
+git -C "$AM" -c user.email=t@t -c user.name=t commit -qm base
+git -C "$AM" worktree add -q "$AO/far" -b jang2162/far
+# 저장소 이름이 아닌 부모(`flat/`)에 둔 이 저장소의 워크트리 — 그 부모는 훑지 않아야 한다.
+git -C "$AM" worktree add -q "$AWR/flat/flatwt" -b jang2162/flatwt
+# 체크아웃 자신 안에 둔 워크트리 — 부모(최상위)의 이름이 저장소 이름이어도 `.git` 이 있으니 훑지 않아야 한다.
+git -C "$AM" worktree add -q "$AM/inner" -b jang2162/inner
+# 목록의 첫 항목은 **다른 저장소의 같은 슬러그**다 — repoId 로 거르지 않으면 그것을 잡는다.
+jq -n --arg m "$AM" --arg f "$AO/far" --arg fl "$AWR/flat/flatwt" --arg in "$AM/inner" \
+      --arg x "$AWR/orca/workspaces/other/far" '
+  {ok:true,result:{worktrees:[
+    {id:("repoB::"+$x),worktreeId:("repoB::"+$x),repoId:"repoB",path:$x,branch:"refs/heads/jang2162/far",
+     isMainWorktree:false,displayName:"far",liveTerminalCount:0,agents:[]},
+    {id:("repoA::"+$m),worktreeId:("repoA::"+$m),repoId:"repoA",path:$m,branch:"refs/heads/main",
+     isMainWorktree:true,displayName:"anyrepo",liveTerminalCount:0,agents:[]},
+    {id:("repoA::"+$f),worktreeId:("repoA::"+$f),repoId:"repoA",path:$f,branch:"refs/heads/jang2162/far",
+     isMainWorktree:false,displayName:"Renamed far",liveTerminalCount:0,agents:[{state:"done"}]},
+    {id:("repoA::"+$fl),worktreeId:("repoA::"+$fl),repoId:"repoA",path:$fl,branch:"refs/heads/jang2162/flatwt",
+     isMainWorktree:false,displayName:"flatwt",liveTerminalCount:0,agents:[]},
+    {id:("repoA::"+$in),worktreeId:("repoA::"+$in),repoId:"repoA",path:$in,branch:"refs/heads/jang2162/inner",
+     isMainWorktree:false,displayName:"inner",liveTerminalCount:0,agents:[]}
+  ]}}' > "$AWR/ps.json"
+jq --arg f "$AO/far" '.result.terminals |= (map(.worktreeId = ("repoA::" + $f)) | .[0:1])' \
+  "$HERE/fixtures/terminal-list.json" > "$AWR/terms.json"
+jq '.result.workers = []' "$HERE/fixtures/worker-list.json" > "$AWR/noworkers.json"
+jq -n --arg f "$AO/far" '{ok:true,result:{worktree:{id:("repoA::"+$f),path:$f,
+  branch:"refs/heads/jang2162/far",repoId:"repoA",displayName:"far"},warnings:[]}}' > "$AWR/create-full.json"
+jq -n --arg f "$AO/far" '{ok:true,result:{worktree:{id:null,path:$f}}}' > "$AWR/create-path.json"
+jq -n --arg f "$AO/far" '{ok:true,result:{id:("repoA::"+$f),path:$f}}' > "$AWR/create-old.json"
+AWLOG="$AWR/log"
+# 셸에 남지 않게 env 로만 준다. ORCA_WORKER_REPO_ID 를 주지 않는다 — repo_id 가 ps 의 최상위 항목에서 읽는다.
+AENV="ORCA_CLI_COMMAND=$HERE/stub-orca.sh STUB_ORCA_LOG=$AWLOG STUB_ORCA_PS_FIXTURE=$AWR/ps.json
+  STUB_ORCA_TERMINALS_FIXTURE=$AWR/terms.json STUB_ORCA_WORKERS_FIXTURE=$AWR/noworkers.json
+  ORCA_WORKER_REPO_ROOT=$AM ORCA_WORKER_REPO_ID= ORCA_WORKER_WORKTREES_DIR= ORCA_WORKER_LIB=1"
+AFAR="repoA::$AO/far"
+
+out="$(env $AENV STUB_ORCA_CREATE_FIXTURE="$AWR/create-full.json" \
+  bash -c '. "$0"; cmd_spawn far chore --base main' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "spawn: Orca 가 저장소 밖에 만든 워크트리로 끝까지 간다(실물 응답 .result.worktree)"
+assert_eq "$(printf '%s\n' "$out" | grep -c -F -x "워크트리: $AFAR")" "1" \
+  "spawn: 생성 응답의 id 를 그대로 쓴다"
+assert_eq "$(grep 'worker-start' "$AWLOG" | grep -c -F -- "--worktree id:$AFAR")" "1" \
+  "spawn: 그 id 로 워커를 붙인다"
+: > "$AWLOG"
+out="$(env $AENV STUB_ORCA_CREATE_FIXTURE="$AWR/create-path.json" \
+  bash -c '. "$0"; cmd_spawn far chore --base main' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc/$(printf '%s\n' "$out" | grep -c -F -x "워크트리: $AFAR")" "0/1" \
+  "spawn: 응답에 id 가 없으면 응답의 path 로 목록에서 id 를 찾는다"
+out="$(env $AENV STUB_ORCA_CREATE_FIXTURE="$AWR/create-old.json" \
+  bash -c '. "$0"; cmd_spawn far chore --base main' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc/$(printf '%s\n' "$out" | grep -c -F -x "워크트리: $AFAR")" "0/1" \
+  "spawn: 옛 판의 .result.{id,path} 꼴도 받는다"
+out="$(env $AENV bash -c '. "$0"; cmd_spawn far chore --base main' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc/$(printf '%s\n' "$out" | grep -c -F -x "워크트리: $AFAR")" "0/1" \
+  "spawn: 응답이 비면 같은 저장소·슬러그·브랜치로 목록에서 찾는다(다른 저장소의 같은 슬러그가 아니다)"
+assert_eq "$(env $AENV bash -c '. "$0"; worktree_id_for_slug far jang2162/other' "$SUT" 2>/dev/null)" "" \
+  "슬러그가 같아도 응답의 브랜치와 다르면 고르지 않는다"
+assert_eq "$(env $AENV bash -c '. "$0"; worktree_id_for_slug nowhere' "$SUT" 2>/dev/null)" "" \
+  "목록에 없는 슬러그는 id 를 지어내지 않는다(경로를 조립하지 않는다)"
+
+: > "$AWLOG"
+out="$(env $AENV bash -c '. "$0"; cmd_attach far chore' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "attach: 저장소 밖 워크트리를 슬러그로 찾아 붙는다"
+assert_eq "$(grep 'worker-start' "$AWLOG" | grep -c -F -- "--worktree id:$AFAR")" "1" \
+  "attach: Orca 목록의 경로로 id 를 만든다"
+assert_status 1 "attach: Orca 가 모르는 슬러그는 거부한다" \
+  env $AENV bash -c '. "$0"; cmd_attach nowhere chore' "$SUT"
+
+assert_eq "$(env $AENV bash -c '. "$0"; cmd_status --porcelain --base main' "$SUT" 2>/dev/null \
+  | awk -F'\t' '$2=="far"{print $1}')" "reap" \
+  "status: 저장소 밖 워크트리를 슬러그로 보고한다"
+# 픽스처의 far 는 살아 있는 터미널이 0개라 「부를 것이 없다」가 찾았다는 표시다(못 찾으면 「없다」·exit 1).
+out="$(env $AENV bash -c '. "$0"; cmd_stop far --dry-run' "$SUT" 2>&1)"; rc=$?
+assert_eq "$rc/$(printf '%s
+' "$out" | grep -c '^far: 살아 있는 터미널이 없다')" "0/1" \
+  "stop: 저장소 밖 워크트리를 슬러그로 찾는다"
+: > "$AWLOG"
+env $AENV bash -c '. "$0"; cmd_reap far --base main' "$SUT" >/dev/null 2>&1
+assert_eq "$(grep 'worktree rm' "$AWLOG" | grep -c -F -- "--worktree id:$AFAR")" "1" \
+  "reap: 저장소 밖 워크트리를 그 자리의 id 로 지운다"
+
+# 잔해 — Orca 가 아는 워크트리의 부모(이름이 저장소 이름)를 훑는다. 이름이 다른 부모는 훑지 않는다.
+mkdir -p "$AO/ghost/node_modules" "$AWR/flat/innocent" "$AM/apps"
+porc="$(env $AENV bash -c '. "$0"; cmd_status --porcelain --base main' "$SUT" 2>/dev/null)"
+assert_eq "$(printf '%s\n' "$porc" | awk -F'\t' '$2=="ghost"{print $1}')" "orphan" \
+  "status: 지금 Orca 자리(<기준>/<저장소>/)의 잔해를 고아로 보고한다"
+assert_eq "$(printf '%s\n' "$porc" | awk -F'\t' '$2=="innocent"' | grep -c '')" "0" \
+  "저장소 이름이 아닌 부모 디렉터리의 남의 디렉터리는 잔해로 읽지 않는다"
+assert_eq "$(printf '%s\n' "$porc" | awk -F'\t' '$2=="apps"' | grep -c '')" "0" \
+  "부모가 체크아웃 자신(.git 이 있다)이면 그 안의 디렉터리를 잔해로 읽지 않는다"
+assert_eq "$(printf '%s\n' "$porc" | awk -F'\t' '$2=="far"||$2=="flatwt"{print $1}' | grep -c orphan)" "0" \
+  "살아 있는 워크트리는 고아가 아니다"
+env $AENV bash -c '. "$0"; cmd_reap ghost --base main' "$SUT" >/dev/null 2>&1
+assert_eq "$([ -d "$AO/ghost" ] && printf yes || printf no)" "no" \
+  "reap: 지금 Orca 자리의 잔해를 치운다"
+assert_eq "$([ -d "$AWR/flat/innocent" ] && printf yes || printf no)" "yes" \
+  "저장소 이름이 아닌 부모의 디렉터리는 남는다"
+
+# 훅 — 워크트리인지는 경로가 아니라 git 으로 가른다. `.worktrees/` 밖 워크트리 안의 훅도 침묵한다.
+mkdir -p "$AO/far/.claude/hooks" "$AO/far/scripts" "$AM/.claude/hooks" "$AM/scripts"
+cp "$HERE/../../.claude/hooks/orca-worker-check.sh" "$AO/far/.claude/hooks/orca-worker-check.sh"
+cp "$SUT" "$AO/far/scripts/orca-worker.sh"
+cp "$HERE/../../.claude/hooks/orca-worker-check.sh" "$AM/.claude/hooks/orca-worker-check.sh"
+cp "$SUT" "$AM/scripts/orca-worker.sh"
+HENV="ORCA_CLI_COMMAND=$HERE/stub-orca.sh STUB_ORCA_PS_FIXTURE=$AWR/ps.json
+  STUB_ORCA_TERMINALS_FIXTURE=$AWR/terms.json STUB_ORCA_WORKERS_FIXTURE=$AWR/noworkers.json
+  ORCA_WORKER_REPO_ID=repoA ORCA_WORKER_REPO_ROOT= ORCA_WORKER_WORKTREES_DIR= ORCA_WORKER_LIB="
+mkdir -p "$AO/ghost2/node_modules"
+assert_eq "$(env $HENV bash "$AM/.claude/hooks/orca-worker-check.sh" UserPromptSubmit 2>/dev/null \
+  | jq -r '.hookSpecificOutput.additionalContext // ""' | grep -c 'ghost2')" "1" \
+  "(전제) 최상위의 훅은 미정리를 낸다"
+assert_eq "$(env $HENV bash "$AO/far/.claude/hooks/orca-worker-check.sh" UserPromptSubmit 2>/dev/null | wc -c | tr -d ' ')" "0" \
+  "저장소 밖(.worktrees/ 밖) 워크트리 안의 훅도 침묵한다(git 으로 가른다)"
+
+rm -rf "$AW"
 
 finish
