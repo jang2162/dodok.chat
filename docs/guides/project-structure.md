@@ -394,7 +394,12 @@ src/
 │  │                      getEffectiveSettings(행이 없으면 에이전트의 새 세션 시작값)·upsertSettings(보낸 칸만)·settingsAgentsOf(상태 줄의 에이전트 = 채널의 러너 에이전트 멤버)·
 │  │                      contextPercentOf(그 세션·스레드의 마지막 실행 runs.usage 의 contextTokens/contextWindow)·assertSettingsWritable(정책 auth/policies.ts authorizeSessionSettings)) ·
 │  │                      agent-settings.routes.ts(`GET /conversations/:id/agent-settings[?threadRootId]`·`PATCH …/:agentId` → wire `conversation.agent_settings` 채널 룸). 새 세션 첫 글의
-│  │                      agentSettings 는 realtime/socket.ts 의 message.send 가 대화를 만드는 같은 트랜잭션에서 저장한다(어기면 글·대화·행이 함께 없다)
+│  │                      agentSettings 는 realtime/socket.ts 의 message.send 가 대화를 만드는 같은 트랜잭션에서 저장한다(어기면 글·대화·행이 함께 없다).
+│  │                      세션에 에이전트 초대(세션 에이전트 초대 스펙 docs/superpowers/specs/2026-11-13-session-agent-invite-design.md): invited-agents.ts(conversation_agents 행 — listInvited·
+│  │                      invitedAgentIds(보관 제외)·insertInvite·deleteInvite·deleteInvitesForChannelAgent(채널 멤버로 넣을 때 — I12), 「이 세션에서 부를 수 있는 에이전트」 sessionAgentIds = 채널
+│  │                      에이전트 멤버 ∪ 그 대화의 초대 — 라우터·실행 문맥·카드 대상·늦은 정본 관문·상태 줄이 쓴다, 멘션 풀기 참가자 sessionParticipants·userSessionParticipants) ·
+│  │                      invited-agents.routes.ts(`GET`·`POST /conversations/:id/agents`·`DELETE …/:agentId` — 일반 채널의 세션만, 내보내면 orchestrator.abortConversationAgent, 시스템 메시지,
+│  │                      wire `conversation.agents` 채널 룸, 초대로 새 Gateway 가 들어오면 채널 프롬프트 동기화 — channels/service.ts channelGatewayIds 가 초대한 에이전트의 Gateway 도 센다)
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상 — OpenClaw 만, provider=runner 는 400).
 │  │                      러너 에이전트는 가져오지 않고 만든다: `POST /agents { provider: "runner", runnerProjectId, program, … }`(프로젝트의 러너가 붙어 있고 프로그램이 available —
 │  │                      아니면 400 field program, 끊김 503 — 옛 클라이언트의 model·permissionMode·allowedTools 는 본문 스키마가 버린다), providerAgentId 는 서버가 `r-` + hex 10 으로 짓는다. PATCH 의
@@ -966,7 +971,7 @@ src/
 │  ├─ WireProvider.tsx     로그인(me 캐시)이 확인되면 소켓을 만들어 붙인다 + `useChannelSubscription`. presence.update(연결마다 강제, visibilitychange·채널 이동 때 값이 바뀌면,
 │  │                       끊겨 있으면 안 보냄, 채널 id 는 uuid 일 때만) · 로그인 확인 때 syncPushSubscription · 세션 정리 훅과 「값 없는 me 의 401」에서 dropLocalPush ·
 │  │                       소켓마다 읽음 전송기(`features/reads/readSender.ts` createReadSender — `ReadSenderContext` 로 내린다, 소켓을 버리면 dispose)·세션 정리 때 읽지 않음 현황 reset
-│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태(`conversation.agent_settings` → features/conversations/agentSettings.ts, 끝난 run.state 는 그 대화의 상태 줄을 다시 받게). `system.notice` 토스트 지속시간.
+│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태(`conversation.agent_settings` → features/conversations/agentSettings.ts, `conversation.agents` → features/conversations/invitedAgents.ts, 끝난 run.state 는 그 대화의 상태 줄을 다시 받게). `system.notice` 토스트 지속시간.
 │  │                       메시지 분배: 루트 → 그 대화의 타임라인 캐시(`message.conversationId` — 캐시가 있을 때만, + 연 스레드의 루트), 답글 → 채널 seq 커서만(noteSeq)·캐시가 있는 스레드에 upsert.
 │  │                       `conversation.created`·`conversation.updated` → 세션 하나·세션 목록 캐시(`features/conversations/cache.ts`).
 │  │                       `ops.event` → 상태 캐시의 unacked 를 곧바로 덮고(상태를 아직 안 받았으면 만들지 않는다) opsStatus·사건 목록 무효화.
@@ -1081,6 +1086,8 @@ src/
 │  ├─ conversations/       채널 세션. ConversationList.tsx(세션 목록 칸·좁은 화면 시트 — 「열림」·「닫힘」, 제목 검색은 서버 q, 「더 보기」, 줄마다 읽지 않음 점·멘션 배지)·ConversationTitle.tsx
 │  │                       (머리의 세션 제목 — 권한이 있으면 「세션 이름 바꾸기」 대화상자, 「세션 닫기」 확인)·ClosedNotice.tsx(작성기 자리 「닫힌 세션입니다」·「다시 열기」, 「세션 관리자만」 정책의
 │  │                       새 세션 창 안내 CannotCreateNotice)·closed.ts(지금 세션이 닫혔는가 — 목록·카드·스레드 패널에 내린다)·permissions.ts(서버 auth/policies.ts 의 세션 쪽 판정을 흉내 — 숨기기는 편의)·agentSettings.ts(상태 줄의 쿼리·PATCH·wire 갈아 끼우기 — 키는 대화·스레드마다, 스레드 키는 값만 바꾸고 컨텍스트 % 는 둔다)·
+│  │                       invitedAgents.ts(세션에 초대한 에이전트 — 쿼리·초대·내보내기·wire `conversation.agents` 갈아 끼우기, 키는 대화마다라 다른 세션에는 없다. 머리 app/layout/ChannelHeader.tsx 의 「초대됨」·
+│  │                       「세션에서 내보내기」, 작성기 @ 후보, 상태 줄이 쓴다)·InviteAgentDialog.tsx(머리의 「에이전트 초대」 — 그 채널에 없고 보관되지 않은 에이전트)·
 │  │                       cache.ts(`qk.conversation`·`qk.conversationList` 캐시, noteConversationActivity — 목록 순서는 message.created 로 올린다, 시스템 메시지는 아니다)·queries.ts·mutations.ts
 │  ├─ messages/            채널 화면은 `/c/<ch>/s/<conv>` 아래(설정·활동·`t/<root>`), `/c/<ch>` 는 ChannelRedirect.tsx 가 최근 열린 세션 또는 `/s/new` 로 넘긴다(목록을 받을 수 없으면 오프라인 사본의 최근 세션 —
 │  │                       4xx 는 사본으로 가리지 않는다, 로딩·없음·오프라인 화면은 ChannelStatus.tsx). ChannelPage.tsx — 머리·세션 목록·그 세션의 MessageList·작성기(닫힌 세션·만들 수 없는 새 세션 창은 숨긴다 — 언마운트하지 않아 세션마다의 초안이 남는다).
