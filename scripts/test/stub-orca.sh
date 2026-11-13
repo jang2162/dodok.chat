@@ -399,14 +399,18 @@ stub_worker_list() {
 
 # run-list 는 픽스처 행의 runId 로 Run 목록을 만든다. 실물처럼 다음 커서는 `page` 가 아니라
 # `.result.nextCursor` 에 있다. STUB_ORCA_RUNS_PAGE_SIZE 로 장을 나눈다.
+#   STUB_ORCA_RUNS_REPEAT  둘째 장부터 앞 장의 마지막 Run 을 다시 싣는다 — 장 사이에 Run 이
+#                          새로 생겨 커서 창이 밀린 모양이다(같은 Run 이 두 장에 걸쳐 온다)
 stub_run_list() {
   local off
   off="$(cursor_offset stub-run-cursor "$(flag_value cursor "$@")")" || exit 1
-  jq --argjson off "$off" --arg size "${STUB_ORCA_RUNS_PAGE_SIZE:-}" '
+  jq --argjson off "$off" --arg size "${STUB_ORCA_RUNS_PAGE_SIZE:-}" \
+     --arg repeat "${STUB_ORCA_RUNS_REPEAT:-}" '
     ([.result.workers[]? | .runId // empty] | unique) as $ids
     | ($ids | length) as $total
     | (if $size == "" then $total else ($size | tonumber) end) as $n
-    | {ok: true, result: {runs: ($ids[$off:($off + $n)] | map({id: .})),
+    | (if $repeat != "" and $off > 0 then $off - 1 else $off end) as $from
+    | {ok: true, result: {runs: ($ids[$from:($off + $n)] | map({id: .})),
         nextCursor: (if ($off + $n) < $total then "stub-run-cursor-\($off + $n)" else null end)}}' \
     "$WORKERS_FIXTURE"
 }

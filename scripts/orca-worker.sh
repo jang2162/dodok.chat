@@ -588,36 +588,73 @@ orca_pages() {
 # `--run` 으로 읽는다. 「모든 Run」을 고르는 옵션은 `worker-list --help` 에 없다 — 그래서
 # 묶인 터미널에서는 Run 수만큼 왕복한다. `run-list` 에 없는 Run 은 볼 수 없다.
 #
+# **Run 별 읽기는 동시에 돈다(`ORCA_WORKER_LIST_JOBS`, 기본 8).** `run-list` 는 이 머신의
+# 모든 프로젝트 Run 을 내고 Run 에는 저장소 표시가 없어 미리 거를 수 없다 — 2026-11-13
+# 실물에서 Run 242개·dispatch 5217행이었고, 순서대로 읽으면 이 함수 한 번이 Orca 호출
+# 266번·67초였다(`attach`·`stop`·`reap` 이 출력 없이 1분 넘게 멈춘 원인). 호출 수는 그대로이고
+# 겹쳐 부를 뿐이라 판정은 같다 — 같은 실물에서 일꾼 8개로 10초. 받은 장은 문자열에 이어 붙이지
+# 않고 파일에 쌓는다 — 9MB 로 자라는 문자열을 Run 마다 다시 복사하는 데만 8초쯤 들었다.
+# 같은 Run 은 한 번만 읽는다 — `run-list` 의 장 사이에 Run 이 새로 생기면 같은 Run 이 두 장에
+# 걸쳐 올 수 있고, 두 번 읽으면 같은 dispatch 를 두 번 회수하고 두 번 센다.
+#
 # **순서.** 한 목록 안에서는 최신순이다(`worker-list --help`). 항목에는 시각 필드가 없어
-# 호출자가 정렬할 수 없다 — 묶인 Run 의 장이 먼저, 그 뒤가 `run-list` 순서다.
-# 못 읽으면 rc=1 이다(「0건」과 다르다 — `orca_pages`).
-all_workers() {
-  local pages first scope bound runs rid more
-  pages="$(orca_pages '.result.page.nextCursor' orchestration worker-list --json --full)" || return 1
+# 호출자가 정렬할 수 없다 — 묶인 Run 의 장이 먼저, 그 뒤가 `run-list` 순서다(동시에 읽어도
+# 이어 붙이는 순서는 이것이다).
+# 못 읽으면 rc=1 이다(「0건」과 다르다 — `orca_pages`). Run 하나라도 못 읽으면 rc=1 이다.
+#
+# 본문이 서브셸이라 임시 디렉터리를 EXIT 트랩으로 지운다.
+all_workers() (
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/orca-worker-list.XXXXXX")" || exit 1
+  trap 'rm -rf "$dir"' EXIT
+  orca_pages '.result.page.nextCursor' orchestration worker-list --json --full >"$dir/0" || exit 1
   # 범위는 첫 장의 `scope` 가 말한다. 그것을 싣지 않는 CLI 는 Run 범위가 생기기 전 것이라
   # 늘 모든 dispatch 를 냈다.
-  first="$(printf '%s\n' "$pages" | sed -n 1p)"
-  scope="$(printf '%s' "$first" | jq -r '.result.scope.source // "all"' 2>/dev/null)"
+  scope="$(sed -n 1p "$dir/0" | jq -r '.result.scope.source // "all"' 2>/dev/null)"
   if [ "$scope" != "all" ]; then
     # 묶인 Run 은 이미 읽었으니 건너뛴다. 어느 Run 인지 모르면 읽은 것을 버리고 전부 다시
     # 읽는다 — 같은 Run 을 두 번 읽으면 같은 dispatch 를 두 번 회수하고 두 번 센다.
-    bound="$(printf '%s' "$first" | jq -r '.result.scope.run // empty' 2>/dev/null)"
-    [ -n "$bound" ] || pages=""
-    runs="$(orca_pages '.result.nextCursor' orchestration run-list --json --full)" || return 1
-    printf '%s\n' "$runs" | jq -s -e 'all(.[]; .result.runs | type == "array")' >/dev/null 2>&1 \
-      || return 1
-    for rid in $(printf '%s\n' "$runs" | jq -r '.result.runs[].id // empty'); do
-      [ "$rid" != "$bound" ] || continue
-      more="$(orca_pages '.result.page.nextCursor' orchestration worker-list --run "$rid" --json --full)" \
-        || return 1
-      pages="$pages
-$more"
+    bound="$(sed -n 1p "$dir/0" | jq -r '.result.scope.run // empty' 2>/dev/null)"
+    [ -n "$bound" ] || : >"$dir/0"
+    orca_pages '.result.nextCursor' orchestration run-list --json --full >"$dir/runs" || exit 1
+    jq -s -e 'all(.[]; .result.runs | type == "array")' "$dir/runs" >/dev/null 2>&1 || exit 1
+    jq -r '.result.runs[].id // empty' "$dir/runs" 2>/dev/null \
+      | awk -v b="$bound" '$0 != "" && $0 != b && !seen[$0]++' >"$dir/rids"
+    jobs="$(uint_env ORCA_WORKER_LIST_JOBS 8)"
+    [ "$jobs" -ge 1 ] || jobs=1
+    # 일꾼 k 는 k, k+jobs, k+2·jobs … 번째 Run 을 순서대로 읽는다(bash 3.2 에는 `wait -n` 이
+    # 없다). **끝까지 읽은 Run 만 `r<번호>` 파일이 된다**(`.part` 에 받아 옮긴다 — 리다이렉션은
+    # 실패해도 파일을 만든다). 그래서 실패든 일꾼이 죽었든 파일이 없는 Run 이 「못 읽었다」다.
+    # 실패하면 표시를 남겨 다른 일꾼이 더 부르지 않게 한다 — 이것은 시간을 아끼는 것뿐이다.
+    k=0
+    while [ "$k" -lt "$jobs" ]; do
+      (
+        i=0
+        while IFS= read -r rid; do
+          i=$((i + 1))
+          [ $(((i - 1) % jobs)) -eq "$k" ] || continue
+          [ ! -e "$dir/failed" ] || exit 0
+          if orca_pages '.result.page.nextCursor' orchestration worker-list --run "$rid" --json --full \
+              >"$dir/r$i.part"; then
+            mv "$dir/r$i.part" "$dir/r$i"
+          else
+            : >"$dir/failed"
+            exit 0
+          fi
+        done <"$dir/rids"
+      ) &
+      k=$((k + 1))
     done
+    wait
+    i=0
+    while IFS= read -r rid; do
+      i=$((i + 1))
+      [ -f "$dir/r$i" ] || exit 1
+      cat "$dir/r$i" >>"$dir/0"
+    done <"$dir/rids"
   fi
-  printf '%s\n' "$pages" | jq -s -e 'all(.[]; .result.workers | type == "array")' >/dev/null 2>&1 \
-    || return 1
-  printf '%s\n' "$pages"
-}
+  jq -s -e 'all(.[]; .result.workers | type == "array")' "$dir/0" >/dev/null 2>&1 || exit 1
+  cat "$dir/0"
+)
 
 # 한 워크트리 것이라고 **증명된** 워커만 낸다.
 # 한 줄에 탭으로 `<dispatchId> <terminalState> <retainedReason> <증명>` 을 낸다.
