@@ -394,7 +394,7 @@ describe("buildTurnFacts — 턴마다 붙는 문맥", () => {
     expect(asGuest).toMatchInlineSnapshot(`
       "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
       세션: 배포 점검
-      세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다.
+      세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션에서는 불리지 않습니다.
       참여자: @mia(사람), @coder(에이전트), @fin(에이전트), @guest(에이전트, 나, 초대됨)
       자리: 채널"
     `);

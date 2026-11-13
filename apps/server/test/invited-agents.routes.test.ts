@@ -257,7 +257,7 @@ describe("DELETE /conversations/:id/agents/:agentId — 내보내기 [Review Foc
     expect(t.events.at(-1)).toEqual({ channelId: t.channel.id, conversationId: t.sessionA, invited: [] });
     expect(await systemLines(t.app, t.headers, t.sessionA)).toEqual([
       "@owner 가 @guest 를 이 세션에 초대했습니다",
-      "@owner 가 @guest 를 이 세션에 내보냈습니다",
+      "@owner 가 @guest 를 이 세션에서 내보냈습니다",
     ]);
   });
 

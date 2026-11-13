@@ -177,7 +177,7 @@ describe("formatInboundContext — 세션에 초대한 에이전트 [세션 에�
     expect(lines.slice(0, 4)).toEqual([
       `[dodok context] channel=${CH} you=@guest`,
       "세션: 배포 점검",
-      "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다.",
+      "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션에서는 불리지 않습니다.",
       "참여자: @jang(사람), @researcher(에이전트), @planner(에이전트), @guest(에이전트, 나, 초대됨)",
     ]);
   });

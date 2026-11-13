@@ -204,7 +204,7 @@ export function formatParticipantLabel(p: InboundContext["participants"][number]
  */
 export function formatSessionInviteLine(participants: InboundContext["participants"]): string | null {
   return participants.some((p) => p.isSelf && p.invited)
-    ? "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다."
+    ? "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션에서는 불리지 않습니다."
     : null;
 }
 

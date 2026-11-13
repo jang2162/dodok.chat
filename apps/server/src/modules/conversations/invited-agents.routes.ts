@@ -80,7 +80,12 @@ export function registerInvitedAgentRoutes(fastify: FastifyInstance, ctx: Invite
       insertInvite(tx, { conversationId: id, agentId, invitedBy: user.id });
       return agent.handle;
     });
-    announce(ctx, { conversationId: id, byUserId: user.id, agentHandle: handle, verb: "초대했습니다" });
+    announce(ctx, {
+      conversationId: id,
+      byUserId: user.id,
+      agentHandle: handle,
+      verb: "이 세션에 초대했습니다",
+    });
     // 다른 Gateway 의 에이전트가 처음 들어오면 그 Gateway 에 채널 프롬프트를 한 번 — 채널 멤버 추가와 같은 꼴(channels/actions.ts)
     for (const gatewayId of channelGatewayIds(ctx.db, session.channelId))
       if (!gatewaysBefore.includes(gatewayId)) syncPromptToGateway(ctx, session.channelId, gatewayId);
@@ -105,7 +110,12 @@ export function registerInvitedAgentRoutes(fastify: FastifyInstance, ctx: Invite
       // 행을 먼저 지운다 — 멈추는 사이 도착한 정본·릴레이 멘션은 이미 「세션 밖」으로 읽힌다
       await ctx.orchestrator.abortConversationAgent(id, agentId);
       const handle = getAgent(ctx.db, agentId)?.handle ?? "알 수 없음";
-      announce(ctx, { conversationId: id, byUserId: user.id, agentHandle: handle, verb: "내보냈습니다" });
+      announce(ctx, {
+        conversationId: id,
+        byUserId: user.id,
+        agentHandle: handle,
+        verb: "이 세션에서 내보냈습니다",
+      });
       return { invited: emitInvited(ctx, session) };
     },
   );
@@ -136,7 +146,7 @@ function announce(
   createSystemMessage(ctx.db, ctx.bus, {
     conversationId: input.conversationId,
     kind: "info",
-    bodyMd: `@${who} ${josa(who, "이", "가")} @${agent} ${josa(agent, "을", "를")} 이 세션에 ${input.verb}`,
+    bodyMd: `@${who} ${josa(who, "이", "가")} @${agent} ${josa(agent, "을", "를")} ${input.verb}`,
   });
 }
 
