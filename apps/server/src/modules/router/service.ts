@@ -8,6 +8,7 @@ import { josa } from "../../util/josa";
 import { getAgent, rowToAgent } from "../agents/service";
 import { type ChannelRecord, getChannel, listMembers } from "../channels/service";
 import { DIRECT_RUN_BLOCK_REASON, directRunBlock } from "../directs/service";
+import { invitedAgentIds, sessionAgentIds } from "../conversations/invited-agents";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { requesterOf } from "../runs/context";
@@ -148,14 +149,17 @@ export function createRouter(deps: RouterDeps): Router {
       const threadRoot =
         message.threadRootId === undefined ? undefined : getThreadRoot(db, channel.id, message.threadRootId);
 
+      // 이 세션에서 부를 수 있는 에이전트 = 채널 멤버 + 그 대화의 초대(세션 에이전트 초대 스펙 5.2). 자동 응답은 members 만 본다(I5)
       const members = listMembers(db, channel.id);
-      const agentList = channelAgents(members.filter((m) => m.memberType === "agent").map((m) => m.memberId));
+      const sessionKey = { channelId: channel.id, conversationId: message.conversationId };
+      const agentList = channelAgents(sessionAgentIds(db, sessionKey));
       const at = now();
       const decision = decideRuns({
         message,
         channel,
         members,
         agents: agentList,
+        invitedAgentIds: invitedAgentIds(db, message.conversationId),
         ...(sourceRun ? { sourceRun } : {}),
         ...(threadRoot ? { threadRoot } : {}),
         chainHashes: sourceRun ? store.chainHashes(db, sourceRun.rootMessageId) : new Set(),

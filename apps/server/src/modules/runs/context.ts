@@ -19,7 +19,8 @@ import {
   users,
 } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
-import { channelParticipants, getChannel } from "../channels/service";
+import { getChannel } from "../channels/service";
+import { invitedAgentIds, sessionParticipants } from "../conversations/invited-agents";
 import { getConversation } from "../conversations/store";
 import type { AgentSessionRow } from "../sessions/service";
 import * as store from "./store";
@@ -113,11 +114,14 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
   const dmOwner = channel.kind === "dm" ? dmOwnerOf(db, channel.dmOwnerId) : undefined;
   // DM 의 참여자는 주인과 이 에이전트뿐이다(계획 PD8). DM 멤버 행은 그 둘만 만들지만(dms/service.ts findOrCreateDm) 헤더가 그 불변에
   // 기대지 않게 여기서도 거른다 — 다른 사람이 실리면 에이전트가 DM 을 여럿이 보는 자리로 읽는다
-  const participants = channelParticipants(db, run.channelId).filter(
+  // 일반 채널은 그 세션(대화)에 초대한 에이전트도 참여자다(세션 에이전트 초대 스펙 5.2) — 다른 세션의 초대는 실리지 않는다
+  const sessionKey = { channelId: run.channelId, conversationId: run.conversationId };
+  const participants = sessionParticipants(db, sessionKey).filter(
     (p) => dmOwner === undefined || (p.type === "user" ? p.id === dmOwner.id : p.id === run.agentId),
   );
+  const invited = new Set(invitedAgentIds(db, run.conversationId));
   // 글 풀기는 보관한 에이전트·비활성 멤버까지 — 옛 멘션이 @unknown 이 되지 않게. 헤더 「참여자:」·릴레이 규칙은 participants 만
-  const renderable = channelParticipants(db, run.channelId, { includeInactive: true });
+  const renderable = sessionParticipants(db, sessionKey, { includeInactive: true });
 
   let message: InboundDeliver["message"];
   let recentUpTo: { seq: number; inclusive: boolean };
@@ -206,7 +210,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     conversationTitle: conversation.title,
     ...(dmOwner ? { dm: { ownerHandle: dmOwner.handle } } : {}),
     // 그룹 DM 은 헤더에 그 표시를 싣는다 — 채널처럼 보이는 자리가 참여자만 보는 대화임을 에이전트가 알게(사람 간 DM 계획 PH12). 참여자는
-    // channelParticipants(비활성·보관 제외) 그대로, 채널 프롬프트는 늘 없다(direct 의 prompt 는 null)
+    // sessionParticipants(비활성·보관 제외 — direct 에는 초대가 없어 channelParticipants 와 같다) 그대로, 채널 프롬프트는 늘 없다(direct 의 prompt 는 null)
     ...(channel.kind === "direct" ? { groupDm: true } : {}),
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
@@ -228,8 +232,11 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
         handle: p.handle,
         displayName: p.displayName,
         isSelf: p.type === "agent" && p.id === run.agentId,
+        ...(p.type === "agent" && invited.has(p.id) ? { invited: true } : {}),
       })),
-      relayRules: dmOwner ? DM_RELAY_RULES : relayRulesFor(channel.relayPolicy, run.agentId, participants),
+      relayRules: dmOwner
+        ? DM_RELAY_RULES
+        : relayRulesFor(channel.relayPolicy, run.agentId, participants, invited),
       ...(input.needsPromptContext && channel.prompt ? { channelPrompt: channel.prompt } : {}),
       ...(override ? { promptOverride: override } : {}),
     },
@@ -292,8 +299,16 @@ function withPlaceholder(text: string, atts: readonly Attachment[]): string {
   return text ? `${text}\n${placeholder}` : placeholder;
 }
 
-/** 사람이 읽는 한 문단. allowPairs 제한이면 이 에이전트가 부를 수 있는 채널 에이전트(자기 자신 제외)만 나열한다. */
-function relayRulesFor(policy: RelayPolicy, agentId: string, participants: Participant[]): string {
+/**
+ * 사람이 읽는 한 문단. allowPairs 제한이면 이 에이전트가 부를 수 있는 에이전트(자기 자신 제외)만 나열한다 — 허용 목록의 쌍 다음에
+ * 초대가 여는 쌍(세션 에이전트 초대 스펙 I11): 이 에이전트가 초대받았으면 그 세션의 다른 에이전트 모두, 아니면 그 세션에 초대한 에이전트
+ */
+function relayRulesFor(
+  policy: RelayPolicy,
+  agentId: string,
+  participants: Participant[],
+  invited: ReadonlySet<string>,
+): string {
   // 라우터는 멘션 = 호출로 본다(서술 속 @핸들도 릴레이가 된다 — docs/guides/agent-guide.md 「릴레이 — 에이전트가 에이전트를 부를 때」). 그래서 부를 때만 @ 를 쓰게 한다
   const base = `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${policy.maxRelayTurns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
   if (policy.allowPairs === "all") return base;
@@ -302,6 +317,9 @@ function relayRulesFor(policy: RelayPolicy, agentId: string, participants: Parti
   for (const pair of policy.allowPairs) {
     const handle = pair.from === agentId && pair.to !== agentId ? handleOf.get(pair.to) : undefined;
     if (handle !== undefined) handles.add(`@${handle}`);
+  }
+  for (const [id, handle] of handleOf) {
+    if (id !== agentId && (invited.has(agentId) || invited.has(id))) handles.add(`@${handle}`);
   }
   if (handles.size === 0) return `${base} 당신은 다른 에이전트를 부를 수 없습니다.`;
   return `${base} 당신이 부를 수 있는 에이전트: ${[...handles].join(", ")}.`;

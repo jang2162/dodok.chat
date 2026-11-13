@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import type { Logger } from "../src/logger";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
-import { addMember, createChannel, updateAgentMember } from "../src/modules/channels/service";
+import { addMember, createChannel, updateAgentMember, updateChannel } from "../src/modules/channels/service";
 import { createAgentMessage, createUserMessage, listMessages } from "../src/modules/messages/service";
 import { createRunGate } from "../src/modules/ops/budget";
 import { patchOpsSettings } from "../src/modules/ops/settings";
@@ -18,7 +18,8 @@ import { ServerBus } from "../src/realtime/bus";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedConversation, seedWorkspace } from "./helpers/seed";
+import { insertInvite } from "../src/modules/conversations/invited-agents";
 
 const CONTINUE_COMPONENTS = {
   blocks: [
@@ -410,6 +411,91 @@ describe("router service — 스레드", () => {
     expect(t.systemMessages().map((m) => [m.systemMeta?.kind, m.threadRootId])).toEqual([
       ["run_limit", root.id],
     ]);
+  });
+});
+
+describe("router service — 세션에 초대한 에이전트 [세션 에이전트 초대 스펙 5.2]", () => {
+  /** 세션 A 에만 guest(채널 밖 에이전트)를 초대한다. B 는 같은 채널의 다른 세션 */
+  function inviteSetup(relayPolicy?: z.input<typeof RelayPolicy>) {
+    const t = setup(relayPolicy);
+    const guest = createAgent(t.db, {
+      gatewayId: FAKE_GATEWAY_ID,
+      workspaceId: t.workspaceId,
+      providerAgentId: "guest",
+      handle: "guest",
+      name: "GUEST",
+    });
+    const sessionA = channelConversation(t.db, t.channel.id);
+    const sessionB = seedConversation(t.db, t.channel.id);
+    insertInvite(t.db, { conversationId: sessionA, agentId: guest.id, invitedBy: t.userId });
+    let n = 0;
+    const humanIn = (conversationId: string, bodyMd: string) =>
+      createUserMessage(t.db, t.bus, { conversationId, authorId: t.userId, bodyMd, clientMsgId: `i${++n}` });
+    const runIn = (conversationId: string, agent: Agent) =>
+      insertRun(t.db, {
+        channelId: t.channel.id,
+        conversationId,
+        agentId: agent.id,
+        triggerKind: "mention",
+        rootMessageId: uuid(),
+        relayDepth: 0,
+        sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${conversationId}`,
+        createdAt: new Date(),
+      });
+    const saidIn = (conversationId: string, agent: Agent, run: Run, bodyMd: string) =>
+      createAgentMessage(t.db, t.bus, {
+        conversationId,
+        agentId: agent.id,
+        runId: run.id,
+        externalId: `io-${++n}`,
+        bodyMd,
+      });
+    return { ...t, guest, sessionA, sessionB, humanIn, runIn, saidIn };
+  }
+
+  it("세션 A 에서 @guest → 멘션 토큰이 되고 guest 의 mention 런", async () => {
+    const t = inviteSetup();
+    const message = t.humanIn(t.sessionA, "@guest 봐 줘");
+    expect(message.mentions.agents).toEqual([t.guest.id]);
+    await t.router.routeMessage(message);
+    expect(
+      t.enqueue.mock.calls.map(([plan]) => [plan.agentId, plan.conversationId, plan.triggerKind]),
+    ).toEqual([[t.guest.id, t.sessionA, "mention"]]);
+  });
+
+  it("같은 채널의 세션 B 에서 @guest 는 토큰이 되지 않고 런도 없다 [Review Focus 1]", async () => {
+    const t = inviteSetup();
+    const message = t.humanIn(t.sessionB, "@guest 봐 줘");
+    expect(message.mentions.agents).toEqual([]);
+    await t.router.routeMessage(message);
+    expect(t.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("세션 A 의 dev 글 @guest → 릴레이, guest 글 @dev → 릴레이 — 허용 목록이 그 쌍을 몰라도 [Review Focus 5]", async () => {
+    const t = inviteSetup();
+    updateChannel(t.db, t.channel.id, {
+      relayPolicy: { maxRelayTurns: 4, allowPairs: [{ from: t.fin.id, to: t.ops.id }] },
+    });
+    const devRun = t.runIn(t.sessionA, t.dev);
+    await t.router.routeMessage(t.saidIn(t.sessionA, t.dev, devRun, "@guest 이어서"));
+    const guestRun = t.runIn(t.sessionA, t.guest);
+    await t.router.routeMessage(t.saidIn(t.sessionA, t.guest, guestRun, "@dev 돌려줄게"));
+    const opsRun = t.runIn(t.sessionA, t.ops);
+    await t.router.routeMessage(t.saidIn(t.sessionA, t.ops, opsRun, "@dev 이건 안 된다"));
+    expect(t.enqueue.mock.calls.map(([plan]) => [plan.agentId, plan.triggerKind])).toEqual([
+      [t.guest.id, "relay"],
+      [t.dev.id, "relay"],
+    ]);
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual([expect.stringContaining("허용 목록 밖")]);
+  });
+
+  it("세션 B 의 dev 글 @guest 는 토큰이 되지 않아 릴레이가 없다 [Review Focus 1]", async () => {
+    const t = inviteSetup();
+    const devRun = t.runIn(t.sessionB, t.dev);
+    const message = t.saidIn(t.sessionB, t.dev, devRun, "@guest 이어서");
+    expect(message.mentions.agents).toEqual([]);
+    await t.router.routeMessage(message);
+    expect(t.enqueue).not.toHaveBeenCalled();
   });
 });
 

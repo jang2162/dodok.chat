@@ -16,6 +16,7 @@ import {
 } from "../src/modules/messages/service";
 import { deleteAutomation, insertAutomation } from "../src/modules/automations/store";
 import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from "../src/modules/runs/context";
+import { insertInvite } from "../src/modules/conversations/invited-agents";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -657,6 +658,96 @@ describe("buildInboundDeliver", () => {
         displayName: "자동화",
       });
     });
+  });
+});
+
+describe("buildInboundDeliver — 세션에 초대한 에이전트 [세션 에이전트 초대 스펙 5.2]", () => {
+  /** guest 는 채널 밖 에이전트 — 세션 A(channelConversation)에만 초대한다. B 는 같은 채널의 다른 세션 */
+  function inviteSetup() {
+    const t = setup();
+    const guest = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "guest",
+      handle: "guest",
+      name: "Guest",
+    });
+    const sessionB = seedConversation(t.db, t.channelId);
+    insertInvite(t.db, { conversationId: t.conversationId, agentId: guest.id, invitedBy: t.userId });
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const deliverIn = (conversationId: string, agentId: string, bodyMd: string) => {
+      const message = createUserMessage(t.db, t.bus, {
+        conversationId,
+        authorId: t.userId,
+        bodyMd,
+        clientMsgId: `inv${++n}`,
+      });
+      const { session } = ensureSession(t.db, adapter, { conversationId, agentId });
+      const run: Run = {
+        id: uuid(),
+        channelId: t.channelId,
+        conversationId,
+        agentId,
+        triggerKind: "mention",
+        triggerMessageId: message.id,
+        rootMessageId: message.id,
+        relayDepth: 0,
+        sessionKey: session.sessionKey,
+        status: "queued",
+        hasCanonical: false,
+        createdAt: new Date().toISOString(),
+      };
+      return buildInboundDeliver(t.db, { run, trigger: { message }, session, needsPromptContext: false });
+    };
+    return { ...t, guest, sessionB, deliverIn };
+  }
+
+  it("그 세션의 실행 참여자에 초대한 에이전트가 invited 로 실린다 — 자기 자신이어도", () => {
+    const t = inviteSetup();
+    const fromDev = t.deliverIn(t.conversationId, t.devId, "@dev @guest 봐 줘");
+    expect(fromDev.context.participants).toEqual([
+      { type: "user", handle: "owner", displayName: "owner", isSelf: false },
+      { type: "agent", handle: "dev", displayName: "Dev", isSelf: true },
+      { type: "agent", handle: "fin", displayName: "Fin", isSelf: false },
+      { type: "agent", handle: "guest", displayName: "Guest", isSelf: false, invited: true },
+    ]);
+    // 본문의 @guest 는 토큰이 됐다가 에이전트에게 다시 @guest 로 풀린다(@unknown 이 아니다)
+    expect(fromDev.message.text).toBe("@dev @guest 봐 줘");
+    const fromGuest = t.deliverIn(t.conversationId, t.guest.id, "@guest 안녕");
+    expect(fromGuest.context.participants.find((p) => p.isSelf)).toEqual({
+      type: "agent",
+      handle: "guest",
+      displayName: "Guest",
+      isSelf: true,
+      invited: true,
+    });
+  });
+
+  it("같은 채널의 다른 세션 실행에는 초대한 에이전트가 참여자에 없다 [Review Focus 1]", () => {
+    const t = inviteSetup();
+    const inbound = t.deliverIn(t.sessionB, t.devId, "@dev 다른 세션");
+    expect(inbound.context.participants.map((p) => p.handle)).toEqual(["owner", "dev", "fin"]);
+    expect(inbound.context.participants.some((p) => "invited" in p)).toBe(false);
+  });
+
+  it("허용 목록 채널의 릴레이 규칙 — 채널 에이전트는 초대한 에이전트를, 초대한 에이전트는 그 세션의 다른 에이전트 모두를 부를 수 있다(I11)", () => {
+    const t = inviteSetup();
+    updateChannel(t.db, t.channelId, {
+      relayPolicy: { maxRelayTurns: 3, allowPairs: [{ from: t.devId, to: t.finId }] },
+    });
+    expect(t.deliverIn(t.conversationId, t.devId, "@dev").context.relayRules).toBe(
+      `${rule(3)} 당신이 부를 수 있는 에이전트: @fin, @guest.`,
+    );
+    expect(t.deliverIn(t.conversationId, t.finId, "@fin").context.relayRules).toBe(
+      `${rule(3)} 당신이 부를 수 있는 에이전트: @guest.`,
+    );
+    expect(t.deliverIn(t.conversationId, t.guest.id, "@guest").context.relayRules).toBe(
+      `${rule(3)} 당신이 부를 수 있는 에이전트: @dev, @fin.`,
+    );
+    // 다른 세션의 dev 는 초대와 무관하다
+    expect(t.deliverIn(t.sessionB, t.devId, "@dev").context.relayRules).toBe(
+      `${rule(3)} 당신이 부를 수 있는 에이전트: @fin.`,
+    );
   });
 });
 

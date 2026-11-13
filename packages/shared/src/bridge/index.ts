@@ -76,6 +76,11 @@ export const InboundContext = z.object({
       handle: z.string(),
       displayName: z.string(),
       isSelf: z.boolean(),
+      /**
+       * 그 세션(대화)에만 초대한 에이전트(세션 에이전트 초대 스펙 5.2) — 채널 멤버가 아니다. 헤더 「참여자:」에 `(에이전트, 초대됨)`,
+       * 자기 자신이면 세션 초대 줄(formatSessionInviteLine). 선택 필드라 옛 플러그인은 버리고 받는다(표시가 없을 뿐)
+       */
+      invited: z.boolean().optional(),
     }),
   ),
   relayRules: z.string(), // 사람이 읽는 한 문단
@@ -178,6 +183,29 @@ export function formatDmLine(ownerHandle: string): string {
  */
 export function formatGroupDmLine(): string {
   return "그룹 DM: 참여자만 보는 대화";
+}
+
+/**
+ * 에이전트 헤더 「참여자:」 줄의 한 사람 — 플러그인 헤더와 러너 턴 사실이 같이 쓴다. 그 세션에만 초대한 에이전트는 `초대됨` 을 붙인다
+ * (세션 에이전트 초대 스펙 5.2)
+ */
+export function formatParticipantLabel(p: InboundContext["participants"][number]): string {
+  const marks = [
+    p.type === "user" ? "사람" : "에이전트",
+    ...(p.isSelf ? ["나"] : []),
+    ...(p.invited ? ["초대됨"] : []),
+  ];
+  return `@${p.handle}(${marks.join(", ")})`;
+}
+
+/**
+ * 초대받은 에이전트 자신의 헤더에 세션 줄 바로 다음 싣는 줄(세션 에이전트 초대 스펙 5.2) — 그 에이전트는 채널 멤버가 아니라 그 세션에만
+ * 불렸다. 참여자 가운데 자기 자신(isSelf)이 invited 일 때만 — 아니면 null
+ */
+export function formatSessionInviteLine(participants: InboundContext["participants"]): string | null {
+  return participants.some((p) => p.isSelf && p.invited)
+    ? "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다."
+    : null;
 }
 
 function foldHeaderText(text: string): string {

@@ -2,12 +2,12 @@
  * 세션에 초대한 에이전트(세션 에이전트 초대 스펙 5.1·5.2) — 저장·조회와 「이 세션에서 부를 수 있는 에이전트」. 권한·검증(I3·I8)은
  * 호출자(REST) 몫이다 — 여기는 행만 다룬다
  */
-import type { InvitedAgent } from "@dodok/shared";
+import type { InvitedAgent, Participant } from "@dodok/shared";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { DbOrTx } from "../../db/client";
 import { agents, conversationAgents, conversations } from "../../db/schema.sqlite";
 import { agentNotArchived } from "../agents/service";
-import { listMembers } from "../channels/service";
+import { channelParticipants, listMembers, userMessageParticipants } from "../channels/service";
 
 /** 그 대화의 초대 전체(초대한 순) — 보관한 에이전트의 행도 싣는다(되살리면 돌아온다). 받은 쪽(화면)이 에이전트 목록으로 거른다 */
 export function listInvited(db: DbOrTx, conversationId: string): InvitedAgent[] {
@@ -101,4 +101,60 @@ export function sessionAgentIds(db: DbOrTx, key: { channelId: string; conversati
     .map((m) => m.memberId);
   const seen = new Set(members);
   return [...members, ...invitedAgentIds(db, key.conversationId).filter((id) => !seen.has(id))];
+}
+
+/**
+ * 그 대화에 초대한 에이전트의 참가자(초대한 순, 별칭 없음) — 채널 멤버로도 든 에이전트는 뺀다. includeInactive 면 보관한 에이전트까지
+ * (이미 토큰이 된 옛 메시지를 에이전트에게 풀 때 — channelParticipants 와 같은 뜻)
+ */
+function invitedParticipants(
+  db: DbOrTx,
+  key: { channelId: string; conversationId: string },
+  exclude: ReadonlySet<string>,
+  opts: { includeInactive?: boolean },
+): Participant[] {
+  return db
+    .select({ id: agents.id, handle: agents.handle, displayName: agents.name })
+    .from(conversationAgents)
+    .innerJoin(agents, eq(agents.id, conversationAgents.agentId))
+    .where(
+      and(
+        eq(conversationAgents.conversationId, key.conversationId),
+        opts.includeInactive ? undefined : agentNotArchived,
+      ),
+    )
+    .orderBy(asc(conversationAgents.invitedAt), asc(conversationAgents.agentId))
+    .all()
+    .filter((row) => !exclude.has(row.id))
+    .map((row): Participant => ({ type: "agent", ...row }));
+}
+
+function withInvited(
+  db: DbOrTx,
+  base: Participant[],
+  key: { channelId: string; conversationId: string },
+  opts: { includeInactive?: boolean } = {},
+): Participant[] {
+  const agentIds = new Set(base.filter((p) => p.type === "agent").map((p) => p.id));
+  return [...base, ...invitedParticipants(db, key, agentIds, opts)];
+}
+
+/**
+ * 그 세션(대화)의 참가자 — channelParticipants 뒤에 그 대화에 초대한 에이전트. 에이전트 글의 멘션 풀기·에이전트 헤더 「참여자:」가 쓴다.
+ * 뒤가 같은 핸들을 덮으므로(tokenize) 사람과 같은 핸들이면 초대한 에이전트로 풀린다 — 채널 에이전트와 같은 규칙이다
+ */
+export function sessionParticipants(
+  db: DbOrTx,
+  key: { channelId: string; conversationId: string },
+  opts: { includeInactive?: boolean } = {},
+): Participant[] {
+  return withInvited(db, channelParticipants(db, key.channelId, opts), key, opts);
+}
+
+/** 그 세션의 사람 글 멘션을 풀 참가자 — userMessageParticipants 뒤에 그 대화에 초대한 에이전트 */
+export function userSessionParticipants(
+  db: DbOrTx,
+  key: { channelId: string; conversationId: string },
+): Participant[] {
+  return withInvited(db, userMessageParticipants(db, key.channelId), key);
 }

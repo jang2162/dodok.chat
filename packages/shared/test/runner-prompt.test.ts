@@ -379,6 +379,27 @@ describe("buildTurnFacts — 턴마다 붙는 문맥", () => {
     `);
   });
 
+  it("세션 초대 — 초대한 에이전트는 `(에이전트, 초대됨)`, 자기 자신이 초대받았으면 세션 줄 다음에 세션 초대 줄 [세션 에이전트 초대 스펙 5.2]", () => {
+    const withGuest = [
+      ...PARTICIPANTS,
+      { type: "agent" as const, handle: "guest", displayName: "Guest", isSelf: false, invited: true },
+    ];
+    const asMember = buildTurnFacts({ conversationTitle: TITLE, participants: withGuest });
+    expect(asMember).toContain("@guest(에이전트, 초대됨)");
+    expect(asMember).not.toContain("세션 초대:");
+    const asGuest = buildTurnFacts({
+      conversationTitle: TITLE,
+      participants: withGuest.map((p) => ({ ...p, isSelf: p.handle === "guest" })),
+    });
+    expect(asGuest).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      세션: 배포 점검
+      세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다.
+      참여자: @mia(사람), @coder(에이전트), @fin(에이전트), @guest(에이전트, 나, 초대됨)
+      자리: 채널"
+    `);
+  });
+
   it("스레드 턴·릴레이 깊이", () => {
     const text = buildTurnFacts({
       conversationTitle: TITLE,
