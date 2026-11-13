@@ -54,6 +54,7 @@ import {
   type DmAccess,
   formatDmLine,
   formatGroupDmLine,
+  formatSessionInviteLine,
   formatSessionLine,
   type GatewayLinkState,
   type InboundDeliver,
@@ -976,6 +977,13 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       ...(d.groupDm ? { groupDm: formatGroupDmLine() } : {}),
       session: formatSessionLine(d.conversationTitle),
       participants: d.context.participants.map((p) => p.handle),
+      // 그 세션에만 초대한 에이전트(세션 에이전트 초대 스펙 5.2) — 초대한 세션의 런에만 있다. 받는 쪽이 초대받았으면 세션 초대 줄도
+      ...(d.context.participants.some((p) => p.invited)
+        ? { invited: d.context.participants.filter((p) => p.invited).map((p) => p.handle) }
+        : {}),
+      ...(formatSessionInviteLine(d.context.participants) === null
+        ? {}
+        : { sessionInvite: formatSessionInviteLine(d.context.participants) }),
     },
     "dev:fake inbound reactions",
   );
