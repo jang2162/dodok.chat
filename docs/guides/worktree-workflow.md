@@ -884,8 +884,14 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 이미 받은 커서가 다시 오거나, 장 수가 `ORCA_WORKER_MAX_PAGES`(기본 1000)에 닿았는데 아직 남았으면
 「목록을 읽지 못했다」로 치고 **아무것도 회수하지 않는다** — 덜 읽은 목록의 「0건」은 다 읽은
 「0건」과 구별되지 않는다.
-**묶인 터미널에서는 Run 이 백 개를 넘으면 한 번 읽는 데 수십 초가 든다** — Bash 도구로 부를 때는
-타임아웃을 넉넉히 준다(왕복 수는 `orca orchestration run-list --json` 을 끝 장까지 센 Run 수다).
+**묶인 터미널에서는 Run 수만큼 왕복한다** — `run-list` 는 이 머신의 **모든 프로젝트** Run 을 내고
+Run 에는 저장소 표시가 없어 미리 거를 수 없다. 그래서 Run 별 읽기는 겹쳐 돈다
+(`ORCA_WORKER_LIST_JOBS`, 기본 8 — 호출 수는 그대로다). 2026-11-13 실물(Orca 1.4.257, Run 242개·
+dispatch 5217행)에서 순서대로 읽던 판은 목록 한 번이 Orca 호출 266번·약 60초라 `attach`·`stop`·`reap`
+이 출력 없이 1분 넘게 멈췄고, 겹쳐 읽자 10~17초가 됐다. **`attach`·`stop`·`reap` 이 말없이 오래
+돌면** 먼저 Run 수(`orca orchestration run-list --json --full` 을 끝 장까지 센 수)와 부른 터미널이
+묶였는지(`orca orchestration run-current --json --full` 의 `.result.run`)를 본다 — Bash 도구로 부를
+때는 타임아웃을 넉넉히 준다. `bash -x` 로 추적하면 9MB 목록이 줄마다 찍혀 그 자체로 느려진다.
 그래서 한 명령은 목록을 한 번만 읽는다. `reap --all-merged`·`stop --all` 은 처음 회수할 때 읽은
 목록(과 못 읽었다는 사실)을 다음 워크트리에 돌려 쓰고 — 한 워크트리의 회수는 다른 워크트리의 행을
 바꾸지 않는다 — `attach` 는 Task 를 만들기 전에 한 번 읽어 진행 중 검사와 `--retry-of` 가 함께 쓴다. **목록을 못 읽으면 진행 중인 dispatch 가 있는지 모르므로 지우지도 끄지도 않는다(fail closed)** — 슬러그를 찍은 `reap`·`stop` 은 거부하고, `reap --all-merged`·`stop --all` 은 그 워크트리를 건너뛴다(일괄 모드는 못 읽었다는 사실도 돌려 쓰므로 한 번 실패하면 전부 건너뛴다). 터미널을 읽어 확인했으면 슬러그를 찍은 `--force` 로만 넘는다 — 그때는 닫기가 그대로 가고(`reap` 은 폐기까지) 그 워크트리 워커의 터미널 꼬리는 보관되지 않는다(「터미널을 끄는 것은 `stop` 이 한다」 절).
