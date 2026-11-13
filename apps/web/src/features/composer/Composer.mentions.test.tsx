@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DmViewContext } from "@/features/dms/context";
 import { useWireStatus } from "@/realtime/wire";
@@ -8,6 +8,10 @@ import { dmChannelOf } from "../../../test/dms";
 import { AGENT, CH, USER, uid } from "../../../test/fixtures";
 import { channelOf } from "../../../test/shellApi";
 import { qk } from "@/api/queries";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render } from "@testing-library/react";
+import { Composer } from "./Composer";
+import { invitedAgentKeys } from "@/features/conversations/invitedAgents";
 import { confirmed, flushEditorFrames, renderComposer } from "../../../test/composerHarness";
 import { MentionList, mentionSuggestion } from "./MentionList";
 import { type MentionCandidate, mentionCandidates } from "./mentions";
@@ -226,4 +230,46 @@ it("사람 DM·그룹 DM 작성기의 @ 후보는 참여자만 — 참여하지 
   expect(labels.some((l) => l.includes("@mia"))).toBe(true);
   expect(labels.some((l) => l.includes("@fin"))).toBe(false);
   expect(labels.some((l) => l.includes("@jun"))).toBe(false);
+});
+
+it("그 세션에 초대한 에이전트는 「초대됨」 후보 — 같은 채널의 다른 세션 작성기에는 없다 [세션 에이전트 초대 스펙 5.4·Review Focus 1]", async () => {
+  const GUEST = { ...DEV, id: uid(9_101), handle: "guest", providerAgentId: "guest", name: "손님" };
+  const OTHER = uid(9_102);
+  const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  qc.setQueryData(qk.me, ME);
+  qc.setQueryData(qk.people, [{ id: USER, handle: "owner", displayName: "주인", role: "owner" }]);
+  qc.setQueryData(qk.agents, [DEV, FIN, GUEST]);
+  qc.setQueryData(qk.members(CH), [memberOf(DEV.id), memberOf(FIN.id)]);
+  qc.setQueryData(invitedAgentKeys.of(CH), [
+    { agentId: GUEST.id, invitedBy: USER, invitedAt: "2026-11-13T00:00:00.000Z" },
+  ]);
+  qc.setQueryData(invitedAgentKeys.of(OTHER), []);
+  const optionsIn = async (conversationId: string) => {
+    render(
+      <QueryClientProvider client={qc}>
+        <Composer channelId={CH} conversationId={conversationId} />
+      </QueryClientProvider>,
+    );
+    const box = screen.getByRole("textbox", { name: "메시지 입력" });
+    const editor = (box as unknown as { editor: Editor }).editor;
+    act(() => {
+      editor.commands.focus();
+      editor.commands.insertContent("@");
+    });
+    await flushEditorFrames();
+    const list = await screen.findByRole("listbox", { name: "멘션 후보" });
+    const texts = within(list)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    await flushEditorFrames();
+    cleanup();
+    return texts;
+  };
+  expect(await optionsIn(CH)).toEqual([
+    "@dev개발봇AI",
+    "@finFinanceAI꺼짐",
+    "@guest손님AI초대됨",
+    "@owner주인",
+  ]);
+  expect(await optionsIn(OTHER)).toEqual(["@dev개발봇AI", "@finFinanceAI꺼짐", "@owner주인"]);
 });

@@ -23,6 +23,7 @@ import {
   invalidateAgentSettings,
 } from "@/features/conversations/agentSettings";
 import { applyConversation } from "@/features/conversations/cache";
+import { applyInvitedAgents } from "@/features/conversations/invitedAgents";
 import {
   bumpDirect,
   cachedDirectChannel,
@@ -355,6 +356,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     /** 누가 러너 에이전트의 세션 설정을 바꿨다 — 그 대화의 상태 줄을 갈아 끼운다(세션 설정 스펙 5.2) */
     "conversation.agent_settings": ({ conversationId, settings }) =>
       applyAgentSettings(qc, conversationId, settings),
+    /** 누가 그 세션에 에이전트를 초대했거나 내보냈다 — 머리·작성기 후보·상태 줄이 그 목록을 따른다(세션 에이전트 초대 스펙 5.3) */
+    "conversation.agents": ({ conversationId, invited }) => applyInvitedAgents(qc, conversationId, invited),
     /**
      * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —
      * 보관·되살리기는 서버가 channel.member.changed 를 내지 않는다(멤버 응답이 읽을 때 거른다). exact: 찾기 목록도 [agents] 아래라

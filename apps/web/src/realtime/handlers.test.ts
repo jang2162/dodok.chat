@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { invitedAgentKeys } from "@/features/conversations/invitedAgents";
 import { agentSettingsKeys } from "@/features/conversations/agentSettings";
 import { fromLatest, jumpAround, threadFromPage } from "@/features/messages/timeline";
 import { conversationTimelineQuery } from "@/features/messages/useTimeline";
@@ -1177,6 +1178,18 @@ describe("러너 에이전트 세션 설정 [세션 설정 스펙 5.2·S9]", () 
     ]);
     // 다른 대화는 그대로
     expect(queryClient.getQueryData(agentSettingsKeys.of(CH2))).toEqual([row()]);
+  });
+
+  it("conversation.agents — 그 대화의 초대 목록을 갈아 끼우고 그 대화의 상태 줄을 낡게 둔다, 다른 대화는 그대로 [세션 에이전트 초대 스펙 5.3]", () => {
+    const { fake, queryClient } = setup();
+    const invited = [{ agentId: uid(91), invitedBy: USER, invitedAt: "2026-11-13T00:00:00.000Z" }];
+    queryClient.setQueryData(invitedAgentKeys.of(CH), []);
+    queryClient.setQueryData(invitedAgentKeys.of(CH2), []);
+    queryClient.setQueryData(agentSettingsKeys.of(CH), [row()]);
+    fake.serverEmit("conversation.agents", { channelId: CH, conversationId: CH, invited });
+    expect(queryClient.getQueryData(invitedAgentKeys.of(CH))).toEqual(invited);
+    expect(queryClient.getQueryData(invitedAgentKeys.of(CH2))).toEqual([]);
+    expect(queryClient.getQueryState(agentSettingsKeys.of(CH))?.isInvalidated).toBe(true);
   });
 
   it("끝난 run.state 는 그 대화의 상태 줄을 낡게 둔다 — 컨텍스트 % 를 다시 받는다", () => {

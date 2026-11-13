@@ -5,6 +5,7 @@ import { act, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { qk } from "@/api/queries";
 import { Composer } from "@/features/composer/Composer";
+import { invitedAgentKeys } from "@/features/conversations/invitedAgents";
 import { AGENT, CH, CH2, USER, msg, uid } from "./fixtures";
 
 /** 작성기 테스트 공용 — 채널 둘(CH·CH2), 에이전트 dev(켜짐)·fin(꺼짐), 사람 owner */
@@ -68,6 +69,9 @@ export function renderComposer(
   qc.setQueryData(qk.agents, [DEV, FIN]);
   qc.setQueryData(qk.members(CH), [memberOf(DEV.id, ["coder"]), memberOf(FIN.id)]);
   qc.setQueryData(qk.members(CH2), []);
+  // 그 세션에 초대한 에이전트 없음(세션 에이전트 초대 스펙 5.4) — 작성기가 후보를 묻지 않게 비워 둔다
+  qc.setQueryData(invitedAgentKeys.of(CH), []);
+  qc.setQueryData(invitedAgentKeys.of(CH2), []);
   const view = render(
     <QueryClientProvider client={qc}>
       {wrap(<Composer channelId={channelId} conversationId={channelId} />)}
