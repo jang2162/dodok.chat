@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { invitedAgentKeys } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
@@ -142,6 +143,8 @@ function renderAt(
     qk.members(CH),
     agents.map((a) => memberOf(a.id)),
   );
+  // 그 세션에 초대한 에이전트 없음 — 초대를 보는 시험은 따로 넣는다(세션 에이전트 초대 스펙 5.4)
+  qc.setQueryData(invitedAgentKeys.of(conversationId), []);
   const ui = (conv: string) => (
     <QueryClientProvider client={qc}>
       <Composer
@@ -179,6 +182,26 @@ afterEach(async () => {
   vi.restoreAllMocks();
   wire.socket = undefined;
   useWireStatus.getState().setStatus("idle");
+});
+
+describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.4]", () => {
+  it("그 세션에 초대한 러너 에이전트도 한 줄 — 핸들 옆 「초대됨」, 다른 세션에는 줄이 없다", async () => {
+    const GUEST = runnerAgent(3, "guest");
+    const OTHER = uid(502);
+    serve({ settings: { [CONV]: [row(CODER), row(GUEST, { model: "opus" })], [OTHER]: [row(CODER)] } });
+    const { qc, rerender } = renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    await act(async () => {
+      qc.setQueryData(qk.agents, [CODER, OPENCLAW, GUEST]);
+      qc.setQueryData(invitedAgentKeys.of(CONV), [{ agentId: GUEST.id, invitedBy: USER, invitedAt: TS }]);
+      qc.setQueryData(invitedAgentKeys.of(OTHER), []);
+    });
+    await waitFor(() => expect(lineOf("guest")).toHaveTextContent("opus"));
+    expect(within(lineOf("guest")).getByText("초대됨")).toBeInTheDocument();
+    expect(within(lineOf("coder")).queryByText("초대됨")).toBeNull();
+    rerender(OTHER);
+    await waitFor(() => expect(lineOf("coder")).toBeInTheDocument());
+    expect(within(bar()).queryByText("@guest")).toBeNull();
+  });
 });
 
 describe("상태 줄 — 값 [세션 설정 스펙 S3·5.4]", () => {

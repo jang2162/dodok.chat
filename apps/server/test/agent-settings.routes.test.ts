@@ -259,6 +259,79 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     });
   });
 
+  describe("세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.2]", () => {
+    /** 채널 밖 러너 에이전트를 세션 A 에만 초대한다. B 는 같은 채널의 다른 세션 */
+    const invitedSetup = async () => {
+      const base = setup();
+      const guest = setup().agent;
+      const sessionB = seedConversation(app.db, base.channel.id);
+      const invited = await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/conversations/${base.conversationId}/agents`,
+        headers: { authorization: `Bearer ${owner}` },
+        payload: { agentId: guest.id },
+      });
+      expect(invited.statusCode, invited.body).toBe(200);
+      return { ...base, guest, sessionB };
+    };
+
+    it("초대한 세션의 설정 목록에 오르고 PATCH 가 된다 — 다른 세션에는 없고 PATCH 는 404", async () => {
+      const t = await invitedSetup();
+      expect((await settingsOf(mia.token, t.conversationId)).map((s) => s.agentId)).toEqual([
+        t.agent.id,
+        t.guest.id,
+      ]);
+      expect((await settingsOf(mia.token, t.sessionB)).map((s) => s.agentId)).toEqual([t.agent.id]);
+      const saved = await patch(mia.token, t.conversationId, t.guest.id, { model: "opus" });
+      expect(saved.statusCode, saved.body).toBe(200);
+      expect((await patch(mia.token, t.sessionB, t.guest.id, { model: "opus" })).statusCode).toBe(404);
+    });
+
+    it("저장한 값이 그 세션 실행의 run.start.agent 에 실린다", async () => {
+      const t = await invitedSetup();
+      expect(
+        (await patch(owner, t.conversationId, t.guest.id, { model: "haiku", effort: "low" })).statusCode,
+      ).toBe(200);
+      const message = createUserMessage(app.db, app.bus, {
+        conversationId: t.conversationId,
+        authorId: app.ownerUserId,
+        bodyMd: `@${t.guest.handle} 초대받은 세션`,
+        clientMsgId: `inv-run-${++n}`,
+      });
+      await app.services.router.routeMessage(message);
+      const runner0 = fakeRunners[0];
+      if (!runner0) throw new Error("러너 없음");
+      await vi.waitFor(() =>
+        expect(runner0.runStarts.some((s) => s.deliver.conversationId === t.conversationId)).toBe(true),
+      );
+      const start = runner0.runStarts.find((s) => s.deliver.conversationId === t.conversationId);
+      expect(start?.agent).toMatchObject({ model: "haiku", effort: "low" });
+    });
+
+    it("내보내면 목록에서 빠지고 설정 행은 남는다 — 다시 초대하면 그 값이 돌아온다", async () => {
+      const t = await invitedSetup();
+      expect((await patch(owner, t.conversationId, t.guest.id, { model: "opus" })).statusCode).toBe(200);
+      const headers = { authorization: `Bearer ${owner}` };
+      const kicked = await app.fastify.inject({
+        method: "DELETE",
+        url: `/api/v1/conversations/${t.conversationId}/agents/${t.guest.id}`,
+        headers,
+      });
+      expect(kicked.statusCode).toBe(200);
+      expect((await settingsOf(owner, t.conversationId)).map((s) => s.agentId)).toEqual([t.agent.id]);
+      expect((await patch(owner, t.conversationId, t.guest.id, { model: "haiku" })).statusCode).toBe(404);
+      await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/conversations/${t.conversationId}/agents`,
+        headers,
+        payload: { agentId: t.guest.id },
+      });
+      expect((await settingsOf(owner, t.conversationId)).find((s) => s.agentId === t.guest.id)?.model).toBe(
+        "opus",
+      );
+    });
+  });
+
   it("저장하면 그 채널 룸에 conversation.agent_settings 하나", async () => {
     const { channel, conversationId, agent } = setup();
     const socket = await connectWire(app, owner);

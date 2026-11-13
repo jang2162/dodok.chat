@@ -81,6 +81,7 @@ export function MentionList({ items, command, onActive, ref }: MentionListProps)
               AI
             </Badge>
           )}
+          {c.invited && <span className="shrink-0 text-xs text-muted-foreground">초대됨</span>}
           {!c.enabled && <span className="ml-auto text-xs">꺼짐</span>}
         </div>
       ))}

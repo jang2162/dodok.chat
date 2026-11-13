@@ -1,16 +1,20 @@
-import type { Agent } from "@dodok/shared";
+import { type Agent, roleAtLeast } from "@dodok/shared";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { HashIcon, ListIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
 import type { RefObject } from "react";
-import { useAgents, useChannel, useMembers } from "@/api/queries";
+import { useAgents, useChannel, useMembers, useRole } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
 import { isChannelArchived } from "@/features/channels/archived";
 import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
+import { InviteAgentDialog } from "@/features/conversations/InviteAgentDialog";
+import { useRemoveInvitedAgent, useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { useConversationPermissions } from "@/features/conversations/permissions";
+import { useConversationView } from "@/features/conversations/queries";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { FilesTabLink } from "./PanelTabs";
 import { OpenSidebarButton } from "./sidebarSheet";
 
@@ -56,6 +60,21 @@ export function ChannelHeader({
   });
   const shown = channelAgents.slice(0, MAX_AVATARS);
   const hidden = channelAgents.length - shown.length;
+  // 이 세션에만 초대한 에이전트(세션 에이전트 초대 스펙 5.4) — 「초대됨」을 달고, 얼굴 메뉴에 「세션에서 내보내기」
+  const isSession = conversationId !== NEW_CONVERSATION;
+  const invited = useSessionInvitedAgents(conversationId, { enabled: isSession }).filter(
+    (agent) => !channelAgents.some((a) => a.id === agent.id),
+  );
+  const conversation = useConversationView(conversationId).data;
+  const role = useRole();
+  // 초대·내보내기는 채널에 에이전트를 넣고 빼는 판정과 같다(I3 — 지금은 누구나). 닫힌 세션·보관한 채널은 서버가 거절한다
+  const canInvite =
+    isSession &&
+    roleAtLeast(role, "member") &&
+    conversation !== undefined &&
+    conversation.closedAt === undefined &&
+    channel.data !== undefined &&
+    !isChannelArchived(channel.data);
 
   return (
     <header data-testid="channel-header" className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
@@ -119,6 +138,16 @@ export function ChannelHeader({
           )}
         </AvatarGroup>
       )}
+      {invited.length > 0 && (
+        <ul aria-label="초대한 에이전트" className="flex shrink-0 items-center gap-1">
+          {invited.map((agent) => (
+            <li key={agent.id}>
+              <InvitedAgentFace agent={agent} conversationId={conversationId} canRemove={canInvite} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {canInvite && <InviteAgentDialog channelId={channelId} conversationId={conversationId} />}
       {canCreate && conversationId !== NEW_CONVERSATION && (
         <Button asChild variant="ghost" size="icon-sm">
           <Link
@@ -146,5 +175,53 @@ export function ChannelHeader({
         </Link>
       </Button>
     </header>
+  );
+}
+
+/** 초대한 에이전트 하나 — 얼굴과 「초대됨」. 내보낼 수 있으면 눌러 여는 메뉴에 「세션에서 내보내기」 */
+function InvitedAgentFace({
+  agent,
+  conversationId,
+  canRemove,
+}: {
+  agent: Agent;
+  conversationId: string;
+  canRemove: boolean;
+}) {
+  const remove = useRemoveInvitedAgent(conversationId);
+  const face = (
+    <span className="flex items-center gap-1">
+      <Avatar size="sm" className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
+        {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
+        <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
+      </Avatar>
+      <span className="rounded-sm bg-muted px-1 text-[10px] text-muted-foreground">초대됨</span>
+    </span>
+  );
+  const label = `@${agent.handle} 초대됨`;
+  if (!canRemove)
+    return (
+      <span role="img" aria-label={label} title={`${agent.name} (@${agent.handle}) · 초대됨`}>
+        {face}
+      </span>
+    );
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          title={`${agent.name} (@${agent.handle}) · 초대됨`}
+          className="rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {face}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={remove.isPending} onSelect={() => remove.mutate(agent.id)}>
+          세션에서 내보내기
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

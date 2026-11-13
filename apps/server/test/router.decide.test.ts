@@ -104,6 +104,7 @@ const input = (partial: Partial<RoutingInput>): RoutingInput => ({
   channel: channel(),
   members: [member(A), member(B)],
   agents: [agent(A, "a"), agent(B, "b")],
+  invitedAgentIds: [],
   chainHashes: new Set(),
   now: new Date(NOW),
   ...partial,
@@ -387,6 +388,92 @@ describe("decideRuns — 스레드 답글(스펙 2.2)", () => {
   it("최상위 메시지의 런에는 threadRootId 가 없다", () => {
     const r = decideRuns(input({ message: userMsg([A]) }));
     expect(r.runs[0]).not.toHaveProperty("threadRootId");
+  });
+});
+
+/** 세션에 초대한 에이전트(세션 에이전트 초대 스펙 I5·I10·I11) — G 는 채널 멤버가 아니라 그 대화에 초대됐다 */
+const G = ID(13);
+describe("decideRuns — 세션에 초대한 에이전트", () => {
+  const invited = (partial: Partial<RoutingInput> = {}) =>
+    input({
+      agents: [agent(A, "a"), agent(B, "b"), agent(G, "g")],
+      invitedAgentIds: [G],
+      ...partial,
+    });
+
+  it("그 세션에서 초대한 에이전트를 멘션하면 mention 런", () => {
+    expect(decideRuns(invited({ message: userMsg([G]) })).runs).toEqual([
+      { agentId: G, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0 },
+    ]);
+  });
+
+  it("초대가 없는 다른 세션의 같은 멘션은 런이 없다 [Review Focus 1]", () => {
+    const r = decideRuns(
+      input({ message: userMsg([G]), agents: [agent(A, "a"), agent(B, "b"), agent(G, "g")] }),
+    );
+    expect(r).toEqual({ runs: [], blocked: [] });
+  });
+
+  it("초대한 에이전트의 글이 루트인 스레드에 멘션 없이 답하면 그 에이전트가 답한다(I10)", () => {
+    const r = decideRuns(
+      invited({
+        message: { ...userMsg([]), threadRootId: ROOT },
+        threadRoot: rootMsg("agent", G),
+        members: [member(A, { autoRespond: true }), member(B)],
+      }),
+    );
+    expect(r.runs).toEqual([
+      { agentId: G, triggerKind: "auto_respond", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+    ]);
+  });
+
+  it("채널 자동 응답은 초대한 에이전트로 가지 않는다(I5)", () => {
+    expect(decideRuns(invited({ message: userMsg([]) })).runs).toEqual([]);
+    const r = decideRuns(
+      invited({ message: userMsg([]), members: [member(A, { autoRespond: true }), member(B)] }),
+    );
+    expect(r.runs.map((p) => p.agentId)).toEqual([A]);
+  });
+
+  it("허용 목록 채널에서 초대한 에이전트가 낀 쌍은 양방향 통과, 무관한 막힌 쌍은 여전히 pair_not_allowed [Review Focus 5]", () => {
+    const policy = channel({ allowPairs: [{ from: A, to: B }] });
+    const toGuest = decideRuns(invited({ message: agentMsg(A, [G]), sourceRun: run(A, 0), channel: policy }));
+    expect(toGuest.blocked).toEqual([]);
+    expect(toGuest.runs.map((p) => [p.agentId, p.triggerKind])).toEqual([[G, "relay"]]);
+    const fromGuest = decideRuns(
+      invited({ message: agentMsg(G, [A]), sourceRun: run(G, 0), channel: policy }),
+    );
+    expect(fromGuest.blocked).toEqual([]);
+    expect(fromGuest.runs.map((p) => p.agentId)).toEqual([A]);
+    const unrelated = decideRuns(
+      invited({ message: agentMsg(B, [A]), sourceRun: run(B, 0), channel: policy }),
+    );
+    expect(unrelated).toEqual({ runs: [], blocked: [{ agentId: A, reason: "pair_not_allowed" }] });
+  });
+
+  it("턴 한도·반복 차단은 초대한 에이전트에도 걸린다(I11)", () => {
+    const policy = channel({ allowPairs: [{ from: A, to: B }] });
+    expect(
+      decideRuns(invited({ message: agentMsg(A, [G]), sourceRun: run(A, 4), channel: policy })).blocked,
+    ).toEqual([{ agentId: G, reason: "max_turns" }]);
+    const h = computeRelayHash(A, G, "reply");
+    expect(
+      decideRuns(
+        invited({
+          message: agentMsg(A, [G]),
+          sourceRun: run(A, 0),
+          channel: policy,
+          chainHashes: new Set([h]),
+        }),
+      ).blocked,
+    ).toEqual([{ agentId: G, reason: "repeat" }]);
+  });
+
+  it("꺼진 초대 에이전트는 멘션해도 런이 없다", () => {
+    const r = decideRuns(
+      invited({ message: userMsg([G]), agents: [agent(A, "a"), agent(B, "b"), agent(G, "g", false)] }),
+    );
+    expect(r.runs).toEqual([]);
   });
 });
 

@@ -32,6 +32,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel, isChannelArchived } from "../channels/service";
+import { sessionAgentIds } from "../conversations/invited-agents";
 import { isConversationClosed } from "../conversations/store";
 import { directRunBlock } from "../directs/service";
 import { dmReadOnlyReason } from "../dms/service";
@@ -132,6 +133,11 @@ export interface Orchestrator {
   abort(runId: string): Promise<void>;
   /** 그 대화의 열린 런을 모두 abort 와 같은 길로 멈춘다(세션 닫기 — 채널 세션 스펙 「세션 만들기·닫기」 절). 걸린 승인은 cancelled 로 닫힌다 */
   abortConversation(conversationId: string): Promise<void>;
+  /**
+   * 그 대화(스레드 포함)에서 그 에이전트의 열린 런만 abort 와 같은 길로 멈춘다 — 세션에서 내보내기(세션 에이전트 초대 스펙 5.3). 걸린
+   * 승인은 cancelled 로 닫힌다
+   */
+  abortConversationAgent(conversationId: string, agentId: string): Promise<void>;
   /**
    * 에이전트 최종 메시지 도착(OpenClaw 는 브리지 정본). 돌려준 messageId 를 어댑터가 ack 로 쓴다.
    * provider·connectionId 는 보낸 어댑터와 그 연결 — msg.agentId(제공자 쪽 id)를 그 연결의 에이전트로 푼다. 틀리면 replyTo 상관·런
@@ -780,7 +786,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return (
       getAgent(db, run.agentId)?.archivedAt != null ||
       isChannelArchived(db, run.channelId) ||
-      isConversationClosed(db, run.conversationId)
+      isConversationClosed(db, run.conversationId) ||
+      outsideSession(run)
+    );
+  }
+
+  /**
+   * 일반 채널에서 그 세션에 있지 않은 에이전트 — 채널 멤버도 그 대화에 초대한 에이전트도 아니다(세션에서 내보냈거나 채널에서 뺐다,
+   * 세션 에이전트 초대 스펙 5.3). 그 뒤에 온 정본이 다른 에이전트를 깨우거나 사람을 부르지 않게 보관과 같이 다룬다. DM·그룹 DM 의
+   * 참여는 따로 정해져 있어 보지 않는다
+   */
+  function outsideSession(run: Pick<Run, "agentId" | "channelId" | "conversationId">): boolean {
+    if (getChannel(db, run.channelId)?.kind !== "channel") return false;
+    return !sessionAgentIds(db, { channelId: run.channelId, conversationId: run.conversationId }).includes(
+      run.agentId,
     );
   }
 
@@ -1449,7 +1468,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId, true);
         logger.info(
           { runId: run.id, messageId: message.id, outboundId: msg.outboundId, agentId: run.agentId },
-          "late canonical from archived agent or channel or closed session — stored without relay",
+          "late canonical from archived agent or channel or closed session or outside the session — stored without relay",
         );
         if (run.status === "error") closeRetryCards(run);
         await api.signal(run.id, { kind: "canonical_received" });
@@ -1466,6 +1485,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     async abortConversation(conversationId) {
       // 대기 런(뒤)부터 거꾸로 — 앞 런을 멈추는 사이 pump 가 뒤 런을 꺼내지 않게(channels/service.ts archiveChannel 과 같다)
       const open = store.listOpenRuns(db).filter((run) => run.conversationId === conversationId);
+      for (const run of open.reverse()) await api.abort(run.id);
+    },
+
+    async abortConversationAgent(conversationId, agentId) {
+      // abortConversation 과 같이 대기 런(뒤)부터 거꾸로
+      const open = store
+        .listOpenRuns(db)
+        .filter((run) => run.conversationId === conversationId && run.agentId === agentId);
       for (const run of open.reverse()) await api.abort(run.id);
     },
 

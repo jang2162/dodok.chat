@@ -15,6 +15,8 @@ export type MentionCandidate = {
   enabled: boolean;
   /** OpenClaw 에이전트가 속한 Gateway 이름 — 두 Gateway 의 같은 id 를 가른다(멀티 Gateway 스펙 「웹」 절). 연결이 비었으면 없다 */
   gateway?: string;
+  /** 이 세션에만 초대한 에이전트(세션 에이전트 초대 스펙 5.4) — 「초대됨」 */
+  invited?: true;
 };
 
 /** 후보 목록에 보이는 최대 수 */
@@ -31,6 +33,8 @@ export function mentionCandidates(
   agents: readonly Agent[] | undefined,
   me: MeResponse | undefined,
   people?: readonly Person[],
+  /** 그 세션에 초대한 에이전트(초대한 순) — 채널 에이전트 뒤에 「초대됨」으로 든다. 다른 세션의 작성기는 넘기지 않는다 */
+  invited: readonly Agent[] = [],
 ): MentionCandidate[] {
   const byId = new Map((agents ?? []).map((a) => [a.id, a]));
   const channelAgents = (members ?? []).flatMap((m): MentionCandidate[] => {
@@ -76,7 +80,24 @@ export function mentionCandidates(
           },
         ]
       : [];
-  return [...channelAgents, ...humans];
+  const seen = new Set(channelAgents.map((c) => c.id));
+  const invitedAgents = invited.flatMap((a): MentionCandidate[] =>
+    isArchived(a) || seen.has(`a:${a.id}`)
+      ? []
+      : [
+          {
+            id: `a:${a.id}`,
+            label: a.handle,
+            name: a.name,
+            kind: "agent",
+            aliases: [],
+            enabled: a.enabled,
+            ...(a.gateway ? { gateway: a.gateway.name } : {}),
+            invited: true,
+          },
+        ],
+  );
+  return [...channelAgents, ...invitedAgents, ...humans];
 }
 
 /** 핸들·이름·별칭 앞부분 일치(대소문자 무시). 빈 검색어는 전부 */

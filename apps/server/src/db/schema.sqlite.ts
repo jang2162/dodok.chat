@@ -292,6 +292,26 @@ export const conversationAgentSettings = sqliteTable(
   (t) => [primaryKey({ columns: [t.conversationId, t.agentId] })],
 );
 
+/**
+ * 세션에 초대한 에이전트(세션 에이전트 초대 스펙 5.1) — 채널 멤버가 아닌 에이전트를 일반 채널의 대화 하나(와 그 스레드)에만 부른다.
+ * 채널 멤버(channel_members)와 따로 둬 기본이 「다른 세션에는 안 보임」이다. 대화·에이전트와 함께 지워지고, 보관한 에이전트의 행은
+ * 남아 되살리면 돌아온다. 그 에이전트를 채널 멤버로 넣으면 그 채널의 행을 지운다(I12)
+ */
+export const conversationAgents = sqliteTable(
+  "conversation_agents",
+  {
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    invitedBy: text("invited_by").references((): AnySQLiteColumn => users.id, { onDelete: "set null" }),
+    invitedAt: ts("invited_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.agentId] })],
+);
+
 export const channelMembers = sqliteTable(
   "channel_members",
   {

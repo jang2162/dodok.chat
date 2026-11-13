@@ -36,6 +36,7 @@ import {
   createChannel,
   setSessionManager,
 } from "../src/modules/channels/service";
+import { insertInvite } from "../src/modules/conversations/invited-agents";
 import { createGateway } from "../src/modules/gateways/service";
 import { createProject } from "../src/modules/runners/projects";
 import { issueRunnerToken } from "../src/modules/runners/tokens";
@@ -634,6 +635,37 @@ describe("역할 매트릭스(스펙 2장)", () => {
           url: `/api/v1/conversations/${conversationId}/agent-settings/${agentId}`,
           payload: { permissionMode: "acceptEdits" },
         };
+      },
+    },
+    // 세션에 에이전트 초대(세션 에이전트 초대 스펙 I3) — 채널에 에이전트를 넣고 빼는 판정과 같다(지금은 누구나)
+    {
+      name: "GET /conversations/:id/agents",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/conversations/${ownerConversation().conversationId}/agents`,
+      }),
+    },
+    {
+      name: "POST /conversations/:id/agents",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/conversations/${ownerConversation().conversationId}/agents`,
+        payload: { agentId: newAgent().id },
+      }),
+    },
+    {
+      name: "DELETE /conversations/:id/agents/:agentId",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const { conversationId } = ownerConversation();
+        const agent = newAgent();
+        insertInvite(app.db, { conversationId, agentId: agent.id, invitedBy: app.ownerUserId });
+        return { method: "DELETE", url: `/api/v1/conversations/${conversationId}/agents/${agent.id}` };
       },
     },
     // 남(owner)이 만든 세션 — member 는 만든 사람·세션 관리자가 아니라 거절, 자기 세션은 conversations.routes.test.ts

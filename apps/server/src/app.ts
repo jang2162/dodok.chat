@@ -36,6 +36,7 @@ import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerAgentSettingsRoutes } from "./modules/conversations/agent-settings.routes";
+import { registerInvitedAgentRoutes } from "./modules/conversations/invited-agents.routes";
 import { registerConversationRoutes } from "./modules/conversations/routes";
 import { registerDirectRoutes } from "./modules/directs/routes";
 import { registerDmRoutes } from "./modules/dms/routes";
@@ -544,6 +545,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
     registerAgentSettingsRoutes(fastify, routeContext);
+    registerInvitedAgentRoutes(fastify, routeContext);
     registerDmRoutes(fastify, routeContext);
     registerDirectRoutes(fastify, routeContext);
     registerMemberManageRoutes(fastify, {

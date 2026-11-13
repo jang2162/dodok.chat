@@ -14,7 +14,12 @@ export type RoutingInput = {
   message: Message; // 방금 저장된 메시지 (user | agent | automation | system)
   channel: Channel;
   members: ChannelMember[];
-  agents: Agent[]; // 채널 소속 에이전트 (enabled·archivedAt 포함)
+  agents: Agent[]; // 이 세션에서 부를 수 있는 에이전트 — 채널 소속 + 그 대화의 초대 (enabled·archivedAt 포함)
+  /**
+   * 그 대화(세션)에 초대한 에이전트(세션 에이전트 초대 스펙 5.2) — 멘션·스레드 루트 응답자·릴레이 대상은 되고(I10), 채널 자동 응답
+   * 자리에는 오르지 않는다(I5). 이 에이전트가 낀 릴레이 쌍은 허용 목록을 건너뛴다(I11)
+   */
+  invitedAgentIds: readonly string[];
   sourceRun?: Run; // message가 에이전트 메시지일 때 그 런
   threadRoot?: Message; // message가 스레드 답글일 때 그 루트
   chainHashes: Set<string>; // 같은 rootMessageId 체인의 relayHash 집합
@@ -45,7 +50,17 @@ export function computeRelayHash(fromAgentId: string, toAgentId: string, bodyMd:
     .digest("hex");
 }
 
-export function isPairAllowed(policy: Channel["relayPolicy"], from: string, to: string): boolean {
+/**
+ * invited 는 그 세션에 초대한 에이전트 — 초대한 에이전트가 from 이거나 to 인 쌍은 목록과 무관하게 허용한다(사람이 그 세션에 일부러
+ * 부른 에이전트다, 세션 에이전트 초대 스펙 I11). 예외는 그 쌍뿐이다 — 초대와 무관한 쌍은 목록 그대로 본다
+ */
+export function isPairAllowed(
+  policy: Channel["relayPolicy"],
+  from: string,
+  to: string,
+  invited: ReadonlySet<string> = new Set(),
+): boolean {
+  if (invited.has(from) || invited.has(to)) return true;
   return policy.allowPairs === "all" || policy.allowPairs.some((p) => p.from === from && p.to === to);
 }
 
@@ -69,7 +84,8 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
   const { message, channel, members, agents, sourceRun } = input;
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const agentMembers = members.filter((m) => m.memberType === "agent");
-  const memberIds = new Set(agentMembers.map((m) => m.memberId));
+  const invited = new Set(input.invitedAgentIds);
+  const memberIds = new Set([...agentMembers.map((m) => m.memberId), ...invited]);
   const isActive = (id: string) => {
     const agent = agentById.get(id);
     return memberIds.has(id) && agent !== undefined && isAgentActive(agent);
@@ -120,7 +136,7 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
         blocked.push({ agentId: to, reason: "disabled" });
         continue;
       }
-      if (!isPairAllowed(policy, sourceRun.agentId, to)) {
+      if (!isPairAllowed(policy, sourceRun.agentId, to, invited)) {
         blocked.push({ agentId: to, reason: "pair_not_allowed" });
         continue;
       }

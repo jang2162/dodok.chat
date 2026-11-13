@@ -153,6 +153,36 @@ describe("formatInboundContext 그룹 DM", () => {
   });
 });
 
+describe("formatInboundContext — 세션에 초대한 에이전트 [세션 에이전트 초대 스펙 5.2]", () => {
+  const participants = [
+    ...deliver.context.participants,
+    { type: "agent" as const, handle: "guest", displayName: "Guest", isSelf: false, invited: true },
+  ];
+
+  it("초대한 에이전트는 `(에이전트, 초대됨)` — 초대받지 않은 에이전트의 헤더에는 세션 초대 줄이 없다", () => {
+    const text = formatInboundContext({ ...deliver, context: { ...deliver.context, participants } });
+    expect(text).toContain(
+      "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트), @guest(에이전트, 초대됨)",
+    );
+    expect(text).not.toContain("세션 초대:");
+  });
+
+  it("자기 자신이 초대받았으면 세션 줄 바로 다음에 세션 초대 줄", () => {
+    const asGuest = participants.map((p) => ({ ...p, isSelf: p.handle === "guest" }));
+    const lines = formatInboundContext({
+      ...deliver,
+      agentId: "guest",
+      context: { ...deliver.context, participants: asGuest },
+    }).split("\n");
+    expect(lines.slice(0, 4)).toEqual([
+      `[dodok context] channel=${CH} you=@guest`,
+      "세션: 배포 점검",
+      "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션은 보이지 않습니다.",
+      "참여자: @jang(사람), @researcher(에이전트), @planner(에이전트), @guest(에이전트, 나, 초대됨)",
+    ]);
+  });
+});
+
 describe("formatInboundContext 리액션", () => {
   const REACTIONS: InboundReaction[] = [
     {

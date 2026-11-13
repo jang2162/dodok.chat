@@ -8,6 +8,7 @@ import { componentInteractions, conversations } from "../src/db/schema.sqlite";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
 import { addMember, createChannel, removeMember, updateChannel } from "../src/modules/channels/service";
 import { type InteractInput, interact } from "../src/modules/components/service";
+import { deleteInvite, insertInvite } from "../src/modules/conversations/invited-agents";
 import {
   createAgentMessage,
   createSystemMessage,
@@ -232,6 +233,41 @@ describe("components service — interact", () => {
     expect(t.interactionRows()).toHaveLength(0);
     expect(t.updated).toHaveLength(0);
   });
+  it("그 세션에 초대한 에이전트의 카드는 그 에이전트에게 간다 — 내보내면 VALIDATION [세션 에이전트 초대 스펙 5.2]", async () => {
+    const t = setup();
+    const guest = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "guest",
+      handle: "guest",
+      name: "guest",
+    });
+    const conversationId = channelConversation(t.db, t.channel.id);
+    insertInvite(t.db, { conversationId, agentId: guest.id, invitedBy: t.userId });
+    await interact(t.deps, t.click(t.card(guest), "go"));
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({ agentId: guest.id, triggerKind: "interaction" });
+    const later = t.card(guest);
+    deleteInvite(t.db, { conversationId, agentId: guest.id });
+    await expect(interact(t.deps, t.click(later, "go"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("허용 목록 채널에서 초대한 에이전트의 relay 런 retry 는 쌍 허용을 통과한다(I11)", async () => {
+    const t = setup({ allowPairs: [{ from: uuid(), to: uuid() }] });
+    const guest = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "guest",
+      handle: "guest",
+      name: "guest",
+    });
+    const conversationId = channelConversation(t.db, t.channel.id);
+    insertInvite(t.db, { conversationId, agentId: guest.id, invitedBy: t.userId });
+    const { run, notice } = failedRun(t, { agent: guest, triggerKind: "relay", fromAgent: t.dev });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({ agentId: guest.id, parentRunId: run.id });
+  });
+
   it("continue_relay 클릭 → continue 런(relay.toAgentId, rootMessageId = 시스템 메시지, depth 0) + 소비 + message.updated", async () => {
     const t = setup({ maxRelayTurns: 1 });
     const created: Message[] = [];

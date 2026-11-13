@@ -15,6 +15,7 @@ import {
   useAgentSettings,
   usePatchAgentSettings,
 } from "@/features/conversations/agentSettings";
+import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
 import { AgentSettingsPopover, DEFAULT_LABEL, RAISE_LOCKED } from "./AgentSettingsPopover";
@@ -69,11 +70,17 @@ export function AgentSettingsBar({
   const members = useMembers(channelId);
   const agents = useAgents();
   const [expanded, setExpanded] = useState(false);
-  const runnerAgents = (members.data ?? []).flatMap((m) => {
+  const memberRunners = (members.data ?? []).flatMap((m) => {
     if (m.memberType !== "agent") return [];
     const agent = agents.data?.find((a) => a.id === m.memberId);
     return agent && agent.provider === "runner" && agent.archivedAt === null ? [agent] : [];
   });
+  // 그 세션에 초대한 러너 에이전트도 한 줄(세션 에이전트 초대 스펙 5.2·5.4) — 새 세션 창에는 초대가 없다
+  const invitedRunners = useSessionInvitedAgents(conversationId, { enabled: !isNew }).filter(
+    (agent) => agent.provider === "runner" && !memberRunners.some((m) => m.id === agent.id),
+  );
+  const invitedIds = new Set(invitedRunners.map((a) => a.id));
+  const runnerAgents = [...memberRunners, ...invitedRunners];
   // 러너 에이전트가 없는 대화(OpenClaw 만·사람끼리)는 묻지 않는다
   const settings = useAgentSettings(conversationId, threadRootId, { enabled: runnerAgents.length > 0 });
   // 대화가 없는 새 세션 창은 상한을 채널 단위로 받는다 — 대화가 있으면 줄에 실려 온다
@@ -120,6 +127,7 @@ export function AgentSettingsBar({
             <SettingsLine
               key={agent.id}
               agent={agent}
+              invited={invitedIds.has(agent.id)}
               row={rowOf(agent)}
               conversationId={conversationId}
               isNew={isNew}
@@ -148,12 +156,15 @@ export function AgentSettingsBar({
 
 function SettingsLine({
   agent,
+  invited,
   row,
   conversationId,
   isNew,
   onPendingChange,
 }: {
   agent: Agent;
+  /** 이 세션에만 초대한 에이전트 — 핸들 옆 「초대됨」 */
+  invited: boolean;
   row: ConversationAgentSettings;
   conversationId: string;
   isNew: boolean;
@@ -187,6 +198,7 @@ function SettingsLine({
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2">
       <span className="font-medium text-foreground">@{agent.handle}</span>
+      {invited && <span className="rounded-sm bg-muted px-1 text-[10px]">초대됨</span>}
       <span className="min-w-0 break-words">{settingsSummary(row)}</span>
       <AgentSettingsPopover
         handle={agent.handle}

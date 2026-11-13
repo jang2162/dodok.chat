@@ -39,6 +39,7 @@ import {
   listMembers,
   userMessageParticipants,
 } from "../channels/service";
+import { sessionParticipants, userSessionParticipants } from "../conversations/invited-agents";
 import { assertConversationWritable, getConversation, touchConversation } from "../conversations/store";
 import { directMentions } from "../directs/service";
 import { withReactions } from "../reactions/service";
@@ -391,7 +392,10 @@ export function sendUserMessage(
     const message = storeMessage(tx, conversation, input.threadRootId, () => {
       const { bodyMd, mentions } =
         kind === "channel"
-          ? tokenize(input.bodyMd, userMessageParticipants(tx, channelId))
+          ? tokenize(
+              input.bodyMd,
+              userSessionParticipants(tx, { channelId, conversationId: conversation.id }),
+            )
           : kind === "direct"
             ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
             : plainInDm(input.bodyMd);
@@ -464,7 +468,10 @@ export function createAgentMessage(
       const kind = channelKind(tx, channelId);
       const { bodyMd, mentions } =
         kind === "channel"
-          ? agentMentions(input.bodyMd, channelParticipants(tx, channelId))
+          ? agentMentions(
+              input.bodyMd,
+              sessionParticipants(tx, { channelId, conversationId: conversation.id }),
+            )
           : kind === "direct"
             ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
             : plainInDm(input.bodyMd);

@@ -7,7 +7,8 @@ import { canReadChannel } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
-import { getChannel, listMembers } from "../channels/service";
+import { getChannel } from "../channels/service";
+import { invitedAgentIds, sessionAgentIds } from "../conversations/invited-agents";
 import { DIRECT_RUN_BLOCK_REASON, directRunBlock } from "../directs/service";
 import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
@@ -183,7 +184,11 @@ function assertDirectRequester(tx: DbOrTx, channelId: string, target: Target, us
  */
 function targetOf(tx: DbOrTx, message: Message, itemId: string): Target {
   const target = resolveTarget(tx, message, itemId);
-  assertDeliverable(tx, message.channelId, target.agentId);
+  assertDeliverable(
+    tx,
+    { channelId: message.channelId, conversationId: message.conversationId },
+    target.agentId,
+  );
   return target;
 }
 
@@ -215,7 +220,8 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
   if (run.triggerKind === "relay") {
     const from = triggerMessage.authorType === "agent" ? triggerMessage.authorId : undefined;
     const channel = getChannel(tx, run.channelId);
-    if (!channel || from === undefined || !isPairAllowed(channel.relayPolicy, from, run.agentId)) {
+    const invited = new Set(invitedAgentIds(tx, run.conversationId));
+    if (!channel || from === undefined || !isPairAllowed(channel.relayPolicy, from, run.agentId, invited)) {
       throw apiError("VALIDATION", "relay pair is not allowed");
     }
   }
@@ -227,12 +233,17 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
  * 저장·소비 전에 던지므로 버튼은 살아 있고, 대상을 되살리면 다시 누를 수 있다. 보관한 에이전트는 채널 멤버 조회에서 빠지므로 먼저
  * 가른다 — 사람에게 「삭제된 에이전트입니다」로 보인다
  */
-function assertDeliverable(tx: DbOrTx, channelId: string, agentId: string): void {
+function assertDeliverable(
+  tx: DbOrTx,
+  session: { channelId: string; conversationId: string },
+  agentId: string,
+): void {
   const agent = getAgent(tx, agentId);
   if (agent && agent.archivedAt !== null) {
     throw apiError("AGENT_ARCHIVED", "삭제된 에이전트입니다", { agentId });
   }
-  const isMember = listMembers(tx, channelId).some((m) => m.memberType === "agent" && m.memberId === agentId);
+  // 그 세션에 초대한 에이전트도 대상이다(세션 에이전트 초대 스펙 5.2) — 내보냈으면 채널에서 빠진 것과 같다
+  const isMember = sessionAgentIds(tx, session).includes(agentId);
   if (!isMember || !agent || !isAgentActive(agent)) {
     throw apiError("VALIDATION", "target agent is disabled or not in the channel");
   }

@@ -17,6 +17,7 @@ import { useDmView } from "@/features/dms/context";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
+import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
 import { PendingAttachments } from "./PendingAttachments";
@@ -149,15 +150,17 @@ export function Composer({
       : `${channelId}:${conversationId}:${threadRootId}`;
 
   const dmKind = useDmView()?.kind;
+  // 그 세션에 초대한 에이전트(세션 에이전트 초대 스펙 5.4) — 일반 채널의 세션만. 다른 세션의 작성기에는 없다
+  const invited = useSessionInvitedAgents(conversationId, { enabled: dmKind === undefined });
   const candidates = useMemo(() => {
     if (dmKind === "dm") return [];
-    const all = mentionCandidates(members.data, agents.data, me.data, people.data);
+    const all = mentionCandidates(members.data, agents.data, me.data, people.data, invited);
     if (dmKind === undefined) return all;
     const participants = new Set(
       (members.data ?? []).map((m) => `${m.memberType === "agent" ? "a" : "u"}:${m.memberId}`),
     );
     return all.filter((c) => participants.has(c.id));
-  }, [dmKind, members.data, agents.data, me.data, people.data]);
+  }, [dmKind, members.data, agents.data, me.data, people.data, invited]);
   // 부를 에이전트가 없는 자리(에이전트 DM·한 줄기 사람 DM)는 「@로 에이전트 부르기」를 권하지 않는다
   const plain = dmKind !== undefined && (dmKind === "dm" || !candidates.some((c) => c.kind === "agent"));
   // 편집기는 한 번만 만든다 — 바뀌는 값은 ref 로 읽는다

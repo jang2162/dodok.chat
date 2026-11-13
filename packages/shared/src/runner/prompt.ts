@@ -1,6 +1,8 @@
 import {
   formatDmLine,
   formatGroupDmLine,
+  formatParticipantLabel,
+  formatSessionInviteLine,
   formatSessionLine,
   type InboundContext,
   type InboundDeliver,
@@ -135,10 +137,6 @@ function channelRulesAppend(input: {
   ].join("\n");
 }
 
-function participantLabel(p: InboundContext["participants"][number]): string {
-  return `@${p.handle}(${p.type === "user" ? "사람" : "에이전트"}${p.isSelf ? ", 나" : ""})`;
-}
-
 /**
  * `UserPromptSubmit` 훅의 additionalContext 로 턴마다 붙는 사실(스펙 4.2). 규칙이 아니라 이 턴의 자리만 적는다 —
  * 참여자 줄은 플러그인 헤더(`packages/openclaw-plugin/src/context.ts`)와 같은 꼴
@@ -156,12 +154,14 @@ export function buildTurnFacts(input: {
   reactions?: readonly InboundReaction[];
   reactionsOmitted?: number;
 }): string {
+  const sessionInvite = formatSessionInviteLine(input.participants);
   const lines = [
     "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.",
     ...(input.dm ? [formatDmLine(input.dm.ownerHandle)] : []),
     ...(input.groupDm ? [formatGroupDmLine()] : []),
     formatSessionLine(input.conversationTitle),
-    `참여자: ${input.participants.length > 0 ? input.participants.map(participantLabel).join(", ") : "(없음)"}`,
+    ...(sessionInvite === null ? [] : [sessionInvite]),
+    `참여자: ${input.participants.length > 0 ? input.participants.map(formatParticipantLabel).join(", ") : "(없음)"}`,
     // DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7). 그룹 DM 에는 있다(사람 간 DM 결정 10)
     input.thread
       ? "자리: 스레드 — 답은 이 스레드에 남습니다."

@@ -1,7 +1,9 @@
 import {
   formatDmLine,
   formatGroupDmLine,
+  formatParticipantLabel,
   formatReactionFacts,
+  formatSessionInviteLine,
   formatSessionLine,
   type InboundDeliver,
 } from "@dodok/shared";
@@ -31,11 +33,9 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   if (d.dm) lines.push(formatDmLine(d.dm.ownerHandle));
   if (d.groupDm) lines.push(formatGroupDmLine());
   lines.push(formatSessionLine(d.conversationTitle));
-  lines.push(
-    `참여자: ${d.context.participants
-      .map((p) => `@${p.handle}(${p.type === "user" ? "사람" : "에이전트"}${p.isSelf ? ", 나" : ""})`)
-      .join(", ")}`,
-  );
+  const sessionInvite = formatSessionInviteLine(d.context.participants);
+  if (sessionInvite !== null) lines.push(sessionInvite);
+  lines.push(`참여자: ${d.context.participants.map(formatParticipantLabel).join(", ")}`);
   lines.push(`릴레이 규칙: ${d.context.relayRules}`);
   const line = (m: { author: { handle: string }; text: string; ts: string }) =>
     `[${hhmm(m.ts, tz)}] @${m.author.handle}: ${m.text}`;

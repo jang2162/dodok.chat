@@ -347,4 +347,28 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     );
     expect(getMessage(app.db, card.id)?.componentState?.consumed).toEqual(["retry_run"]);
   });
+
+  it("[세션 에이전트 초대 Q1] 그 런의 에이전트를 채널에서 뺀 뒤 온 늦은 정본은 저장만 한다 — 릴레이·푸시 없음(바로 위 시험과 같은 런, 빼기만 다르다)", async () => {
+    const { app, adapter, pushes } = await boot();
+    const s = { app, adapter, pushes, ...(await seed(app)) };
+    const runId = await closedRun(s, false);
+    const { headers } = await login(app);
+    const removed = await app.fastify.inject({
+      method: "DELETE",
+      url: `/api/v1/channels/${s.channelId}/members/${agentIdByProvider(app, "dev")}`,
+      headers,
+    });
+    expect(removed.statusCode).toBe(200);
+    const created: Array<{ message: Message; silent?: true }> = [];
+    app.bus.on("message.created", (p) => created.push(p));
+
+    const ack = await app.orchestrator.onCanonical(late(s, runId), "openclaw", FAKE_GATEWAY_ID);
+    await settle();
+
+    expect(getMessage(app.db, ack.messageId ?? "")).toMatchObject({ runId, authorType: "agent" });
+    expect(created).toEqual([expect.objectContaining({ silent: true })]);
+    expect(runIdsIn(app, s.channelId)).toEqual([runId]);
+    expect(adapter.calls.send).toHaveLength(1);
+    expect(pushes).toEqual([]);
+  });
 });
