@@ -40,6 +40,45 @@ finish() {
   [ "$FAIL" -eq 0 ] || exit 1
 }
 
+# Run 이 많고 다른 저장소 것이 섞인 worker-list 픽스처를 만든다. 실물(2026-11-13)은 이 머신의
+# 모든 프로젝트 Run 242개를 `run-list` 로 냈고 Run 에는 저장소 표시가 없다. 다른 저장소의
+# dispatch 를 Run 마다 하나씩(run_far_01‥49 — 모두 회수 가능한 상태) 더하고, 이 저장소의
+# dispatch 하나($3)를 run_far_38 로 옮긴다. Run 은 이름순이라 run_far_38 은 39번째 —
+# `run-list` 를 스무 개씩 나누면 둘째 장의 끝이다.
+# 사용: many_runs_fixture <원본> <출력> <옮길 dispatchId>
+many_runs_fixture() {
+  jq --arg d "$3" '
+    .result.workers += [range(1; 50) as $i
+      | ($i | tostring | if length < 2 then "0" + . else . end) as $n
+      | {dispatchId: "ctx_far_\($n)", taskId: "task_far_\($n)", runId: "run_far_\($n)",
+         workerState: "done", dispatchStatus: "completed", agentTerminalHandle: "term_far_\($n)",
+         terminalState: "reclaimable",
+         resource: {worktreeId: "other::/tmp/other-project/.worktrees/other-project/far-\($n)"}}]
+    | (.result.workers[] | select(.dispatchId == $d) | .runId) = "run_far_38"' "$1" > "$2"
+}
+
+# `--run` 호출이 동시에 몇 개 돌았는지 남기는 Orca 감싸개를 만든다. 호출마다 자기 표시를
+# 두고 그 순간의 표시 수를 <디렉터리>/peaks 에 적은 뒤 잠깐 머문다.
+# 사용: concurrency_probe <디렉터리>   (감싸개 경로를 낸다)
+concurrency_probe() {
+  mkdir -p "$1/active"
+  : > "$1/peaks"
+  cat > "$1/probe-orca.sh" <<EOF
+#!/bin/bash
+case " \$* " in
+  (*" --run "*)
+    : > "$1/active/\$\$"
+    ls "$1/active" | wc -l | tr -d ' ' >> "$1/peaks"
+    sleep 0.2
+    rm -f "$1/active/\$\$"
+    ;;
+esac
+exec "$HERE/stub-orca.sh" "\$@"
+EOF
+  chmod +x "$1/probe-orca.sh"
+  printf '%s\n' "$1/probe-orca.sh"
+}
+
 # 테스트 대상 함수를 불러온다. ORCA_WORKER_LIB=1 이면 main 을 돌리지 않는다.
 ORCA_WORKER_LIB=1
 export ORCA_WORKER_LIB
@@ -1130,6 +1169,19 @@ STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" STUB_ORCA_BOUND_RUN=run_a \
   cmd_attach probe chore >/dev/null 2>&1
 assert_eq "$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" "1" \
   "묶인 터미널에서도 attach 한 번에 Run 을 한 번만 돈다"
+# Run 이 많고 다른 저장소 것이 섞인 묶인 터미널(2026-11-13 실물: Run 242개, attach 가 몇 분씩
+# 말없이 멈췄다). 직전 시도(ctx_prev)를 묶인 Run 밖 run_far_38 에 둔다 — 묶인 run_a 에는 행이
+# 없고 Run 은 run_far_01‥49 다. 호출 수는 Run 수에 묶이고(Run 마다 한 번), 그래도 판정은 같다.
+many_runs_fixture "$P/prevworker.json" "$P/prev-many.json" ctx_prev
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/prev-many.json" STUB_ORCA_BOUND_RUN=run_a \
+  STUB_ORCA_RUNS_PAGE_SIZE=20 cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep '^orchestration worker-start ' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_prev')" "1" \
+  "Run 이 많은 묶인 터미널: 묶인 Run 밖의 직전 시도도 찾아 잇는다"
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG"):$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" \
+  "50:3" "Run 이 많은 묶인 터미널: attach 의 목록 호출은 1 + Run 49개, Run 목록 세 장이다"
+assert_eq "$(grep -o -E -- '--run [a-z_0-9]+' "$STUB_ORCA_LOG" | sort | uniq -d | wc -l | tr -d ' ')" "0" \
+  "Run 이 많은 묶인 터미널: attach 가 같은 Run 을 두 번 읽지 않는다"
 : > "$STUB_ORCA_LOG"
 cmd_attach probe review >/dev/null 2>&1
 assert_eq "$(grep -c '^orchestration worker-list --json --full$' "$STUB_ORCA_LOG")" "1" \
@@ -2145,6 +2197,68 @@ assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
          STUB_ORCA_FAIL="orchestration run-list"
   owned_workers "repo1::$X/.worktrees/lms-base/w-reap" ) >/dev/null 2>&1
 assert_eq "$?" "1" "묶인 터미널에서 Run 목록을 못 읽으면 rc=1 이다(묶인 Run 만으로 판정하지 않는다)"
+
+# Run 이 많고 다른 저장소 것이 섞인 묶인 터미널(2026-11-13 실물: Run 242개·dispatch 5217행,
+# 순서대로 읽으면 목록 한 번이 Orca 호출 266번·67초라 stop·attach 가 몇 분씩 말없이 멈췄다).
+# ctx_reap 을 run_far_38 에 두고 run_a 에 묶는다. Run 은 run_a·run_b·run_far_01‥49 — 51개다.
+many_runs_fixture "$X/workers.json" "$X/workers-many.json" ctx_reap
+PROBE="$(concurrency_probe "$X/probe")"
+: > "$STUB_ORCA_LOG"
+out="$( export ORCA_CLI_COMMAND="$PROBE" STUB_ORCA_WORKERS_FIXTURE="$X/workers-many.json" \
+               STUB_ORCA_BOUND_RUN=run_a STUB_ORCA_RUNS_PAGE_SIZE=20 ORCA_WORKER_LIST_JOBS=4
+        cmd_stop w-reap 2>&1 )"
+assert_eq "$(grep '^orchestration worker-release ' "$STUB_ORCA_LOG" | grep -o -E 'ctx_[a-z_0-9]+' | tr '\n' ',')" \
+  "ctx_reap," "Run 이 많은 묶인 터미널: stop 은 이 워크트리 것만 회수한다(다른 저장소의 회수 가능한 49개는 건드리지 않는다)"
+assert_eq "$(grep -c '^terminal close ' "$STUB_ORCA_LOG")" "1" \
+  "Run 이 많은 묶인 터미널: stop 이 끝까지 가서 터미널을 닫는다"
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG"):$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" \
+  "51:3" "Run 이 많은 묶인 터미널: stop 의 목록 호출은 1 + Run 50개, Run 목록 세 장이다"
+assert_eq "$(grep -o -E -- '--run [a-z_0-9]+' "$STUB_ORCA_LOG" | sort | uniq -d | wc -l | tr -d ' ')" "0" \
+  "Run 이 많은 묶인 터미널: stop 이 같은 Run 을 두 번 읽지 않는다"
+assert_eq "$(grep -c -E -- '--run run_a( |$)' "$STUB_ORCA_LOG")" "0" \
+  "Run 이 많은 묶인 터미널: 묶인 Run 은 --run 으로 다시 읽지 않는다"
+peak="$(sort -n "$X/probe/peaks" | tail -n 1)"
+assert_eq "$([ "${peak:-0}" -ge 2 ] && [ "${peak:-0}" -le 4 ] && echo yes || echo "no(${peak:-없음})")" "yes" \
+  "Run 이 많은 묶인 터미널: Run 별 읽기가 겹쳐 돌되 ORCA_WORKER_LIST_JOBS(4)를 넘지 않는다"
+
+# 겹쳐 읽어도 이어 붙이는 순서는 순서대로 읽을 때와 같다(묶인 Run 의 장, 그 뒤 run-list 순서) —
+# attach 의 직전 시도는 이 순서의 `first` 에 기댄다. 묶인 run_a 가 이름순으로도 맨 앞이라
+# 기대값은 Run 이름순(run-list 순서)이다.
+assert_eq "$( export STUB_ORCA_WORKERS_FIXTURE="$X/workers-many.json" STUB_ORCA_BOUND_RUN=run_a \
+                     STUB_ORCA_RUNS_PAGE_SIZE=20 ORCA_WORKER_LIST_JOBS=7
+              all_workers | jq -r '.result.workers[].runId' | uniq | tr '\n' ',' )" \
+  "$(jq -r '[.result.workers[].runId] | unique | .[]' "$X/workers-many.json" | tr '\n' ',')" \
+  "Run 이 많은 묶인 터미널: 겹쳐 읽어도 묶인 Run 다음 run-list 순서로 잇는다"
+
+# 장 사이에 Run 이 새로 생기면 run-list 의 창이 밀려 같은 Run 이 두 장에 걸쳐 온다. 두 번 읽으면
+# 같은 dispatch 를 두 번 회수하고 두 번 센다. run_far_38 은 둘째 장의 끝이라 셋째 장 첫머리에 다시 온다.
+: > "$STUB_ORCA_LOG"
+out="$( export STUB_ORCA_WORKERS_FIXTURE="$X/workers-many.json" STUB_ORCA_BOUND_RUN=run_a \
+               STUB_ORCA_RUNS_PAGE_SIZE=20 STUB_ORCA_RUNS_REPEAT=1
+        release_workers "repo1::$X/.worktrees/lms-base/w-reap" 2>&1 )"
+assert_eq "$(grep -c -E -- '--run run_far_38( |$)' "$STUB_ORCA_LOG")" "1" \
+  "run-list 의 두 장에 걸쳐 온 Run 도 한 번만 읽는다"
+assert_eq "$(grep '^orchestration worker-release ' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_reap')" "1" \
+  "두 장에 걸쳐 온 Run 의 dispatch 를 두 번 회수하지 않는다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '워커 1건 회수 · 2건 건너뜀 · 0건 실패')" "1" \
+  "두 장에 걸쳐 온 Run 의 dispatch 를 두 번 세지 않는다"
+
+# Run 하나라도 못 읽으면 전체가 「못 읽었다」다 — 겹쳐 읽는 일꾼 하나의 실패가 묻히면 그 Run 의
+# dispatch 가 「없다」로 보인다. 마지막 Run(run_far_49)을 실패시킨다 — 그 일꾼의 마지막 몫이라
+# 뒤에 빠지는 Run 이 없어, 실패를 못 본 체하면 그 Run 하나만 조용히 빠진다.
+printf '#!/bin/bash\ncase " $* " in (*" --run run_far_49 "*) exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "$HERE/stub-orca.sh" > "$X/fail-one-run.sh"
+chmod +x "$X/fail-one-run.sh"
+: > "$STUB_ORCA_LOG"
+out="$( export ORCA_CLI_COMMAND="$X/fail-one-run.sh" STUB_ORCA_WORKERS_FIXTURE="$X/workers-many.json" \
+               STUB_ORCA_BOUND_RUN=run_a ORCA_WORKER_LIST_JOBS=4
+        release_workers "repo1::$X/.worktrees/lms-base/w-reap" 2>&1 )"
+assert_eq "$(printf '%s\n' "$out" | grep -c '판정하지 못했다'):$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "1:0" \
+  "겹쳐 읽던 Run 하나를 못 읽으면 판정 불가로 치고 아무것도 회수하지 않는다"
+( export ORCA_CLI_COMMAND="$X/fail-one-run.sh" STUB_ORCA_WORKERS_FIXTURE="$X/workers-many.json" \
+         STUB_ORCA_BOUND_RUN=run_a ORCA_WORKER_LIST_JOBS=1
+  all_workers ) >/dev/null 2>&1
+assert_eq "$?" "1" "일꾼이 하나여도(ORCA_WORKER_LIST_JOBS=1) Run 하나를 못 읽으면 rc=1 이다"
 
 # reap 경로 end-to-end. w-reap 은 병합·클린이고 터미널이 있으므로 recover 다.
 : > "$STUB_ORCA_LOG"
