@@ -23,6 +23,8 @@ import {
   updateAgentMember,
   updateChannel,
 } from "./service";
+import { deleteInvitesForChannelAgent } from "../conversations/invited-agents";
+import { emitInvited } from "../conversations/invited-agents.routes";
 
 // 채널 쓰기의 「저장 + 알림」 — REST 라우트와 제어 도구(modules/control/handlers.ts)가 같은 함수를 불러 버스 이벤트·Gateway 반영이
 // 갈라지지 않는다(제어 MCP 스펙 결정 6). 역할·보관 검사는 부르는 쪽이 먼저 한다
@@ -80,6 +82,9 @@ export function addChannelMemberAndNotify(
   const member = addMember(ctx.db, channelId, body, ctx.logger);
   emitMembers(ctx, channelId);
   if (body.memberType === "agent") {
+    // 그 채널의 세션에 초대했던 에이전트면 이제 채널 멤버다 — 초대 행을 지우고 그 대화마다 알린다(세션 에이전트 초대 스펙 I12)
+    for (const conversationId of deleteInvitesForChannelAgent(ctx.db, { channelId, agentId: body.memberId }))
+      emitInvited(ctx, { channelId, conversationId });
     for (const gatewayId of channelGatewayIds(ctx.db, channelId))
       if (!gatewaysBefore.includes(gatewayId)) syncPromptToGateway(ctx, channelId, gatewayId);
   }

@@ -11,6 +11,7 @@ import type { App } from "../src/app";
 import { createAgent } from "../src/modules/agents/service";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
+import { seedConversation } from "./helpers/seed";
 
 const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
 
@@ -65,7 +66,7 @@ async function setup() {
   // 부팅 뒤 넣은 두 Gateway 의 플러그인이 붙은 것(첫 hello) — 채널이 없어 보낼 것이 없다
   adapter.emit({ kind: "setup" });
   const { headers } = await login(app);
-  const inject = (method: "POST" | "PATCH" | "PUT", url: string, payload: object) =>
+  const inject = (method: "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: object) =>
     app.fastify.inject({ method, url, headers, payload });
   let n = 0;
   const agent = (gatewayId: string) => {
@@ -92,6 +93,16 @@ async function setup() {
         })
       ).statusCode,
     ).toBe(201);
+  /** 그 채널의 새 세션에 에이전트를 초대한다(세션 에이전트 초대 스펙 5.3) — 세션 id 를 돌려준다 */
+  const inviteTo = async (
+    channelId: string,
+    agentId: string,
+    conversationId = seedConversation(app.db, channelId),
+  ) => {
+    const res = await inject("POST", `/api/v1/conversations/${conversationId}/agents`, { agentId });
+    expect(res.statusCode).toBe(200);
+    return conversationId;
+  };
   const setPrompt = async (channelId: string, prompt: string) =>
     expect((await inject("PATCH", `/api/v1/channels/${channelId}`, { prompt })).statusCode).toBe(200);
   /** 지금까지 보낸 것을 [채널, Gateway, 프롬프트] 로 — 비운다 */
@@ -105,7 +116,7 @@ async function setup() {
     adapter.calls.connections.syncChannelConfig.length = 0;
     return out;
   };
-  return { app, adapter, inject, agent, channel, join, setPrompt, takeSyncs };
+  return { app, adapter, inject, agent, channel, join, inviteTo, setPrompt, takeSyncs };
 }
 
 describe("채널 프롬프트 — Gateway 별 동기화", () => {
@@ -199,5 +210,48 @@ describe("채널 프롬프트 — Gateway 별 동기화", () => {
     expect((await inject("PATCH", `/api/v1/gateways/${HOME_ID}`, { enabled: true })).statusCode).toBe(200);
     adapter.hello(HOME_ID, "2026-10-05T02:00:00.000Z");
     expect(takeSyncs()).toEqual([[ch, HOME_ID, "끈 사이"]]);
+  });
+});
+
+describe("채널 프롬프트 — 세션에 초대한 OpenClaw 에이전트의 Gateway [세션 에이전트 초대 스펙 I5]", () => {
+  it("채널 멤버가 없는 Gateway 의 에이전트를 초대하면 그 Gateway 에 한 번 — 같은 Gateway 를 다시 초대해도 다시 보내지 않는다", async () => {
+    const { agent, channel, join, inviteTo, takeSyncs } = await setup();
+    const ch = await channel("세션 규칙");
+    await join(ch, agent(FAKE_GATEWAY_ID).id);
+    takeSyncs();
+    const session = await inviteTo(ch, agent(HOME_ID).id);
+    expect(takeSyncs()).toEqual([[ch, HOME_ID, "세션 규칙"]]);
+    await inviteTo(ch, agent(HOME_ID).id, session);
+    await inviteTo(ch, agent(FAKE_GATEWAY_ID).id, session);
+    expect(takeSyncs()).toEqual([]);
+  });
+
+  it("프롬프트를 바꾸면 초대한 에이전트의 Gateway 에도, 그 Gateway 의 플러그인 hello 에도 그 채널을 보낸다", async () => {
+    const { adapter, agent, channel, join, inviteTo, setPrompt, takeSyncs } = await setup();
+    const ch = await channel("처음");
+    await join(ch, agent(FAKE_GATEWAY_ID).id);
+    await inviteTo(ch, agent(HOME_ID).id);
+    takeSyncs();
+    await setPrompt(ch, "바뀜");
+    expect(takeSyncs()).toEqual(
+      expect.arrayContaining([
+        [ch, FAKE_GATEWAY_ID, "바뀜"],
+        [ch, HOME_ID, "바뀜"],
+      ]),
+    );
+    adapter.hello(HOME_ID, "2026-10-05T05:00:00.000Z");
+    expect(takeSyncs()).toEqual([[ch, HOME_ID, "바뀜"]]);
+  });
+
+  it("초대한 에이전트를 다른 Gateway 로 옮기면 그 채널에 새로 들어온 Gateway 에 한 번", async () => {
+    const { agent, channel, inviteTo, inject, takeSyncs } = await setup();
+    const ch = await channel("옮겨 간 초대");
+    const moving = agent(FAKE_GATEWAY_ID);
+    await inviteTo(ch, moving.id);
+    takeSyncs();
+    expect(
+      (await inject("PUT", `/api/v1/agents/${moving.id}/gateway`, { gatewayId: HOME_ID })).statusCode,
+    ).toBe(200);
+    expect(takeSyncs()).toEqual([[ch, HOME_ID, "옮겨 간 초대"]]);
   });
 });

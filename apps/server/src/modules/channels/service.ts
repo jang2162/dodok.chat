@@ -13,7 +13,16 @@ import { z } from "zod";
 import { assertChannelReadable, type ChannelReader, readerSql } from "../../auth/channel-access";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channelMembers, channels, gateways, memberships, users } from "../../db/schema.sqlite";
+import {
+  agents,
+  channelMembers,
+  channels,
+  conversationAgents,
+  conversations,
+  gateways,
+  memberships,
+  users,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
@@ -515,55 +524,77 @@ export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
 /**
  * 그 채널의 OpenClaw 에이전트 멤버가 속한 켜진 Gateway 들(멀티 Gateway 계획 판정 PG10) — Gateway 가 빈 에이전트와 꺼진 Gateway 는
  * 빠진다. 꺼진 Gateway 에는 보내도 실패해 경고 알림만 남는다 — 다시 켜면 그 Gateway 의 플러그인 hello 때 다시 보낸다
- * (channels/prompt-sync.ts watchPluginHellos)
+ * (channels/prompt-sync.ts watchPluginHellos). 그 채널의 세션에 초대한 OpenClaw 에이전트의 Gateway 도 든다 — 초대한 에이전트도 채널
+ * 프롬프트를 따른다(세션 에이전트 초대 스펙 I5). 멤버 쪽 Gateway 가 앞이다
  */
 export function channelGatewayIds(db: DbOrTx, channelId: string): string[] {
-  return db
+  const live = and(eq(agents.provider, "openclaw"), isNotNull(agents.gatewayId), eq(gateways.enabled, true));
+  const viaMembers = db
     .selectDistinct({ gatewayId: agents.gatewayId })
     .from(channelMembers)
     .innerJoin(agents, eq(agents.id, channelMembers.memberId))
     .innerJoin(gateways, eq(gateways.id, agents.gatewayId))
-    .where(
-      and(
-        eq(channelMembers.channelId, channelId),
-        eq(channelMembers.memberType, "agent"),
-        eq(agents.provider, "openclaw"),
-        isNotNull(agents.gatewayId),
-        eq(gateways.enabled, true),
-      ),
-    )
-    .all()
-    .flatMap((row) => (row.gatewayId === null ? [] : [row.gatewayId]));
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberType, "agent"), live))
+    .all();
+  const viaInvites = db
+    .selectDistinct({ gatewayId: agents.gatewayId })
+    .from(conversationAgents)
+    .innerJoin(conversations, eq(conversations.id, conversationAgents.conversationId))
+    .innerJoin(agents, eq(agents.id, conversationAgents.agentId))
+    .innerJoin(gateways, eq(gateways.id, agents.gatewayId))
+    .where(and(eq(conversations.channelId, channelId), live))
+    .all();
+  const ids = [...viaMembers, ...viaInvites].flatMap((row) =>
+    row.gatewayId === null ? [] : [row.gatewayId],
+  );
+  return [...new Set(ids)];
 }
 
-/** 그 Gateway 에 OpenClaw 에이전트 멤버를 둔 채널들 — 그 Gateway 의 플러그인이 hello 하면 이 채널들의 프롬프트를 다시 보낸다 */
+/**
+ * 그 Gateway 에 OpenClaw 에이전트 멤버를 두거나 그 채널의 세션에 그 Gateway 의 OpenClaw 에이전트를 초대한 채널들 — 그 Gateway 의
+ * 플러그인이 hello 하면 이 채널들의 프롬프트를 다시 보낸다
+ */
 export function channelsOnGateway(db: DbOrTx, gatewayId: string): string[] {
-  return db
+  const onGateway = and(eq(agents.provider, "openclaw"), eq(agents.gatewayId, gatewayId));
+  const viaMembers = db
     .selectDistinct({ channelId: channelMembers.channelId })
     .from(channelMembers)
     .innerJoin(agents, eq(agents.id, channelMembers.memberId))
-    .where(
-      and(
-        eq(channelMembers.memberType, "agent"),
-        eq(agents.provider, "openclaw"),
-        eq(agents.gatewayId, gatewayId),
-      ),
-    )
-    .all()
-    .map((row) => row.channelId);
+    .where(and(eq(channelMembers.memberType, "agent"), onGateway))
+    .all();
+  const viaInvites = db
+    .selectDistinct({ channelId: conversations.channelId })
+    .from(conversationAgents)
+    .innerJoin(conversations, eq(conversations.id, conversationAgents.conversationId))
+    .innerJoin(agents, eq(agents.id, conversationAgents.agentId))
+    .where(onGateway)
+    .all();
+  return [...new Set([...viaMembers, ...viaInvites].map((row) => row.channelId))];
 }
 
-/** 그 에이전트가 멤버인 채널마다 지금 동기화 대상 Gateway 들(channelGatewayIds) — 옮기기 전에 읽어 새로 들어오는 Gateway 를 가른다 */
+/**
+ * 그 에이전트가 멤버이거나 그 채널의 세션에 초대된 채널마다 지금 동기화 대상 Gateway 들(channelGatewayIds) — 옮기기 전에 읽어 새로
+ * 들어오는 Gateway 를 가른다
+ */
 export function agentChannelGateways(
   db: DbOrTx,
   agentId: string,
 ): Array<{ channelId: string; gatewayIds: string[] }> {
-  return db
+  const viaMembers = db
     .select({ channelId: channelMembers.channelId })
     .from(channelMembers)
     .where(and(eq(channelMembers.memberType, "agent"), eq(channelMembers.memberId, agentId)))
-    .all()
-    .map(({ channelId }) => ({ channelId, gatewayIds: channelGatewayIds(db, channelId) }));
+    .all();
+  const viaInvites = db
+    .selectDistinct({ channelId: conversations.channelId })
+    .from(conversationAgents)
+    .innerJoin(conversations, eq(conversations.id, conversationAgents.conversationId))
+    .where(eq(conversationAgents.agentId, agentId))
+    .all();
+  return [...new Set([...viaMembers, ...viaInvites].map((row) => row.channelId))].map((channelId) => ({
+    channelId,
+    gatewayIds: channelGatewayIds(db, channelId),
+  }));
 }
 
 /**
