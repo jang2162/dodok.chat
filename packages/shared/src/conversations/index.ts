@@ -43,3 +43,4 @@ export type AgentSettingsPatch = z.infer<typeof AgentSettingsPatch>;
 /** 새 세션의 첫 글과 함께 오는 에이전트 하나의 설정(S11) */
 export const AgentSettingsEntry = z.object({ agentId: Id, ...PATCH_FIELDS }).refine(hasField, NEEDS_FIELD);
 export type AgentSettingsEntry = z.infer<typeof AgentSettingsEntry>;
+export * from "./invited-agents";

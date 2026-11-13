@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Ack } from "../common";
 import { Id } from "../common";
-import { AgentSettingsEntry, type ConversationAgentSettings } from "../conversations";
+import { AgentSettingsEntry, type ConversationAgentSettings, type InvitedAgent } from "../conversations";
 import {
   ATTACHMENT_LIMITS,
   Approval,
@@ -178,6 +178,8 @@ export interface ServerToClientEvents {
     conversationId: Id;
     settings: ConversationAgentSettings;
   }) => void;
+  // 채널 룸 — 누가 그 세션에 에이전트를 초대했거나 내보냈다(세션 에이전트 초대 스펙 5.3). invited 는 그 대화의 초대 전체 — 받은 쪽은 갈아 끼운다
+  "conversation.agents": (p: { channelId: Id; conversationId: Id; invited: InvitedAgent[] }) => void;
   "conversation.read": (p: ConversationReadUpdate) => void; // user 룸 — 같은 사용자의 다른 기기·탭이 읽음을 맞춘다(보낸 소켓도 받는다)
   "channel.activity": (p: ChannelActivity) => void; // workspace 룸 — 본문 없음, 구독하지 않은 채널·보지 않는 세션의 새 글을 사이드바·세션 목록이 안다
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록

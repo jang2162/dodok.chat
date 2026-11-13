@@ -1,5 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Ack } from "../src/common";
+import type { InvitedAgent } from "../src/conversations";
 import type { Conversation, Message } from "../src/domain";
 import type { OpsEvent, OpsUnacked } from "../src/ops";
 import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../src/reads";
@@ -37,6 +38,7 @@ describe("wire event maps", () => {
       | "conversation.created"
       | "conversation.updated"
       | "conversation.agent_settings"
+      | "conversation.agents"
       | "conversation.read"
       | "channel.activity"
       | "people.changed"
@@ -52,6 +54,13 @@ describe("wire event maps", () => {
       | "me.status"
       | "me.sidebar"
     >();
+  });
+  it("conversation.agents 페이로드는 { channelId, conversationId, invited } — 그 대화의 초대 전체", () => {
+    expectTypeOf<Parameters<ServerToClientEvents["conversation.agents"]>[0]>().toEqualTypeOf<{
+      channelId: string;
+      conversationId: string;
+      invited: InvitedAgent[];
+    }>();
   });
   it("me.sidebar 페이로드는 { layout } 로 감싼다", () => {
     expectTypeOf<Parameters<ServerToClientEvents["me.sidebar"]>[0]>().toEqualTypeOf<{
