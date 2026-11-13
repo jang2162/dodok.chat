@@ -15,6 +15,7 @@ import { authorizeSessionSettings } from "../../auth/policies";
 import type { DbOrTx } from "../../db/client";
 import { agents, conversationAgentSettings, runs } from "../../db/schema.sqlite";
 import { listMembers } from "../channels/service";
+import { sessionAgentIds } from "./invited-agents";
 import { agentActor } from "../connections/owner";
 import type { RunnerLiveApi } from "../runners/live";
 
@@ -94,14 +95,21 @@ export function upsertSettings(
     .get();
 }
 
-/** 상태 줄에 오르는 에이전트(S13) — 그 채널의 러너 에이전트 멤버(DM 이면 그 DM 의 에이전트도 멤버다). 보관한 에이전트는 빠진다 */
+/**
+ * 상태 줄에 오르는 에이전트(S13) — 그 채널의 러너 에이전트 멤버(DM 이면 그 DM 의 에이전트도 멤버다). 보관한 에이전트는 빠진다.
+ * conversationId 를 주면 그 대화에 초대한 러너 에이전트도 뒤에 든다(세션 에이전트 초대 스펙 5.2) — 새 세션 창(대화 없음)은 주지 않는다
+ */
 export function settingsAgentsOf(
   db: DbOrTx,
   channelId: string,
+  conversationId?: string,
 ): Array<{ id: string; runnerTokenId: string | null; program: RunnerProgram | null }> {
-  const ids = listMembers(db, channelId)
-    .filter((m) => m.memberType === "agent")
-    .map((m) => m.memberId);
+  const ids =
+    conversationId === undefined
+      ? listMembers(db, channelId)
+          .filter((m) => m.memberType === "agent")
+          .map((m) => m.memberId)
+      : sessionAgentIds(db, { channelId, conversationId });
   if (ids.length === 0) return [];
   const rows = db
     .select({ id: agents.id, runnerTokenId: agents.runnerTokenId, program: agents.program })
@@ -191,6 +199,8 @@ export function assertSettingsWritable(
   input: {
     workspaceId: string;
     channelId: string;
+    /** 이미 있는 대화면 그 대화 — 초대한 러너 에이전트도 고른다. 새 세션의 첫 글은 없다(아직 초대가 없다) */
+    conversationId?: string;
     agentId: string;
     user: { id: string; role: TeamRole | undefined };
     permissionMode: RunnerPermissionMode | null | undefined;
@@ -198,7 +208,9 @@ export function assertSettingsWritable(
   },
   notFound: () => Error,
 ): void {
-  const agent = settingsAgentsOf(db, input.channelId).find((a) => a.id === input.agentId);
+  const agent = settingsAgentsOf(db, input.channelId, input.conversationId).find(
+    (a) => a.id === input.agentId,
+  );
   if (!agent) throw notFound();
   authorizeSessionSettings({
     canRead: true,

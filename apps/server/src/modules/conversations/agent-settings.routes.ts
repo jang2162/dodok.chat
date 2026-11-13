@@ -51,7 +51,7 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
       const conversation = getReadableConversation(ctx.db, id, user.workspaceId, user.id);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
       return {
-        settings: settingsAgentsOf(ctx.db, conversation.channelId).map((agent) =>
+        settings: settingsAgentsOf(ctx.db, conversation.channelId, id).map((agent) =>
           toConversationAgentSettings(
             ctx.db,
             {
@@ -100,6 +100,7 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
           {
             workspaceId: user.workspaceId,
             channelId: conversation.channelId,
+            conversationId: id,
             agentId,
             user,
             permissionMode: patch.permissionMode,
