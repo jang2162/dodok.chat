@@ -608,6 +608,7 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
    - 러너 첫 실행 마법사(`dodok-runner`·`setup`·`token`)와 웹 러너 안내 줄이기 → **완료**(2026-11-11, pty·dev:fake 연결까지 — 모델 런 0회). 러너 판본 미배포(0.4.0 예정).
    - 러너 세션 설정(대화 × 에이전트의 모델·effort·권한, 작성기 위 상태 줄·컨텍스트 %) → **완료**(2026-11-11, 시험 8,145개·런 0회 하네스까지 — 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-11-runner-session-settings-design.md`, 계획 `docs/superpowers/plans/2026-11-11-runner-session-settings.md`. 마이그레이션 `0037`. 구현에서 더한 것: 새 세션 창용 `GET /api/v1/channels/:id/agent-ceilings`(채널을 읽는 누구나 — 러너 권한 상한), 대화 설정 응답의 `ceiling`. 러너 판본 미배포(0.5.0 예정).
    - 사이드바 개인 섹션(채널·DM 을 내 분류로, 메뉴·끌어다 놓기) → **완료**(2026-11-11, 시험 8,197개·dev:fake 브라우저까지 — 실기기 터치 미확인) — 스펙 `docs/superpowers/specs/2026-11-11-sidebar-sections-design.md`, 계획 `docs/superpowers/plans/2026-11-11-sidebar-sections.md`. 마이그레이션 `0038`, 새 의존성 `@dnd-kit`.
+   - 세션에 에이전트 초대(채널에 없는 에이전트를 세션 하나에만) → **완료**(2026-11-13, 시험 8,271개·dev:fake 브라우저까지 — 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-13-session-agent-invite-design.md`, 계획 `docs/superpowers/plans/2026-11-13-session-agent-invite.md`. 마이그레이션 `0039`. 구현에서 정한 것: 그 세션에서 부를 수 없게 된 에이전트(내보낸 초대·**채널에서 뺀 멤버**)의 늦은 정본은 저장만 하고 릴레이·푸시하지 않는다(기존 동작 변화), 초대한 OpenClaw 에이전트의 Gateway 에도 채널 프롬프트를 보낸다. 「초대됨」·세션 초대 줄은 shared 가 그리므로 러너 새 판·플러그인 재설치 뒤에 에이전트에게 간다(옛 판은 그 필드를 버리고 돈다).
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
 ### 이월 — 남은 문제(이월 정리 뒤 시점, 2026-11-01)
@@ -640,6 +641,8 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **러너의 설치본 claude(결정 #27) 뒤 남은 것** — ① 판본은 재접속 hello 때만 갱신된다(사람이 claude 를 업데이트해도 러너를 다시 띄우기 전엔 옛 판이 보인다) ② connect 처리기가 `detect` 의 `--version`(최대 5초)을 기다려 세대 확인 없는 hello 경쟁 창이 넓어졌다 ③ 막는 도구 이름·MCP 시한·stderr 꼬리 해석이 내장 2.1.283 기준이라 설치본 판이 크게 바뀌면 다시 본다 ④ 런 시점에 설정 `executable` 경로를 다시 검사하지 않는다 ⑤ 실제 5초를 기다리는 시험이 하나 있다. 출처: 2026-11-10 runner-installed-cli 리뷰.
 - **러너 첫 실행 마법사(`dodok-runner`·`setup`·`token`) 뒤 남은 것** — ① `setup` 이 기존 `tokenFile` 을 존중하는 줄은 시험이 잡지 못한다(시험의 기존 값이 기본 자리와 같다 — 동작은 pty 로 확인) ② 루트 경로만 바꾸는 길이 없어 빼고 다시 더하면 새 id 다 ③ 새로 더한 루트 경로는 `~` 로 줄이지 않고 절대 경로로 저장한다. 출처: 2026-11-11 runner-setup-wizard 재리뷰.
 - **러너가 끊겨 있으면 세션 설정 저장 때 권한 상한 대조를 건너뛴다** — 주인·admin 이 상한 위 값을 저장할 수 있고, 다음 실행에서 러너가 `RUNNER_CEILING` 으로 거절한다(의도 — 코드 주석에 근거). 출처: 2026-11-11 session-settings 리뷰 건 2.
+- **세션 초대 뒤 남은 것** — ① 자동화가 올린 글은 초대한 에이전트를 멘션해도 부르지 못한다(새지 않는 쪽) ② 내보낸 뒤 그 Gateway 에 채널 프롬프트가 남는다(채널 멤버 빼기와 같은 수준 — 함께 다룬다) ③ 원시 멘션 토큰 경로의 서비스 시험이 비어 있다 ④ 제어 도구 읽기(`read_messages`·`list_conversations`·`search_messages`)는 시킨 사람 권한이라 초대한 에이전트도 그 사람이 볼 수 있는 다른 세션을 읽는다(의도 — 헤더·agent-guide 문구를 「불리지 않는다」로 맞췄다). 출처: 2026-11-13 session-invite 리뷰.
+- **`scripts/orca-worker.sh attach` 가 Orca 재시작(1.4.257) 뒤 출력 없이 멈춘다** — 개별 `orca` 명령은 정상이고 Run 은 10개뿐인데 스크립트 안의 반복에서 5분 넘게 돈다(원인 미확정 — `bash -x` 추적은 107MB). 2026-11-13 에는 `orca orchestration task-create` + `worker-start` 를 직접 불러 리뷰어를 붙였다. 워커가 브랜치를 `jang2162/` 접두 없이 `<슬러그>` 로 만든 것도 그날 처음 봤다.
 
 **웹**
 
