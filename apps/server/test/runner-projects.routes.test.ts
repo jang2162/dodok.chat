@@ -143,6 +143,8 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       browse: false,
       roots: [{ id: "src", label: "내 저장소들" }],
       programs: [FAKE_CLAUDE_PROGRAM, FAKE_CODEX_PROGRAM],
+      // 기본 가짜 hello 의 능력 — 워크트리 능력이 없는 옛 러너 흉내(워크트리 스펙 5.2)
+      capabilities: ["threads", "interrupt", "approvals", "attachments"],
       projectCount: 1,
     });
     expect(list.find((r) => r.id === quiet.record.id)).toEqual({
@@ -154,6 +156,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       browse: null,
       roots: [],
       programs: [],
+      capabilities: [],
       projectCount: 0,
     });
     expect(list.find((r) => r.id === revoked.record.id)).toMatchObject({ connected: false, revoked: true });
@@ -1050,6 +1053,14 @@ describe("러너 워크트리 REST — POST /runner-projects/:id/worktrees·보�
     );
   const details = (res: { json(): unknown }) =>
     res.json() as { code: string; message: string; details?: Record<string, unknown> };
+
+  it("GET /runners — 붙은 러너가 알린 능력(worktrees)", async () => {
+    const { runnerId } = await setup();
+    const list = ((await call("GET", "/runners")).json() as { runners: unknown[] }).runners.map((r) =>
+      RunnerSummary.parse(r),
+    );
+    expect(list.find((r) => r.id === runnerId)?.capabilities).toContain("worktrees");
+  });
 
   it("check stores isGit — 새 러너의 저장소 맨 위만 참, 「확인」이 갱신", async () => {
     const { runnerId, runner, parent } = await setup();

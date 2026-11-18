@@ -58,6 +58,7 @@ export function registerConnectionRoutes(fastify: FastifyInstance, ctx: Connecti
           runnerId: runnerProjects.runnerTokenId,
           label: runnerProjects.label,
           archivedAt: runnerProjects.archivedAt,
+          parentProjectId: runnerProjects.parentProjectId,
         })
         .from(runnerProjects)
         .where(eq(runnerProjects.workspaceId, ctx.workspaceId))
@@ -68,6 +69,7 @@ export function registerConnectionRoutes(fastify: FastifyInstance, ctx: Connecti
           runnerId: row.runnerId,
           label: row.label,
           archived: row.archivedAt !== null,
+          parentProjectId: row.parentProjectId,
         })),
     };
     return response;

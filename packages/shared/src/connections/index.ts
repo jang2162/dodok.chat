@@ -30,7 +30,15 @@ export const ConnectionsResponse = z.object({
       owner: ConnectionOwner.nullable(),
     }),
   ),
-  // 보관한 것도 싣는다(archived) — 화면이 가른다
-  projects: z.array(z.object({ id: Id, runnerId: Id, label: z.string(), archived: z.boolean() })),
+  // 보관한 것도 싣는다(archived) — 화면이 가른다. parentProjectId 는 워크트리의 부모 프로젝트(워크트리 스펙 W2) — 트리가 부모 아래로 묶는다
+  projects: z.array(
+    z.object({
+      id: Id,
+      runnerId: Id,
+      label: z.string(),
+      archived: z.boolean(),
+      parentProjectId: Id.nullable(),
+    }),
+  ),
 });
 export type ConnectionsResponse = z.infer<typeof ConnectionsResponse>;

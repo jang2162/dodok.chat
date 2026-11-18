@@ -10,6 +10,7 @@ import {
   Id,
   MoveRunnerProjectBody,
   RenameRunnerProjectBody,
+  RunnerCapability,
   type RunnerFsListing,
   RunnerFsQuery,
   type RunnerProject,
@@ -185,6 +186,9 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
               browse: hello?.browse ?? null,
               roots: hello?.roots ?? [],
               programs: hello?.programs ?? [],
+              capabilities: hello
+                ? RunnerCapability.options.filter((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
+                : [],
               projectCount: projectCounts.get(token.id) ?? 0,
             };
           }),

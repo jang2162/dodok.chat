@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 import {
+  RunnerCapability,
   RunnerFsEntry,
   RunnerProgramStatus,
   RunnerProjectCheckResult,
@@ -12,7 +13,7 @@ import {
 // 「러너」 탭 REST(러너 일반화 스펙 5·6·7장) — admin 이상. 러너는 runner_tokens 행 하나다. 연결 상태·hello 내용은 서버 메모리에만
 // 있어(스펙 5장) 끊긴 러너는 「마지막으로 알린」 값 없이 null·빈 목록으로 온다
 
-/** GET /api/v1/runners 의 러너 하나 — 끊겼으면 runnerVersion·browse 가 null, roots·programs 가 빈 목록 */
+/** GET /api/v1/runners 의 러너 하나 — 끊겼으면 runnerVersion·browse 가 null, roots·programs·capabilities 가 빈 목록 */
 export const RunnerSummary = z.object({
   id: Id,
   label: z.string(),
@@ -22,6 +23,8 @@ export const RunnerSummary = z.object({
   browse: z.boolean().nullable(),
   roots: z.array(z.object({ id: RunnerRootId, label: z.string() })),
   programs: z.array(RunnerProgramStatus),
+  /** 붙은 러너가 hello 로 알린 능력(워크트리 스펙 5.2 — worktrees 가 없으면 웹이 워크트리 만들기를 잠근다). 끊겼으면 빈 목록 */
+  capabilities: z.array(RunnerCapability),
   /** 보관하지 않은 프로젝트 수 */
   projectCount: z.int().min(0),
 });
