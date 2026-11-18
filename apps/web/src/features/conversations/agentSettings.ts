@@ -54,7 +54,7 @@ export function useAgentSettings(
 
 /**
  * 한 줄을 그 대화의 캐시 모두에 넣는다 — wire `conversation.agent_settings`·PATCH 응답이 같은 길. 대화 키는 줄 그대로, 스레드 키는 값만
- * 바꾸고 컨텍스트 % 는 그 스레드의 것을 둔다(실린 % 는 대화 세션의 것이다)
+ * 바꾸고 컨텍스트 %·세부는 그 스레드의 것을 둔다(실린 것은 대화 세션의 것이다)
  */
 export function applyAgentSettings(
   qc: QueryClient,
@@ -72,7 +72,7 @@ export function applyAgentSettings(
         row.agentId !== settings.agentId
           ? row
           : thread
-            ? { ...settings, contextPercent: row.contextPercent }
+            ? { ...settings, contextPercent: row.contextPercent, context: row.context }
             : settings,
       ),
     );
