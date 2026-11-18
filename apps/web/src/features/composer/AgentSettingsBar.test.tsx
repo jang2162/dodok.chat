@@ -67,13 +67,12 @@ const OPENCLAW: Agent = {
   createdBy: null,
 };
 const CODER = runnerAgent(1, "coder", { model: "sonnet" });
-/** 러너가 알린 모델 목록 — default 줄은 「기본」에 합친다, Sonnet 은 effort 셋, Haiku 는 effort 없음 */
+/**
+ * 러너가 알린 모델 목록 — default 줄은 「기본」에 합친다(efforts 를 다섯이 아닌 둘로 — 「기본」이 이 줄을 보는지 가른다, C9),
+ * Sonnet 은 effort 셋, Haiku 는 effort 를 안 받는다(빈 목록)
+ */
 const MODELS: RunnerModelOption[] = [
-  {
-    value: "default",
-    displayName: "Default (recommended)",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-  },
+  { value: "default", displayName: "Default (recommended)", efforts: ["low", "high"] },
   { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
   { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },
   { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
@@ -184,7 +183,7 @@ function renderAt(
 
 const bar = () => screen.getByTestId("agent-settings-bar");
 const lineOf = (handle: string) => screen.getByTestId(`agent-settings-${handle}`);
-type ChipKind = "모델" | "effort" | "권한";
+type ChipKind = "모델" | "노력치" | "권한";
 const chip = (handle: string, kind: ChipKind) =>
   within(lineOf(handle)).getByRole("button", { name: new RegExp(`^@${handle} ${kind}:`) });
 /** 칩 메뉴는 트리거에 초점을 준 뒤 Enter 로 연다 — jsdom 의 window blur 가 Radix 메뉴를 닫는다(invitedAgents.test 와 같은 까닭) */
@@ -260,12 +259,12 @@ describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 �
     });
     renderAt(CONV);
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("opus"));
-    expect(chip("coder", "effort")).toHaveTextContent("effort high");
+    expect(chip("coder", "노력치")).toHaveTextContent("높음");
     expect(chip("coder", "권한")).toHaveTextContent("default");
     expect(within(lineOf("coder")).getByRole("button", { name: "컨텍스트 42%" })).toBeInTheDocument();
-    expect(chip("reviewer", "모델")).toHaveTextContent("모델 기본");
-    expect(chip("reviewer", "effort")).toHaveTextContent("effort 기본");
-    expect(chip("reviewer", "권한")).toHaveTextContent("권한 기본");
+    expect(chip("reviewer", "모델")).toHaveTextContent("기본 모델");
+    expect(chip("reviewer", "노력치")).toHaveTextContent("기본 노력");
+    expect(chip("reviewer", "권한")).toHaveTextContent("기본 권한");
     expect(within(lineOf("reviewer")).getByRole("button", { name: "컨텍스트 —" })).toBeInTheDocument();
     expect(within(bar()).queryByText("@dev")).toBeNull();
     expect(screen.queryByTestId("agent-settings-dev")).toBeNull();
@@ -301,7 +300,7 @@ describe("모델 칩 [작성기 칩 스펙 C3·C4·C9]", () => {
   it("picking a model chip saves immediately (PATCH model)", async () => {
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("모델 기본"));
+    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("기본 모델"));
     await pick("coder", "모델", "Opus 5.5");
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("Opus 5.5"));
     expect(patches()).toEqual([
@@ -355,43 +354,62 @@ describe("모델 칩 [작성기 칩 스펙 C3·C4·C9]", () => {
   });
 });
 
-describe("effort 칩 [작성기 칩 스펙 5.4]", () => {
+describe("노력치 칩 [작성기 칩 스펙 5.4]", () => {
   it("effort chip lists only the model's efforts — 「기본」이면 default 줄의 것, 목록 없으면 다섯", async () => {
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet", models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    let { menu } = await openChip("coder", "effort");
-    expect(names(menu)).toEqual(["기본", "low", "medium", "high"]);
+    let { menu } = await openChip("coder", "노력치");
+    expect(names(menu)).toEqual(["기본", "낮음", "보통", "높음"]);
     await userEvent.keyboard("{Escape}");
     cleanup();
+    // 「기본」 — default 줄의 둘만(대체값 다섯이 아니다 — C9)
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    ({ menu } = await openChip("coder", "effort"));
-    expect(names(menu)).toEqual(["기본", "low", "medium", "high", "xhigh", "max"]);
+    ({ menu } = await openChip("coder", "노력치"));
+    expect(names(menu)).toEqual(["기본", "낮음", "높음"]);
     await userEvent.keyboard("{Escape}");
     cleanup();
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet" })] } });
     renderAt(CONV, { agents: [CODER] });
-    ({ menu } = await openChip("coder", "effort"));
-    expect(names(menu)).toEqual(["기본", "low", "medium", "high", "xhigh", "max"]);
+    ({ menu } = await openChip("coder", "노력치"));
+    expect(names(menu)).toEqual(["기본", "낮음", "보통", "높음", "매우 높음", "최대"]);
+  });
+
+  it("노력치를 안 받는 모델(빈 efforts)은 「기본」만 — 저장된 값은 범위 밖 경고", async () => {
+    serve({ settings: { [CONV]: [row(CODER, { model: "haiku", models: MODELS })] } });
+    renderAt(CONV, { agents: [CODER] });
+    let { menu } = await openChip("coder", "노력치");
+    expect(names(menu)).toEqual(["기본"]);
+    await userEvent.keyboard("{Escape}");
+    cleanup();
+    serve({ settings: { [CONV]: [row(CODER, { model: "haiku", effort: "high", models: MODELS })] } });
+    renderAt(CONV, { agents: [CODER] });
+    await waitFor(() => expect(chip("coder", "노력치")).toHaveAttribute("aria-invalid", "true"));
+    ({ menu } = await openChip("coder", "노력치"));
+    expect(optionsOf(menu)).toEqual([
+      { name: "기본", disabled: false, checked: false },
+      { name: `높음 — ${EFFORT_UNSUPPORTED}`, disabled: true, checked: true },
+    ]);
+    expect(patches()).toEqual([]);
   });
 
   it("고르면 바로 저장 — PATCH effort", async () => {
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet", models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    await pick("coder", "effort", "high");
+    await pick("coder", "노력치", "높음");
     expect(patches().map((c) => c.body)).toEqual([{ effort: "high" }]);
-    await waitFor(() => expect(chip("coder", "effort")).toHaveTextContent("effort high"));
+    await waitFor(() => expect(chip("coder", "노력치")).toHaveTextContent("높음"));
   });
 
   it("out-of-list effort shows warning and is not changed", async () => {
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet", effort: "max", models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    await waitFor(() => expect(chip("coder", "effort")).toHaveAttribute("aria-invalid", "true"));
-    expect(chip("coder", "effort")).toHaveTextContent("effort max");
-    expect(chip("coder", "effort")).toHaveAccessibleName(`@coder effort: max — ${EFFORT_UNSUPPORTED}`);
-    const { menu } = await openChip("coder", "effort");
+    await waitFor(() => expect(chip("coder", "노력치")).toHaveAttribute("aria-invalid", "true"));
+    expect(chip("coder", "노력치")).toHaveTextContent("최대");
+    expect(chip("coder", "노력치")).toHaveAccessibleName(`@coder 노력치: 최대 — ${EFFORT_UNSUPPORTED}`);
+    const { menu } = await openChip("coder", "노력치");
     expect(optionsOf(menu).at(-1)).toEqual({
-      name: `max — ${EFFORT_UNSUPPORTED}`,
+      name: `최대 — ${EFFORT_UNSUPPORTED}`,
       disabled: true,
       checked: true,
     });
@@ -445,13 +463,13 @@ describe("권한 칩 [S2]", () => {
     renderAt(CONV, { agents: [CODER], role: "admin" });
     await pick("coder", "권한", "plan");
     await waitFor(() => expect(within(lineOf("coder")).getByRole("alert")).toHaveTextContent(RAISE_LOCKED));
-    expect(chip("coder", "권한")).toHaveTextContent("권한 기본");
+    expect(chip("coder", "권한")).toHaveTextContent("기본 권한");
   });
 
   it("save failure shows 저장하지 못했습니다", async () => {
     serve({ settings: { [CONV]: [row(CODER)] }, patchFails: { status: 500, code: "INTERNAL" } });
     renderAt(CONV, { agents: [CODER] });
-    await pick("coder", "effort", "low");
+    await pick("coder", "노력치", "낮음");
     await waitFor(() =>
       expect(within(lineOf("coder")).getByRole("alert")).toHaveTextContent("저장하지 못했습니다"),
     );
@@ -509,11 +527,11 @@ describe("새 세션 창 [S11]", () => {
   it("보내지 않고 떠났다 돌아오면 시작값 — 바꾼 값은 버린다", async () => {
     serve({ settings: { [CONV]: [row(CODER)] } });
     const { rerender } = renderAt(NEW_CONVERSATION, { agents: [CODER] });
-    await pick("coder", "effort", "low");
-    await waitFor(() => expect(chip("coder", "effort")).toHaveTextContent("effort low"));
+    await pick("coder", "노력치", "낮음");
+    await waitFor(() => expect(chip("coder", "노력치")).toHaveTextContent("낮음"));
     act(() => rerender(CONV));
     act(() => rerender(NEW_CONVERSATION));
-    expect(chip("coder", "effort")).toHaveTextContent("effort 기본");
+    expect(chip("coder", "노력치")).toHaveTextContent("기본 노력");
     expect(chip("coder", "모델")).toHaveTextContent("sonnet");
   });
 });

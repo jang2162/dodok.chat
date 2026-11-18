@@ -24,7 +24,8 @@ const tone = (percent: number) =>
 /**
  * 컨텍스트 게이지(작성기 칩 스펙 5.4) — 원(지름 16px)과 퍼센트, 실행이 없으면 「—」. 호버·키보드 초점에 세부: `사용/창` 토큰,
  * 창 안 줄(used·free·buffer)은 창 비율, 창 밖(deferred)은 「불러올 때만」 아래 토큰 수, 0 토큰 줄은 숨김. 세부가 없으면(옛 러너)
- * 퍼센트 한 줄. 퍼센트는 서버가 세부의 percentage 로 낸 값이라 팝오버의 합계와 같은 수다
+ * 퍼센트 한 줄. 옛 러너 런은 서버가 항목 없는 세부(그 런의 사용·창)를 채워 `사용/창` 한 줄만(C4). 퍼센트는 서버가 세부의
+ * percentage 로 낸 값이라 팝오버의 합계와 같은 수다
  */
 export function ContextGauge({
   percent,
@@ -86,20 +87,22 @@ export function ContextGauge({
                 {formatTokens(context.totalTokens)} / {formatTokens(context.maxTokens)}
               </p>
               {context.percentage > 100 && <p className="text-destructive">{OVER_WINDOW}</p>}
-              <ul className="flex flex-col">
-                {inWindow.map((c) => (
-                  <li key={c.name} className="flex justify-between gap-4 tabular-nums">
-                    <span>{c.name}</span>
-                    <span>{share(c.tokens)}</span>
-                  </li>
-                ))}
-              </ul>
+              {inWindow.length > 0 && (
+                <ul className="flex flex-col">
+                  {inWindow.map((c, i) => (
+                    <li key={`${c.kind}:${i}`} className="flex justify-between gap-4 tabular-nums">
+                      <span>{c.name}</span>
+                      <span>{share(c.tokens)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {deferred.length > 0 && (
                 <>
                   <p className="mt-1 border-t pt-1 text-muted-foreground">{DEFERRED_HEADING}</p>
                   <ul className="flex flex-col" aria-label={DEFERRED_HEADING}>
-                    {deferred.map((c) => (
-                      <li key={c.name} className="flex justify-between gap-4 tabular-nums">
+                    {deferred.map((c, i) => (
+                      <li key={`${c.kind}:${i}`} className="flex justify-between gap-4 tabular-nums">
                         <span>{c.name}</span>
                         <span>{formatTokens(c.tokens)}</span>
                       </li>

@@ -57,6 +57,44 @@ describe("ContextGauge [작성기 칩 스펙 5.4·C8]", () => {
     expect(tip).not.toHaveTextContent(OVER_WINDOW);
   });
 
+  it("옛 러너 런(항목 없는 세부)은 `사용/창` 한 줄만", async () => {
+    render(
+      <ContextGauge
+        percent={42}
+        context={{ model: "", totalTokens: 42_000, maxTokens: 100_000, percentage: 42, categories: [] }}
+      />,
+    );
+    const tip = await focusGauge("컨텍스트 42%");
+    expect(tip).toHaveTextContent("42k / 100k");
+    expect(within(tip).queryAllByRole("list")).toEqual([]);
+    expect(tip).not.toHaveTextContent("컨텍스트 42%");
+    expect(tip).not.toHaveTextContent(OVER_WINDOW);
+  });
+
+  it("같은 이름의 줄이 둘이어도 둘 다 그린다", async () => {
+    render(
+      <ContextGauge
+        percent={10}
+        context={{
+          model: "m",
+          totalTokens: 20_000,
+          maxTokens: 200_000,
+          percentage: 10,
+          categories: [
+            { name: "Messages", tokens: 10_000, kind: "used" },
+            { name: "Messages", tokens: 10_000, kind: "used" },
+          ],
+        }}
+      />,
+    );
+    const tip = await focusGauge("컨텍스트 10%");
+    expect(
+      within(tip)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Messages5.0%", "Messages5.0%"]);
+  });
+
   it("hides zero rows", async () => {
     render(<ContextGauge percent={31} context={CONTEXT} />);
     const tip = await focusGauge("컨텍스트 31%");

@@ -13,6 +13,7 @@ import {
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { detailField, formError } from "@/api/formErrors";
+import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import {
   PERMISSION_MODE_LABEL,
   ROOT_MISSING,
@@ -367,7 +368,7 @@ export function RunnerAgentForm({
   );
 }
 
-/** effort 선택지 — 「기본」 뒤 다섯(shared RUNNER_EFFORTS) */
+/** 노력치(effort) 선택지 — 「기본」 뒤 다섯(shared RUNNER_EFFORTS), 화면 이름은 EFFORT_LABEL */
 export const EFFORT_OPTIONS = RUNNER_EFFORTS;
 
 type DefaultsDraft = { model: string; effort: RunnerEffort | ""; permissionMode: RunnerPermissionMode | "" };
@@ -467,7 +468,7 @@ export function SessionDefaultsForm({
           />
         )}
       </Row>
-      <Row label="effort">
+      <Row label="노력치">
         {(id, describedBy) => (
           <select
             id={id}
@@ -480,7 +481,7 @@ export function SessionDefaultsForm({
             <option value="">{DEFAULT_LABEL}</option>
             {EFFORT_OPTIONS.map((level) => (
               <option key={level} value={level}>
-                {level}
+                {EFFORT_LABEL[level]}
               </option>
             ))}
           </select>

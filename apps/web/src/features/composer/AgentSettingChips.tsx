@@ -10,6 +10,7 @@ import {
 } from "@dodok/shared";
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import {
@@ -31,8 +32,12 @@ export const MODEL_PRESETS = ["sonnet", "opus", "haiku"] as const;
 /** default 보다 높은 권한(acceptEdits)은 러너 주인·admin 만(S2) */
 export const RAISE_LOCKED = "러너 주인·admin 만 올릴 수 있습니다";
 export const ABOVE_CEILING = (ceiling: RunnerPermissionMode) => `러너 상한(${ceiling}) 위는 고를 수 없습니다`;
-/** 지금 effort 를 고른 모델이 받지 않는다 — 값은 그대로 둔다(작성기 칩 스펙 5.4) */
-export const EFFORT_UNSUPPORTED = "이 모델이 받지 않는 effort";
+/** 지금 노력치를 고른 모델이 받지 않는다 — 값은 그대로 둔다(작성기 칩 스펙 5.4) */
+export const EFFORT_UNSUPPORTED = "이 모델이 받지 않는 노력치";
+/** 칩이 「기본」일 때의 글 — 칩 셋이 모두 「기본」이어도 어느 칩인지 보이게 */
+export const DEFAULT_MODEL_LABEL = `${DEFAULT_LABEL} 모델`;
+export const DEFAULT_EFFORT_LABEL = `${DEFAULT_LABEL} 노력`;
+export const DEFAULT_PERMISSION_LABEL = `${DEFAULT_LABEL} 권한`;
 const CUSTOM_LABEL = "직접 입력";
 /** supportedModels 의 「기본」 줄 — 따로 보이지 않고 「기본」(null)에 합친다(C9) */
 const DEFAULT_MODEL_VALUE = "default";
@@ -68,19 +73,20 @@ export function modelChoices(models: readonly RunnerModelOption[], saved: string
 }
 
 /**
- * 노력치 칩의 선택지 — 고른 모델이 받는 단계, 「기본」이면 default 줄의 것. 목록이 없거나(옛 러너·목록에 없는 모델) 그 줄의 단계가
- * 비었으면 다섯 단계 전부(고를 수 없게 되지 않게 — C4)
+ * 노력치 칩의 선택지 — 고른 모델이 받는 단계, 「기본」이면 default 줄의 것. 그 줄이 있으면 빈 목록도 그대로(그 모델은 노력치를 안
+ * 받는다 — 칩은 「기본」만, 저장된 값은 범위 밖 경고 — 스펙 5.4). 줄이 없으면(목록이 없는 옛 러너·끊김, 목록에 없는 모델) 다섯 단계
+ * 전부(C4)
  */
 export function effortChoices(models: readonly RunnerModelOption[], model: string | null): RunnerEffort[] {
   const row = models.find((m) => m.value === (model ?? DEFAULT_MODEL_VALUE));
-  return row && row.efforts.length > 0 ? row.efforts : [...RUNNER_EFFORTS];
+  return row ? row.efforts : [...RUNNER_EFFORTS];
 }
 
 const CHIP =
   "h-6 max-w-48 gap-1 rounded-full border border-input bg-background px-2 text-xs font-normal text-foreground";
 
 /**
- * 작성기 위 칩 셋(작성기 칩 스펙 5.4) — 모델·effort·권한. 칩을 누르면 그 칩의 선택지만 뜨고, 고르면 바로 저장한다(부르는 쪽이 대화면
+ * 작성기 위 칩 셋(작성기 칩 스펙 5.4) — 모델·노력치(effort)·권한. 칩을 누르면 그 칩의 선택지만 뜨고, 고르면 바로 저장한다(부르는 쪽이 대화면
  * PATCH, 새 세션 창이면 보류 값). 실패·잠금 사유는 칩 옆에(부르는 쪽이 `error` 로 돌려준다)
  */
 export function AgentSettingChips({
@@ -106,7 +112,7 @@ export function AgentSettingChips({
   const choices = modelChoices(models, row.model);
   const modelLabel =
     row.model === null
-      ? `모델 ${DEFAULT_LABEL}`
+      ? DEFAULT_MODEL_LABEL
       : (choices.find((c) => c.value === row.model)?.label ?? row.model);
   const efforts = effortChoices(models, row.model);
   const effortOff = row.effort !== null && !efforts.includes(row.effort);
@@ -193,12 +199,12 @@ export function AgentSettingChips({
             size="sm"
             className={cn(CHIP, effortOff && "border-amber-500/70")}
             disabled={saving}
-            aria-label={`@${handle} effort: ${row.effort ?? DEFAULT_LABEL}${effortOff ? ` — ${EFFORT_UNSUPPORTED}` : ""}`}
+            aria-label={`@${handle} 노력치: ${row.effort === null ? DEFAULT_LABEL : EFFORT_LABEL[row.effort]}${effortOff ? ` — ${EFFORT_UNSUPPORTED}` : ""}`}
             aria-invalid={effortOff || undefined}
           >
             {effortOff && <TriangleAlertIcon className="size-3 text-amber-600" aria-hidden />}
             <span className="truncate">
-              {row.effort === null ? `effort ${DEFAULT_LABEL}` : `effort ${row.effort}`}
+              {row.effort === null ? DEFAULT_EFFORT_LABEL : EFFORT_LABEL[row.effort]}
             </span>
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
@@ -214,12 +220,12 @@ export function AgentSettingChips({
             <DropdownMenuRadioItem value="">{DEFAULT_LABEL}</DropdownMenuRadioItem>
             {efforts.map((level) => (
               <DropdownMenuRadioItem key={level} value={level}>
-                {level}
+                {EFFORT_LABEL[level]}
               </DropdownMenuRadioItem>
             ))}
             {effortOff && row.effort !== null && (
               <DropdownMenuRadioItem value={row.effort} disabled>
-                {row.effort} — {EFFORT_UNSUPPORTED}
+                {EFFORT_LABEL[row.effort]} — {EFFORT_UNSUPPORTED}
               </DropdownMenuRadioItem>
             )}
           </DropdownMenuRadioGroup>
@@ -236,7 +242,7 @@ export function AgentSettingChips({
             disabled={saving}
             aria-label={`@${handle} 권한: ${row.permissionMode ?? DEFAULT_LABEL}`}
           >
-            <span className="truncate">{row.permissionMode ?? `권한 ${DEFAULT_LABEL}`}</span>
+            <span className="truncate">{row.permissionMode ?? DEFAULT_PERMISSION_LABEL}</span>
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
