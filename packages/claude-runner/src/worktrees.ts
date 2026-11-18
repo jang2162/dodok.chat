@@ -32,8 +32,12 @@ export const execGit: GitRunner = (args, cwd) =>
     execFile(
       "git",
       args,
-      // 자격 증명 물음 같은 대화형 입력으로 멈추지 않게
-      { cwd, timeout: GIT_CALL_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+      // 자격 증명 물음 같은 대화형 입력으로 멈추지 않게, 사유 판정(dirty·branch_in_use)이 읽는 stderr 가 번역되지 않게
+      {
+        cwd,
+        timeout: GIT_CALL_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+      },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === "ENOENT") return reject(err);
         const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
@@ -102,7 +106,11 @@ function resolveTarget(roots: readonly ResolvedRoot[], ref: RunnerProjectRef): T
   return { ok: true, path, root: { ...root, path: rootPath } };
 }
 
-/** porcelain 목록의 워크트리 경로 → 브랜치(분리된 HEAD 면 null) */
+/** 제어 문자(줄바꿈 등) — info/exclude 에 다른 줄을 끼워 넣을 수 있어 경로·브랜치에서 거절한다 */
+// oxlint-disable-next-line no-control-regex
+export const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
+/** porcelain 목록의 워크트리 경로 → 브랜치(분리된 HEAD 면 null). 첫 항목은 주 작업 트리다(git 이 그렇게 낸다) */
 async function listWorktrees(git: GitRunner, repo: string): Promise<Map<string, string | null>> {
   const r = await git(["worktree", "list", "--porcelain"], repo);
   const out = new Map<string, string | null>();
@@ -197,16 +205,33 @@ export async function createWorktree(
           : "not_git",
       );
     }
-    // `-` 로 시작하는 이름은 check-ref-format 이 옵션으로 읽을 수 있다(그 명령은 `--` 를 받지 않는다) — 먼저 거른다
-    if (req.branch.startsWith("-")) return fail("invalid_branch");
+    // `-` 로 시작하는 이름은 check-ref-format 이 옵션으로 읽을 수 있다(그 명령은 `--` 를 받지 않는다) — 먼저 거른다.
+    // `@{` 는 check-ref-format --branch 가 `@{-1}` 처럼 다른 브랜치로 펼쳐 엉뚱한 사유가 나온다. 제어 문자도 여기서
+    if (req.branch.startsWith("-") || req.branch.includes("@{") || CONTROL_CHARS.test(req.branch))
+      return fail("invalid_branch");
+    if (CONTROL_CHARS.test(req.target.relPath)) return fail("outside_root");
     const refCheck = await git(["check-ref-format", "--branch", req.branch], repo.path);
     if (refCheck.code !== 0) return fail("invalid_branch");
 
     const target = resolveTarget(cfg.roots, req.target);
     if (!target.ok) return fail(target.reason);
     if (existsSync(target.path) && !isEmptyDir(target.path)) {
+      // 받아들이기(W13)는 요청한 글자 그대로의 자리가 다른 워크트리일 때만 — 주 작업 트리(첫 항목·.git 이 디렉터리)는 빼고,
+      // 대소문자만 다르거나 링크를 거쳐 같은 폴더로 풀리는 자리는 다른 행이 이미 가리킬 수 있어 받아들이지 않는다
       const registered = await listWorktrees(git, repo.path);
-      if (registered.has(target.path) && registered.get(target.path) === req.branch) {
+      const main = registered.keys().next().value;
+      const literal =
+        req.target.relPath === ""
+          ? target.root.path
+          : join(target.root.path, ...req.target.relPath.split("/"));
+      const dotGit = join(target.path, ".git");
+      if (
+        target.path === literal &&
+        target.path !== main &&
+        !(existsSync(dotGit) && lstatSync(dotGit).isDirectory()) &&
+        registered.has(target.path) &&
+        registered.get(target.path) === req.branch
+      ) {
         const head = await git(["rev-parse", "--short", "HEAD"], target.path);
         await excludeTarget(git, repo.path, target.path);
         return { ok: true, created: false, adopted: true, base: head.stdout.trim().slice(0, 64) };
@@ -260,6 +285,21 @@ export async function removeWorktree(
     if (!existsSync(dotGit) || lstatSync(dotGit).isDirectory()) return fail("not_worktree");
     const registered = await listWorktrees(git, repo.path);
     if (!registered.has(target.path) || target.path === realpathOr(repo.path)) return fail("not_worktree");
+    // 분리된 HEAD 의 커밋은 git worktree remove 가 지켜 주지 않는다(reflog 도 함께 지워진다) — 어떤 브랜치에도 닿지 않으면 지우지 않는다
+    const onBranch = await git(["symbolic-ref", "-q", "HEAD"], target.path);
+    if (onBranch.code !== 0) {
+      const head = await git(["rev-parse", "--verify", "--quiet", "HEAD"], target.path);
+      const sha = head.stdout.trim();
+      if (head.code === 0 && sha !== "") {
+        if (!/^[0-9a-f]{7,64}$/.test(sha)) return fail("git_failed");
+        const contains = await git(
+          ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/heads"],
+          repo.path,
+        );
+        if (contains.code !== 0) return fail("git_failed", contains.stderr);
+        if (contains.stdout.trim() === "") return fail("unmerged_detached");
+      }
+    }
     const rm = await git(["worktree", "remove", "--", target.path], repo.path);
     if (rm.code === 0) return { ok: true };
     if (/contains modified or untracked files/.test(rm.stderr)) return fail("dirty", rm.stderr);

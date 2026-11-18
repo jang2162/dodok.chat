@@ -354,7 +354,10 @@ export const RunnerWorktreeCreateResult = z.discriminatedUnion("ok", [
 ]);
 export type RunnerWorktreeCreateResult = z.infer<typeof RunnerWorktreeCreateResult>;
 
-/** worktree.remove — `--force` 없이 지운다. 커밋하지 않은 변경·추적 안 된 파일이 있으면 dirty(W7) */
+/**
+ * worktree.remove — `--force` 없이 지운다. 커밋하지 않은 변경·추적 안 된 파일이 있으면 dirty(W7), 분리된 HEAD 의 커밋이 어떤
+ * 브랜치에도 닿지 않으면 unmerged_detached(지우면 그 커밋을 찾을 길이 없다)
+ */
 export const RunnerWorktreeRemove = z.object({ repo: RunnerProjectRef, target: RunnerProjectRef });
 export type RunnerWorktreeRemove = z.infer<typeof RunnerWorktreeRemove>;
 
@@ -362,7 +365,7 @@ export const RunnerWorktreeRemoveResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({
     ok: z.literal(false),
-    reason: z.enum(["dirty", "not_worktree", "git_failed"]),
+    reason: z.enum(["dirty", "unmerged_detached", "not_worktree", "git_failed"]),
     message: z.string().max(200).optional(),
   }),
 ]);

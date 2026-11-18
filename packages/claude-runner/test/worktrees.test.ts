@@ -213,6 +213,70 @@ describe("createWorktree", () => {
     expect(other).toMatchObject({ ok: false, reason: "target_exists" });
   });
 
+  it("adopt never takes the main working tree (target = repo itself, branch main) → target_exists", async () => {
+    const r = await createWorktree(cfg(), { repo: REPO, target: REPO, branch: "main" });
+    expect(r).toMatchObject({ ok: false, reason: "target_exists" });
+  });
+
+  it("adopt refuses a link that resolves to the main tree or to a registered worktree → target_exists", async () => {
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync(repo, join(root, "alias"));
+    expect(await createWorktree(cfg(), { repo: REPO, target: at("alias"), branch: "main" })).toMatchObject({
+      ok: false,
+      reason: "target_exists",
+    });
+    const req = { repo: REPO, target: at("app/.worktrees/e"), branch: "dodok/e" };
+    expect(await createWorktree(cfg(), req)).toMatchObject({ ok: true, created: true });
+    symlinkSync(join(repo, ".worktrees", "e"), join(root, "e-link"));
+    expect(await createWorktree(cfg(), { ...req, target: at("e-link") })).toMatchObject({
+      ok: false,
+      reason: "target_exists",
+    });
+  });
+
+  // 대소문자 무시 FS(macOS APFS 기본)에서만 같은 폴더로 풀린다 — 구분하는 FS 면 건너뛴다
+  const caseInsensitive = () => existsSync(join(root, "APP"));
+
+  it("(a) case-only different path to the main tree is not adopted → target_exists", async (ctx) => {
+    if (!caseInsensitive()) ctx.skip();
+    const r = await createWorktree(cfg(), { repo: REPO, target: at("APP"), branch: "main" });
+    expect(r).toMatchObject({ ok: false, reason: "target_exists" });
+  });
+
+  it("(b) case-only different path to a registered worktree is not adopted → target_exists", async (ctx) => {
+    if (!caseInsensitive()) ctx.skip();
+    const req = { repo: REPO, target: at("app/.worktrees/e"), branch: "dodok/e" };
+    expect(await createWorktree(cfg(), req)).toMatchObject({ ok: true, created: true });
+    const r = await createWorktree(cfg(), { ...req, target: at("app/.worktrees/E") });
+    expect(r).toMatchObject({ ok: false, reason: "target_exists" });
+    // 글자가 같은 자리는 그대로 받아들인다
+    expect(await createWorktree(cfg(), req)).toMatchObject({ ok: true, adopted: true });
+  });
+
+  it("control characters in target or branch are refused, info/exclude untouched", async () => {
+    const before = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    const r = await createWorktree(cfg(), {
+      repo: REPO,
+      target: at("app/sub\nREADME.md"),
+      branch: "dodok/sub",
+    });
+    expect(r).toMatchObject({ ok: false, reason: "outside_root" });
+    for (const branch of ["dodok/a\nb", "dodok/a\x7fb", "dodok/\tx"]) {
+      const b = await createWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/c"), branch });
+      expect(b, JSON.stringify(branch)).toMatchObject({ ok: false, reason: "invalid_branch" });
+    }
+    expect(readFileSync(join(repo, ".git", "info", "exclude"), "utf8")).toBe(before);
+    expect(existsSync(join(repo, "sub\nREADME.md"))).toBe(false);
+    expect(branches()).toEqual(["main"]);
+  });
+
+  it('branch "@{-1}" → invalid_branch (not expanded to another branch)', async () => {
+    git(repo, "checkout", "-q", "-b", "other");
+    git(repo, "checkout", "-q", "main");
+    const r = await createWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/p"), branch: "@{-1}" });
+    expect(r).toEqual({ ok: false, reason: "invalid_branch" });
+  });
+
   it("already ignored by .gitignore → exclude untouched", async () => {
     writeFileSync(join(repo, ".gitignore"), ".worktrees/\n");
     git(repo, "add", ".gitignore");
@@ -327,6 +391,27 @@ describe("removeWorktree", () => {
     const r = await removeWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/feat") });
     expect(r).toMatchObject({ ok: false, reason: "dirty" });
     expect(readFileSync(join(dir, "README.md"), "utf8")).toBe("changed\n");
+  });
+
+  it("detached HEAD with a commit on no branch → unmerged_detached, folder and commit kept", async () => {
+    const dir = await make("feat");
+    git(dir, "checkout", "-q", "--detach");
+    writeFileSync(join(dir, "lost.txt"), "work");
+    git(dir, "add", "lost.txt");
+    git(dir, "commit", "-q", "-m", "detached work");
+    const sha = git(dir, "rev-parse", "HEAD");
+    const r = await removeWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/feat") });
+    expect(RunnerWorktreeRemoveResult.parse(r)).toEqual({ ok: false, reason: "unmerged_detached" });
+    expect(existsSync(join(dir, "lost.txt"))).toBe(true);
+    expect(git(dir, "rev-parse", "HEAD")).toBe(sha);
+  });
+
+  it("detached HEAD whose commit is on a branch → removed", async () => {
+    const dir = await make("feat");
+    git(dir, "checkout", "-q", "--detach");
+    const r = await removeWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/feat") });
+    expect(r).toEqual({ ok: true });
+    expect(existsSync(dir)).toBe(false);
   });
 
   it("remove missing folder → prune ok", async () => {
