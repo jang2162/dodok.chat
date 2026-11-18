@@ -90,7 +90,7 @@ describe("러너 에이전트 줄 — 새 세션 시작값 [세션 설정 스펙
       "admin",
     );
     const row = await agentDetail();
-    expect(row).toHaveTextContent("새 세션 시작값 · 모델 sonnet · effort high · 권한 기본");
+    expect(row).toHaveTextContent("새 세션 시작값 · 모델 sonnet · 노력 높음 · 권한 기본");
     expect(row).not.toHaveTextContent("허용 도구");
     expect(within(row).getByRole("button", { name: "@coder 시작값 고치기" })).toBeInTheDocument();
   });

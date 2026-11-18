@@ -14,6 +14,7 @@ import { useRole } from "@/api/queries";
 import { canOpenDm } from "@/features/dms/queries";
 import { FieldError } from "@/ui/field-error";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
+import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import { josa } from "@/lib/josa";
 import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { AvatarPicker } from "@/features/account/AvatarPicker";
@@ -322,7 +323,8 @@ function RunnerSessionDefaults({
   return (
     <div className="flex items-start justify-between gap-3">
       <p className="min-w-0 text-sm break-words text-muted-foreground">
-        새 세션 시작값 · 모델 {orDefault(defaults.model)} · effort {orDefault(defaults.effort)} · 권한{" "}
+        새 세션 시작값 · 모델 {orDefault(defaults.model)} · 노력{" "}
+        {defaults.effort === null ? DEFAULT_LABEL : EFFORT_LABEL[defaults.effort]} · 권한{" "}
         {orDefault(defaults.permissionMode)}
       </p>
       <Button
