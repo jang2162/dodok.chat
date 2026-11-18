@@ -171,7 +171,8 @@ export interface RunnerAdapter extends AgentAdapter {
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
 }
 
-const HELLO_TIMEOUT_MS = 10_000;
+/** 연결 뒤 hello 를 기다리는 상한 — 넘으면 전송을 끊는다. 러너의 detect(판 읽기 + 모델 목록 받기)가 이 안에 끝나야 한다 */
+export const HELLO_TIMEOUT_MS = 10_000;
 const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;

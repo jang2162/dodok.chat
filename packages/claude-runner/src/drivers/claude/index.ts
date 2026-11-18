@@ -1,4 +1,4 @@
-import { Id, RunnerModelOption } from "@dodok/shared";
+import { Id, RUNNER_EFFORTS, RunnerModelOption } from "@dodok/shared";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -35,20 +35,25 @@ export type ClaudeDriverOptions = {
   modelsCwd?: string;
 };
 
-/** 모델 목록 받기 상한 — 넘으면 목록 없이 hello 를 보낸다(웹은 고정 목록으로 — 작성기 칩 스펙 C4) */
-export const MODELS_TIMEOUT_MS = 10_000;
+/**
+ * 모델 목록 받기 상한 — 넘으면 목록 없이 hello 를 보낸다(웹은 고정 목록으로 — 작성기 칩 스펙 C4). hello 는 detect 뒤에 나가므로
+ * 설치본 판 읽기 상한(VERSION_TIMEOUT_MS)과 더해 서버의 hello 상한(runner-adapter HELLO_TIMEOUT_MS)보다 작아야 한다 — 넘으면 서버가
+ * 끊고 러너는 다시 붙어 같은 일을 되풀이한다(시험이 합을 단언한다)
+ */
+export const MODELS_TIMEOUT_MS = 3000;
 const MODELS_MAX = 32;
 
 /**
  * SDK supportedModels() 를 계약 모양으로 — value "default" 줄도 싣는다(웹이 「기본」에 합친다 — C9), 32개까지. 표시 이름은 80자로
- * 자르고, 계약에 맞지 않는 줄(빈 value·모르는 effort)은 그 줄만 뺀다
+ * 자르고, 계약에 맞지 않는 줄(빈 value·모르는 effort)은 그 줄만 뺀다. 노력치는 「안 받음」(supportsEffort 거짓 → 빈 목록)과
+ * 「모름」(둘 다 없음 → 다섯 단계)을 가른다 — 웹은 빈 목록이면 「기본」만 보인다(스펙 5.4)
  */
 export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
   return list.slice(0, MODELS_MAX).flatMap((m) => {
     const row = RunnerModelOption.safeParse({
       value: m?.value,
       displayName: typeof m?.displayName === "string" ? m.displayName.slice(0, 80) : m?.displayName,
-      efforts: [...(m?.supportedEffortLevels ?? [])],
+      efforts: m?.supportsEffort === false ? [] : [...(m?.supportedEffortLevels ?? RUNNER_EFFORTS)],
     });
     return row.success ? [row.data] : [];
   });
@@ -64,8 +69,9 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   let chosen: ClaudeExecutable | undefined;
   // 고른 CLI 가 바뀔 때만 한 줄 — 경로는 찍지 않는다(로그를 남에게 보여 줄 수 있다)
   let lastChoice = "";
-  // 마지막으로 받은 모델 목록과 그때의 CLI·로그인 자리 — 같으면 재연결마다 CLI 를 다시 띄우지 않는다. 실패는 기억하지 않는다
-  let models: { key: string; list: RunnerModelOption[] } | undefined;
+  // 마지막으로 받은 모델 목록과 그때의 CLI·로그인 자리 — 같으면 재연결마다 CLI 를 다시 띄우지 않는다. 시간 초과도 같은 키로 기억해
+  // 목록 없이 간다(멈추는 CLI 를 재연결마다 띄우지 않게). 던짐(로그인 전 등)은 기억하지 않는다 — 로그인 뒤 다음 연결에서 다시 받는다
+  let models: { key: string; list: RunnerModelOption[] | undefined } | undefined;
 
   /** 던지지 않는다 — 실패·시간 초과·모양 어긋남이면 undefined */
   async function listModels(
@@ -80,6 +86,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
     const timeout = new Promise<undefined>((resolve) => {
       timer = setTimeout(() => {
         abort.abort();
+        models = { key, list: undefined };
         resolve(undefined);
       }, opts.modelsTimeoutMs ?? MODELS_TIMEOUT_MS);
     });

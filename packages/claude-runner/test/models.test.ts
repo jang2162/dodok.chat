@@ -1,3 +1,4 @@
+import { RUNNER_EFFORTS } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { toModelOptions } from "../src/drivers/claude";
 import type { SdkModelInfo } from "../src/drivers/claude/sdk";
@@ -15,10 +16,17 @@ describe("toModelOptions(작성기 칩 스펙 C3)", () => {
     expect(
       toModelOptions([info({ supportedEffortLevels: ["low", "max"], resolvedModel: "claude-opus-5-5" })]),
     ).toEqual([{ value: "opus", displayName: "Opus 5.5", efforts: ["low", "max"] }]);
-    // effort 를 안 받는 모델 — 빈 목록
-    expect(toModelOptions([info({ supportsEffort: false })])).toEqual([
+    // effort 를 안 받는 모델 — 빈 목록(단계를 함께 실어도 「안 받음」이 이긴다)
+    expect(toModelOptions([info({ supportsEffort: false, supportedEffortLevels: ["low"] })])).toEqual([
       { value: "opus", displayName: "Opus 5.5", efforts: [] },
     ]);
+  });
+
+  it("effort 「모름」(둘 다 없음)은 다섯 단계 — 「안 받음」과 가른다", () => {
+    expect(toModelOptions([info({})])).toEqual([
+      { value: "opus", displayName: "Opus 5.5", efforts: [...RUNNER_EFFORTS] },
+    ]);
+    expect(toModelOptions([info({ supportsEffort: true })])[0]!.efforts).toEqual([...RUNNER_EFFORTS]);
   });
 
   it("keeps default row", () => {
@@ -34,7 +42,7 @@ describe("toModelOptions(작성기 칩 스펙 C3)", () => {
     const got = toModelOptions([
       info({ value: "" }),
       info({ value: "x", supportedEffortLevels: ["ultra" as "max"] }),
-      info({ value: "long", displayName: "가".repeat(120) }),
+      info({ value: "long", displayName: "가".repeat(120), supportsEffort: false }),
     ]);
     expect(got).toEqual([{ value: "long", displayName: "가".repeat(80), efforts: [] }]);
   });

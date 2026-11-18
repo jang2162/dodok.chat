@@ -26,6 +26,7 @@ import {
   type RunnerRunAgent,
   type RunnerServerToClientEvents,
 } from "@dodok/shared";
+import { HELLO_TIMEOUT_MS } from "@dodok/runner-adapter";
 import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "../src/config";
@@ -37,7 +38,8 @@ import {
   type RunnerConnection,
 } from "../src/connection";
 import type { ProgramDriver } from "../src/driver";
-import { createClaudeDriver, toModelOptions } from "../src/drivers/claude";
+import { createClaudeDriver, MODELS_TIMEOUT_MS, toModelOptions } from "../src/drivers/claude";
+import { VERSION_TIMEOUT_MS } from "../src/drivers/claude/executable";
 import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
 import { createFakeSdk, FAKE_MODELS, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
@@ -1191,7 +1193,8 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
         efforts: ["low", "medium", "high", "xhigh", "max"],
       },
       { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },
-      { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
+      // supportsEffort·supportedEffortLevels 를 싣지 않은 줄 — 「모름」이라 다섯 단계(「안 받음」은 models.test.ts)
+      { value: "haiku", displayName: "Haiku 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
     ]);
     // 런과 같은 로그인·설정 — 첫 루트를 cwd 로, env 허용 목록·전용 로그인 자리, 사람 저장소 설정·커넥터는 끌어오지 않는다
     expect(fake.listModelsCalls).toHaveLength(1);
@@ -1206,6 +1209,21 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
     expect(options.abortController).toBeInstanceOf(AbortController);
     // 프롬프트를 보내는 query 는 열지 않는다 — 목록 받기가 런이 되지 않는다
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("목록 받기 env 는 허용 목록 — 러너의 ANTHROPIC_* 를 CLI 로 넘기지 않는다", async () => {
+    const { server, fake } = await setup({
+      baseEnv: {
+        PATH: "/usr/bin",
+        ANTHROPIC_API_KEY: "sk-runner-secret",
+        ANTHROPIC_BASE_URL: "https://elsewhere",
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const env = fake.listModelsCalls[0]!.env;
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CONFIG_DIR: AGENT.configDir });
   });
 
   it("listModels failure → hello without models", async () => {
@@ -1236,6 +1254,46 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
     await waitFor(() => server.hellos.length === 1);
     expect(server.hellos[0]!.programs[0]).not.toHaveProperty("models");
     expect(aborted?.signal.aborted).toBe(true);
+  });
+
+  it("판 읽기 + 목록 받기 상한의 합이 서버 hello 상한보다 작다 — 넘으면 서버가 끊고 재연결을 되풀이한다", () => {
+    // 1초 넘게 남긴다 — 연결·hello 전송·detect 의 다른 일에 쓸 여유
+    expect(VERSION_TIMEOUT_MS + MODELS_TIMEOUT_MS).toBeLessThanOrEqual(HELLO_TIMEOUT_MS - 1000);
+  });
+
+  it("timed-out model list is not retried on reconnect", async () => {
+    const { server, fake } = await setup({
+      modelsTimeoutMs: 30,
+      sdk: (f) => {
+        f.models = () => new Promise(() => {});
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 다시 붙는다(transport close) — 같은 CLI·판·로그인 자리라 멈추는 CLI 를 다시 띄우지 않고 목록 없이 hello
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    expect(server.hellos[1]!.programs[0]).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+  });
+
+  it("thrown model list is retried", async () => {
+    let fail = true;
+    const { server, fake } = await setup({
+      sdk: (f) => {
+        f.models = async () => {
+          if (fail) throw new Error("로그인 전");
+          return FAKE_MODELS;
+        };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).not.toHaveProperty("models");
+    fail = false;
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    expect(fake.listModelsCalls).toHaveLength(2);
+    expect(server.hellos[1]!.programs[0]!.models).toEqual(toModelOptions(FAKE_MODELS));
   });
 
   it("second detect with same CLI reuses models", async () => {
