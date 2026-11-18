@@ -37,6 +37,11 @@ export type SdkPort = {
   /** 그 세션의 전사가 이 작업 디렉터리에 있으면 참 — 러너가 resume 과 sessionId 를 가른다(계획 판정 P2) */
   sessionExists: (sessionId: string, cwd: string) => Promise<boolean>;
   createMcpServer: (tools: SdkMcpTool[]) => SdkMcpServer;
+  /**
+   * 그 CLI 가 받는 모델(supportedModels) — 프롬프트 없이 query 를 열어 초기화 답만 받고 닫는다. 프롬프트를 보내지 않으므로 모델
+   * 호출이 없다(작성기 칩 스펙 5.1 — 런 0회 하네스가 확인한다). options.abortController 로 끊는다
+   */
+  listModels: (args: { options: SdkOptions }) => Promise<SdkModelInfo[]>;
 };
 
 export const realSdk: SdkPort = {
@@ -45,4 +50,21 @@ export const realSdk: SdkPort = {
   sessionExists: async (sessionId, cwd) => (await getSessionInfo(sessionId, { dir: cwd })) !== undefined,
   // alwaysLoad — 없으면 dodok 도구가 ToolSearch 뒤로 밀려 모델이 스키마 없이 첫 호출을 한다(ADR 0007 5.7)
   createMcpServer: (tools) => createSdkMcpServer({ name: "dodok", alwaysLoad: true, tools }),
+  listModels: async ({ options }) => {
+    // 입력은 닫을 때까지 아무것도 내지 않는다 — 닫히면 끝나 SDK 가 stdin 을 닫는다
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const noPrompt: AsyncIterable<SDKUserMessage> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => released.then(() => ({ done: true as const, value: undefined })),
+      }),
+    };
+    const q = query({ prompt: noPrompt, options });
+    try {
+      return await q.supportedModels();
+    } finally {
+      release();
+      q.close();
+    }
+  },
 };

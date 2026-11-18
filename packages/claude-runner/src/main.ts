@@ -154,7 +154,15 @@ async function main(): Promise<void> {
   const connection = startRunnerConnection({
     config,
     token,
-    drivers: [createClaudeDriver({ sdk: realSdk, claudeCodeVersion: CLAUDE_CODE_VERSION, logger })],
+    drivers: [
+      createClaudeDriver({
+        sdk: realSdk,
+        claudeCodeVersion: CLAUDE_CODE_VERSION,
+        logger,
+        // 모델 목록을 받는 query 의 cwd — 첫 루트(작성기 칩 스펙 C10). 루트는 설정이 하나 이상을 강제한다
+        ...(config.roots[0] ? { modelsCwd: config.roots[0].path } : {}),
+      }),
+    ],
     versions: {
       runnerVersion: RUNNER_VERSION,
       sdkVersion: SDK_VERSION,

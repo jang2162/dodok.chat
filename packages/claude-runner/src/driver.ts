@@ -31,7 +31,7 @@ export type RunSpec = {
 
 export type ProgramDetection = Pick<
   RunnerProgramStatus,
-  "available" | "version" | "auth" | "reason" | "login" | "cli"
+  "available" | "version" | "auth" | "reason" | "login" | "cli" | "models"
 >;
 
 export interface ProgramDriver {

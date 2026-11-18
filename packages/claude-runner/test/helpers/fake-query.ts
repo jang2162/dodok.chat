@@ -4,6 +4,7 @@ import type {
   SdkMcpServer,
   SdkMcpTool,
   SdkMessage,
+  SdkModelInfo,
   SdkOptions,
   SdkPort,
   SdkQuery,
@@ -69,7 +70,30 @@ export type FakeSdk = SdkPort & {
    * 부르면 던진다 — 러너가 입력을 닫기 전에 물어야 한다
    */
   contextUsage: (call: FakeCall) => Promise<SdkContextUsage>;
+  /** listModels 의 답 — 시험이 바꿔 끼운다(던짐·멈춤). 기본은 FAKE_MODELS */
+  models: (options: SdkOptions) => Promise<SdkModelInfo[]>;
+  /** listModels 를 부른 options — 부를 때마다 하나(CLI 를 몇 번 띄웠나) */
+  listModelsCalls: SdkOptions[];
 };
+
+/** 가짜 supportedModels() 의 기본 답 — 실제 응답처럼 description 등 계약에 없는 필드도 싣는다 */
+export const FAKE_MODELS = [
+  {
+    value: "default",
+    displayName: "Default (recommended)",
+    description: "Opus 5.5 · Most capable",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    value: "sonnet",
+    displayName: "Sonnet 5.5",
+    description: "Everyday tasks",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high"],
+  },
+  { value: "haiku", displayName: "Haiku 5.5", description: "Fastest" },
+] as SdkModelInfo[];
 
 /** 가짜 getContextUsage 의 기본 답 — 실제 응답처럼 줄별 목록(memoryFiles·mcpTools·gridRows …)도 싣는다 */
 export const FAKE_CONTEXT_USAGE = {
@@ -112,6 +136,8 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
   const servers: SdkMcpTool[][] = [];
   const fake = {
     contextUsage: async (_call: FakeCall): Promise<SdkContextUsage> => FAKE_CONTEXT_USAGE,
+    models: async (_options: SdkOptions): Promise<SdkModelInfo[]> => FAKE_MODELS,
+    listModelsCalls: [] as SdkOptions[],
   };
 
   function query(args: { prompt: AsyncIterable<SdkUserMessage>; options: SdkOptions }): SdkQuery {
@@ -242,7 +268,11 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       // tools 는 가짜만 싣는다 — callTool 단계가 handler 를 찾는다
       return { type: "sdk", name: "dodok", instance: {}, tools } as unknown as SdkMcpServer;
     },
-  } satisfies Omit<FakeSdk, "contextUsage">) as FakeSdk;
+    listModels: async ({ options }) => {
+      fake.listModelsCalls.push(options);
+      return fake.models(options);
+    },
+  } satisfies Omit<FakeSdk, "contextUsage" | "models" | "listModelsCalls">) as FakeSdk;
 }
 
 /** 대본 조각 — ADR 0007 4.1 의 턴 하나 모양 */
