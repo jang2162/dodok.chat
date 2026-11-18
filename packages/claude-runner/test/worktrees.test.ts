@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunnerWorktreeCreateResult, RunnerWorktreeRemoveResult } from "@dodok/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createWorktree, type GitRunner, isGitTop, removeWorktree } from "../src/worktrees";
+import { createWorktree, execGit, type GitRunner, isGitTop, removeWorktree } from "../src/worktrees";
 
 // git 워크트리(워크트리 스펙 5.3) — 실제 git 으로 임시 저장소를 만들어 본다. 머신의 git 설정(전역 훅·서명 등)에 기대지 않게
 // 전역·시스템 설정을 끈다
@@ -112,6 +112,48 @@ describe("createWorktree", () => {
     expect(existsSync(join(repo, ".worktrees"))).toBe(false);
     expect(existsSync(join(repo, "pwned"))).toBe(false);
     expect(branches()).toEqual(["main"]);
+  });
+
+  it("git argv: option-like branch never reaches git, paths follow --", async () => {
+    // 이 판의 git 은 `-` 시작 이름을 스스로 거절하지만, 옛 git·다른 하위 명령이 옵션으로 읽지 않게 러너가 먼저 거르고
+    // 경로는 언제나 `--` 뒤에 둔다(Review Focus 1)
+    const calls: string[][] = [];
+    const recording: GitRunner = (args, cwd) => {
+      calls.push(args);
+      return execGit(args, cwd);
+    };
+    for (const branch of ["-x", "--orphan"]) {
+      const r = await createWorktree(
+        cfg(),
+        { repo: REPO, target: at("app/.worktrees/x"), branch },
+        { git: recording },
+      );
+      expect(r).toMatchObject({ ok: false, reason: "invalid_branch" });
+    }
+    expect(calls.some((a) => a.includes("-x") || a.includes("--orphan"))).toBe(false);
+
+    calls.length = 0;
+    git(repo, "branch", "topic");
+    const target = join(repo, ".worktrees");
+    for (const [name, branch] of [
+      ["n", "dodok/n"],
+      ["t", "topic"],
+    ] as const) {
+      const r = await createWorktree(
+        cfg(),
+        { repo: REPO, target: at(`app/.worktrees/${name}`), branch },
+        { git: recording },
+      );
+      expect(r.ok).toBe(true);
+    }
+    await removeWorktree(cfg(), { repo: REPO, target: at("app/.worktrees/t") }, { git: recording });
+    const pathCalls = calls.filter((a) => a[0] === "worktree" && (a[1] === "add" || a[1] === "remove"));
+    expect(pathCalls).toHaveLength(3);
+    for (const a of pathCalls) {
+      const i = a.findIndex((x) => x.startsWith(target));
+      expect(i, a.join(" ")).toBeGreaterThan(0);
+      expect(a[i - 1], a.join(" ")).toBe("--");
+    }
   });
 
   it("shell characters without spaces become the branch name verbatim", async () => {
