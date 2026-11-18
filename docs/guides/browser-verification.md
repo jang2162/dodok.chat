@@ -25,6 +25,9 @@
 - ⚠ **읽음(`conversation.read`)·presence 처럼 탭이 보일 때만 도는 동작은 neo 로 재지 않는다.** neo 의 탭은 백그라운드라 `visibilityState` 가 `hidden` 이고,
   `useReadAtEnd` 는 보이는 탭에서만 읽음을 보내므로 「안 나간다」 확인이 고치기 전 코드에서도 통과한다. 독립 헤드리스 Chromium(`playwright-core` 의
   `chromium.launch()`, 페이지가 `visible`)으로 보고 WebSocket `framesent` 로 센다.
+- **dev:fake 에서 러너 에이전트를 API 로 더 만들 때** 프로젝트 id 는 `GET /api/v1/runners/<tokenId>/projects` 에서 얻고,
+  채널 만들기 본문의 topic·prompt 는 `null` 이 아니라 빈 글로 보낸다(`null` 은 거절된다). 가짜 러너에는 에이전트가 coder 하나뿐이라
+  여러 에이전트 화면(작성기 알약·패널)을 보려면 이렇게 더 만든다.
 - `scripts/orca-worker.sh spawn` 은 워커를 띄우기 전에 neo 가 꺼져 있으면 켠다(`ensure_browser`) —
   그러나 **메인 세션 자신**이 시작될 때 꺼져 있었던 것은 스크립트가 고치지 못한다.
 - ⚠ **프로필이 하나라 쿠키·localStorage 는 호스트 단위로 공유되고, 로그인은 쿠키 세션(`dodok.session`)이다.**
