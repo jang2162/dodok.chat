@@ -1,7 +1,21 @@
-import type { AgentCeiling, AgentSettingsPatch, ConversationAgentSettings } from "@dodok/shared";
+import type {
+  AgentCeiling,
+  AgentSettingsPatch,
+  ConversationAgentSettings,
+  RunnerEffort,
+} from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+
+/** 노력치(effort) 단계의 화면 이름 — 작성기 칩과 새 에이전트 폼·「새 세션 시작값」이 같은 이름을 쓴다. 저장 값은 영문 그대로 */
+export const EFFORT_LABEL: Record<RunnerEffort, string> = {
+  low: "낮음",
+  medium: "보통",
+  high: "높음",
+  xhigh: "매우 높음",
+  max: "최대",
+};
 
 /**
  * 러너 에이전트의 세션 설정(세션 설정 스펙 5.2) — `GET /conversations/:id/agent-settings[?threadRootId]` 와 `PATCH …/:agentId`.
@@ -54,7 +68,7 @@ export function useAgentSettings(
 
 /**
  * 한 줄을 그 대화의 캐시 모두에 넣는다 — wire `conversation.agent_settings`·PATCH 응답이 같은 길. 대화 키는 줄 그대로, 스레드 키는 값만
- * 바꾸고 컨텍스트 % 는 그 스레드의 것을 둔다(실린 % 는 대화 세션의 것이다)
+ * 바꾸고 컨텍스트 %·세부는 그 스레드의 것을 둔다(실린 것은 대화 세션의 것이다)
  */
 export function applyAgentSettings(
   qc: QueryClient,
@@ -72,7 +86,7 @@ export function applyAgentSettings(
         row.agentId !== settings.agentId
           ? row
           : thread
-            ? { ...settings, contextPercent: row.contextPercent }
+            ? { ...settings, contextPercent: row.contextPercent, context: row.context }
             : settings,
       ),
     );

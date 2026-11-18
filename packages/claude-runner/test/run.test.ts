@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { CONTROL_TOOLS, renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ABORT_CLOSE_MS,
@@ -16,10 +16,11 @@ import {
 } from "../src/drivers/claude/run";
 import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
 import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
-import { realSdk, type SdkMcpServer } from "../src/drivers/claude/sdk";
+import { realSdk, type SdkContextUsage, type SdkMcpServer } from "../src/drivers/claude/sdk";
+import { toContextBreakdown } from "../src/drivers/claude/context-usage";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
-import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
+import { createFakeSdk, FAKE_CONTEXT_USAGE, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runSpec, runStart, SESSION_ID } from "./helpers/fixtures";
 
 const BASE_ENV = {
@@ -956,5 +957,90 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
     expect(finals(emitted)).toEqual([
       { kind: "final", final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" } },
     ]);
+  });
+});
+
+describe("runOnce — 런 끝 컨텍스트 세부(작성기 칩 스펙 C7)", () => {
+  const usageOf = (e: Emitted[]) =>
+    (finals(e)[0] as { final: { usage?: Record<string, unknown> } } | undefined)?.final.usage;
+
+  it("final carries contextBreakdown when getContextUsage resolves", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runSpec(), ctx);
+    expect(finals(emitted)).toHaveLength(1);
+    expect(usageOf(emitted)).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      contextBreakdown: toContextBreakdown(FAKE_CONTEXT_USAGE),
+    });
+    expect(fake.calls[0]!.inputClosed).toBe(true);
+  });
+
+  it("getContextUsage is called with detail summary before input closes", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runSpec(), ctx);
+    // 가짜 query 는 입력이 닫힌 뒤 부르면 던진다 — 세부가 실렸으면 닫기 전에 불렀다
+    expect(fake.calls[0]!.contextUsageCalls).toEqual([{ detail: "summary" }]);
+    expect(usageOf(emitted)).toHaveProperty("contextBreakdown");
+  });
+
+  it("getContextUsage hangs → final without breakdown within 2s", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { fake, ctx, emitted } = harness();
+      fake.contextUsage = () => new Promise<SdkContextUsage>(() => {});
+      fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+      const done = runOnce(runSpec(), ctx);
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(finals(emitted)).toHaveLength(0);
+      // 답 글은 이미 흘러 나와 있다
+      expect(emitted.some((e) => e.kind === "event" && e.event.type === "TEXT_MESSAGE_END")).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(100);
+      await done;
+      expect(finals(emitted)).toHaveLength(1);
+      expect(errors(emitted)).toHaveLength(0);
+      expect(usageOf(emitted)).toEqual({ inputTokens: 10, outputTokens: 5 });
+      expect(finals(emitted)[0]).toMatchObject({ final: { text: "끝", stopReason: "end_turn" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("getContextUsage throws → final without breakdown", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.contextUsage = async () => {
+      throw new Error("control request failed");
+    };
+    fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runSpec(), ctx);
+    expect(errors(emitted)).toHaveLength(0);
+    expect(usageOf(emitted)).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "끝", stopReason: "end_turn" } });
+  });
+
+  it("aborted run does not call getContextUsage", async () => {
+    const { fake, ctx, emitted, controller } = harness();
+    fake.script(script.messageStart("msg_1"), {
+      waitInterrupt: [script.errorResult("error_during_execution", ["[ede_diagnostic] stop_reason=null"])],
+    });
+    const done = runOnce(runSpec(), ctx);
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    await done;
+    expect(finals(emitted)).toHaveLength(1);
+    expect(finals(emitted)[0]).toMatchObject({ final: { stopReason: "aborted" } });
+    expect(fake.calls[0]!.contextUsageCalls).toEqual([]);
+    expect(usageOf(emitted)).not.toHaveProperty("contextBreakdown");
+  });
+
+  it("error result(error_*) 는 세부를 묻지 않는다 — run.error 하나", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(script.init(), script.errorResult("error_max_turns", ["max turns"]));
+    await runOnce(runSpec(), ctx);
+    expect(errors(emitted)).toHaveLength(1);
+    expect(fake.calls[0]!.contextUsageCalls).toEqual([]);
   });
 });

@@ -15,6 +15,7 @@ import {
   RunnerHelloResult,
   RunnerOutboundAck,
   RunnerOutboundPost,
+  RunnerProgramStatus,
   RunnerRunAbort,
   RunnerRunAck,
   RunnerRunError,
@@ -263,5 +264,86 @@ describe("RunEventBodySchema — seq·ts 는 서버가 붙인다", () => {
 
   it("RunEvent 의 모든 변형을 싣는다", () => {
     expect(RunEventBodySchema.options.map((o) => o.shape.type.value)).toEqual(RUN_EVENT_TYPES);
+  });
+});
+
+const BREAKDOWN = {
+  model: "claude-opus-5-5",
+  totalTokens: 248_500,
+  maxTokens: 800_000,
+  percentage: 31.1,
+  categories: [
+    { name: "Messages", tokens: 215_200, kind: "used" },
+    { name: "Free space", tokens: 518_400, kind: "free" },
+    { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" },
+    { name: "MCP tools (deferred)", tokens: 21_900, kind: "deferred" },
+  ],
+};
+const PROGRAM = {
+  program: "claude",
+  available: true,
+  auth: "ok",
+  capabilities: [],
+  ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null },
+};
+const MODELS = [
+  { value: "default", displayName: "Default (recommended)", efforts: ["low", "medium", "high"] },
+  { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
+];
+
+describe("컨텍스트 세부·모델 목록(작성기 칩 스펙 5.2)", () => {
+  it("RunnerRunFinal parses usage.contextBreakdown", () => {
+    const final = { ...FINAL, usage: { ...FINAL.usage, contextBreakdown: BREAKDOWN } };
+    roundTrip(RunnerRunFinal, final);
+    expect(RunnerRunFinal.parse(final).usage?.contextBreakdown?.categories.map((c) => c.kind)).toEqual([
+      "used",
+      "free",
+      "buffer",
+      "deferred",
+    ]);
+  });
+
+  it("rejects 33 categories", () => {
+    const categories = Array.from({ length: 33 }, (_, i) => ({ name: `c${i}`, tokens: 1, kind: "used" }));
+    const final = { ...FINAL, usage: { contextBreakdown: { ...BREAKDOWN, categories } } };
+    expect(RunnerRunFinal.safeParse(final).success).toBe(false);
+    expect(
+      RunnerRunFinal.safeParse({
+        ...FINAL,
+        usage: { contextBreakdown: { ...BREAKDOWN, categories: categories.slice(0, 32) } },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("RunnerProgramStatus keeps models", () => {
+    roundTrip(RunnerProgramStatus, { ...PROGRAM, models: MODELS });
+    roundTrip(RunnerHello, { ...HELLO, programs: [{ ...PROGRAM, models: MODELS }] });
+    expect(
+      RunnerProgramStatus.safeParse({ ...PROGRAM, models: [{ value: "", displayName: "x", efforts: [] }] })
+        .success,
+    ).toBe(false);
+    expect(
+      RunnerProgramStatus.safeParse({
+        ...PROGRAM,
+        models: Array.from({ length: 33 }, (_, i) => ({ value: `m${i}`, displayName: "m", efforts: [] })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("옛 서버 스키마(models·contextBreakdown 이 없던 것)는 새 키를 거절하지 않고 지운다", () => {
+    const oldStatus = RunnerProgramStatus.omit({ models: true });
+    const parsed = oldStatus.parse({ ...PROGRAM, models: MODELS });
+    expect(parsed).not.toHaveProperty("models");
+    const oldFinal = RunnerRunFinal.extend({
+      usage: RunnerRunFinal.shape.usage.unwrap().omit({ contextBreakdown: true }).optional(),
+    });
+    const final = oldFinal.parse({ ...FINAL, usage: { ...FINAL.usage, contextBreakdown: BREAKDOWN } });
+    expect(final.usage).toEqual(FINAL.usage);
+  });
+
+  it("옛 페이로드(세부·목록 없음)도 그대로 받는다", () => {
+    roundTrip(RunnerRunFinal, FINAL);
+    roundTrip(RunnerProgramStatus, PROGRAM);
   });
 });

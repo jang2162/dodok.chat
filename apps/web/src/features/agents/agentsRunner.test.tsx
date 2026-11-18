@@ -90,7 +90,7 @@ describe("러너 에이전트 줄 — 새 세션 시작값 [세션 설정 스펙
       "admin",
     );
     const row = await agentDetail();
-    expect(row).toHaveTextContent("새 세션 시작값 · 모델 sonnet · effort high · 권한 기본");
+    expect(row).toHaveTextContent("새 세션 시작값 · 모델 sonnet · 노력 높음 · 권한 기본");
     expect(row).not.toHaveTextContent("허용 도구");
     expect(within(row).getByRole("button", { name: "@coder 시작값 고치기" })).toBeInTheDocument();
   });
@@ -161,7 +161,9 @@ describe("새 세션 시작값 고치기", () => {
     const row = await openEdit();
     await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
     await userEvent.type(within(row).getByLabelText("모델"), "opus");
-    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "effort" }), "max");
+    // 선택지는 한글 이름, 값은 영문 그대로
+    expect(within(row).getByRole("option", { name: "최대" })).toHaveValue("max");
+    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "노력치" }), "max");
     await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "acceptEdits");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     await waitFor(() =>

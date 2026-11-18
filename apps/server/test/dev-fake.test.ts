@@ -70,6 +70,9 @@ import {
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
   DEV_FAKE_CONTEXT_WINDOW,
+  DEV_FAKE_MODELS,
+  fakeContextBreakdown,
+  fakeContextUsage,
   DEV_FAKE_GATEWAYS,
   DEV_FAKE_HOME_GATEWAY_ID,
   DEV_FAKE_OFFICE_GATEWAY_ID,
@@ -530,6 +533,7 @@ async function runRunnerScript(
   text: string,
   decision: RunnerApprovalResolve | null = null,
   control: ControlResult = { ok: true, data: {} },
+  scriptOpts: { breakdown?: boolean } = {},
 ) {
   const calls: RunnerCall[] = [];
   const run = {
@@ -557,7 +561,7 @@ async function runRunnerScript(
   // 델타 사이 쉼(150ms~1.5s)을 가짜 시계로 흘린다
   vi.useFakeTimers();
   try {
-    const done = fakeRunnerScript(run);
+    const done = fakeRunnerScript(run, scriptOpts);
     await vi.runAllTimersAsync();
     await done;
   } finally {
@@ -567,6 +571,28 @@ async function runRunnerScript(
   const streamed = calls.flatMap((c) => (c.kind === "text" ? [c.delta] : [])).join("");
   return { calls, final, streamed };
 }
+
+describe("fakeContextBreakdown [작성기 칩 스펙 C2]", () => {
+  it("fakeContextUsage 와 같은 수로 여섯 줄 — 사용 줄의 합 = contextTokens, 창 안 줄의 합 = 창", () => {
+    const key = `agent:coder:dodok:channel:bd-${Date.now()}`;
+    const usage = fakeContextUsage(key);
+    const b = fakeContextBreakdown(key);
+    expect(b.categories.map((c) => c.name)).toEqual([
+      "Messages",
+      "System prompt",
+      "System tools",
+      "Free space",
+      "Autocompact buffer",
+      "MCP tools (deferred)",
+    ]);
+    const sum = (kinds: string[]) =>
+      b.categories.filter((c) => kinds.includes(c.kind)).reduce((a, c) => a + c.tokens, 0);
+    expect(sum(["used"])).toBe(usage.contextTokens);
+    expect(sum(["used", "free", "buffer"])).toBe(b.maxTokens);
+    expect(b).toMatchObject({ totalTokens: usage.contextTokens, maxTokens: usage.contextWindow });
+    expect(Math.round(b.percentage)).toBe(Math.round((usage.contextTokens / usage.contextWindow) * 100));
+  });
+});
 
 describe("fakeRunnerScript", () => {
   const allow: RunnerApprovalResolve = { providerApprovalId: "p", decision: "allow-once" };
@@ -585,6 +611,17 @@ describe("fakeRunnerScript", () => {
       ).reply,
     );
     expect(streamed).toContain("@dev 이어서 부탁해요");
+  });
+
+  it("런 끝 usage 에 컨텍스트 세부 — breakdown false(제한 러너, 옛 러너 흉내)면 싣지 않는다 [작성기 칩 스펙 C4]", async () => {
+    const withBreakdown = await runRunnerScript("@coder 세부");
+    expect(withBreakdown.final).toMatchObject({
+      opts: { usage: { contextBreakdown: expect.objectContaining({ maxTokens: DEV_FAKE_CONTEXT_WINDOW }) } },
+    });
+    const old = await runRunnerScript("@coder 세부", null, undefined, { breakdown: false });
+    const usage = (old.final as { opts?: { usage?: object } } | undefined)?.opts?.usage;
+    expect(usage).toMatchObject({ contextWindow: DEV_FAKE_CONTEXT_WINDOW });
+    expect(usage).not.toHaveProperty("contextBreakdown");
   });
 
   it("승인 → Bash 승인 요청(작업 디렉터리 상대 명령만), 허용이면 Bash 도구가 돌고 답 첫 줄이 결과, 거절·만료·중지는 도구 없음", async () => {
@@ -2667,6 +2704,19 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     ]);
   });
 
+  it("main fake runner hello has models, limited has none [작성기 칩 스펙 C3·C4]", async () => {
+    type Summary = { id: string; programs: Array<{ program: string; models?: unknown }> };
+    const { runners } = await rest<{ runners: Summary[] }>("GET", "/runners");
+    const claudeOf = (id: string) =>
+      runners.find((r) => r.id === id)?.programs.find((p) => p.program === "claude");
+    expect(claudeOf(DEV_FAKE_RUNNER_ID)?.models).toEqual(DEV_FAKE_MODELS);
+    expect(DEV_FAKE_MODELS.map((m) => m.displayName)).toEqual(
+      expect.arrayContaining(["Opus 5.5", "Sonnet 5.5", "Haiku 5.5"]),
+    );
+    expect(DEV_FAKE_MODELS.find((m) => m.value === "sonnet")?.efforts).toEqual(["low", "medium", "high"]);
+    expect(claudeOf(DEV_FAKE_LIMITED_RUNNER_ID)).not.toHaveProperty("models");
+  });
+
   it("둘러보기 — 고정 나무: 숨김·루트 밖 링크·파일은 없고 git·특수 문자 이름이 있다, many 는 500개 + truncated, 제한 러너는 403", async () => {
     type Listing = { entries: Array<{ name: string; isGitRepo: boolean }>; truncated: boolean };
     const fs = (runnerId: string, rootId: string, relPath: string) =>
@@ -2815,6 +2865,12 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     expect(settings.find((s) => s.agentId === ch.coderId)?.contextPercent).toBe(
       Math.round(((second?.contextTokens ?? 0) / DEV_FAKE_CONTEXT_WINDOW) * 100),
     );
+    // 세부도 같은 런에서 — 저장되고 대화 설정 응답의 context 로 나간다(작성기 칩 스펙 5.3)
+    expect(second?.contextBreakdown?.totalTokens).toBe(second?.contextTokens);
+    const row = (settings as Array<{ agentId: string; context?: { totalTokens: number } | null }>).find(
+      (s) => s.agentId === ch.coderId,
+    );
+    expect(row?.context?.totalTokens).toBe(second?.contextTokens);
   }, 30_000);
 
   it("@coder 「제어」 → 시킨 owner 에게 dodok_control 확인 카드, 허용하면 채널 주제가 바뀌고 시스템 메시지·답이 온다", async () => {

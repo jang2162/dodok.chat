@@ -13,6 +13,7 @@ import { loadReadableChannel } from "../channels/service";
 import type { RunnerLiveApi } from "../runners/live";
 import {
   assertSettingsWritable,
+  runnerModels,
   runnerPermissionCeiling,
   settingsAgentsOf,
   toConversationAgentSettings,
@@ -79,6 +80,7 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
       const ceilings: AgentCeiling[] = settingsAgentsOf(ctx.db, id).map((agent) => ({
         agentId: agent.id,
         ceiling: runnerPermissionCeiling(ctx.runners, agent),
+        models: runnerModels(ctx.runners, agent),
       }));
       return { ceilings };
     },

@@ -18,7 +18,8 @@ import {
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
-import { AgentSettingsPopover, DEFAULT_LABEL, RAISE_LOCKED } from "./AgentSettingsPopover";
+import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
+import { ContextGauge } from "./ContextGauge";
 
 /** 줄이 이보다 많으면 「러너 에이전트 N」 한 줄로 접는다(세션 설정 스펙 S3) */
 export const FOLD_OVER = 3;
@@ -30,16 +31,6 @@ export type PendingAgentSettings = Readonly<Record<string, AgentSettingsPatch>>;
 
 const NO_DEFAULTS: SessionDefaults = { model: null, effort: null, permissionMode: null };
 
-/** 줄 하나의 글 — 「기본」은 「기본」, 컨텍스트가 없으면 「—」 */
-export function settingsSummary(row: Omit<ConversationAgentSettings, "agentId">): string {
-  return [
-    row.model ?? `모델 ${DEFAULT_LABEL}`,
-    `effort ${row.effort ?? DEFAULT_LABEL}`,
-    row.permissionMode ?? `권한 ${DEFAULT_LABEL}`,
-    `컨텍스트 ${row.contextPercent === null ? "—" : `${row.contextPercent}%`}`,
-  ].join(" · ");
-}
-
 function errorText(e: unknown): string {
   if (e instanceof ApiRequestError) {
     if (e.code === "FORBIDDEN") return RAISE_LOCKED;
@@ -49,7 +40,8 @@ function errorText(e: unknown): string {
 }
 
 /**
- * 작성기 바로 위 상태 줄(세션 설정 스펙 S3·5.4) — 그 대화에 든 러너 에이전트(S13)마다 한 줄: 모델·effort·권한·컨텍스트 % 와 「변경」.
+ * 작성기 바로 위 상태 줄(세션 설정 스펙 S3·5.4, 작성기 칩 스펙 5.4) — 그 대화에 든 러너 에이전트(S13)마다 한 줄: 모델·effort·권한 칩과
+ * 컨텍스트 게이지.
  * 대화가 있으면 서버 값(`GET …/agent-settings`, 스레드면 컨텍스트 % 만 그 스레드의 것 — S9), 새 세션 창이면 에이전트 시작값에 화면에서
  * 바꾼 값(`pending`)을 얹는다 — 저장하지 않고 첫 글이 싣는다(S11). 러너 에이전트가 없으면(OpenClaw 만) 그리지 않는다
  */
@@ -91,13 +83,16 @@ export function AgentSettingsBar({
     const saved = settings.data?.find((s) => s.agentId === agent.id);
     if (!isNew && saved) return saved;
     const base = agent.sessionDefaults ?? NO_DEFAULTS;
-    const ceiling = ceilings.data?.find((c) => c.agentId === agent.id)?.ceiling ?? null;
+    const line = ceilings.data?.find((c) => c.agentId === agent.id);
     return {
       agentId: agent.id,
       ...base,
       ...(isNew ? pending?.[agent.id] : {}),
       contextPercent: null,
-      ceiling,
+      ceiling: line?.ceiling ?? null,
+      context: null,
+      // 새 세션 창은 모델 목록도 채널의 agent-ceilings 로 받는다(작성기 칩 스펙 5.3) — 없으면 고정 목록
+      models: line?.models ?? [],
     };
   };
 
@@ -176,9 +171,8 @@ function SettingsLine({
   const patch = usePatchAgentSettings(conversationId);
   const [error, setError] = useState<string>();
   const owner = agentOwnerOf(agent, connections.data);
+  // 상한·모델 목록은 서버가 줄에 싣는다(누구에게나) — 남의 러너는 `GET /runners` 에 없어 member 화면이 모른다(리뷰 건 1)
   const canRaise = roleAtLeast(role, "admin") || (meId !== null && owner === meId);
-  // 상한은 서버가 싣는다(누구에게나) — 남의 러너는 `GET /runners` 에 없어 member 화면이 모른다(리뷰 건 1)
-  const ceiling = row.ceiling ?? undefined;
 
   async function save(change: AgentSettingsPatch): Promise<boolean> {
     setError(undefined);
@@ -196,19 +190,23 @@ function SettingsLine({
   }
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-2">
+    // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
+    <div
+      className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5"
+      data-testid={`agent-settings-${agent.handle}`}
+    >
       <span className="font-medium text-foreground">@{agent.handle}</span>
       {invited && <span className="rounded-sm bg-muted px-1 text-[10px]">초대됨</span>}
-      <span className="min-w-0 break-words">{settingsSummary(row)}</span>
-      <AgentSettingsPopover
+      <AgentSettingChips
         handle={agent.handle}
-        value={{ model: row.model, effort: row.effort, permissionMode: row.permissionMode }}
+        row={row}
+        models={row.models}
         canRaise={canRaise}
-        ceiling={ceiling}
         saving={patch.isPending}
         error={error}
         onSave={save}
       />
+      <ContextGauge percent={row.contextPercent} context={row.context} />
     </div>
   );
 }

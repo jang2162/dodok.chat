@@ -5,6 +5,7 @@ import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../ima
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
 import { abortedFinal, abortStopReason, type RunSink } from "../../sink";
 import { createCanUseTool } from "./approvals";
+import { fetchContextBreakdown } from "./context-usage";
 import type {
   CanUseTool,
   SdkMcpServer,
@@ -68,6 +69,25 @@ export const RUNNER_DISALLOWED_TOOLS: readonly string[] = [
   "RemoteTrigger",
 ];
 
+/**
+ * CLI 로 넘기는 env — 허용 목록 + CLAUDE_CONFIG_DIR + 자동 메모리 끔. 런(buildQueryOptions)과 모델 목록 받기(index.ts)가 같게 쓴다 —
+ * 로그인 자리가 런과 같아야 같은 계정의 모델이 나온다
+ */
+export function cliEnv(baseEnv: NodeJS.ProcessEnv, configDirOverride?: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of ENV_ALLOWLIST) {
+    const value = baseEnv[key];
+    if (value !== undefined) env[key] = value;
+  }
+  // 러너 프로세스(main.ts applyClaudeConfigDirEnv)와 같은 자리 — 전용이면 configDir, 평소면 baseEnv(기본 process.env)의 값.
+  // 둘 다 없으면 넣지 않는다(평소 ~/.claude). ENV_ALLOWLIST 에 더하지 않고 여기서만 명시로 넣는다
+  const configDir = configDirOverride ?? (baseEnv.CLAUDE_CONFIG_DIR || undefined);
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;
+  // 켜 두면 메모리 자리가 cwd 로 정해져 작업 디렉터리가 같은 채널·스레드가 한 메모리를 나눠 쓴다(ADR 0007 5.10)
+  env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+  return env;
+}
+
 export function buildQueryOptions(
   spec: ClaudeRunSpec,
   deps: {
@@ -79,18 +99,7 @@ export function buildQueryOptions(
     executable?: string;
   },
 ): SdkOptions {
-  const env: Record<string, string> = {};
-  for (const key of ENV_ALLOWLIST) {
-    const value = deps.baseEnv[key];
-    if (value !== undefined) env[key] = value;
-  }
-  // 러너 프로세스(main.ts applyClaudeConfigDirEnv)와 같은 자리 — 전용이면 configDir, 평소면 baseEnv(기본 process.env)의 값.
-  // 둘 다 없으면 넣지 않는다(평소 ~/.claude). ENV_ALLOWLIST 에 더하지 않고 여기서만 명시로 넣는다
-  const configDir = spec.configDir ?? (deps.baseEnv.CLAUDE_CONFIG_DIR || undefined);
-  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;
-  // 켜 두면 메모리 자리가 cwd 로 정해져 작업 디렉터리가 같은 채널·스레드가 한 메모리를 나눠 쓴다(ADR 0007 5.10)
-  env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
-
+  const env = cliEnv(deps.baseEnv, spec.configDir);
   const { start } = spec;
   return {
     cwd: spec.workdir,
@@ -333,7 +342,16 @@ async function attempt(
         } else if (item.final) {
           const { totalCostUsd, ...rest } = item.final;
           const costUsd = recordCost(totalCostUsd);
-          ctx.sink.final({ ...rest, ...(costUsd === undefined ? {} : { costUsd }), costKind });
+          // 세부는 입력을 닫기 전에 묻는다 — 닫으면 CLI 가 끝나 제어 요청에 답하지 않는다. 중지된 턴은 묻지 않는다(작성기 칩 스펙 C7)
+          const contextBreakdown =
+            interrupted || ctx.signal.aborted ? undefined : await fetchContextBreakdown(q);
+          const usage = contextBreakdown === undefined ? rest.usage : { ...rest.usage, contextBreakdown };
+          ctx.sink.final({
+            ...rest,
+            ...(usage === undefined ? {} : { usage }),
+            ...(costUsd === undefined ? {} : { costUsd }),
+            costKind,
+          });
           end();
         } else if (item.error) {
           ctx.sink.error(item.error.code, item.error.message);

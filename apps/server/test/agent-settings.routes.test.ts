@@ -6,6 +6,8 @@ import type {
   AgentSettingsEntry,
   ConversationAgentSettings,
   Conversation,
+  RunnerContextBreakdown,
+  RunnerModelOption,
   RunnerPermissionMode,
 } from "@dodok/shared";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
@@ -32,8 +34,12 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
   const noah = { id: "", token: "" };
   const fakeRunners: FakeRunner[] = [];
   const sockets: WireClient[] = [];
-  /** 주인 없는 러너(상한 acceptEdits), mia 의 러너(상한 acceptEdits), 상한 default 인 러너 */
-  const runner = { open: "", mine: "", low: "" };
+  /** 주인 없는 러너(상한 acceptEdits), mia 의 러너(상한 acceptEdits), 상한 default 인 러너, 모델 목록을 알린 admin 의 러너 */
+  const runner = { open: "", mine: "", low: "", models: "" };
+  const MODELS = [
+    { value: "default", displayName: "Default (recommended)", efforts: ["low", "medium", "high"] },
+    { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  ] satisfies RunnerModelOption[];
   let n = 0;
 
   beforeAll(async () => {
@@ -43,7 +49,12 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     Object.assign(admin, await userWithRole(app, "ada", "admin"));
     Object.assign(mia, await userWithRole(app, "mia", "member"));
     Object.assign(noah, await userWithRole(app, "noah", "member"));
-    const connect = async (label: string, ownerId: string | null, max: RunnerPermissionMode) => {
+    const connect = async (
+      label: string,
+      ownerId: string | null,
+      max: RunnerPermissionMode,
+      models?: RunnerModelOption[],
+    ) => {
       const issued = issueRunnerToken(app.db, app.workspaceId, label, ownerId);
       fakeRunners.push(
         await startFakeRunner({
@@ -51,7 +62,11 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
           token: issued.token,
           hello: {
             programs: [
-              { ...FAKE_CLAUDE_PROGRAM, ceiling: { maxPermissionMode: max, allowedToolsCeiling: null } },
+              {
+                ...FAKE_CLAUDE_PROGRAM,
+                ceiling: { maxPermissionMode: max, allowedToolsCeiling: null },
+                ...(models === undefined ? {} : { models }),
+              },
             ],
           },
         }),
@@ -61,6 +76,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     runner.open = await connect("open", null, "acceptEdits");
     runner.mine = await connect("mine", mia.id, "acceptEdits");
     runner.low = await connect("low", null, "default");
+    runner.models = await connect("models", admin.id, "acceptEdits", MODELS);
   });
   afterEach(() => {
     for (const socket of sockets.splice(0)) socket.close();
@@ -237,7 +253,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
           ceiling: s.ceiling,
         })),
       ).toEqual(want);
-      expect(await ceilingsOf(noah.token, channel.id)).toEqual(want);
+      expect(await ceilingsOf(noah.token, channel.id)).toEqual(want.map((w) => ({ ...w, models: [] })));
       const saved = await patch(noah.token, conversationId, agent.id, { model: "opus" });
       expect(saved.json()).toMatchObject({ agentId: agent.id, ceiling: "default" });
     });
@@ -255,7 +271,9 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
       });
       for (const token of [noah.token, owner])
         expect((await call(token, "GET", `/api/v1/channels/${dm.id}/agent-ceilings`)).statusCode).toBe(404);
-      expect(await ceilingsOf(mia.token, dm.id)).toEqual([{ agentId: agent.id, ceiling: "acceptEdits" }]);
+      expect(await ceilingsOf(mia.token, dm.id)).toEqual([
+        { agentId: agent.id, ceiling: "acceptEdits", models: [] },
+      ]);
     });
   });
 
@@ -351,6 +369,8 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
         permissionMode: null,
         contextPercent: null,
         ceiling: "acceptEdits",
+        context: null,
+        models: [],
       },
     });
     // 같은 틱의 덤 이벤트가 없는지 — 응답 뒤에 한 번 더 기다려 본다
@@ -405,6 +425,92 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
       ).toBe(78);
       // 스레드 런은 대화 세션 값에 섞이지 않는다
       expect((await settingsOf(owner, fx.conversationId))[0]?.contextPercent).toBe(42);
+    });
+  });
+
+  describe("컨텍스트 세부·모델 목록 [작성기 칩 스펙 5.3]", () => {
+    const BREAKDOWN: RunnerContextBreakdown = {
+      model: "claude-opus-5-5",
+      totalTokens: 250_000,
+      maxTokens: 1_000_000,
+      percentage: 25,
+      categories: [
+        { name: "Messages", tokens: 250_000, kind: "used" },
+        { name: "Free space", tokens: 717_000, kind: "free" },
+        { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" },
+      ],
+    };
+    const ceilingsOf = async (token: string, channelId: string) => {
+      const res = await call(token, "GET", `/api/v1/channels/${channelId}/agent-ceilings`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { ceilings: Array<{ agentId: string; models: RunnerModelOption[] }> }).ceilings;
+    };
+
+    it("GET agent-settings returns context and models", async () => {
+      const fx = setup(runner.models);
+      const root = createUserMessage(app.db, app.bus, {
+        conversationId: fx.conversationId,
+        authorId: app.ownerUserId,
+        bodyMd: "질문",
+        clientMsgId: `cb-${++n}`,
+      });
+      const row = insertRun(app.db, {
+        channelId: fx.channel.id,
+        conversationId: fx.conversationId,
+        agentId: fx.agent.id,
+        triggerKind: "mention",
+        triggerMessageId: root.id,
+        rootMessageId: root.id,
+        relayDepth: 0,
+        sessionKey: `k-${n}`,
+        connectionId: runner.models,
+        createdAt: new Date(),
+      });
+      // 1M 창 — 옛 계산(contextTokens/contextWindow)이면 5, 세부의 percentage 는 25
+      app.db
+        .update(runs)
+        .set({ usage: { contextTokens: 50_000, contextWindow: 1_000_000, contextBreakdown: BREAKDOWN } })
+        .where(eq(runs.id, row.id))
+        .run();
+      const [got] = await settingsOf(owner, fx.conversationId);
+      expect(got).toMatchObject({
+        agentId: fx.agent.id,
+        contextPercent: 25,
+        context: BREAKDOWN,
+        models: MODELS,
+      });
+    });
+
+    it("member gets models of another owner's runner", async () => {
+      const fx = setup(runner.models);
+      expect((await settingsOf(noah.token, fx.conversationId))[0]?.models).toEqual(MODELS);
+      expect(await ceilingsOf(noah.token, fx.channel.id)).toEqual([
+        { agentId: fx.agent.id, ceiling: "acceptEdits", models: MODELS },
+      ]);
+    });
+
+    it("disconnected runner → models []", async () => {
+      const issued = issueRunnerToken(app.db, app.workspaceId, "never", null);
+      const fx = setup(issued.record.id);
+      const [got] = await settingsOf(owner, fx.conversationId);
+      expect(got).toMatchObject({ ceiling: null, models: [], context: null, contextPercent: null });
+      // 옛 러너(목록을 알리지 않음)도 빈 목록
+      const old = setup(runner.open);
+      expect((await settingsOf(owner, old.conversationId))[0]?.models).toEqual([]);
+    });
+
+    it("agent-ceilings returns models", async () => {
+      const fx = setup(runner.models);
+      const other = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `am${++n}`,
+        runnerTokenId: runner.open,
+      }).agent;
+      addMember(app.db, fx.channel.id, { memberType: "agent", memberId: other.id }, app.logger);
+      expect(await ceilingsOf(owner, fx.channel.id)).toEqual([
+        { agentId: fx.agent.id, ceiling: "acceptEdits", models: MODELS },
+        { agentId: other.id, ceiling: "acceptEdits", models: [] },
+      ]);
     });
   });
 

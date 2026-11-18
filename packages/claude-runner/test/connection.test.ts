@@ -26,6 +26,7 @@ import {
   type RunnerRunAgent,
   type RunnerServerToClientEvents,
 } from "@dodok/shared";
+import { HELLO_TIMEOUT_MS } from "@dodok/runner-adapter";
 import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "../src/config";
@@ -37,9 +38,15 @@ import {
   type RunnerConnection,
 } from "../src/connection";
 import type { ProgramDriver } from "../src/driver";
-import { createClaudeDriver } from "../src/drivers/claude";
+import {
+  createClaudeDriver,
+  MODELS_TIMEOUT_MEMORY_MS,
+  MODELS_TIMEOUT_MS,
+  toModelOptions,
+} from "../src/drivers/claude";
+import { VERSION_TIMEOUT_MS } from "../src/drivers/claude/executable";
 import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
-import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
+import { createFakeSdk, FAKE_MODELS, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
 
 // 태스크 3 의 러너 어댑터 대신 shared 러너 계약(RUNNER_NAMESPACE·이벤트 Zod)으로 말하는 가짜 서버.
@@ -176,12 +183,16 @@ async function setup(
     driver?: (claude: ProgramDriver) => ProgramDriver;
     /** claude 드라이버의 baseEnv — detect 가 평소 자리(HOME/.claude·CLAUDE_CONFIG_DIR)를 여기서 읽는다 */
     baseEnv?: NodeJS.ProcessEnv;
+    /** 가짜 SDK 를 붙기 전에 고친다(모델 목록 실패 등) */
+    sdk?: (fake: FakeSdk) => void;
+    modelsTimeoutMs?: number;
   } = {},
 ) {
   const server = await startFakeServer();
   server.reject = opts.reject;
   cleanups.push(() => server.close());
   const fake: FakeSdk = createFakeSdk();
+  opts.sdk?.(fake);
   const logs: string[] = [];
   const fatal: number[] = [];
   const dirs = tempRoot();
@@ -202,6 +213,8 @@ async function setup(
           claudeCodeVersion: "2.1.283",
           baseEnv: opts.baseEnv ?? { PATH: "/usr/bin" },
           closeGraceMs: 30,
+          modelsCwd: dirs.root,
+          ...(opts.modelsTimeoutMs === undefined ? {} : { modelsTimeoutMs: opts.modelsTimeoutMs }),
           logger: { info: (m) => logs.push(m) },
         }),
       ),
@@ -255,6 +268,7 @@ describe("startRunnerConnection", () => {
           reason: expect.any(String),
           capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
           ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+          models: toModelOptions(FAKE_MODELS),
         },
       ],
     });
@@ -291,6 +305,7 @@ describe("startRunnerConnection", () => {
         cli: "bundled",
         capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
         ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
+        models: toModelOptions(FAKE_MODELS),
       },
       {
         program: "codex",
@@ -1169,5 +1184,246 @@ describe("invalidFields — 형식 오류 문구는 스키마의 이름만 [태�
     expect(invalidFields([{ path: [Symbol("s")] }])).toBe("?");
     const many = Array.from({ length: 7 }, (_, i) => ({ path: [`f${i}`] }));
     expect(invalidFields(many)).toBe("f0, f1, f2, f3, f4 외 2개");
+  });
+});
+
+describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
+  it("hello program status carries models from detect", async () => {
+    const { server, fake, dirs } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]!.models).toEqual([
+      {
+        value: "default",
+        displayName: "Default (recommended)",
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+      },
+      { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },
+      // 다른 줄이 effort 키를 실었는데 이 줄은 싣지 않았다 — 「안 받음」이라 빈 목록(실제 CLI 의 꼴, models.test.ts)
+      { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
+    ]);
+    // 런과 같은 로그인·설정 — 첫 루트를 cwd 로, env 허용 목록·전용 로그인 자리, 사람 저장소 설정·커넥터는 끌어오지 않는다
+    expect(fake.listModelsCalls).toHaveLength(1);
+    const options = fake.listModelsCalls[0]!;
+    expect(options).toMatchObject({
+      cwd: dirs.root,
+      settingSources: [],
+      strictMcpConfig: true,
+      persistSession: false,
+      env: { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: AGENT.configDir, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
+    });
+    expect(options.abortController).toBeInstanceOf(AbortController);
+    // 프롬프트를 보내는 query 는 열지 않는다 — 목록 받기가 런이 되지 않는다
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("목록 받기 env 는 허용 목록 — 러너의 ANTHROPIC_* 를 CLI 로 넘기지 않는다", async () => {
+    const { server, fake } = await setup({
+      baseEnv: {
+        PATH: "/usr/bin",
+        ANTHROPIC_API_KEY: "sk-runner-secret",
+        ANTHROPIC_BASE_URL: "https://elsewhere",
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const env = fake.listModelsCalls[0]!.env;
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CONFIG_DIR: AGENT.configDir });
+  });
+
+  it("listModels failure → hello without models", async () => {
+    const { server } = await setup({
+      sdk: (fake) => {
+        fake.models = async () => {
+          throw new Error("CLI 초기화 실패");
+        };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const claude = server.hellos[0]!.programs[0]!;
+    expect(claude.available).toBe(true);
+    expect(claude).not.toHaveProperty("models");
+  });
+
+  it("listModels 가 답하지 않으면 상한 뒤 목록 없이 hello — 그 query 는 끊는다", async () => {
+    let aborted: AbortController | undefined;
+    const { server } = await setup({
+      modelsTimeoutMs: 30,
+      sdk: (fake) => {
+        fake.models = (options) => {
+          aborted = options.abortController;
+          return new Promise(() => {});
+        };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).not.toHaveProperty("models");
+    expect(aborted?.signal.aborted).toBe(true);
+  });
+
+  it("판 읽기 + 목록 받기 상한의 합이 서버 hello 상한보다 작다 — 넘으면 서버가 끊고 재연결을 되풀이한다", () => {
+    // 1초 넘게 남긴다 — 연결·hello 전송·detect 의 다른 일에 쓸 여유
+    expect(VERSION_TIMEOUT_MS + MODELS_TIMEOUT_MS).toBeLessThanOrEqual(HELLO_TIMEOUT_MS - 1000);
+  });
+
+  it("timed-out model list is not retried on reconnect", async () => {
+    const { server, fake } = await setup({
+      modelsTimeoutMs: 30,
+      sdk: (f) => {
+        f.models = () => new Promise(() => {});
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 다시 붙는다(transport close) — 같은 CLI·판·로그인 자리라 멈추는 CLI 를 다시 띄우지 않고 목록 없이 hello
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    expect(server.hellos[1]!.programs[0]).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+  });
+
+  it("thrown model list is retried", async () => {
+    let fail = true;
+    const { server, fake } = await setup({
+      sdk: (f) => {
+        f.models = async () => {
+          if (fail) throw new Error("로그인 전");
+          return FAKE_MODELS;
+        };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]).not.toHaveProperty("models");
+    fail = false;
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    expect(fake.listModelsCalls).toHaveLength(2);
+    expect(server.hellos[1]!.programs[0]!.models).toEqual(toModelOptions(FAKE_MODELS));
+  });
+
+  it("second detect with same CLI reuses models", async () => {
+    const fake = createFakeSdk();
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+    });
+    const first = await driver.detect(CLAUDE_CEILING);
+    const second = await driver.detect(CLAUDE_CEILING);
+    expect(first.models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(second.models).toEqual(first.models);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 로그인 자리가 바뀌면(다른 계정일 수 있다) 다시 받는다
+    await driver.detect({ ...CLAUDE_CEILING, configDir: "/elsewhere/claude" });
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("changed CLI version refetches models", async () => {
+    const fake = createFakeSdk();
+    let version = "2.1.322";
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      isExecutable: (p) => p === "/usr/bin/claude",
+      readVersion: async () => version,
+    });
+    await driver.detect(CLAUDE_CEILING);
+    await driver.detect(CLAUDE_CEILING);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 같은 자리의 CLI 를 올렸다 — 모델 목록이 달라졌을 수 있다
+    version = "2.1.323";
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("changed CLI version after timeout refetches", async () => {
+    const fake = createFakeSdk();
+    let hang = true;
+    fake.models = async () => (hang ? new Promise<never>(() => {}) : FAKE_MODELS);
+    let version = "2.1.322";
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      isExecutable: (p) => p === "/usr/bin/claude",
+      readVersion: async () => version,
+      modelsTimeoutMs: 30,
+    });
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 시간 초과 기억(10분)이 남아 있어도 CLI 를 바꾸면 그 자리에서 다시 받는다
+    hang = false;
+    version = "2.1.323";
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("timed-out model list is retried after 10 minutes", async () => {
+    const fake = createFakeSdk();
+    fake.models = () => new Promise(() => {});
+    let clock = 1_000_000;
+    const logs: string[] = [];
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      modelsTimeoutMs: 30,
+      now: () => clock,
+      logger: { info: (m) => logs.push(m) },
+    });
+    expect(MODELS_TIMEOUT_MEMORY_MS).toBe(600_000);
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 시간 초과는 한 줄 — 경로 없이
+    const timeoutLines = logs.filter((l) => l.includes("모델 목록"));
+    expect(timeoutLines).toEqual([
+      "dodok-runner: Claude Code 모델 목록을 30ms 안에 받지 못했습니다 — 10분 뒤 다시 받습니다",
+    ]);
+    expect(timeoutLines[0]).not.toContain("/");
+    // 10분이 지나기 전에는 기억을 쓴다
+    clock += MODELS_TIMEOUT_MEMORY_MS - 1;
+    await driver.detect(CLAUDE_CEILING);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 지나면 다시 받는다 — 이번에는 답한다
+    clock += 1;
+    fake.models = async () => FAKE_MODELS;
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+    // 받은 목록은 만료가 없다
+    clock += MODELS_TIMEOUT_MEMORY_MS * 10;
+    await driver.detect(CLAUDE_CEILING);
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("실패한 목록은 기억하지 않는다 — 다음 detect 가 다시 받는다", async () => {
+    const fake = createFakeSdk();
+    let fail = true;
+    fake.models = async () => {
+      if (fail) throw new Error("x");
+      return FAKE_MODELS;
+    };
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+    });
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    fail = false;
+    expect((await driver.detect(CLAUDE_CEILING)).models).toHaveLength(3);
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("쓸 수 없는 CLI 면 목록을 받지 않는다", async () => {
+    const fake = createFakeSdk();
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+    });
+    const got = await driver.detect({ ...CLAUDE_CEILING, executable: "/nope/claude" });
+    expect(got.available).toBe(false);
+    expect(fake.listModelsCalls).toHaveLength(0);
   });
 });

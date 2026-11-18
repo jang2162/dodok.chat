@@ -1172,6 +1172,57 @@ describe("런 이벤트", () => {
     expect(usage && "value" in usage ? usage.value : undefined).not.toHaveProperty("contextTokens");
   });
 
+  const BREAKDOWN = {
+    model: "claude-opus-5-5",
+    totalTokens: 248_500,
+    maxTokens: 800_000,
+    percentage: 31,
+    categories: [
+      { name: "Messages", tokens: 215_200, kind: "used" as const },
+      { name: "Free space", tokens: 518_400, kind: "free" as const },
+      { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" as const },
+      { name: "MCP tools (deferred)", tokens: 21_900, kind: "deferred" as const },
+    ],
+  };
+
+  it("run.final contextBreakdown reaches RunUsage [작성기 칩 스펙 5.2]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const run = await startRun(h, r);
+    r.send("run.final", {
+      runId: run.runId,
+      text: "끝",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 2, contextBreakdown: BREAKDOWN },
+      costKind: "api",
+    });
+    await until(() => signals(h, run.runId).includes("gateway_final"), "final");
+    const usage = runEvents(h, run.runId).find((e) => e.type === "CUSTOM" && e.name === "dodok.usage");
+    expect(usage && "value" in usage ? usage.value : undefined).toMatchObject({
+      inputTokens: 1,
+      outputTokens: 2,
+      contextBreakdown: BREAKDOWN,
+    });
+  });
+
+  it("breakdown-only usage is stored — 토큰·비용 없이 세부만 와도 dodok.usage 를 낸다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const run = await startRun(h, r);
+    r.send("run.final", {
+      runId: run.runId,
+      text: "끝",
+      stopReason: "end_turn",
+      usage: { contextBreakdown: BREAKDOWN },
+      costKind: "subscription_estimate",
+    });
+    await until(() => signals(h, run.runId).includes("gateway_final"), "final");
+    const usage = runEvents(h, run.runId).find((e) => e.type === "CUSTOM" && e.name === "dodok.usage");
+    expect(usage && "value" in usage ? usage.value : undefined).toMatchObject({
+      contextBreakdown: BREAKDOWN,
+    });
+  });
+
   it("run.final 은 최종 답을 메시지로 만들고 dodok.usage 와 종료 신호를 낸다", async () => {
     const h = await setup();
     const r = await readyRunner(h);

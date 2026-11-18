@@ -64,6 +64,8 @@ import {
   OpsSeverity,
   type RunnerHello,
   RunnerPermissionMode,
+  type RunnerContextBreakdown,
+  type RunnerModelOption,
   type RunnerProgramStatus,
   type RunnerProjectRef,
   RunnerRootId,
@@ -258,6 +260,21 @@ export const DEV_FAKE_LIMITED_RUNNER_TOKEN = "dev-fake-runner-token-limited";
 export const DEV_FAKE_LIMITED_RUNNER_LABEL = "dev-fake 제한";
 export const DEV_FAKE_LIMITED_RUNNER_ID = "00000000-0000-4000-8000-00000000fa02";
 
+/**
+ * 가짜 러너 「dev-fake」가 hello 로 알리는 Claude Code 모델(작성기 칩 스펙 C3) — 작성기 위 모델 칩의 선택지. default 줄은 화면이
+ * 「기본」에 합친다(C9), Sonnet 은 노력치 셋, Haiku 는 노력치 없음. 「dev-fake 제한」은 목록을 싣지 않는다(옛 러너 흉내 — C4)
+ */
+export const DEV_FAKE_MODELS: RunnerModelOption[] = [
+  {
+    value: "default",
+    displayName: "Default (recommended)",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+  },
+  { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },
+  { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
+];
+
 /** 「설치되지 않음」 Codex 줄 — 에이전트 추가에서 흐리게 보인다 */
 const DEV_FAKE_CODEX_MISSING: RunnerProgramStatus = {
   program: "codex",
@@ -328,7 +345,13 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장
       programs: [
-        { ...FAKE_CLAUDE_PROGRAM, version: "2.1.322", login: "default", cli: "installed" },
+        {
+          ...FAKE_CLAUDE_PROGRAM,
+          version: "2.1.322",
+          login: "default",
+          cli: "installed",
+          models: DEV_FAKE_MODELS,
+        },
         DEV_FAKE_CODEX_MISSING,
       ],
     },
@@ -883,6 +906,36 @@ export function fakeContextUsage(sessionKey: string): { contextTokens: number; c
     contextWindow: DEV_FAKE_CONTEXT_WINDOW,
   };
 }
+/** 가짜 세부의 고정 줄 — 실제 응답처럼 창 밖(deferred) 줄도 하나 */
+const FAKE_SYSTEM_PROMPT_TOKENS = 3_000;
+const FAKE_SYSTEM_TOOLS_TOKENS = 7_000;
+const FAKE_AUTOCOMPACT_TOKENS = 33_000;
+const FAKE_DEFERRED_MCP_TOKENS = 21_900;
+
+/**
+ * 가짜 컨텍스트 세부(작성기 칩 스펙 C2) — 그 세션의 마지막 fakeContextUsage 와 같은 수(그 뒤에 부른다). 사용 = System prompt +
+ * System tools + Messages = contextTokens, percentage 는 contextTokens/창 — 게이지 % 가 옛 계산과 같다. 여섯 줄
+ */
+export function fakeContextBreakdown(sessionKey: string): RunnerContextBreakdown {
+  const n = Math.max(1, contextRuns.get(sessionKey) ?? 1);
+  const used = Math.min(DEV_FAKE_CONTEXT_WINDOW, 12_000 * n);
+  const messages = Math.max(0, used - FAKE_SYSTEM_PROMPT_TOKENS - FAKE_SYSTEM_TOOLS_TOKENS);
+  const buffer = Math.min(FAKE_AUTOCOMPACT_TOKENS, DEV_FAKE_CONTEXT_WINDOW - used);
+  return {
+    model: "claude-opus-5-5",
+    totalTokens: used,
+    maxTokens: DEV_FAKE_CONTEXT_WINDOW,
+    percentage: (used / DEV_FAKE_CONTEXT_WINDOW) * 100,
+    categories: [
+      { name: "Messages", tokens: messages, kind: "used" },
+      { name: "System prompt", tokens: FAKE_SYSTEM_PROMPT_TOKENS, kind: "used" },
+      { name: "System tools", tokens: FAKE_SYSTEM_TOOLS_TOKENS, kind: "used" },
+      { name: "Free space", tokens: DEV_FAKE_CONTEXT_WINDOW - used - buffer, kind: "free" },
+      { name: "Autocompact buffer", tokens: buffer, kind: "buffer" },
+      { name: "MCP tools (deferred)", tokens: FAKE_DEFERRED_MCP_TOKENS, kind: "deferred" },
+    ],
+  };
+}
 const RUNNER_COST_USD = 0.02;
 
 /** ms 만큼 쉰다 — 런이 중지되면 곧바로 풀린다 */
@@ -895,9 +948,12 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
  * 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
  * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
  * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
- * 중지되면 더 보내지 않는다 — 가짜 러너가 `stopReason: "aborted"` 로 끝낸다
+ * 중지되면 더 보내지 않는다 — 가짜 러너가 `stopReason: "aborted"` 로 끝낸다. breakdown false 면 런 끝 세부를 싣지 않는다(옛 러너)
  */
-export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
+export async function fakeRunnerScript(
+  run: FakeRunnerRun,
+  opts: { breakdown?: boolean } = {},
+): Promise<void> {
   const d = run.start.deliver;
   const { text } = d.message;
   const script = fakeAgentScript(DEV_FAKE_RUNNER_AGENT.handle, d);
@@ -950,7 +1006,12 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   }
   if (run.isAborted) return;
   run.final(deltas.join(""), {
-    usage: { ...RUNNER_USAGE, ...fakeContextUsage(d.sessionKey) },
+    usage: {
+      ...RUNNER_USAGE,
+      ...fakeContextUsage(d.sessionKey),
+      // 새 러너는 세부를 런 끝에 싣는다 — 옛 러너 흉내(제한 러너)는 싣지 않는다(작성기 칩 스펙 C4)
+      ...(opts.breakdown === false ? {} : { contextBreakdown: fakeContextBreakdown(d.sessionKey) }),
+    },
     costUsd: RUNNER_COST_USD,
     costKind: text.includes("구독") ? "subscription_estimate" : "api",
   });
@@ -1901,7 +1962,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             { runId: run.start.deliver.runId, model, effort: effort ?? null, permissionMode },
             "dev:fake runner settings",
           );
-          return fakeRunnerScript(run);
+          return fakeRunnerScript(run, { breakdown: spec.key !== "limited" });
         },
       });
     /** 훅의 roots·maxPermissionMode 를 그 러너의 기본 hello 위에 — 루트는 고정 목록 안의 id 만, 상한은 Claude Code 줄에 */

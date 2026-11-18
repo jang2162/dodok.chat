@@ -20,6 +20,7 @@ import {
   RunState,
   RunStatus,
   RunTriggerKind,
+  RunUsage,
   DmReadOnlyReason,
 } from "../src/domain";
 import { ErrorCode } from "../src/common";
@@ -484,5 +485,27 @@ describe("Approval", () => {
       "gateway-restart",
       "storage-corrupt",
     ]);
+  });
+});
+
+describe("RunUsage.contextBreakdown(작성기 칩 스펙 5.2)", () => {
+  it("RunUsage accepts contextBreakdown", () => {
+    const usage = {
+      inputTokens: 10,
+      contextTokens: 50_000,
+      contextWindow: 1_000_000,
+      contextBreakdown: {
+        model: "claude-opus-5-5",
+        totalTokens: 250_000,
+        maxTokens: 1_000_000,
+        percentage: 25,
+        categories: [{ name: "Messages", tokens: 200_000, kind: "used" }],
+      },
+    };
+    expect(RunUsage.parse(usage)).toEqual(usage);
+    expect(RunUsage.parse({ inputTokens: 1 })).not.toHaveProperty("contextBreakdown");
+    expect(
+      RunUsage.safeParse({ contextBreakdown: { ...usage.contextBreakdown, maxTokens: 0 } }).success,
+    ).toBe(false);
   });
 });

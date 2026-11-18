@@ -171,7 +171,8 @@ export interface RunnerAdapter extends AgentAdapter {
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
 }
 
-const HELLO_TIMEOUT_MS = 10_000;
+/** 연결 뒤 hello 를 기다리는 상한 — 넘으면 전송을 끊는다. 러너의 detect(판 읽기 + 모델 목록 받기)가 이 안에 끝나야 한다 */
+export const HELLO_TIMEOUT_MS = 10_000;
 const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;
@@ -621,10 +622,15 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       usage.contextTokens = final.usage.contextTokens;
       usage.contextWindow = final.usage.contextWindow;
     }
+    // 런 끝 컨텍스트 세부(작성기 칩 스펙 5.2) — 필드를 손으로 옮기므로 여기서 빠지면 말없이 사라진다. 옛 러너는 싣지 않는다
+    if (final.usage?.contextBreakdown !== undefined) usage.contextBreakdown = final.usage.contextBreakdown;
     // 잴 것이 하나도 없으면(대기열에서 중지된 런 — init 을 못 봐 costKind 는 기본값) 내지 않는다 — 비용 없는 런이
     // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
     const measured =
-      usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.costUsd !== undefined;
+      usage.inputTokens !== undefined ||
+      usage.outputTokens !== undefined ||
+      usage.costUsd !== undefined ||
+      usage.contextBreakdown !== undefined;
     if (measured)
       emitEvent(run.runner.tokenId, run.runId, {
         type: "CUSTOM",

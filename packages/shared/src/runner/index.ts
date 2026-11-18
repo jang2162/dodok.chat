@@ -6,7 +6,9 @@ import {
   ApprovalDecision,
   permissionModeRank,
   RUNNER_PERMISSION_MODES,
+  RunnerContextBreakdown,
   RunnerEffort,
+  RunnerModelOption,
   RunnerPermissionMode,
   RunnerProgram,
   RunnerToolNames,
@@ -69,6 +71,8 @@ export const RunnerRunFinal = z.object({
       contextTokens: z.int().min(0).optional(),
       /** 그 모델의 컨텍스트 창 크기 — 사용률의 분모. 옛 러너는 싣지 않는다 */
       contextWindow: z.int().min(1).optional(),
+      /** 런 끝 컨텍스트 세부(작성기 칩 스펙 C7) — 받지 못했으면 없다. 옛 러너는 싣지 않는다 */
+      contextBreakdown: RunnerContextBreakdown.optional(),
     })
     .optional(),
   costUsd: z.number().min(0).optional(),
@@ -217,6 +221,11 @@ export const RunnerProgramStatus = z.object({
     /** 배열이면 에이전트의 allowedTools 는 그 부분집합이어야 한다. null 이면 상한 없음 */
     allowedToolsCeiling: RunnerToolNames.nullable(),
   }),
+  /**
+   * 그 프로그램이 받는 모델(SDK supportedModels — 작성기 칩 스펙 C3). 받지 못했으면 없다. 옛 러너는 싣지 않는다 — 이 객체는
+   * strict 가 아니라 옛 서버는 이 키를 지운다(hello 최상위에는 새 키를 두지 않는다)
+   */
+  models: z.array(RunnerModelOption).max(32).optional(),
 });
 export type RunnerProgramStatus = z.infer<typeof RunnerProgramStatus>;
 

@@ -1157,24 +1157,36 @@ describe("러너 에이전트 세션 설정 [세션 설정 스펙 5.2·S9]", () 
     effort: null,
     permissionMode: null,
     contextPercent: 10,
+    ceiling: null,
+    context: null,
+    models: [],
     ...over,
   });
+  const breakdown = (percentage: number) => ({
+    model: "claude-opus-5-5",
+    totalTokens: percentage * 1000,
+    maxTokens: 100_000,
+    percentage,
+    categories: [{ name: "Messages", tokens: percentage * 1000, kind: "used" }],
+  });
 
-  it("conversation.agent_settings — 대화 키는 줄 그대로, 스레드 키는 값만 바꾸고 그 스레드의 컨텍스트 % 는 둔다 [Review Focus 5]", () => {
+  it("conversation.agent_settings — 대화 키는 줄 그대로, 스레드 키는 값만 바꾸고 그 스레드의 컨텍스트 %·세부는 둔다 [Review Focus 5 · 작성기 칩 스펙 5.3]", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(agentSettingsKeys.of(CH), [row()]);
-    queryClient.setQueryData(agentSettingsKeys.of(CH, uid(77)), [row({ contextPercent: 70 })]);
+    queryClient.setQueryData(agentSettingsKeys.of(CH, uid(77)), [
+      row({ contextPercent: 70, context: breakdown(70) }),
+    ]);
     queryClient.setQueryData(agentSettingsKeys.of(CH2), [row()]);
     fake.serverEmit("conversation.agent_settings", {
       channelId: CH,
       conversationId: CH,
-      settings: row({ model: "opus", permissionMode: "plan", contextPercent: 42 }),
+      settings: row({ model: "opus", permissionMode: "plan", contextPercent: 42, context: breakdown(42) }),
     });
     expect(queryClient.getQueryData(agentSettingsKeys.of(CH))).toEqual([
-      row({ model: "opus", permissionMode: "plan", contextPercent: 42 }),
+      row({ model: "opus", permissionMode: "plan", contextPercent: 42, context: breakdown(42) }),
     ]);
     expect(queryClient.getQueryData(agentSettingsKeys.of(CH, uid(77)))).toEqual([
-      row({ model: "opus", permissionMode: "plan", contextPercent: 70 }),
+      row({ model: "opus", permissionMode: "plan", contextPercent: 70, context: breakdown(70) }),
     ]);
     // 다른 대화는 그대로
     expect(queryClient.getQueryData(agentSettingsKeys.of(CH2))).toEqual([row()]);
