@@ -18,12 +18,10 @@ import {
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { agentColorVar } from "@/theme/agentColor";
-import { Button } from "@/ui/button";
 import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
-import { ContextGauge } from "./ContextGauge";
+import { AgentPills, type PillItem } from "./AgentPills";
+import { CONTEXT_WARN_PERCENT, ContextGauge } from "./ContextGauge";
 
-/** 줄이 이보다 많으면 「러너 에이전트 N」 한 줄로 접는다(세션 설정 스펙 S3) */
-export const FOLD_OVER = 3;
 const SAVE_FAILED = "저장하지 못했습니다";
 const CEILING_REFUSED = "러너 상한 위의 권한 모드입니다";
 
@@ -31,6 +29,19 @@ const CEILING_REFUSED = "러너 상한 위의 권한 모드입니다";
 export type PendingAgentSettings = Readonly<Record<string, AgentSettingsPatch>>;
 
 const NO_DEFAULTS: SessionDefaults = { model: null, effort: null, permissionMode: null };
+
+/**
+ * 알약·패널 줄 순서(작성기 도구 줄 스펙 T4) — 컨텍스트가 주의 구간(70%) 이상인 것이 앞, 그 안과 나머지는 받은 순서(채널 멤버 →
+ * 세션에 초대한 순). 멘션으로는 바꾸지 않는다(입력 중 흔들림 — T6)
+ */
+export function orderForPills<T extends { agent: Agent; row: ConversationAgentSettings }>(
+  items: readonly T[],
+): T[] {
+  const warn = (i: T) => i.row.contextPercent !== null && i.row.contextPercent >= CONTEXT_WARN_PERCENT;
+  return [...items.filter(warn), ...items.filter((i) => !warn(i))];
+}
+
+const NO_MENTIONS: ReadonlySet<string> = new Set();
 
 function errorText(e: unknown): string {
   if (e instanceof ApiRequestError) {
@@ -50,7 +61,7 @@ export function AgentSettingsBar({
   channelId,
   conversationId,
   threadRootId,
-  mentioned: _mentioned,
+  mentioned = NO_MENTIONS,
   pending,
   onPendingChange,
 }: {
@@ -65,7 +76,6 @@ export function AgentSettingsBar({
   const isNew = conversationId === NEW_CONVERSATION && threadRootId === undefined;
   const members = useMembers(channelId);
   const agents = useAgents();
-  const [expanded, setExpanded] = useState(false);
   const memberRunners = (members.data ?? []).flatMap((m) => {
     if (m.memberType !== "agent") return [];
     const agent = agents.data?.find((a) => a.id === m.memberId);
@@ -118,55 +128,28 @@ export function AgentSettingsBar({
     );
   }
 
-  const folded = runnerAgents.length > FOLD_OVER && !expanded;
+  // 2명 이상 — 에이전트마다 알약, 누르면 설정 패널(T3·T4)
+  const items: PillItem[] = orderForPills(
+    runnerAgents.map((agent) => ({ agent, row: rowOf(agent), invited: invitedIds.has(agent.id) })),
+  );
   return (
-    <div
-      className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs text-muted-foreground"
-      data-testid="agent-settings-bar"
-    >
-      {folded ? (
-        <div className="flex items-center gap-2">
-          <span>러너 에이전트 {runnerAgents.length}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs"
-            aria-expanded={false}
-            onClick={() => setExpanded(true)}
-          >
-            펼치기
-          </Button>
-        </div>
-      ) : (
-        <>
-          {runnerAgents.map((agent) => (
-            <SettingsLine
-              key={agent.id}
-              agent={agent}
-              invited={invitedIds.has(agent.id)}
-              row={rowOf(agent)}
-              conversationId={conversationId}
-              isNew={isNew}
-              {...(onPendingChange ? { onPendingChange } : {})}
-            />
-          ))}
-          {runnerAgents.length > FOLD_OVER && (
-            <div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                aria-expanded
-                onClick={() => setExpanded(false)}
-              >
-                접기
-              </Button>
-            </div>
-          )}
-        </>
-      )}
+    <div className="flex min-w-0 flex-1 text-xs text-muted-foreground" data-testid="agent-settings-bar">
+      <AgentPills
+        items={items}
+        mentioned={mentioned}
+        compact={false}
+        isNew={isNew}
+        renderLine={(item) => (
+          <SettingsLine
+            agent={item.agent}
+            invited={item.invited}
+            row={item.row}
+            conversationId={conversationId}
+            isNew={isNew}
+            {...(onPendingChange ? { onPendingChange } : {})}
+          />
+        )}
+      />
     </div>
   );
 }
