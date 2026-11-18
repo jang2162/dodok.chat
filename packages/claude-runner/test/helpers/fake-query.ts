@@ -1,5 +1,6 @@
 import type {
   CanUseTool,
+  SdkContextUsage,
   SdkMcpServer,
   SdkMcpTool,
   SdkMessage,
@@ -53,6 +54,8 @@ export type FakeCall = {
   finished: boolean;
   toolResults: FakeToolResult[];
   permissions: FakePermission[];
+  /** getContextUsage 를 부른 인자 — 부를 때마다 하나 */
+  contextUsageCalls: Array<{ detail?: "summary" | "full" } | undefined>;
 };
 
 export type FakeSdk = SdkPort & {
@@ -61,7 +64,43 @@ export type FakeSdk = SdkPort & {
   script(...steps: ScriptStep[]): void;
   sessions: Set<string>;
   servers: SdkMcpTool[][];
+  /**
+   * getContextUsage 의 답 — 시험이 바꿔 끼운다(멈춤·던짐). 기본은 FAKE_CONTEXT_USAGE. 실제 CLI 처럼 입력(stdin)이 닫힌 뒤
+   * 부르면 던진다 — 러너가 입력을 닫기 전에 물어야 한다
+   */
+  contextUsage: (call: FakeCall) => Promise<SdkContextUsage>;
 };
+
+/** 가짜 getContextUsage 의 기본 답 — 실제 응답처럼 줄별 목록(memoryFiles·mcpTools·gridRows …)도 싣는다 */
+export const FAKE_CONTEXT_USAGE = {
+  categories: [
+    { name: "System prompt", tokens: 3_100, color: "promptBorder", kind: "used" },
+    { name: "System tools", tokens: 17_600, color: "inactive", kind: "used" },
+    { name: "Messages", tokens: 215_200, color: "purple_FOR_SUBAGENTS_ONLY", kind: "used" },
+    { name: "Free space", tokens: 518_400, color: "promptBorder", kind: "free" },
+    { name: "Autocompact buffer", tokens: 33_000, color: "inactive", kind: "buffer" },
+    {
+      name: "MCP tools",
+      tokens: 21_900,
+      color: "cyan_FOR_SUBAGENTS_ONLY",
+      isDeferred: true,
+      kind: "deferred",
+    },
+  ],
+  totalTokens: 235_900,
+  maxTokens: 800_000,
+  rawMaxTokens: 800_000,
+  percentage: 29.4875,
+  gridRows: [
+    [{ color: "x", isFilled: true, categoryName: "Messages", tokens: 1, percentage: 1, squareFullness: 1 }],
+  ],
+  model: "claude-opus-5-5",
+  memoryFiles: [{ path: "/home/u/repo/CLAUDE.md", type: "Project", tokens: 900 }],
+  mcpTools: [{ name: "mcp__dodok__post", serverName: "dodok", tokens: 400, isLoaded: true }],
+  agents: [{ agentType: "general-purpose", source: "built-in", tokens: 100 }],
+  isAutoCompactEnabled: true,
+  apiUsage: null,
+} as unknown as SdkContextUsage;
 
 /** 테스트용 SDK 메시지 — 쓰는 필드만 채우고 SDK 타입으로 본다 */
 export const sdkMsg = (m: Record<string, unknown>): SdkMessage => m as unknown as SdkMessage;
@@ -71,6 +110,9 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
   const calls: FakeCall[] = [];
   const sessions = new Set<string>();
   const servers: SdkMcpTool[][] = [];
+  const fake = {
+    contextUsage: async (_call: FakeCall): Promise<SdkContextUsage> => FAKE_CONTEXT_USAGE,
+  };
 
   function query(args: { prompt: AsyncIterable<SdkUserMessage>; options: SdkOptions }): SdkQuery {
     const steps = scripts.shift() ?? [];
@@ -84,8 +126,10 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       finished: false,
       toolResults: [],
       permissions: [],
+      contextUsageCalls: [],
     };
     calls.push(call);
+    let inputEnded = false;
     let onInterrupt: (() => void) | undefined;
     // 권한 콜백의 signal — interrupt·close 가 끊는다
     const permissionControllers = new Set<AbortController>();
@@ -101,7 +145,6 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       const input = args.prompt[Symbol.asyncIterator]();
       const first = await input.next();
       if (!first.done) call.prompt = first.value;
-      let inputEnded = false;
       const rest = input.next().then(() => void (inputEnded = true));
       try {
         for (const step of steps) {
@@ -177,10 +220,17 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
         cancelPermissions();
         onClose?.();
       },
+      getContextUsage: async (opts) => {
+        call.contextUsageCalls.push(opts);
+        // 제어 요청은 stdin 으로 가고 답은 그 뒤에 온다 — 한 틱 뒤에 보아야 같은 틱에 닫은 입력도 잡힌다
+        await new Promise((r) => setImmediate(r));
+        if (inputEnded || closed) throw new Error("fake: getContextUsage after input closed");
+        return fake.contextUsage(call);
+      },
     };
   }
 
-  return {
+  return Object.assign(fake, {
     calls,
     sessions,
     servers,
@@ -192,7 +242,7 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       // tools 는 가짜만 싣는다 — callTool 단계가 handler 를 찾는다
       return { type: "sdk", name: "dodok", instance: {}, tools } as unknown as SdkMcpServer;
     },
-  };
+  } satisfies Omit<FakeSdk, "contextUsage">) as FakeSdk;
 }
 
 /** 대본 조각 — ADR 0007 4.1 의 턴 하나 모양 */

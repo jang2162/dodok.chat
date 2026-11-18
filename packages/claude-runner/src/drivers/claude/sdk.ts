@@ -6,7 +6,9 @@ import {
   query,
   tool,
   type CanUseTool,
+  type ModelInfo,
   type Options,
+  type SDKControlGetContextUsageResponse,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -14,6 +16,8 @@ import {
 export type SdkMessage = SDKMessage;
 export type SdkUserMessage = SDKUserMessage;
 export type SdkOptions = Options;
+export type SdkContextUsage = SDKControlGetContextUsageResponse;
+export type SdkModelInfo = ModelInfo;
 export type { CanUseTool };
 // tool() 은 입력 스키마마다 다른 제네릭을 돌려준다 — createSdkMcpServer 가 받는 원소 타입을 그대로 쓴다
 export type SdkMcpTool = NonNullable<Parameters<typeof createSdkMcpServer>[0]["tools"]>[number];
@@ -24,6 +28,8 @@ export const defineSdkTool = tool;
 export type SdkQuery = AsyncIterable<SdkMessage> & {
   interrupt(): Promise<unknown>;
   close(): void;
+  /** 런 끝 컨텍스트 세부 — 러너는 summary 만 쓴다(full 은 항목마다 토큰 세기 API 를 부른다 — 작성기 칩 스펙 C6) */
+  getContextUsage(opts?: { detail?: "summary" | "full" }): Promise<SdkContextUsage>;
 };
 
 export type SdkPort = {

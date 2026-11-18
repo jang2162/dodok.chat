@@ -5,6 +5,7 @@ import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../ima
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
 import { abortedFinal, abortStopReason, type RunSink } from "../../sink";
 import { createCanUseTool } from "./approvals";
+import { fetchContextBreakdown } from "./context-usage";
 import type {
   CanUseTool,
   SdkMcpServer,
@@ -333,7 +334,16 @@ async function attempt(
         } else if (item.final) {
           const { totalCostUsd, ...rest } = item.final;
           const costUsd = recordCost(totalCostUsd);
-          ctx.sink.final({ ...rest, ...(costUsd === undefined ? {} : { costUsd }), costKind });
+          // 세부는 입력을 닫기 전에 묻는다 — 닫으면 CLI 가 끝나 제어 요청에 답하지 않는다. 중지된 턴은 묻지 않는다(작성기 칩 스펙 C7)
+          const contextBreakdown =
+            interrupted || ctx.signal.aborted ? undefined : await fetchContextBreakdown(q);
+          const usage = contextBreakdown === undefined ? rest.usage : { ...rest.usage, contextBreakdown };
+          ctx.sink.final({
+            ...rest,
+            ...(usage === undefined ? {} : { usage }),
+            ...(costUsd === undefined ? {} : { costUsd }),
+            costKind,
+          });
           end();
         } else if (item.error) {
           ctx.sink.error(item.error.code, item.error.message);
