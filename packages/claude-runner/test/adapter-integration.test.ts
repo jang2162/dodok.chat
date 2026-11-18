@@ -245,6 +245,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       "interrupt",
       "approvals",
       "attachments",
+      "worktrees",
     ]);
     const info = server.adapter.runnerInfo(TOKEN_ID);
     expect(info).toMatchObject({ roots: [{ id: "src", label: "my-repo" }], browse: true });
@@ -287,6 +288,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(await server.adapter.projectCheck(TOKEN_ID, { rootId: "src", relPath: "repo" })).toEqual({
       ok: true,
       isGitRepo: true,
+      isGitTop: false,
     });
     expect(await server.adapter.projectCheck(TOKEN_ID, { rootId: "gone", relPath: "" })).toEqual({
       ok: false,

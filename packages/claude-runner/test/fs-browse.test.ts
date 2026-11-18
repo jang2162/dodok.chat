@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,38 +106,78 @@ describe("listDirectory (fs.list)", () => {
 });
 
 describe("checkProject (project.check)", () => {
-  it("ok — git 여부", () => {
-    expect(checkProject(cfg(), { rootId: "src", relPath: "beta" })).toEqual({ ok: true, isGitRepo: true });
-    expect(checkProject(cfg(), { rootId: "src", relPath: "alpha" })).toEqual({ ok: true, isGitRepo: false });
+  it("ok — git 여부", async () => {
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "beta" })).toEqual({
+      ok: true,
+      isGitRepo: true,
+      isGitTop: false,
+    });
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "alpha" })).toEqual({
+      ok: true,
+      isGitRepo: false,
+      isGitTop: false,
+    });
   });
 
-  it("사유 넷", () => {
-    expect(checkProject(cfg(), { rootId: "gone", relPath: "" })).toEqual({
+  it("사유 넷", async () => {
+    expect(await checkProject(cfg(), { rootId: "gone", relPath: "" })).toEqual({
       ok: false,
       reason: "root_missing",
     });
-    expect(checkProject(cfg(), { rootId: "src", relPath: "nope" })).toEqual({
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "nope" })).toEqual({
       ok: false,
       reason: "not_found",
     });
-    expect(checkProject(cfg(), { rootId: "src", relPath: "dangling" })).toEqual({
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "dangling" })).toEqual({
       ok: false,
       reason: "not_found",
     });
-    expect(checkProject(cfg(), { rootId: "src", relPath: "notes.txt" })).toEqual({
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "notes.txt" })).toEqual({
       ok: false,
       reason: "not_directory",
     });
-    expect(checkProject(cfg(), { rootId: "src", relPath: "escape" })).toEqual({
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "escape" })).toEqual({
       ok: false,
       reason: "outside_root",
     });
   });
 
-  it("둘러보기를 꺼도 확인은 된다 — 경로를 직접 적어 더하는 길", () => {
-    expect(checkProject({ roots: cfg(false).roots }, { rootId: "src", relPath: "beta" })).toEqual({
+  it("둘러보기를 꺼도 확인은 된다 — 경로를 직접 적어 더하는 길", async () => {
+    expect(await checkProject({ roots: cfg(false).roots }, { rootId: "src", relPath: "beta" })).toEqual({
       ok: true,
       isGitRepo: true,
+      isGitTop: false,
+    });
+  });
+
+  it("checkProject isGitTop true for repo top, false for subdir and worktree", async () => {
+    const run = (cwd: string, ...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+        cwd,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+        stdio: "ignore",
+      });
+    const repo = join(root, "real");
+    mkdirSync(join(repo, "sub"), { recursive: true });
+    run(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "sub", "f"), "x");
+    run(repo, "add", "sub/f");
+    run(repo, "commit", "-q", "-m", "init");
+    run(repo, "worktree", "add", "-q", "-b", "w", "--", join(root, "real-wt"), "HEAD");
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "real" })).toEqual({
+      ok: true,
+      isGitRepo: true,
+      isGitTop: true,
+    });
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "real/sub" })).toEqual({
+      ok: true,
+      isGitRepo: false,
+      isGitTop: false,
+    });
+    expect(await checkProject(cfg(), { rootId: "src", relPath: "real-wt" })).toEqual({
+      ok: true,
+      isGitRepo: true,
+      isGitTop: false,
     });
   });
 });

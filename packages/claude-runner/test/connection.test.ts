@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -21,6 +22,8 @@ import {
   RunnerRunEvent,
   RunnerRunFinal,
   RunnerRunSession,
+  RunnerWorktreeCreateResult,
+  RunnerWorktreeRemoveResult,
   type RunnerClientToServerEvents,
   type RunnerHelloResult,
   type RunnerRunAgent,
@@ -252,7 +255,7 @@ describe("startRunnerConnection", () => {
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
       bundleSha256: null,
-      capabilities: ["threads", "interrupt", "approvals", "attachments"],
+      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees"],
       roots: [{ id: "src", label: "내 저장소들" }],
       browse: true,
       programs: [
@@ -804,7 +807,73 @@ describe("startRunnerConnection", () => {
     ).toEqual({
       ok: true,
       isGitRepo: false,
+      isGitTop: false,
     });
+  });
+
+  it("hello capabilities include worktrees", async () => {
+    const { server } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.capabilities).toContain("worktrees");
+  });
+
+  it("worktree.create ack goes through createWorktree", async () => {
+    // 머신의 git 설정(전역 훅 등)에 기대지 않게 — 러너가 부르는 git 도 이 env 를 물려받는다
+    const env = {
+      GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+      GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM,
+    };
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    cleanups.push(() => {
+      for (const [k, v] of Object.entries(env)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+    const { server, dirs } = await setup();
+    const repo = join(dirs.root, "app");
+    mkdirSync(repo);
+    const run = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+    run("init", "-q", "-b", "main");
+    run("commit", "-q", "--allow-empty", "-m", "init");
+    await waitFor(() => server.hellos.length === 1);
+    const socket = server.sockets[0]!;
+    const created = RunnerWorktreeCreateResult.parse(
+      await socket.timeout(10_000).emitWithAck("worktree.create", {
+        repo: { rootId: "src", relPath: "app" },
+        target: { rootId: "src", relPath: "app/.worktrees/feat" },
+        branch: "dodok/feat",
+      }),
+    );
+    expect(created).toMatchObject({ ok: true, created: true, adopted: false });
+    expect(
+      await socket.timeout(10_000).emitWithAck("worktree.create", {
+        repo: { rootId: "src", relPath: "app" },
+        target: { rootId: "src", relPath: "app/.worktrees/bad" },
+        branch: "-x",
+      }),
+    ).toMatchObject({ ok: false, reason: "invalid_branch" });
+    expect(
+      RunnerWorktreeRemoveResult.parse(
+        await socket.timeout(10_000).emitWithAck("worktree.remove", {
+          repo: { rootId: "src", relPath: "app" },
+          target: { rootId: "src", relPath: "app/.worktrees/feat" },
+        }),
+      ),
+    ).toEqual({ ok: true });
+    // 형식이 틀린 요청 — git 을 부르지 않고 git_failed
+    expect(
+      await socket.timeout(10_000).emitWithAck("worktree.create", {
+        repo: { rootId: "src", relPath: "../x" },
+        target: { rootId: "src", relPath: "x" },
+        branch: "b",
+      }),
+    ).toMatchObject({ ok: false, reason: "git_failed" });
   });
 
   it("같은 세션이 돌고 있으면 run.error CONFLICT", async () => {
