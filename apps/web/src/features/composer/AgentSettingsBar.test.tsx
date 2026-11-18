@@ -19,6 +19,7 @@ import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
 import { doc, flushEditorFrames, mention, p, setDoc, t } from "../../../test/composerHarness";
+import { stubMedia } from "../../../test/media";
 import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
 import { ABOVE_CEILING, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
@@ -466,6 +467,78 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByTestId("agent-pill-reviewer")).toHaveFocus();
     expect(screen.getByTestId("agent-pill-reviewer")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구 줄 스펙 T5]", () => {
+  const three = [CODER, REVIEWER, TESTER];
+  const rows = () => [row(CODER, { contextPercent: 10 }), row(REVIEWER, { contextPercent: 72 }), row(TESTER)];
+  const summary = () => screen.getByTestId("agent-pill-summary");
+
+  it("좁은 화면 3명 — 모은 알약 하나, 가장 높은 %, 누르면 아래 시트에 줄 셋", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    expect(summary()).toHaveTextContent("에이전트 3");
+    expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정");
+    expect(summary()).toHaveAttribute("aria-haspopup", "dialog");
+    expect(screen.queryByTestId("agent-pill-coder")).toBeNull();
+    await userEvent.click(summary());
+    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    expect(dialog).toHaveAttribute("data-slot", "sheet-content");
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+    // 줄 순서도 T4 — 70% 이상(reviewer)이 앞
+    expect(
+      Array.from(dialog.querySelectorAll("[data-testid^='agent-settings-']")).map((el) =>
+        el.getAttribute("data-testid"),
+      ),
+    ).toEqual(["agent-settings-reviewer", "agent-settings-coder", "agent-settings-tester"]);
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+  });
+
+  it("넓은 화면의 스레드 작성기도 모은 알약 — 시트가 아니라 패널", async () => {
+    serve({ settings: { [CONV]: rows(), [`${CONV}:${ROOT}`]: rows() } });
+    renderAt(CONV, { agents: three, threadRootId: ROOT });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    await userEvent.click(summary());
+    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    expect(dialog).toHaveAttribute("data-slot", "popover-content");
+  });
+
+  it("좁은 화면 1명은 펼친 칩 그대로", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: [row(CODER)] } });
+    renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("composer-toolbar")).getByTestId("agent-settings-coder"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("agent-pill-summary")).toBeNull();
+  });
+
+  it("모은 알약도 멘션하면 이름에 「이 글에서 부름」", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정"));
+    const editor = (screen.getByRole("textbox", { name: "메시지 입력" }) as unknown as { editor: Editor })
+      .editor;
+    setDoc(editor, doc(p(mention(`a:${TESTER.id}`, "tester"))));
+    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정 — 이 글에서 부름"));
+  });
+
+  it("escape returns focus — 시트", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await userEvent.click(await waitFor(() => summary()));
+    await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(summary()).toHaveFocus();
   });
 });
 

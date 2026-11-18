@@ -17,6 +17,7 @@ import {
 } from "@/features/conversations/agentSettings";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { agentColorVar } from "@/theme/agentColor";
 import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
 import { AgentPills, type PillItem } from "./AgentPills";
@@ -76,6 +77,7 @@ export function AgentSettingsBar({
   const isNew = conversationId === NEW_CONVERSATION && threadRootId === undefined;
   const members = useMembers(channelId);
   const agents = useAgents();
+  const narrow = useIsNarrow();
   const memberRunners = (members.data ?? []).flatMap((m) => {
     if (m.memberType !== "agent") return [];
     const agent = agents.data?.find((a) => a.id === m.memberId);
@@ -128,7 +130,7 @@ export function AgentSettingsBar({
     );
   }
 
-  // 2명 이상 — 에이전트마다 알약, 누르면 설정 패널(T3·T4)
+  // 2명 이상 — 에이전트마다 알약, 누르면 설정 패널(T3·T4). 좁은 화면·스레드 작성기는 모은 알약 하나(T5)
   const items: PillItem[] = orderForPills(
     runnerAgents.map((agent) => ({ agent, row: rowOf(agent), invited: invitedIds.has(agent.id) })),
   );
@@ -137,7 +139,8 @@ export function AgentSettingsBar({
       <AgentPills
         items={items}
         mentioned={mentioned}
-        compact={false}
+        compact={narrow || threadRootId !== undefined}
+        sheet={narrow}
         isNew={isNew}
         renderLine={(item) => (
           <SettingsLine
