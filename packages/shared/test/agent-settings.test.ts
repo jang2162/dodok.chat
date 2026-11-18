@@ -46,6 +46,8 @@ describe("ConversationAgentSettings·SessionDefaults", () => {
       permissionMode: null,
       contextPercent: null,
       ceiling: null,
+      context: null,
+      models: [],
     };
     expect(ConversationAgentSettings.parse(row)).toEqual(row);
     expect(SessionDefaults.parse({ model: null, effort: null, permissionMode: null })).toEqual({
@@ -63,6 +65,8 @@ describe("ConversationAgentSettings·SessionDefaults", () => {
       permissionMode: "plan",
       contextPercent: 42,
       ceiling: "default",
+      context: null,
+      models: [],
     };
     expect(ConversationAgentSettings.parse(row)).toEqual(row);
     expect(ConversationAgentSettings.safeParse({ ...row, contextPercent: 101 }).success).toBe(false);
@@ -70,11 +74,23 @@ describe("ConversationAgentSettings·SessionDefaults", () => {
   });
 
   it("ceiling 은 권한 모드나 null — 빠지면 거절, AgentCeiling 도 같다", () => {
-    const row = { agentId: ID(1), model: null, effort: null, permissionMode: null, contextPercent: null };
+    const row = {
+      agentId: ID(1),
+      model: null,
+      effort: null,
+      permissionMode: null,
+      contextPercent: null,
+      context: null,
+      models: [],
+    };
     expect(ConversationAgentSettings.safeParse(row).success).toBe(false);
     expect(ConversationAgentSettings.safeParse({ ...row, ceiling: "root" }).success).toBe(false);
-    expect(AgentCeiling.parse({ agentId: ID(1), ceiling: null })).toEqual({ agentId: ID(1), ceiling: null });
-    expect(AgentCeiling.safeParse({ agentId: ID(1), ceiling: "root" }).success).toBe(false);
+    expect(AgentCeiling.parse({ agentId: ID(1), ceiling: null, models: [] })).toEqual({
+      agentId: ID(1),
+      ceiling: null,
+      models: [],
+    });
+    expect(AgentCeiling.safeParse({ agentId: ID(1), ceiling: "root", models: [] }).success).toBe(false);
   });
 });
 

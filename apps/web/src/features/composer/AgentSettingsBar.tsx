@@ -98,6 +98,8 @@ export function AgentSettingsBar({
       ...(isNew ? pending?.[agent.id] : {}),
       contextPercent: null,
       ceiling,
+      context: null,
+      models: [],
     };
   };
 

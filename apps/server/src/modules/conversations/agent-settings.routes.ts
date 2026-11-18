@@ -79,6 +79,7 @@ export function registerAgentSettingsRoutes(fastify: FastifyInstance, ctx: Agent
       const ceilings: AgentCeiling[] = settingsAgentsOf(ctx.db, id).map((agent) => ({
         agentId: agent.id,
         ceiling: runnerPermissionCeiling(ctx.runners, agent),
+        models: [],
       }));
       return { ceilings };
     },

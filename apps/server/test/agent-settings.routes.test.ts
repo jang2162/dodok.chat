@@ -237,7 +237,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
           ceiling: s.ceiling,
         })),
       ).toEqual(want);
-      expect(await ceilingsOf(noah.token, channel.id)).toEqual(want);
+      expect(await ceilingsOf(noah.token, channel.id)).toEqual(want.map((w) => ({ ...w, models: [] })));
       const saved = await patch(noah.token, conversationId, agent.id, { model: "opus" });
       expect(saved.json()).toMatchObject({ agentId: agent.id, ceiling: "default" });
     });
@@ -255,7 +255,9 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
       });
       for (const token of [noah.token, owner])
         expect((await call(token, "GET", `/api/v1/channels/${dm.id}/agent-ceilings`)).statusCode).toBe(404);
-      expect(await ceilingsOf(mia.token, dm.id)).toEqual([{ agentId: agent.id, ceiling: "acceptEdits" }]);
+      expect(await ceilingsOf(mia.token, dm.id)).toEqual([
+        { agentId: agent.id, ceiling: "acceptEdits", models: [] },
+      ]);
     });
   });
 
@@ -351,6 +353,8 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
         permissionMode: null,
         contextPercent: null,
         ceiling: "acceptEdits",
+        context: null,
+        models: [],
       },
     });
     // 같은 틱의 덤 이벤트가 없는지 — 응답 뒤에 한 번 더 기다려 본다

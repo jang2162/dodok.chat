@@ -387,6 +387,35 @@ export const RunStatus = z.enum([
 export type RunStatus = z.infer<typeof RunStatus>;
 export const RunTriggerKind = z.enum(["mention", "auto_respond", "relay", "interaction", "continue"]);
 export type RunTriggerKind = z.infer<typeof RunTriggerKind>;
+/** 런 끝 컨텍스트 세부의 한 줄(작성기 칩 스펙 5.1) — SDK getContextUsage 의 categories 를 줄였다. deferred 는 창 밖(불러올 때만) */
+export const RunnerContextCategory = z.object({
+  name: z.string().max(80),
+  tokens: z.int().min(0),
+  kind: z.enum(["used", "free", "buffer", "deferred"]),
+});
+export type RunnerContextCategory = z.infer<typeof RunnerContextCategory>;
+
+/**
+ * 러너가 런 끝에 SDK getContextUsage({ detail: "summary" }) 로 받아 줄인 것(작성기 칩 스펙 C2·C8). mcp_tools·memory_files 같은
+ * 줄별 목록은 싣지 않는다 — 경로·이름이 머신 정보를 드러낸다. percentage 는 100 을 넘을 수 있다(창 초과)
+ */
+export const RunnerContextBreakdown = z.object({
+  model: z.string().max(128),
+  totalTokens: z.int().min(0),
+  maxTokens: z.int().min(1),
+  percentage: z.number().min(0),
+  categories: z.array(RunnerContextCategory).max(32),
+});
+export type RunnerContextBreakdown = z.infer<typeof RunnerContextBreakdown>;
+
+/** 러너가 hello 로 알린 그 프로그램의 모델 한 줄 — SDK supportedModels(). value "default" 줄은 화면이 「기본」에 합친다(C9) */
+export const RunnerModelOption = z.object({
+  value: z.string().min(1).max(128),
+  displayName: z.string().max(80),
+  efforts: z.array(RunnerEffort).max(5),
+});
+export type RunnerModelOption = z.infer<typeof RunnerModelOption>;
+
 export const RunUsage = z.object({
   inputTokens: z.int().optional(),
   outputTokens: z.int().optional(),
@@ -397,6 +426,8 @@ export const RunUsage = z.object({
   // 러너 실행 끝의 컨텍스트 사용량(세션 설정 스펙 5.1) — 상태 줄의 컨텍스트 % 가 마지막 실행의 이 둘로 그린다
   contextTokens: z.int().min(0).optional(),
   contextWindow: z.int().min(1).optional(),
+  // 같은 실행 끝의 컨텍스트 세부 — 있으면 상태 줄 퍼센트도 이것의 percentage 로 낸다. 옛 러너는 싣지 않는다
+  contextBreakdown: RunnerContextBreakdown.optional(),
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 

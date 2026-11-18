@@ -78,6 +78,8 @@ const row = (agent: Agent, over: Partial<ConversationAgentSettings> = {}): Conve
   permissionMode: null,
   contextPercent: null,
   ceiling: null,
+  context: null,
+  models: [],
   ...over,
 });
 

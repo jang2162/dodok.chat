@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { Id } from "../common";
-import { RunnerEffort, RunnerPermissionMode, SessionDefaults } from "../domain";
+import {
+  RunnerContextBreakdown,
+  RunnerEffort,
+  RunnerModelOption,
+  RunnerPermissionMode,
+  SessionDefaults,
+} from "../domain";
 
 // 러너 에이전트의 세션 설정(세션 설정 스펙 5장) — 대화 × 러너 에이전트마다 모델·effort·권한 모드. null 은 「기본」이다:
 // 모델·effort 는 프로그램 기본, 권한은 실행 때 min(default, 그 러너의 상한)
@@ -21,11 +27,19 @@ export const ConversationAgentSettings = SessionDefaults.extend({
   agentId: Id,
   contextPercent: z.int().min(0).max(100).nullable(),
   ceiling: PermissionCeiling,
+  /** contextPercent 와 같은 실행의 컨텍스트 세부 — 그 실행이 세부를 싣지 않았으면(옛 러너·받기 실패) null */
+  context: RunnerContextBreakdown.nullable(),
+  /** 그 에이전트 러너가 알린 그 프로그램의 모델 — 러너가 끊겼거나 옛 러너면 빈 목록(화면은 고정 목록으로) */
+  models: z.array(RunnerModelOption),
 });
 export type ConversationAgentSettings = z.infer<typeof ConversationAgentSettings>;
 
 /** GET /channels/:id/agent-ceilings 의 한 줄 — 대화가 아직 없는 새 세션 창이 쓴다. 계산은 ConversationAgentSettings.ceiling 과 같다 */
-export const AgentCeiling = z.object({ agentId: Id, ceiling: PermissionCeiling });
+export const AgentCeiling = z.object({
+  agentId: Id,
+  ceiling: PermissionCeiling,
+  models: z.array(RunnerModelOption),
+});
 export type AgentCeiling = z.infer<typeof AgentCeiling>;
 
 const PATCH_FIELDS = {

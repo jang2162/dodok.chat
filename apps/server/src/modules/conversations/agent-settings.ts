@@ -187,6 +187,8 @@ export function toConversationAgentSettings(
     ...getEffectiveSettings(db, key),
     contextPercent: contextPercentOf(db, key),
     ceiling: agentPermissionCeiling(db, runners, key.agentId),
+    context: null,
+    models: [],
   };
 }
 
