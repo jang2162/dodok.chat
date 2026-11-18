@@ -29,7 +29,9 @@ export type ClaudeDriverOptions = {
   closeGraceMs?: number;
   /** 시험이 줄인다 — 기본 MODELS_TIMEOUT_MS */
   modelsTimeoutMs?: number;
-  /** 세션을 연 길(새로·resume·거절 뒤 resume)을 남기는 줄 */
+  /** 시험이 바꿔 끼운다 — 시간 초과 기억의 만료를 잰다. 기본 Date.now */
+  now?: () => number;
+  /** 세션을 연 길(새로·resume·거절 뒤 resume)·고른 CLI·목록 시간 초과를 남기는 줄 */
   logger?: { info(msg: string): void };
   /** 모델 목록을 받는 query 의 cwd — 러너의 첫 루트(작성기 칩 스펙 C10). 없으면 러너 프로세스의 cwd */
   modelsCwd?: string;
@@ -41,22 +43,44 @@ export type ClaudeDriverOptions = {
  * 끊고 러너는 다시 붙어 같은 일을 되풀이한다(시험이 합을 단언한다)
  */
 export const MODELS_TIMEOUT_MS = 3000;
+/**
+ * 시간 초과로 기억한 「목록 없음」을 쓰는 기간 — 지나면 다음 detect 가 다시 받는다. 첫 실행이 느린 머신(디스크 캐시·첫 실행 검사)이
+ * 한 번 넘겼다고 러너가 사는 내내 목록 없이 가지 않게
+ */
+export const MODELS_TIMEOUT_MEMORY_MS = 600_000;
 const MODELS_MAX = 32;
 
 /**
  * SDK supportedModels() 를 계약 모양으로 — value "default" 줄도 싣는다(웹이 「기본」에 합친다 — C9), 32개까지. 표시 이름은 80자로
- * 자르고, 계약에 맞지 않는 줄(빈 value·모르는 effort)은 그 줄만 뺀다. 노력치는 「안 받음」(supportsEffort 거짓 → 빈 목록)과
- * 「모름」(둘 다 없음 → 다섯 단계)을 가른다 — 웹은 빈 목록이면 「기본」만 보인다(스펙 5.4)
+ * 자르고, 계약에 맞지 않는 줄(빈 value·모르는 effort)은 그 줄만 뺀다. 노력치는 「안 받음」(빈 목록 — 웹은 「기본」만, 스펙 5.4)과
+ * 「모름」(다섯 단계)을 목록 전체로 가른다: CLI 는 effort 를 받는 모델에 supportsEffort·supportedEffortLevels 를 함께 싣고 안 받는
+ * 모델에는 둘 다 뺀다(false 를 싣지 않는다 — 2.1.283·2.1.323 에서 확인). 그래서 어느 줄이든 두 키를 실었으면 키 없는 줄은 「안 받음」,
+ * 어떤 줄도 싣지 않았으면 effort 를 모르는 판이라 모두 「모름」
  */
 export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
+  const knowsEffort = list.some(
+    (m) => m?.supportsEffort !== undefined || m?.supportedEffortLevels !== undefined,
+  );
+  const effortsOf = (m: SdkModelInfo): readonly string[] => {
+    if (m?.supportsEffort === false) return [];
+    if (m?.supportedEffortLevels !== undefined) return m.supportedEffortLevels;
+    return m?.supportsEffort === true || !knowsEffort ? RUNNER_EFFORTS : [];
+  };
   return list.slice(0, MODELS_MAX).flatMap((m) => {
     const row = RunnerModelOption.safeParse({
       value: m?.value,
       displayName: typeof m?.displayName === "string" ? m.displayName.slice(0, 80) : m?.displayName,
-      efforts: m?.supportsEffort === false ? [] : [...(m?.supportedEffortLevels ?? RUNNER_EFFORTS)],
+      efforts: [...effortsOf(m)],
     });
     return row.success ? [row.data] : [];
   });
+}
+
+/** 로그용 — 3000 → 「3초」, 600000 → 「10분」, 1초 밑(시험)은 ms */
+function durationText(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000}분`;
+  if (ms >= 1000) return `${Math.round(ms / 100) / 10}초`;
+  return `${ms}ms`;
 }
 
 export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
@@ -64,14 +88,16 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   const costs = new Map<string, number>();
   const isExecutable = opts.isExecutable ?? isExecutableFile;
   const readVersion = opts.readVersion ?? readClaudeVersion;
+  const now = opts.now ?? Date.now;
   // 마지막 detect(연결마다 — hello 직전)가 고른 실행 파일. 런은 이 값을 쓴다 — 화면에 보인 판본과 실제로 띄우는 CLI 가 같게.
   // 천장 검사가 detect 의 available 을 보므로 detect 전에 런이 오지 않지만, 오면 그 자리에서 고른다
   let chosen: ClaudeExecutable | undefined;
   // 고른 CLI 가 바뀔 때만 한 줄 — 경로는 찍지 않는다(로그를 남에게 보여 줄 수 있다)
   let lastChoice = "";
   // 마지막으로 받은 모델 목록과 그때의 CLI·로그인 자리 — 같으면 재연결마다 CLI 를 다시 띄우지 않는다. 시간 초과도 같은 키로 기억해
-  // 목록 없이 간다(멈추는 CLI 를 재연결마다 띄우지 않게). 던짐(로그인 전 등)은 기억하지 않는다 — 로그인 뒤 다음 연결에서 다시 받는다
-  let models: { key: string; list: RunnerModelOption[] | undefined } | undefined;
+  // 목록 없이 간다(멈추는 CLI 를 재연결마다 띄우지 않게) — 단 MODELS_TIMEOUT_MEMORY_MS 까지만(expiresAt). 던짐(로그인 전 등)은
+  // 기억하지 않는다 — 로그인 뒤 다음 연결에서 다시 받는다
+  let models: { key: string; list: RunnerModelOption[] | undefined; expiresAt?: number } | undefined;
 
   /** 던지지 않는다 — 실패·시간 초과·모양 어긋남이면 undefined */
   async function listModels(
@@ -80,15 +106,21 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
     env: NodeJS.ProcessEnv,
   ): Promise<RunnerModelOption[] | undefined> {
     const key = `${exe.cli}\0${exe.cli === "installed" ? exe.path : ""}\0${configDir ?? ""}\0${lastChoice}`;
-    if (models?.key === key) return models.list;
+    if (models?.key === key && (models.expiresAt === undefined || now() < models.expiresAt))
+      return models.list;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const limitMs = opts.modelsTimeoutMs ?? MODELS_TIMEOUT_MS;
     const timeout = new Promise<undefined>((resolve) => {
       timer = setTimeout(() => {
         abort.abort();
-        models = { key, list: undefined };
+        models = { key, list: undefined, expiresAt: now() + MODELS_TIMEOUT_MEMORY_MS };
+        // 경로는 찍지 않는다 — 고른 CLI 줄과 같은 까닭
+        opts.logger?.info(
+          `dodok-runner: Claude Code 모델 목록을 ${durationText(limitMs)} 안에 받지 못했습니다 — ${durationText(MODELS_TIMEOUT_MEMORY_MS)} 뒤 다시 받습니다`,
+        );
         resolve(undefined);
-      }, opts.modelsTimeoutMs ?? MODELS_TIMEOUT_MS);
+      }, limitMs);
     });
     try {
       const raw = await Promise.race([

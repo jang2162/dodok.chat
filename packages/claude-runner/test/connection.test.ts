@@ -38,7 +38,12 @@ import {
   type RunnerConnection,
 } from "../src/connection";
 import type { ProgramDriver } from "../src/driver";
-import { createClaudeDriver, MODELS_TIMEOUT_MS, toModelOptions } from "../src/drivers/claude";
+import {
+  createClaudeDriver,
+  MODELS_TIMEOUT_MEMORY_MS,
+  MODELS_TIMEOUT_MS,
+  toModelOptions,
+} from "../src/drivers/claude";
 import { VERSION_TIMEOUT_MS } from "../src/drivers/claude/executable";
 import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
 import { createFakeSdk, FAKE_MODELS, script, type FakeSdk } from "./helpers/fake-query";
@@ -1193,8 +1198,8 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
         efforts: ["low", "medium", "high", "xhigh", "max"],
       },
       { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },
-      // supportsEffort·supportedEffortLevels 를 싣지 않은 줄 — 「모름」이라 다섯 단계(「안 받음」은 models.test.ts)
-      { value: "haiku", displayName: "Haiku 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
+      // 다른 줄이 effort 키를 실었는데 이 줄은 싣지 않았다 — 「안 받음」이라 빈 목록(실제 CLI 의 꼴, models.test.ts)
+      { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
     ]);
     // 런과 같은 로그인·설정 — 첫 루트를 cwd 로, env 허용 목록·전용 로그인 자리, 사람 저장소 설정·커넥터는 끌어오지 않는다
     expect(fake.listModelsCalls).toHaveLength(1);
@@ -1310,6 +1315,85 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
     expect(fake.listModelsCalls).toHaveLength(1);
     // 로그인 자리가 바뀌면(다른 계정일 수 있다) 다시 받는다
     await driver.detect({ ...CLAUDE_CEILING, configDir: "/elsewhere/claude" });
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("changed CLI version refetches models", async () => {
+    const fake = createFakeSdk();
+    let version = "2.1.322";
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      isExecutable: (p) => p === "/usr/bin/claude",
+      readVersion: async () => version,
+    });
+    await driver.detect(CLAUDE_CEILING);
+    await driver.detect(CLAUDE_CEILING);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 같은 자리의 CLI 를 올렸다 — 모델 목록이 달라졌을 수 있다
+    version = "2.1.323";
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("changed CLI version after timeout refetches", async () => {
+    const fake = createFakeSdk();
+    let hang = true;
+    fake.models = async () => (hang ? new Promise<never>(() => {}) : FAKE_MODELS);
+    let version = "2.1.322";
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      isExecutable: (p) => p === "/usr/bin/claude",
+      readVersion: async () => version,
+      modelsTimeoutMs: 30,
+    });
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 시간 초과 기억(10분)이 남아 있어도 CLI 를 바꾸면 그 자리에서 다시 받는다
+    hang = false;
+    version = "2.1.323";
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+  });
+
+  it("timed-out model list is retried after 10 minutes", async () => {
+    const fake = createFakeSdk();
+    fake.models = () => new Promise(() => {});
+    let clock = 1_000_000;
+    const logs: string[] = [];
+    const driver = createClaudeDriver({
+      sdk: fake,
+      claudeCodeVersion: "2.1.283",
+      baseEnv: { PATH: "/usr/bin" },
+      modelsTimeoutMs: 30,
+      now: () => clock,
+      logger: { info: (m) => logs.push(m) },
+    });
+    expect(MODELS_TIMEOUT_MEMORY_MS).toBe(600_000);
+    expect(await driver.detect(CLAUDE_CEILING)).not.toHaveProperty("models");
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 시간 초과는 한 줄 — 경로 없이
+    const timeoutLines = logs.filter((l) => l.includes("모델 목록"));
+    expect(timeoutLines).toEqual([
+      "dodok-runner: Claude Code 모델 목록을 30ms 안에 받지 못했습니다 — 10분 뒤 다시 받습니다",
+    ]);
+    expect(timeoutLines[0]).not.toContain("/");
+    // 10분이 지나기 전에는 기억을 쓴다
+    clock += MODELS_TIMEOUT_MEMORY_MS - 1;
+    await driver.detect(CLAUDE_CEILING);
+    expect(fake.listModelsCalls).toHaveLength(1);
+    // 지나면 다시 받는다 — 이번에는 답한다
+    clock += 1;
+    fake.models = async () => FAKE_MODELS;
+    expect((await driver.detect(CLAUDE_CEILING)).models).toEqual(toModelOptions(FAKE_MODELS));
+    expect(fake.listModelsCalls).toHaveLength(2);
+    // 받은 목록은 만료가 없다
+    clock += MODELS_TIMEOUT_MEMORY_MS * 10;
+    await driver.detect(CLAUDE_CEILING);
     expect(fake.listModelsCalls).toHaveLength(2);
   });
 

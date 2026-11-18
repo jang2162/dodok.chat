@@ -29,6 +29,28 @@ describe("toModelOptions(작성기 칩 스펙 C3)", () => {
     expect(toModelOptions([info({ supportsEffort: true })])[0]!.efforts).toEqual([...RUNNER_EFFORTS]);
   });
 
+  it("rows without effort keys are [] when another row has them", () => {
+    // 실제 CLI 의 꼴 — effort 를 받는 모델에만 두 키를 함께 싣고 안 받는 모델(Haiku)은 둘 다 뺀다
+    expect(toModelOptions(FAKE_MODELS).find((m) => m.value === "haiku")!.efforts).toEqual([]);
+    // 한 키만 실어도 이 CLI 는 effort 를 아는 판이다
+    expect(
+      toModelOptions([info({ value: "a", supportsEffort: true }), info({ value: "b" })]).map(
+        (m) => m.efforts,
+      ),
+    ).toEqual([[...RUNNER_EFFORTS], []]);
+    expect(
+      toModelOptions([info({ value: "a" }), info({ value: "b", supportedEffortLevels: ["low"] })]).map(
+        (m) => m.efforts,
+      ),
+    ).toEqual([[], ["low"]]);
+  });
+
+  it("all rows without effort keys get all five", () => {
+    expect(
+      toModelOptions([info({ value: "a" }), info({ value: "b", displayName: "B" })]).map((m) => m.efforts),
+    ).toEqual([[...RUNNER_EFFORTS], [...RUNNER_EFFORTS]]);
+  });
+
   it("keeps default row", () => {
     expect(toModelOptions(FAKE_MODELS).map((m) => m.value)).toEqual(["default", "sonnet", "haiku"]);
   });
