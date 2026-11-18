@@ -201,3 +201,14 @@ it("초안은 채널마다 — 옮겨 가면 비고, 돌아오면 되살아난�
   act(() => rerender(CH2));
   expect(editor.getText()).toBe("CH2 초안");
 });
+
+it("입력 상자 안 도구 줄 — 첨부·보내기 버튼과 입력이 한 상자에, 러너가 없으면 에이전트 칸 없음", () => {
+  renderComposer();
+  const toolbar = screen.getByTestId("composer-toolbar");
+  expect(within(toolbar).getByRole("button", { name: "파일 첨부" })).toBeInTheDocument();
+  expect(within(toolbar).getByRole("button", { name: "보내기" })).toBeInTheDocument();
+  expect(screen.queryByTestId("agent-settings-bar")).toBeNull();
+  // 입력과 도구 줄이 한 상자 안에
+  const box = screen.getByRole("textbox", { name: "메시지 입력" });
+  expect(toolbar.parentElement?.contains(box)).toBe(true);
+});

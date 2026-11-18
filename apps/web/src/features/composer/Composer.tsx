@@ -18,6 +18,7 @@ import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
+import { mentionedAgentIds, sameIds } from "./mentionedAgents";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
 import { PendingAttachments } from "./PendingAttachments";
@@ -217,6 +218,12 @@ export function Composer({
     [],
   );
   const empty = useEditorState({ editor, selector: ({ editor: ed }) => ed.isEmpty });
+  // 초안이 부르는 에이전트 — 도구 줄 알약의 강조(작성기 도구 줄 스펙 T6). 같은 집합이면 다시 그리지 않는다
+  const mentioned = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => mentionedAgentIds(ed.getJSON()),
+    equalityFn: (a, b) => b !== null && sameIds(a, b),
+  });
 
   // 채널을 옮기면 지금 초안을 그 채널 몫으로 두고, 옮겨 간 채널의 초안을 꺼낸다(없으면 비움). 새 세션 창에서 그 창이 만든 세션으로 옮겨
   // 갔으면 편집기를 그대로 두고 창 몫으로 막 넣어 둔 초안만 지운다 — 다음에 새 세션 창을 열면 빈 작성기다
@@ -309,20 +316,9 @@ export function Composer({
     live.current.addFiles(files);
   };
 
+  // 입력 상자 안 두 줄(작성기 도구 줄 스펙 T1·5.1) — 첨부 미리보기 → 입력(전체 폭) → 도구 줄 [첨부][에이전트 칸][보내기]
   return (
     <div className="px-4 pb-4">
-      <AgentSettingsBar
-        channelId={channelId}
-        conversationId={conversationId}
-        {...(threadRootId === undefined ? {} : { threadRootId })}
-        pending={pendingSettings.byAgent}
-        onPendingChange={(agentId, patch) =>
-          setPendingSettings((p) => ({
-            n: p.n,
-            byAgent: { ...p.byAgent, [agentId]: { ...p.byAgent[agentId], ...patch } },
-          }))
-        }
-      />
       <div
         className="rounded-lg border border-input bg-card px-3 py-1.5 shadow-xs focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30"
         onDragOver={onDragOver}
@@ -333,14 +329,15 @@ export function Composer({
           onRemove={attachments.remove}
           onEmptied={() => attachButton.current?.focus()}
         />
-        <div className="flex items-end gap-2">
+        <EditorContent editor={editor} className="min-w-0" />
+        <div data-testid="composer-toolbar" className="flex items-center gap-1.5">
           <Button
             type="button"
             size="icon"
             variant="ghost"
             aria-label="파일 첨부"
             ref={attachButton}
-            className="-ml-2"
+            className="-ml-2 shrink-0"
             onClick={() => fileInput.current?.click()}
           >
             <PaperclipIcon />
@@ -357,12 +354,26 @@ export function Composer({
               e.currentTarget.value = ""; // 같은 파일을 다시 고를 수 있게
             }}
           />
-          <EditorContent editor={editor} className="min-w-0 flex-1" />
+          <AgentSettingsBar
+            channelId={channelId}
+            conversationId={conversationId}
+            {...(threadRootId === undefined ? {} : { threadRootId })}
+            mentioned={mentioned}
+            pending={pendingSettings.byAgent}
+            onPendingChange={(agentId, patch) =>
+              setPendingSettings((p) => ({
+                n: p.n,
+                byAgent: { ...p.byAgent, [agentId]: { ...p.byAgent[agentId], ...patch } },
+              }))
+            }
+          />
+          {/* 에이전트 칸이 없으면(러너 없음) ml-auto 가 보내기를 오른쪽 끝으로 민다 — 있으면 칸이 남는 폭을 차지한다 */}
           <Button
             type="button"
             size="icon"
             variant="ghost"
             aria-label="보내기"
+            className="ml-auto shrink-0"
             aria-describedby={blocked ? hintId : undefined}
             disabled={!!blocked || (empty && attachments.ready.length === 0)}
             onClick={() => live.current.submit()}

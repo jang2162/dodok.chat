@@ -17,6 +17,7 @@ import {
 } from "@/features/conversations/agentSettings";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+import { agentColorVar } from "@/theme/agentColor";
 import { Button } from "@/ui/button";
 import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
 import { ContextGauge } from "./ContextGauge";
@@ -49,12 +50,15 @@ export function AgentSettingsBar({
   channelId,
   conversationId,
   threadRootId,
+  mentioned: _mentioned,
   pending,
   onPendingChange,
 }: {
   channelId: string;
   conversationId: string;
   threadRootId?: string;
+  /** 초안이 부르는 에이전트 id(작성기 도구 줄 스펙 T6) */
+  mentioned?: ReadonlySet<string>;
   pending?: PendingAgentSettings;
   onPendingChange?: (agentId: string, patch: AgentSettingsPatch) => void;
 }) {
@@ -96,10 +100,28 @@ export function AgentSettingsBar({
     };
   };
 
+  // 1명 — 칩 셋을 도구 줄에 펼친다(작성기 도구 줄 스펙 T2)
+  if (runnerAgents.length === 1) {
+    const agent = runnerAgents[0]!;
+    return (
+      <div className="flex min-w-0 flex-1 text-xs text-muted-foreground" data-testid="agent-settings-bar">
+        <SettingsLine
+          agent={agent}
+          invited={invitedIds.has(agent.id)}
+          row={rowOf(agent)}
+          conversationId={conversationId}
+          isNew={isNew}
+          inToolbar
+          {...(onPendingChange ? { onPendingChange } : {})}
+        />
+      </div>
+    );
+  }
+
   const folded = runnerAgents.length > FOLD_OVER && !expanded;
   return (
     <div
-      className="mb-1 flex flex-col gap-0.5 px-1 text-xs text-muted-foreground"
+      className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs text-muted-foreground"
       data-testid="agent-settings-bar"
     >
       {folded ? (
@@ -155,6 +177,7 @@ function SettingsLine({
   row,
   conversationId,
   isNew,
+  inToolbar = false,
   onPendingChange,
 }: {
   agent: Agent;
@@ -163,6 +186,8 @@ function SettingsLine({
   row: ConversationAgentSettings;
   conversationId: string;
   isNew: boolean;
+  /** 도구 줄에 바로 펼친 1명 — 핸들·칩을 한 묶음으로, 게이지는 「컨텍스트」를 붙여 보내기 앞(T2) */
+  inToolbar?: boolean;
   onPendingChange?: (agentId: string, patch: AgentSettingsPatch) => void;
 }) {
   const role = useRole();
@@ -189,23 +214,52 @@ function SettingsLine({
     }
   }
 
+  const chips = (
+    <AgentSettingChips
+      handle={agent.handle}
+      row={row}
+      models={row.models}
+      canRaise={canRaise}
+      saving={patch.isPending}
+      error={error}
+      onSave={save}
+    />
+  );
+  const name = (
+    <>
+      <span
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: agentColorVar(agent.handle) }}
+        aria-hidden
+      />
+      <span className="max-w-32 truncate font-medium text-foreground">@{agent.handle}</span>
+      {invited && <span className="rounded-sm bg-muted px-1 text-xs">초대됨</span>}
+    </>
+  );
+  if (inToolbar)
+    return (
+      // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
+      <div
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5"
+        data-testid={`agent-settings-${agent.handle}`}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-2xl bg-muted/60 py-0.5 pr-0.5 pl-2">
+          {name}
+          {chips}
+        </div>
+        <span className="ml-auto">
+          <ContextGauge percent={row.contextPercent} context={row.context} label />
+        </span>
+      </div>
+    );
   return (
     // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
     <div
       className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5"
       data-testid={`agent-settings-${agent.handle}`}
     >
-      <span className="font-medium text-foreground">@{agent.handle}</span>
-      {invited && <span className="rounded-sm bg-muted px-1 text-[10px]">초대됨</span>}
-      <AgentSettingChips
-        handle={agent.handle}
-        row={row}
-        models={row.models}
-        canRaise={canRaise}
-        saving={patch.isPending}
-        error={error}
-        onSave={save}
-      />
+      {name}
+      {chips}
       <ContextGauge percent={row.contextPercent} context={row.context} />
     </div>
   );

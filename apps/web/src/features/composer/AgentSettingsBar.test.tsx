@@ -296,6 +296,18 @@ describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 �
   });
 });
 
+describe("도구 줄 — 1명 [작성기 도구 줄 스펙 T1·T2]", () => {
+  it("1명이면 칩 셋을 도구 줄에 펼치고 게이지는 「컨텍스트 —」", async () => {
+    serve({ settings: { [CONV]: [row(CODER)] } });
+    renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    const line = await waitFor(() =>
+      within(screen.getByTestId("composer-toolbar")).getByTestId("agent-settings-coder"),
+    );
+    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("모델 기본"));
+    expect(within(line).getByRole("button", { name: "컨텍스트 —" }).textContent).toBe("컨텍스트 —");
+  });
+});
+
 describe("모델 칩 [작성기 칩 스펙 C3·C4·C9]", () => {
   it("picking a model chip saves immediately (PATCH model)", async () => {
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
