@@ -86,9 +86,13 @@ export const Agent = z.object({
   archivedAt: IsoDateTime.nullable(),
   /**
    * 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
-   * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다
+   * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다.
+   * projectLabel 은 그 에이전트 프로젝트의 표시 이름(워크트리면 `<부모 라벨> · <브랜치>`) — member 도 받으므로 경로는 싣지 않는다.
+   * 프로젝트가 없는 러너 에이전트(0031 이 보관한 옛 행)·이 필드 전 서버면 없다
    */
-  runner: z.object({ tokenId: Id, label: z.string(), revoked: z.boolean() }).optional(),
+  runner: z
+    .object({ tokenId: Id, label: z.string(), revoked: z.boolean(), projectLabel: z.string().optional() })
+    .optional(),
   /**
    * OpenClaw 에이전트의 Gateway — REST 에이전트 응답에만, OpenClaw 에이전트에만 키가 있다. null 이면 Gateway 가 지워져 연결이 비었다
    * (owner 가 다른 Gateway 로 옮기기를 기다린다 — 멀티 Gateway 스펙 「에이전트 API」 절)

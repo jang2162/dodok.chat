@@ -19,7 +19,7 @@ import { agents, channelMembers, gateways, runnerProjects, runnerTokens } from "
 import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
-import { isArchivedWorktree } from "../runners/projects";
+import { assertNotArchiving, isArchivedWorktree } from "../runners/projects";
 import { assertHandleFree } from "../members/handles";
 import type { Orchestrator } from "../runs/orchestrator";
 import { listOpenRuns } from "../runs/store";
@@ -160,12 +160,21 @@ function toApiAgent(
   row: AgentRow,
   token: RunnerTokenRow | null | undefined,
   gateway: GatewayNameRow | null | undefined,
+  project: ProjectLabelRow | null | undefined,
 ): Agent {
   const agent = rowToAgent(row);
+  const projectLabel = projectDisplay(project);
   return {
     ...agent,
     ...(token
-      ? { runner: { tokenId: token.id, label: token.label, revoked: token.revokedAt !== null } }
+      ? {
+          runner: {
+            tokenId: token.id,
+            label: token.label,
+            revoked: token.revokedAt !== null,
+            ...(projectLabel === undefined ? {} : { projectLabel }),
+          },
+        }
       : {}),
     ...(row.provider === "openclaw"
       ? { gateway: gateway ? { id: gateway.id, name: gateway.name } : null }
@@ -203,6 +212,22 @@ const runnerTokenColumns = {
 
 const gatewayNameColumns = { id: gateways.id, name: gateways.name };
 
+/** 러너 에이전트 프로젝트의 표시 이름(Agent.runner.projectLabel) — 워크트리면 부모 라벨과 브랜치. 경로는 싣지 않는다 */
+const parentProjects = alias(runnerProjects, "parent_project");
+const projectLabelColumns = {
+  label: runnerProjects.label,
+  branch: runnerProjects.branch,
+  parentLabel: parentProjects.label,
+};
+type ProjectLabelRow = { label: string | null; branch: string | null; parentLabel: string | null };
+
+function projectDisplay(project: ProjectLabelRow | null | undefined): string | undefined {
+  if (!project || project.label === null) return undefined;
+  return project.parentLabel !== null && project.branch !== null
+    ? `${project.parentLabel} · ${project.branch}`
+    : project.label;
+}
+
 /** REST 응답용 — 행 하나에 묶인 러너 토큰·Gateway 를 붙인다 */
 export function apiAgent(db: DbOrTx, row: AgentRow): Agent {
   const token =
@@ -213,7 +238,16 @@ export function apiAgent(db: DbOrTx, row: AgentRow): Agent {
     row.gatewayId === null
       ? undefined
       : db.select(gatewayNameColumns).from(gateways).where(eq(gateways.id, row.gatewayId)).get();
-  return toApiAgent(row, token, gateway);
+  const project =
+    row.runnerProjectId === null
+      ? undefined
+      : db
+          .select(projectLabelColumns)
+          .from(runnerProjects)
+          .leftJoin(parentProjects, eq(parentProjects.id, runnerProjects.parentProjectId))
+          .where(eq(runnerProjects.id, row.runnerProjectId))
+          .get();
+  return toApiAgent(row, token, gateway, project);
 }
 
 /**
@@ -382,6 +416,8 @@ function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
     // 보관한 프로젝트로는 새 에이전트를 만들지 않는다 — 이미 있는 에이전트는 남고 런도 돈다(스펙 8장)
     if (project.archivedAt !== null)
       throw apiError("VALIDATION", "runner project is archived", { field: "runnerProjectId" });
+    // 워크트리를 보관(폴더 정리)하는 중이면 409 — 러너가 폴더를 지운 뒤 그 에이전트의 런이 깨진다
+    assertNotArchiving(input.runnerProjectId);
     assertHandleFree(tx, input.workspaceId, input.handle);
     const row = tx
       .insert(agents)
@@ -545,6 +581,7 @@ export function restoreAgent(
     // 보관한 워크트리는 폴더가 지워졌다 — 되살리면 다음 런이 천장 검사 path 로 깨진다(워크트리 스펙 W11)
     if (archived?.runnerProjectId && isArchivedWorktree(tx, archived.runnerProjectId))
       throw apiError("CONFLICT", RUNNER_AGENT_ARCHIVED_WORKTREE, { field: "runnerProjectId" });
+    if (archived?.runnerProjectId) assertNotArchiving(archived.runnerProjectId);
     const row = tx
       .update(agents)
       .set({ archivedAt: null })
@@ -606,14 +643,21 @@ function clearContestedAutoRespond(tx: DbOrTx, agentId: string): string[] {
 /** REST 목록 — 묶인 러너 토큰(라벨·폐기 여부)과 Gateway(이름)를 붙인다. 보관한 에이전트도 싣는다(archivedAt 으로 가른다) */
 export function listAgents(db: DbOrTx, workspaceId: string): Agent[] {
   return db
-    .select({ agent: agents, token: runnerTokenColumns, gateway: gatewayNameColumns })
+    .select({
+      agent: agents,
+      token: runnerTokenColumns,
+      gateway: gatewayNameColumns,
+      project: projectLabelColumns,
+    })
     .from(agents)
     .leftJoin(runnerTokens, eq(runnerTokens.id, agents.runnerTokenId))
     .leftJoin(gateways, eq(gateways.id, agents.gatewayId))
+    .leftJoin(runnerProjects, eq(runnerProjects.id, agents.runnerProjectId))
+    .leftJoin(parentProjects, eq(parentProjects.id, runnerProjects.parentProjectId))
     .where(eq(agents.workspaceId, workspaceId))
     .orderBy(asc(agents.createdAt), asc(agents.id))
     .all()
-    .map(({ agent, token, gateway }) => toApiAgent(agent, token, gateway));
+    .map(({ agent, token, gateway, project }) => toApiAgent(agent, token, gateway, project));
 }
 
 /** 러너 에이전트가 묶인 러너·프로그램 — REST 의 천장 대조가 쓴다. 다른 워크스페이스·없는 에이전트면 undefined */

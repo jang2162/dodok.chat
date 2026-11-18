@@ -92,6 +92,16 @@ export function createProject(
       )
       .get();
     if (taken) throw apiError("CONFLICT", "같은 자리의 프로젝트가 이미 있다", { projectId: taken.id });
+    // 워크트리 — 러너를 기다리는 사이 부모가 보관됐으면 행을 만들지 않는다(W9). 러너에 만든 폴더는 다시 만들 때 받아들이기(W13)로 이어진다
+    if (input.parentProjectId !== undefined) {
+      const parent = tx
+        .select({ archivedAt: runnerProjects.archivedAt })
+        .from(runnerProjects)
+        .where(eq(runnerProjects.id, input.parentProjectId))
+        .get();
+      if (!parent || parent.archivedAt !== null)
+        throw apiError("VALIDATION", WORKTREE_PARENT_ARCHIVED, { field: "parentId" });
+    }
     return tx
       .insert(runnerProjects)
       .values({
@@ -145,6 +155,23 @@ export function renameProject(
     .get();
   if (!row) throw apiError("NOT_FOUND", "runner project not found");
   return row;
+}
+
+/** 보관한 부모에는 워크트리를 만들지 않는다 — 러너를 기다리는 사이 보관된 경우도 */
+export const WORKTREE_PARENT_ARCHIVED = "보관한 프로젝트에는 워크트리를 만들 수 없습니다";
+/** 보관(폴더 정리)을 기다리는 워크트리 — 그동안 그 프로젝트의 에이전트 만들기·되살리기를 막는다 */
+export const WORKTREE_ARCHIVING = "워크트리를 보관하는 중입니다 — 잠시 뒤 다시 시도하세요";
+
+/**
+ * 러너가 폴더를 지우는 동안의 워크트리 id(이 프로세스 안). W11 은 러너에 묻기 전에만 보므로, 그 사이 에이전트가 생기거나 되살아나면
+ * 폴더는 지워졌는데 그 에이전트의 런이 천장 검사 path 로 깨진다. 보관하지 않은 에이전트가 없으면 런도 시작되지 않는다(런 관문)
+ */
+const archivingWorktrees = new Set<string>();
+
+/** 그 프로젝트가 보관(폴더 정리) 중이면 409 — 에이전트 만들기·되살리기가 부른다 */
+export function assertNotArchiving(projectId: string): void {
+  if (archivingWorktrees.has(projectId))
+    throw apiError("CONFLICT", WORKTREE_ARCHIVING, { reason: "worktree_archiving" });
 }
 
 /** 보관 안 된 워크트리가 있는 부모는 보관·옮기기를 막는다(W9) */
@@ -325,6 +352,9 @@ export function activeProjectCounts(db: DbOrTx, workspaceId: string): Map<string
 
 const SLUG_MAX = 40;
 
+// oxlint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
 /**
  * 이름 → 폴더·브랜치 슬러그. 소문자 ASCII·숫자·`-` 만 남기고(나머지는 `-` 로, 이어진 `-` 는 하나로) 앞뒤 `-` 를 떼고 40자. 비면(한글
  * 이름 등) `wt-<6 hex>` — 사람이 브랜치·위치를 바꿀 수 있으니 안전한 기본이면 된다(스펙 6장). 웹 worktreeDefaults 와 같은 규칙
@@ -366,6 +396,7 @@ export const WORKTREE_RUNNER_OUTDATED = "러너를 업데이트하세요(워크�
 export const WORKTREE_RUNNER_OFFLINE = "러너가 연결되어 있어야 합니다";
 export const WORKTREE_CLEANUP_OFFLINE = "러너가 연결되어 있어야 정리할 수 있습니다";
 export const WORKTREE_CLEANUP_DIRTY = "정리하지 못했습니다 — 커밋하지 않은 변경이 있습니다";
+export const WORKTREE_CLEANUP_UNMERGED = "정리하지 못했습니다 — 브랜치에 없는 커밋이 있습니다";
 export const WORKTREE_CLEANUP_REVOKED = "러너가 폐기되어 폴더를 정리할 수 없습니다";
 export const WORKTREE_CLEANUP_FAILED = "정리하지 못했습니다";
 
@@ -399,10 +430,19 @@ export async function createWorktreeProject(
   },
   ask: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn(),
 ): Promise<RunnerProjectRow> {
+  // 제어 문자(줄바꿈 등)는 러너가 info/exclude 에 쓰는 줄을 둘로 가를 수 있다(러너도 다시 거른다)
+  for (const [field, value] of [
+    ["label", input.label],
+    ["branch", input.branch],
+    ["location", input.location?.relPath],
+  ] as const) {
+    if (value !== undefined && CONTROL_CHARS.test(value))
+      throw apiError("VALIDATION", "제어 문자는 쓸 수 없습니다", { field });
+  }
   const parent = getProject(db, input.workspaceId, input.parentId);
   if (!parent) throw apiError("NOT_FOUND", "runner project not found");
   if (parent.archivedAt !== null)
-    throw apiError("VALIDATION", "보관한 프로젝트에는 워크트리를 만들 수 없습니다", { field: "parentId" });
+    throw apiError("VALIDATION", WORKTREE_PARENT_ARCHIVED, { field: "parentId" });
   if (parent.parentProjectId !== null)
     throw apiError("VALIDATION", "워크트리 안에는 워크트리를 만들 수 없습니다", { field: "parentId" });
   if (!parent.isGit)
@@ -470,7 +510,7 @@ function saveCleanupIssue(db: Db, id: string, reason: string): void {
 
 /**
  * 보관 — 워크트리면 러너에 폴더 정리(worktree.remove)를 묻고 성공해야 보관한다(W7·W8). keepFolder 면 묻지 않고 행만(W12). 정리가
- * 실패하면 사유를 worktree_cleanup 에 남기고 409 details.reason(runner_revoked·runner_offline·dirty·not_worktree·git_failed).
+ * 실패하면 사유를 worktree_cleanup 에 남기고 409 details.reason(runner_revoked·runner_offline·dirty·unmerged_detached·not_worktree·git_failed).
  * 일반 프로젝트·이미 보관한 행은 archiveProject 그대로
  */
 export async function archiveRunnerProject(
@@ -484,6 +524,22 @@ export async function archiveRunnerProject(
   if (project.parentProjectId === null || project.archivedAt !== null || input.keepFolder)
     return archiveProject(db, input);
   assertWorktreeIdle(db, project.id);
+  assertNotArchiving(project.id);
+  archivingWorktrees.add(project.id);
+  try {
+    return await removeAndArchive(db, runners, project, input, ask);
+  } finally {
+    archivingWorktrees.delete(project.id);
+  }
+}
+
+async function removeAndArchive(
+  db: Db,
+  runners: WorktreeRunnerApi | null,
+  project: RunnerProjectRow,
+  input: { workspaceId: string; id: string },
+  ask: <T>(fn: () => Promise<T>) => Promise<T>,
+): Promise<RunnerProjectRow> {
   const fail = (reason: string, message: string, extra: Record<string, unknown> = {}): never => {
     saveCleanupIssue(db, project.id, reason);
     throw apiError("CONFLICT", message, { reason, ...extra });
@@ -518,10 +574,14 @@ export async function archiveRunnerProject(
   if (!result.ok)
     return fail(
       result.reason,
-      result.reason === "dirty" ? WORKTREE_CLEANUP_DIRTY : WORKTREE_CLEANUP_FAILED,
+      result.reason === "dirty"
+        ? WORKTREE_CLEANUP_DIRTY
+        : result.reason === "unmerged_detached"
+          ? WORKTREE_CLEANUP_UNMERGED
+          : WORKTREE_CLEANUP_FAILED,
       result.message === undefined ? {} : { message: result.message },
     );
-  return archiveProject(db, input);
+  return archiveProject(db, { workspaceId: input.workspaceId, id: input.id });
 }
 
 /** 「확인」·만들기 때 러너 project.check 의 isGitTop 을 저장한다(W14) */

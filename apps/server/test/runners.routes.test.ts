@@ -272,7 +272,12 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         handle: "binder",
         runnerTokenId: a.record.id,
       }).agent;
-      expect(agent.runner).toEqual({ tokenId: a.record.id, label: "bind-a", revoked: false });
+      expect(agent.runner).toEqual({
+        tokenId: a.record.id,
+        label: "bind-a",
+        revoked: false,
+        projectLabel: "binder",
+      });
       const res = await call(owner, "PUT", `/runner-tokens/${b.record.id}/agents/${agent.providerAgentId}`);
       expect(res.statusCode).toBe(404);
       expect((await listed(agent.id))?.runner).toMatchObject({ tokenId: a.record.id });
@@ -290,6 +295,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         tokenId: a.record.id,
         label: "gone",
         revoked: true,
+        projectLabel: "keeper",
       });
     });
   });
