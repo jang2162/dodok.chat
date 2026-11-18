@@ -281,6 +281,13 @@
       "when": 1794543805410,
       "tag": "0039_conversation_agents",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1794986221539,
+      "tag": "0040_runner_worktrees",
+      "breakpoints": true
     }
   ]
 }

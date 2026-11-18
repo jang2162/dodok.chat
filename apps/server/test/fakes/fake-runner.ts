@@ -32,6 +32,10 @@ import {
   type RunnerRunAgent,
   type RunnerRunFinal,
   RunnerRunStart,
+  RunnerWorktreeCreate,
+  type RunnerWorktreeCreateResult,
+  RunnerWorktreeRemove,
+  type RunnerWorktreeRemoveResult,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { io, type Socket } from "socket.io-client";
@@ -93,8 +97,11 @@ export type FakeRunnerOptions = {
   tree?: FakeTree;
 };
 
-/** 가짜 러너 머신의 디렉터리 — git 이면 `.git` 이 있는 것처럼 */
-export type FakeDir = { git?: boolean; children?: Record<string, FakeNode> };
+/**
+ * 가짜 러너 머신의 디렉터리 — git 이면 `.git` 이 있는 것처럼(저장소 맨 위). worktree 면 그 브랜치의 git 워크트리(`.git` 이 파일)다 —
+ * 가짜 worktree.create 가 나무에 더한다
+ */
+export type FakeDir = { git?: boolean; worktree?: { branch: string }; children?: Record<string, FakeNode> };
 /** 디렉터리, 파일, 또는 루트 밖을 가리키는 심볼릭 링크 */
 export type FakeNode = FakeDir | "file" | "outside";
 /** 루트 id → 그 루트 디렉터리. hello 가 알리지 않는 루트는 나무에 있어도 「없음」이다(러너 설정에서 지운 루트) */
@@ -141,7 +148,111 @@ export function fakeProjectCheck(
   ref: RunnerProjectRef,
 ): RunnerProjectCheckResult {
   const resolved = resolveFake(hello, tree, ref);
-  return resolved.ok ? { ok: true, isGitRepo: resolved.dir.git === true } : resolved;
+  if (!resolved.ok) return resolved;
+  const isGitRepo = resolved.dir.git === true || resolved.dir.worktree !== undefined;
+  // isGitTop 은 워크트리 능력을 알리는(새) 러너만 싣는다 — 옛 러너 흉내는 그대로
+  return hello.capabilities.includes("worktrees")
+    ? { ok: true, isGitRepo, isGitTop: resolved.dir.git === true }
+    : { ok: true, isGitRepo };
+}
+
+/** 이 이름의 브랜치로 만든 워크트리는 가짜 worktree.remove 가 dirty 로 답한다(dev:fake 대본 키 — 보관 409 를 손으로 보려고) */
+export const FAKE_DIRTY_BRANCH_KEY = "dirty";
+
+/** 나무 안에서 그 저장소(git 디렉터리) 아래 워크트리들의 브랜치 */
+function worktreeBranches(dir: FakeDir, out: string[] = []): string[] {
+  for (const child of Object.values(dir.children ?? {})) {
+    if (typeof child === "string") continue;
+    if (child.worktree) out.push(child.worktree.branch);
+    worktreeBranches(child, out);
+  }
+  return out;
+}
+
+/**
+ * 실제 러너 worktrees.ts `createWorktree` 의 갈래를 나무로 흉내 낸다 — 저장소 맨 위만, `-` 시작·공백 브랜치는 invalid_branch, 같은
+ * 브랜치의 워크트리가 이미 있으면 branch_in_use, 같은 자리에 같은 브랜치로 이미 있으면 adopted, 비지 않은 자리는 target_exists. 루트
+ * 밖·없는 루트는 경로를 풀어 가른다. 성공하면 나무에 워크트리 디렉터리를 더한다(사이 디렉터리도)
+ */
+export function fakeWorktreeCreate(
+  hello: RunnerHello,
+  tree: FakeTree,
+  req: RunnerWorktreeCreate,
+): RunnerWorktreeCreateResult {
+  const repo = resolveFake(hello, tree, req.repo);
+  if (!repo.ok)
+    return {
+      ok: false,
+      reason: repo.reason === "root_missing" || repo.reason === "outside_root" ? repo.reason : "not_git",
+    };
+  if (repo.dir.worktree) return { ok: false, reason: "is_worktree" };
+  if (repo.dir.git !== true) return { ok: false, reason: "not_git" };
+  if (req.branch.startsWith("-") || /[\s~^:?*[\\]/.test(req.branch))
+    return { ok: false, reason: "invalid_branch" };
+  const root = tree[req.target.rootId];
+  if (!root || !hello.roots.some((r) => r.id === req.target.rootId))
+    return { ok: false, reason: "root_missing" };
+  const parts = req.target.relPath === "" ? [] : req.target.relPath.split("/");
+  const name = parts.pop();
+  if (name === undefined) return { ok: false, reason: "target_exists" };
+  let node: FakeDir = root;
+  const missing: string[] = [];
+  for (const part of parts) {
+    if (missing.length > 0) {
+      missing.push(part);
+      continue;
+    }
+    const next: FakeNode | undefined = node.children?.[part];
+    if (next === undefined) missing.push(part);
+    else if (next === "outside") return { ok: false, reason: "outside_root" };
+    else if (next === "file") return { ok: false, reason: "git_failed", message: "fatal: not a directory" };
+    else node = next;
+  }
+  const existing = missing.length === 0 ? node.children?.[name] : undefined;
+  if (existing === "outside") return { ok: false, reason: "outside_root" };
+  if (existing !== undefined) {
+    if (typeof existing !== "string" && existing.worktree?.branch === req.branch)
+      return { ok: true, created: false, adopted: true, base: "fa1e000" };
+    if (typeof existing === "string" || Object.keys(existing.children ?? {}).length > 0 || existing.worktree)
+      return { ok: false, reason: "target_exists" };
+  }
+  if (worktreeBranches(repo.dir).includes(req.branch))
+    return {
+      ok: false,
+      reason: "branch_in_use",
+      message: `fatal: '${req.branch}' is already used by worktree`,
+    };
+  for (const part of missing) {
+    const dir: FakeDir = { children: {} };
+    node.children = { ...node.children, [part]: dir };
+    node = dir;
+  }
+  node.children = { ...node.children, [name]: { worktree: { branch: req.branch }, children: {} } };
+  return { ok: true, created: true, adopted: false, base: "fa1e000" };
+}
+
+/** 실제 러너 `removeWorktree` 처럼 — 폴더가 없으면 ok(prune), 워크트리가 아니면 not_worktree, 대본 키 브랜치면 dirty */
+export function fakeWorktreeRemove(
+  hello: RunnerHello,
+  tree: FakeTree,
+  req: RunnerWorktreeRemove,
+): RunnerWorktreeRemoveResult {
+  const parts = req.target.relPath === "" ? [] : req.target.relPath.split("/");
+  const name = parts.pop();
+  const parent = resolveFake(hello, tree, { rootId: req.target.rootId, relPath: parts.join("/") });
+  if (!parent.ok) return parent.reason === "not_found" ? { ok: true } : { ok: false, reason: "not_worktree" };
+  const node = name === undefined ? undefined : parent.dir.children?.[name];
+  if (node === undefined || name === undefined) return { ok: true };
+  if (typeof node === "string" || !node.worktree) return { ok: false, reason: "not_worktree" };
+  if (node.worktree.branch.includes(FAKE_DIRTY_BRANCH_KEY))
+    return {
+      ok: false,
+      reason: "dirty",
+      message: `fatal: '${req.target.relPath}' contains modified or untracked files, use --force to delete it`,
+    };
+  const { [name]: _gone, ...rest } = parent.dir.children ?? {};
+  parent.dir.children = rest;
+  return { ok: true };
 }
 
 /** 실제 러너 `checkCeiling` 의 순서 root → path → program → permissionMode → allowedTools. 통과면 null */
@@ -171,6 +282,16 @@ export type FakeRunner = {
   onProjectCheck: (ref: RunnerProjectRef) => RunnerProjectCheckResult | undefined;
   /** 받은 fs.list·project.check, 도착 순서 */
   readonly fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]>;
+  /**
+   * worktree.create·worktree.remove 에 무엇으로 답할지 — 나무가 있으면 fakeWorktreeCreate·fakeWorktreeRemove, 없으면 언제나 ok.
+   * undefined 면 ack 하지 않는다
+   */
+  onWorktreeCreate: (req: RunnerWorktreeCreate) => RunnerWorktreeCreateResult | undefined;
+  onWorktreeRemove: (req: RunnerWorktreeRemove) => RunnerWorktreeRemoveResult | undefined;
+  /** 스키마를 통과한 worktree.create·worktree.remove, 도착 순서 */
+  readonly worktreeRequests: Array<
+    ["worktree.create", RunnerWorktreeCreate] | ["worktree.remove", RunnerWorktreeRemove]
+  >;
   /** 스키마를 통과한 run.start, 도착 순서 */
   readonly runStarts: RunnerRunStart[];
   readonly aborts: RunnerRunAbort[];
@@ -256,6 +377,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const resolves: RunnerApprovalResolve[] = [];
   const disconnectReasons: string[] = [];
   const fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]> = [];
+  const worktreeRequests: FakeRunner["worktreeRequests"] = [];
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
 
@@ -268,6 +390,12 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     onProjectCheck: (ref) =>
       tree ? fakeProjectCheck(fakeRunnerHello(hello), tree, ref) : { ok: true, isGitRepo: false },
     fsRequests,
+    onWorktreeCreate: (req) =>
+      tree
+        ? fakeWorktreeCreate(fakeRunnerHello(hello), tree, req)
+        : { ok: true, created: true, adopted: false, base: "fa1e000" },
+    onWorktreeRemove: (req) => (tree ? fakeWorktreeRemove(fakeRunnerHello(hello), tree, req) : { ok: true }),
+    worktreeRequests,
     tree,
     get hello() {
       return fakeRunnerHello(hello);
@@ -467,6 +595,20 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         if (res !== undefined) ack(res);
       });
     }
+    s.on("worktree.create", (raw: unknown, ack: (r: unknown) => void) => {
+      const parsed = RunnerWorktreeCreate.safeParse(raw);
+      if (!parsed.success) return ack({ ok: false, reason: "git_failed" });
+      worktreeRequests.push(["worktree.create", parsed.data]);
+      const res = runner.onWorktreeCreate(parsed.data);
+      if (res !== undefined) ack(res);
+    });
+    s.on("worktree.remove", (raw: unknown, ack: (r: unknown) => void) => {
+      const parsed = RunnerWorktreeRemove.safeParse(raw);
+      if (!parsed.success) return ack({ ok: false, reason: "git_failed" });
+      worktreeRequests.push(["worktree.remove", parsed.data]);
+      const res = runner.onWorktreeRemove(parsed.data);
+      if (res !== undefined) ack(res);
+    });
     s.on("run.abort", (p: RunnerRunAbort) => {
       aborts.push(p);
       abortHandlers.get(p.runId)?.();

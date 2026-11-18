@@ -13,7 +13,10 @@ import { AdapterError } from "../../adapters/types";
 import { apiError } from "../../http/errors";
 
 /** 서버가 쓰는 러너 어댑터의 몫 — 러너 어댑터가 없으면(OpenClaw 만 붙인 테스트 앱) null */
-export type RunnerLiveApi = Pick<RunnerAdapter, "runnerInfo" | "fsList" | "projectCheck">;
+export type RunnerLiveApi = Pick<
+  RunnerAdapter,
+  "runnerInfo" | "fsList" | "projectCheck" | "worktreeCreate" | "worktreeRemove" | "hasCapability"
+>;
 
 /**
  * 러너에 묻는다. 러너 어댑터가 없거나 러너가 붙어 있지 않으면 503 ADAPTER_UNAVAILABLE, 어댑터의 AdapterError 코드는 그대로 API 오류

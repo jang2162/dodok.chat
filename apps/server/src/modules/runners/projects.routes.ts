@@ -4,7 +4,9 @@
  * 발급·폐기는 routes.ts, 러너 에이전트 만들기·고치기는 POST·PATCH /agents(agents/routes.ts). 연결 상태·hello 내용은 메모리에만 있다 — 끊긴 러너는 null·빈 목록으로 보인다(스펙 5장)
  */
 import {
+  ArchiveRunnerProjectBody,
   CreateRunnerProjectBody,
+  CreateWorktreeBody,
   Id,
   MoveRunnerProjectBody,
   RenameRunnerProjectBody,
@@ -38,13 +40,16 @@ import {
   activeAgentCounts,
   activeProjectAgents,
   activeProjectCounts,
-  archiveProject,
+  archiveRunnerProject,
+  assertMovable,
   createProject,
+  createWorktreeProject,
   getProject,
   listProjects,
   moveProject,
   renameProject,
   type RunnerProjectRow,
+  setProjectIsGit,
 } from "./projects";
 import { listRunnerTokens } from "./tokens";
 
@@ -79,10 +84,10 @@ function toApiProject(
     label: row.label,
     agentCount: agentCounts.get(row.id) ?? 0,
     archivedAt: row.archivedAt?.toISOString() ?? null,
-    parentProjectId: null,
-    branch: null,
-    isGit: false,
-    cleanupIssue: null,
+    parentProjectId: row.parentProjectId,
+    branch: row.branch,
+    isGit: row.isGit,
+    cleanupIssue: row.worktreeCleanup,
   };
 }
 
@@ -154,7 +159,10 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
         field: "relPath",
         reason: check.reason,
       });
+    return check;
   };
+  /** 러너에 묻는 서비스 호출 — 어댑터 오류를 API 오류로(askRunner 와 같은 규칙) */
+  const viaRunner = <T>(fn: () => Promise<T>): Promise<T> => askRunner(ctx.runners, () => fn());
 
   /** member 는 자기 러너만(루트·프로그램은 그 머신의 사정이다), admin 이상은 모두 */
   fastify.get(
@@ -224,7 +232,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     manageRunner(request, id);
     const body = parseBody(CreateRunnerProjectBody, request.body);
     activeRunner(id);
-    await checkPlace(id, body);
+    const check = await checkPlace(id, body);
     const rootLabel = live(id)?.roots.find((r) => r.id === body.rootId)?.label;
     const row = createProject(ctx.db, {
       workspaceId: ctx.workspaceId,
@@ -234,6 +242,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
       ...(body.label === undefined ? {} : { label: body.label }),
       ...(rootLabel === undefined ? {} : { rootLabel }),
       createdBy: sessionUser(request).id,
+      isGit: check.isGitTop ?? false,
     });
     ctx.logger.info({ runnerId: id, projectId: row.id, rootId: row.rootId }, "runner project added");
     connectionsChanged();
@@ -249,13 +258,55 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     return { project: apiProject(renamed) };
   });
 
-  /** 보관 — 목록 정리일 뿐 이미 있는 에이전트는 남고 런도 돈다(스펙 8장). 그 프로젝트로 새 에이전트는 못 만든다 */
+  /**
+   * 워크트리 만들기(워크트리 스펙 5.4) — 부모(git 저장소 프로젝트)를 다룰 수 있는 사람(W10), 폐기하지 않은 러너. 러너에
+   * worktree.create 를 묻고 성공해야 행을 만든다. 실패면 400(details.reason 은 러너 사유), 끊김·같은 자리면 409
+   */
+  fastify.post("/api/v1/runner-projects/:id/worktrees", { preHandler: session }, async (request, reply) => {
+    const { id } = parseParams(ProjectParams, request.params);
+    const parent = manageProject(request, id);
+    const body = parseBody(CreateWorktreeBody, request.body);
+    activeRunner(parent.runnerTokenId);
+    const row = await createWorktreeProject(
+      ctx.db,
+      ctx.runners,
+      {
+        workspaceId: ctx.workspaceId,
+        parentId: id,
+        label: body.label,
+        ...(body.branch === undefined ? {} : { branch: body.branch }),
+        ...(body.location === undefined ? {} : { location: body.location }),
+        createdBy: sessionUser(request).id,
+      },
+      viaRunner,
+    );
+    ctx.logger.info({ projectId: row.id, parentId: id, rootId: row.rootId }, "runner worktree created");
+    connectionsChanged();
+    return reply.code(201).send({ project: apiProject(row) });
+  });
+
+  /**
+   * 보관 — 일반 프로젝트는 목록 정리일 뿐 이미 있는 에이전트는 남고 런도 돈다(스펙 8장). 워크트리는 러너가 폴더를 지워야 보관한다(W7),
+   * 본문 { keepFolder: true } 면 묻지 않고 행만(W12). 정리 실패는 409 details.reason, 그 줄의 cleanupIssue 로 남는다
+   */
   fastify.post("/api/v1/runner-projects/:id/archive", { preHandler: session }, async (request) => {
     const { id } = parseParams(ProjectParams, request.params);
     manageProject(request, id);
-    const archived = archiveProject(ctx.db, { workspaceId: ctx.workspaceId, id });
-    connectionsChanged();
-    return { project: apiProject(archived) };
+    const body = parseBody(ArchiveRunnerProjectBody, request.body ?? {});
+    try {
+      const archived = await archiveRunnerProject(
+        ctx.db,
+        ctx.runners,
+        { workspaceId: ctx.workspaceId, id, ...(body.keepFolder ? { keepFolder: true } : {}) },
+        viaRunner,
+      );
+      connectionsChanged();
+      return { project: apiProject(archived) };
+    } catch (err) {
+      // 정리 실패 사유가 그 줄에 남았다 — 열린 「연결」 탭이 다시 받게
+      connectionsChanged();
+      throw err;
+    }
   });
 
   /** 확인 — 그 러너의 project.check 결과 그대로(쓸 수 없는 자리도 200 — ok:false 와 사유) */
@@ -265,9 +316,18 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     async (request): Promise<RunnerProjectCheck> => {
       const { id } = parseParams(ProjectParams, request.params);
       const project = manageProject(request, id);
-      return askRunner(ctx.runners, (api) =>
+      const check = await askRunner(ctx.runners, (api) =>
         api.projectCheck(project.runnerTokenId, { rootId: project.rootId, relPath: project.relPath }),
       );
+      // git 여부를 갱신한다(W14) — 워크트리 행은 언제나 거짓(워크트리 안의 워크트리 막기)
+      if (check.ok && project.parentProjectId === null) {
+        const isGit = check.isGitTop ?? false;
+        if (isGit !== project.isGit) {
+          setProjectIsGit(ctx.db, project.id, isGit);
+          connectionsChanged();
+        }
+      }
+      return check;
     },
   );
 
@@ -289,6 +349,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
       sessionUser(request).role,
       isOwner(from.ownerUserId, userId) && isOwner(to.ownerUserId, userId),
     );
+    assertMovable(ctx.db, project);
     if (project.runnerTokenId === runnerId) return { project: apiProject(project) };
     activeRunner(runnerId);
     const target = liveRunner(ctx.runners, runnerId);

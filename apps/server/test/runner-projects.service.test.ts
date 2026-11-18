@@ -16,7 +16,9 @@ import {
   getProject,
   listProjects,
   renameProject,
+  slugOf,
 } from "../src/modules/runners/projects";
+import { runnerProjects } from "../src/db/schema.sqlite";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
 import { newTestDb } from "./helpers/db";
 import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
@@ -308,5 +310,66 @@ describe("되살리기 — 보관되지 않은 러너 에이전트는 프로젝�
     expect(
       db.select({ a: agents.archivedAt }).from(agents).where(eq(agents.id, agent.id)).get()?.a,
     ).not.toBeNull();
+  });
+});
+
+describe("워크트리 — slugOf·보관 막기 [워크트리 스펙 W3·W9·W11]", () => {
+  it("slugOf — 소문자 ASCII·숫자·- 만, 40자, 비면 wt-<6 hex>", () => {
+    expect(slugOf("Feat Login")).toBe("feat-login");
+    expect(slugOf("--x")).toBe("x");
+    expect(slugOf("로그인")).toMatch(/^wt-[0-9a-f]{6}$/);
+    expect(slugOf("a__b..c")).toBe("a-b-c");
+    expect(slugOf("x".repeat(60))).toHaveLength(40);
+    expect(slugOf(`${"a".repeat(39)}-b`)).toBe("a".repeat(39));
+  });
+
+  const worktreeOf = (parentId: string, relPath: string) => {
+    const row = createProject(db, { workspaceId: ws, runnerTokenId: token, rootId: "src", relPath });
+    db.update(runnerProjects)
+      .set({ parentProjectId: parentId, branch: "dodok/x" })
+      .where(eq(runnerProjects.id, row.id))
+      .run();
+    return row;
+  };
+
+  it("보관 안 된 워크트리가 있는 부모는 보관을 409 「워크트리를 먼저 보관하세요」", () => {
+    const parent = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "repo",
+    });
+    const wt = worktreeOf(parent.id, "repo/.worktrees/x");
+    const error = errorOf(() => archiveProject(db, { workspaceId: ws, id: parent.id }));
+    expect(error.status).toBe(409);
+    expect(error.body).toMatchObject({ code: "CONFLICT", message: "워크트리를 먼저 보관하세요" });
+    archiveProject(db, { workspaceId: ws, id: wt.id });
+    expect(archiveProject(db, { workspaceId: ws, id: parent.id }).archivedAt).not.toBeNull();
+  });
+
+  it("보관 안 된 에이전트가 있는 워크트리는 보관을 409 「에이전트를 먼저 보관하세요」 — 일반 프로젝트는 그대로", async () => {
+    const parent = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "repo",
+    });
+    const wt = worktreeOf(parent.id, "repo/.worktrees/x");
+    const { agent } = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "wtc",
+      runnerTokenId: token,
+      relPath: "repo/.worktrees/x",
+    });
+    const error = errorOf(() => archiveProject(db, { workspaceId: ws, id: wt.id }));
+    expect(error.body).toMatchObject({ code: "CONFLICT", message: "에이전트를 먼저 보관하세요" });
+    await archiveAgent(db, noop, agent.id, ws);
+    expect(archiveProject(db, { workspaceId: ws, id: wt.id }).archivedAt).not.toBeNull();
+    const { projectId } = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "plain",
+      runnerTokenId: token,
+    });
+    expect(archiveProject(db, { workspaceId: ws, id: projectId }).archivedAt).not.toBeNull();
   });
 });

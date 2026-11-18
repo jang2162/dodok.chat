@@ -122,6 +122,7 @@ import {
   type FakeRunner,
   type FakeRunnerRun,
   type FakeTree,
+  fakeRunnerHello,
   startFakeRunner,
 } from "../test/fakes/fake-runner";
 import {
@@ -341,6 +342,9 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
     token: DEV_FAKE_RUNNER_TOKEN,
     label: DEV_FAKE_RUNNER_LABEL,
     hello: {
+      // 워크트리 능력(워크트리 스펙 5.2) — 이름에 「dirty」가 든 브랜치의 워크트리는 보관(정리)이 dirty 로 409. 제한 러너는 옛 러너처럼
+      // 능력이 없다(워크트리 만들기 단추가 「러너를 업데이트하세요」로 잠긴다)
+      capabilities: [...fakeRunnerHello().capabilities, "worktrees"],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장
@@ -1387,6 +1391,8 @@ function ensureDevFakeRunner(app: App): void {
       runnerTokenId: token.id,
       rootId: FAKE_RUNNER_ROOT.id,
       relPath: DEV_FAKE_RUNNER_AGENT.relPath,
+      // 가짜 나무의 src/dodok 은 git 저장소 맨 위 — 앱에서 더하면 project.check 의 isGitTop 이 채우는 값(W14)
+      isGit: true,
     });
   createAgent(db, {
     workspaceId,

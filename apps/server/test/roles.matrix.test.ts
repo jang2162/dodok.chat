@@ -104,7 +104,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
     // 「러너」 탭 경로가 붙은 러너에 묻는다 — 프로젝트는 runnerA 에 만들고 옮기기는 runnerB 로
     for (const label of ["matrix-a", "matrix-b"] as const) {
       const issued = issueRunnerToken(app.db, app.workspaceId, label, null);
-      fakeRunners.push(await startFakeRunner({ url: app.url, token: issued.token }));
+      fakeRunners.push(
+        await startFakeRunner({
+          url: app.url,
+          token: issued.token,
+          // 워크트리 만들기가 묻는 능력(워크트리 스펙 5.2) — 나무가 없으면 worktree.* 는 언제나 ok
+          hello: { capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees"] },
+        }),
+      );
       runnerIds.push(issued.record.id);
     }
     tokens.owner = (await login(app)).token;
@@ -140,12 +147,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
       name: `ag${n}`,
     });
   const runnerA = () => runnerIds[0] ?? "";
-  const newRunnerProject = () =>
+  const newRunnerProject = (extra: { isGit?: boolean; parentProjectId?: string; branch?: string } = {}) =>
     createProject(app.db, {
       workspaceId: app.workspaceId,
       runnerTokenId: runnerA(),
       rootId: "src",
       relPath: `matrix-${++n}`,
+      ...extra,
     });
   /** 붙지 않은 새 러너 토큰 — 폐기·다시 발급이 붙은 러너를 끊지 않게 */
   const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`, null).record.id;
@@ -399,6 +407,30 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "POST", url: `/api/v1/runner-projects/${newRunnerProject().id}/archive` }),
+    },
+    {
+      name: "POST /runner-projects/:id/worktrees",
+      min: "admin",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/runner-projects/${newRunnerProject({ isGit: true }).id}/worktrees`,
+        payload: { label: `wt-${++n}` },
+      }),
+    },
+    {
+      name: "POST /runner-projects/:id/archive {keepFolder} (워크트리)",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        const parent = newRunnerProject({ isGit: true });
+        const wt = newRunnerProject({ parentProjectId: parent.id, branch: `dodok/m${n}` });
+        return {
+          method: "POST",
+          url: `/api/v1/runner-projects/${wt.id}/archive`,
+          payload: { keepFolder: true },
+        };
+      },
     },
     {
       name: "POST /runner-projects/:id/check",

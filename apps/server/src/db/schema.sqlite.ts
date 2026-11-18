@@ -700,6 +700,13 @@ export const runnerProjects = sqliteTable(
     createdBy: text("created_by").references(() => users.id),
     createdAt: ts("created_at").notNull(),
     archivedAt: ts("archived_at"),
+    // git 워크트리(워크트리 스펙 5.1) — 부모가 있으면 워크트리 하위 프로젝트다(부모의 부모는 없다). rootId·relPath 는 워크트리 폴더
+    parentProjectId: text("parent_project_id").references((): AnySQLiteColumn => runnerProjects.id),
+    branch: text("branch"),
+    /** 저장소의 주 작업 트리 맨 위(W14) — 프로젝트를 만들 때와 「확인」 때 러너 project.check 의 isGitTop 으로 갱신 */
+    isGit: integer("is_git", { mode: "boolean" }).notNull().default(false),
+    /** 마지막 워크트리 정리(보관) 시도가 실패한 사유 코드 — 화면 표시용(W12) */
+    worktreeCleanup: text("worktree_cleanup"),
   },
   (t) => [
     uniqueIndex("runner_projects_runner_root_path")

@@ -986,3 +986,293 @@ describe("다시 발급과 열린 런·보관한 프로젝트의 런 [Review Foc
     expect(runner.runStarts[0]?.agent.project).toEqual({ rootId: "src", relPath: "dodok" });
   });
 });
+
+describe("러너 워크트리 REST — POST /runner-projects/:id/worktrees·보관 [워크트리 스펙 5.4]", () => {
+  let app: App;
+  let admin: { authorization: string };
+  let owner: { authorization: string };
+  const runners: FakeRunner[] = [];
+  const WT_CAPS = ["threads", "interrupt", "approvals", "attachments", "worktrees"] as const;
+
+  beforeAll(async () => {
+    app = await bootTestApp({}, { adapters: [new FakeAdapter()], runnerAdapter: true });
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    owner = (await login(app)).headers;
+    admin = { authorization: `Bearer ${(await userWithRole(app, "wta", "admin")).token}` };
+  });
+  afterEach(() => {
+    for (const runner of runners.splice(0)) runner.close();
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const call = (method: Method, url: string, payload?: object, headers = admin) =>
+    app.fastify.inject({
+      method,
+      url: `/api/v1${url}`,
+      headers,
+      ...(payload === undefined ? {} : { payload }),
+    });
+  let n = 0;
+  /** 워크트리 능력을 알리는 러너 + git 저장소 repo·일반 디렉터리 plain 이 있는 나무 */
+  const setup = async (opts: { caps?: readonly string[] } = {}) => {
+    const res = await call("POST", "/setup/runner-tokens", { label: `wt-${++n}` }, owner);
+    const issued = IssueRunnerTokenResult.parse(res.json());
+    const runner = await startFakeRunner({
+      url: app.url,
+      token: issued.token,
+      hello: { capabilities: [...(opts.caps ?? WT_CAPS)] as never },
+      tree: { src: { children: { repo: { git: true, children: {} }, plain: { children: {} } } } },
+    });
+    runners.push(runner);
+    const added = await call("POST", `/runners/${issued.record.id}/projects`, {
+      rootId: "src",
+      relPath: "repo",
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    const parent = RunnerProject.parse((added.json() as { project: unknown }).project);
+    return { runnerId: issued.record.id, token: issued.token, runner, parent };
+  };
+  const makeWorktree = async (parentId: string, body: object) => {
+    const res = await call("POST", `/runner-projects/${parentId}/worktrees`, body);
+    return {
+      res,
+      project:
+        res.statusCode === 201
+          ? RunnerProject.parse((res.json() as { project: unknown }).project)
+          : undefined,
+    };
+  };
+  const projectsOf = async (runnerId: string) =>
+    ((await call("GET", `/runners/${runnerId}/projects`)).json() as { projects: unknown[] }).projects.map(
+      (p) => RunnerProject.parse(p),
+    );
+  const details = (res: { json(): unknown }) =>
+    res.json() as { code: string; message: string; details?: Record<string, unknown> };
+
+  it("check stores isGit — 새 러너의 저장소 맨 위만 참, 「확인」이 갱신", async () => {
+    const { runnerId, runner, parent } = await setup();
+    expect(parent).toMatchObject({ isGit: true, parentProjectId: null, branch: null, cleanupIssue: null });
+    const plain = await call("POST", `/runners/${runnerId}/projects`, { rootId: "src", relPath: "plain" });
+    expect(RunnerProject.parse((plain.json() as { project: unknown }).project).isGit).toBe(false);
+    runner.onProjectCheck = () => ({ ok: true, isGitRepo: true, isGitTop: false });
+    const checked = await call("POST", `/runner-projects/${parent.id}/check`);
+    expect(checked.json()).toEqual({ ok: true, isGitRepo: true, isGitTop: false });
+    expect((await projectsOf(runnerId)).find((p) => p.id === parent.id)?.isGit).toBe(false);
+  });
+
+  it("creates worktree row with defaults .worktrees/<slug> and dodok/<slug>", async () => {
+    const { runnerId, runner, parent } = await setup();
+    const { res, project } = await makeWorktree(parent.id, { label: "Feat Login" });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(project).toMatchObject({
+      runnerId,
+      rootId: "src",
+      relPath: "repo/.worktrees/feat-login",
+      label: "Feat Login",
+      parentProjectId: parent.id,
+      branch: "dodok/feat-login",
+      isGit: false,
+      cleanupIssue: null,
+      archivedAt: null,
+    });
+    expect(runner.worktreeRequests).toEqual([
+      [
+        "worktree.create",
+        {
+          repo: { rootId: "src", relPath: "repo" },
+          target: { rootId: "src", relPath: "repo/.worktrees/feat-login" },
+          branch: "dodok/feat-login",
+        },
+      ],
+    ]);
+  });
+
+  it("Korean label → wt- slug", async () => {
+    const { parent } = await setup();
+    const { res, project } = await makeWorktree(parent.id, { label: "로그인" });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(project?.branch).toMatch(/^dodok\/wt-[0-9a-f]{6}$/);
+    expect(project?.relPath).toMatch(/^repo\/\.worktrees\/wt-[0-9a-f]{6}$/);
+  });
+
+  it("custom location passes through", async () => {
+    const { runner, parent } = await setup();
+    const { res, project } = await makeWorktree(parent.id, {
+      label: "feat",
+      branch: "topic/x",
+      location: { rootId: "src", relPath: "trees/feat" },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(project).toMatchObject({ relPath: "trees/feat", branch: "topic/x" });
+    expect(runner.worktreeRequests[0]?.[1]).toMatchObject({
+      target: { rootId: "src", relPath: "trees/feat" },
+      branch: "topic/x",
+    });
+  });
+
+  it("parent not git / is worktree / archived → 400", async () => {
+    const { runnerId, runner, parent } = await setup();
+    const plainRes = await call("POST", `/runners/${runnerId}/projects`, { rootId: "src", relPath: "plain" });
+    const plain = RunnerProject.parse((plainRes.json() as { project: unknown }).project);
+    expect((await makeWorktree(plain.id, { label: "a" })).res.statusCode).toBe(400);
+    const { project: wt } = await makeWorktree(parent.id, { label: "a" });
+    expect((await makeWorktree(wt!.id, { label: "b" })).res.statusCode).toBe(400);
+    const other = await call("POST", `/runners/${runnerId}/projects`, { rootId: "src", relPath: "" });
+    const otherProject = RunnerProject.parse((other.json() as { project: unknown }).project);
+    await call("POST", `/runner-projects/${otherProject.id}/archive`);
+    expect((await makeWorktree(otherProject.id, { label: "c" })).res.statusCode).toBe(400);
+    expect(runner.worktreeRequests).toHaveLength(1);
+  });
+
+  it("runner without worktrees capability → 400 copy", async () => {
+    const { runner, parent } = await setup();
+    await runner.reconnect({ hello: { capabilities: ["threads", "interrupt", "approvals", "attachments"] } });
+    const { res } = await makeWorktree(parent.id, { label: "a" });
+    expect(res.statusCode).toBe(400);
+    expect(details(res).message).toBe("러너를 업데이트하세요(워크트리는 0.7.0 부터)");
+    expect(runner.worktreeRequests).toEqual([]);
+  });
+
+  it("offline → 409", async () => {
+    const { runner, parent } = await setup();
+    runner.disconnect();
+    const { res } = await makeWorktree(parent.id, { label: "a" });
+    expect(res.statusCode).toBe(409);
+    expect(details(res).details).toMatchObject({ reason: "runner_offline" });
+  });
+
+  it("same active place → 409 without asking runner", async () => {
+    const { runner, parent } = await setup();
+    expect((await makeWorktree(parent.id, { label: "a" })).res.statusCode).toBe(201);
+    const again = await makeWorktree(parent.id, { label: "a", branch: "other" });
+    expect(again.res.statusCode).toBe(409);
+    expect(runner.worktreeRequests).toHaveLength(1);
+  });
+
+  it("same place as archived row → ok", async () => {
+    const { runner, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    expect((await call("POST", `/runner-projects/${project!.id}/archive`)).statusCode).toBe(200);
+    const again = await makeWorktree(parent.id, { label: "a" });
+    expect(again.res.statusCode, again.res.body).toBe(201);
+    expect(again.project?.id).not.toBe(project!.id);
+    expect(runner.worktreeRequests.map(([e]) => e)).toEqual([
+      "worktree.create",
+      "worktree.remove",
+      "worktree.create",
+    ]);
+  });
+
+  it("runner failure → no row, 400 reason", async () => {
+    const { runnerId, parent } = await setup();
+    const before = (await projectsOf(runnerId)).length;
+    const { res } = await makeWorktree(parent.id, { label: "a", branch: "-x" });
+    expect(res.statusCode).toBe(400);
+    expect(details(res).details).toMatchObject({ reason: "invalid_branch" });
+    expect(await projectsOf(runnerId)).toHaveLength(before);
+  });
+
+  it("archive clean worktree → runner removes folder, row archived", async () => {
+    const { runner, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(RunnerProject.parse((res.json() as { project: unknown }).project).archivedAt).not.toBeNull();
+    expect(runner.worktreeRequests.at(-1)).toEqual([
+      "worktree.remove",
+      { repo: { rootId: "src", relPath: "repo" }, target: { rootId: "src", relPath: "repo/.worktrees/a" } },
+    ]);
+  });
+
+  it("archive worktree with active agent → 409", async () => {
+    const { runner, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    const agent = await call("POST", "/agents", {
+      provider: "runner",
+      program: "claude",
+      runnerProjectId: project!.id,
+      handle: `wta${++n}`,
+      name: "워크트리 에이전트",
+    });
+    expect(agent.statusCode, agent.body).toBe(201);
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect(res.statusCode).toBe(409);
+    expect(details(res).message).toBe("에이전트를 먼저 보관하세요");
+    expect(runner.worktreeRequests.map(([e]) => e)).toEqual(["worktree.create"]);
+    // 폴더를 남기고 보관도 같은 이유로 막힌다
+    expect(
+      (await call("POST", `/runner-projects/${project!.id}/archive`, { keepFolder: true })).statusCode,
+    ).toBe(409);
+  });
+
+  it("archive dirty → 409 + cleanupIssue saved", async () => {
+    const { runnerId, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a", branch: "dodok/dirty-a" });
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect(res.statusCode).toBe(409);
+    expect(details(res).message).toBe("정리하지 못했습니다 — 커밋하지 않은 변경이 있습니다");
+    expect(details(res).details).toMatchObject({ reason: "dirty" });
+    const row = (await projectsOf(runnerId)).find((p) => p.id === project!.id);
+    expect(row).toMatchObject({ archivedAt: null, cleanupIssue: "dirty" });
+  });
+
+  it("keepFolder archives without asking runner", async () => {
+    const { runnerId, runner, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a", branch: "dodok/dirty-a" });
+    await call("POST", `/runner-projects/${project!.id}/archive`);
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`, { keepFolder: true });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(runner.worktreeRequests.map(([e]) => e)).toEqual(["worktree.create", "worktree.remove"]);
+    const row = (await projectsOf(runnerId)).find((p) => p.id === project!.id);
+    expect(row?.archivedAt).not.toBeNull();
+    expect(row?.cleanupIssue).toBeNull();
+  });
+
+  it("archive offline → 409 runner_offline", async () => {
+    const { runner, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    runner.disconnect();
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect(res.statusCode).toBe(409);
+    expect(details(res).message).toBe("러너가 연결되어 있어야 정리할 수 있습니다");
+    expect(details(res).details).toMatchObject({ reason: "runner_offline" });
+  });
+
+  it("revoked runner → 409 runner_revoked", async () => {
+    const { runnerId, parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    expect(
+      (await call("DELETE", `/setup/runner-tokens/${runnerId}`, undefined, owner)).statusCode,
+    ).toBeLessThan(300);
+    const res = await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect(res.statusCode).toBe(409);
+    expect(details(res).details).toMatchObject({ reason: "runner_revoked" });
+    expect(
+      (await call("POST", `/runner-projects/${project!.id}/archive`, { keepFolder: true })).statusCode,
+    ).toBe(200);
+  });
+
+  it("archive parent with active worktree → 409", async () => {
+    const { parent } = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    const res = await call("POST", `/runner-projects/${parent.id}/archive`);
+    expect(res.statusCode).toBe(409);
+    expect(details(res).message).toBe("워크트리를 먼저 보관하세요");
+    await call("POST", `/runner-projects/${project!.id}/archive`);
+    expect((await call("POST", `/runner-projects/${parent.id}/archive`)).statusCode).toBe(200);
+  });
+
+  it("move worktree → 400, move parent with worktree → 409", async () => {
+    const { parent } = await setup();
+    const other = await setup();
+    const { project } = await makeWorktree(parent.id, { label: "a" });
+    expect(
+      (await call("POST", `/runner-projects/${project!.id}/move`, { runnerId: other.runnerId })).statusCode,
+    ).toBe(400);
+    const res = await call("POST", `/runner-projects/${parent.id}/move`, { runnerId: other.runnerId });
+    expect(res.statusCode).toBe(409);
+    expect(details(res).message).toBe("워크트리를 먼저 보관하세요");
+  });
+});

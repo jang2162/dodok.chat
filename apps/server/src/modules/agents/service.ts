@@ -19,6 +19,7 @@ import { agents, channelMembers, gateways, runnerProjects, runnerTokens } from "
 import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
+import { isArchivedWorktree } from "../runners/projects";
 import { assertHandleFree } from "../members/handles";
 import type { Orchestrator } from "../runs/orchestrator";
 import { listOpenRuns } from "../runs/store";
@@ -523,6 +524,10 @@ export const RUNNER_AGENT_WITHOUT_PROJECT = "프로젝트가 없어 되살릴 �
  * 자동 응답은 채널당 하나다 — 보관 중에는 멤버 응답이 이 에이전트를 걸러 웹이 다른 에이전트를 켤 때 이 행을 끌 수 없으므로, 같은
  * 채널에 살아 있는 다른 에이전트의 자동 응답이 켜져 있으면 되살린 쪽을 끈다. 끈 채널은 호출자가 channel.member.changed 로 알린다
  */
+/** 보관한 워크트리의 에이전트 되살리기(W11) */
+export const RUNNER_AGENT_ARCHIVED_WORKTREE =
+  "워크트리를 보관해 폴더가 없습니다 — 에이전트를 되살릴 수 없습니다";
+
 export function restoreAgent(
   db: Db,
   id: string,
@@ -537,6 +542,9 @@ export function restoreAgent(
     // 「보관되지 않은 러너 에이전트는 프로젝트가 있다」(계획 판정 PR4) — 0031 이 보관한 옛 러너 에이전트는 되살리지 않는다
     if (archived?.provider === "runner" && archived.runnerProjectId === null)
       throw apiError("VALIDATION", RUNNER_AGENT_WITHOUT_PROJECT, { field: "runnerProjectId" });
+    // 보관한 워크트리는 폴더가 지워졌다 — 되살리면 다음 런이 천장 검사 path 로 깨진다(워크트리 스펙 W11)
+    if (archived?.runnerProjectId && isArchivedWorktree(tx, archived.runnerProjectId))
+      throw apiError("CONFLICT", RUNNER_AGENT_ARCHIVED_WORKTREE, { field: "runnerProjectId" });
     const row = tx
       .update(agents)
       .set({ archivedAt: null })
