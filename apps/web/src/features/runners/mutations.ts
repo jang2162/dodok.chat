@@ -1,4 +1,5 @@
 import type {
+  CreateWorktreeBody,
   CreateRunnerProjectBody,
   MoveRunnerProjectBody,
   RunnerProject,
@@ -39,12 +40,34 @@ export function useRenameRunnerProject() {
   });
 }
 
-/** 보관 — 그 프로젝트에 새 에이전트를 만들 수 없게 된다. 이미 있는 에이전트는 남고 런은 돈다(스펙 8장) */
-export function useArchiveRunnerProject() {
+/**
+ * 보관 — 그 프로젝트에 새 에이전트를 만들 수 없게 된다. 이미 있는 에이전트는 남고 런은 돈다(스펙 8장). 워크트리는 러너가 폴더를
+ * 지워야 보관된다(워크트리 스펙 W7) — 409(정리 실패)는 그 줄이 그리므로 워크트리 보관은 `silent`. keepFolder 면 폴더를 남기고
+ * 행만(W12). 실패해도 목록을 다시 받는다 — 서버가 그 줄에 정리 실패 사유(cleanupIssue)를 남겼다
+ */
+export function useArchiveRunnerProject({ silent = false }: { silent?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) =>
-      (await api<{ project: RunnerProject }>("POST", `/runner-projects/${id}/archive`)).project,
+    mutationFn: async ({ id, keepFolder }: { id: string; keepFolder?: boolean }) =>
+      (
+        await api<{ project: RunnerProject }>(
+          "POST",
+          `/runner-projects/${id}/archive`,
+          keepFolder ? { keepFolder: true } : undefined,
+        )
+      ).project,
+    meta: { silent },
+    onSettled: () => projectsChanged(qc),
+  });
+}
+
+/** 워크트리 만들기 — 러너가 폴더·브랜치를 만들고 나서 행이 생긴다. 400(러너 사유)·409 는 대화상자·폼이 그린다(`silent`) */
+export function useCreateWorktree(parentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateWorktreeBody) =>
+      (await api<{ project: RunnerProject }>("POST", `/runner-projects/${parentId}/worktrees`, body)).project,
+    meta: { silent: true },
     onSuccess: () => projectsChanged(qc),
   });
 }

@@ -1,5 +1,5 @@
 import type { Agent, SessionDefaults } from "@dodok/shared";
-import { cleanup, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
@@ -12,7 +12,15 @@ import {
   renderPage as renderAt,
   stubServer as serve,
 } from "../../../test/agentsPage";
-import { programOf, projectOf, runnerOf, runnersRoutes } from "../../../test/runnersServer";
+import {
+  json,
+  programOf,
+  projectOf,
+  projectPath,
+  renderRunnersPage,
+  runnerOf,
+  runnersRoutes,
+} from "../../../test/runnersServer";
 import { ABOVE_CEILING, CEILING_REFUSED } from "./RunnerAgentForm";
 
 /** 시험마다 첫 에이전트의 상세를 띄운다 — 러너 에이전트 줄은 「연결」 탭의 에이전트 상세가 그린다 */
@@ -246,5 +254,133 @@ describe("보관한 러너 에이전트", () => {
     renderPage();
     const keptRow = await agentDetail();
     expect(within(keptRow).getByRole("button", { name: "@kept 되살리기" })).toBeInTheDocument();
+  });
+});
+
+describe("에이전트 만들기 — 「새 워크트리」 지름길 [워크트리 스펙 5.5]", () => {
+  type Hit = { method: string; url: string; body: unknown };
+  /** 프로젝트 상세(dodok, git)를 띄운다 — POST /agents 는 agentStatus 로, 워크트리 만들기는 201 과 새 프로젝트 */
+  function serveProject(opts: { isGit?: boolean; agentStatus?: number } = {}) {
+    const hits: Hit[] = [];
+    const routes = runnersRoutes({
+      runners: [runnerOf(1, { label: "맥북" })],
+      projects: [projectOf(1, { label: "dodok", relPath: "dodok", isGit: opts.isGit ?? true })],
+    });
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      if (method === "POST" && url.endsWith("/worktrees")) {
+        hits.push({ method, url, body });
+        const b = body as { label: string; branch: string; location: { rootId: string; relPath: string } };
+        const project = projectOf(77, {
+          label: b.label,
+          relPath: b.location.relPath,
+          parentProjectId: projectOf(1).id,
+          branch: b.branch,
+        });
+        routes.projects.push(project);
+        return json(201, { project });
+      }
+      if (method === "POST" && url === "/api/v1/agents") {
+        hits.push({ method, url, body });
+        const status = opts.agentStatus ?? 201;
+        return status === 201
+          ? json(201, {
+              agent: makeAgent({
+                provider: "runner",
+                providerAgentId: "r-wt",
+                handle: "wt-coder",
+                name: "wt-coder",
+              }),
+            })
+          : json(status, { code: "INTERNAL", message: "boom" });
+      }
+      const hit = routes.handle(method, url, body);
+      if (hit) return hit;
+      if (url === "/api/v1/agents") return json(200, { agents: [] });
+      return json(404, { code: "NOT_FOUND", message: "x" });
+    };
+    vi.stubGlobal("fetch", vi.fn(fetch));
+    return { hits, routes };
+  }
+  async function openForm() {
+    renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    const project = await screen.findByTestId("project-detail");
+    await userEvent.click(within(project).getByRole("button", { name: "에이전트 만들기" }));
+    return screen.findByRole("dialog", { name: "러너 에이전트 만들기" });
+  }
+
+  it("new worktree option creates worktree then agent", async () => {
+    const { hits } = serveProject();
+    const dialog = await openForm();
+    const where = within(dialog).getByRole("radiogroup", { name: "작업 위치" });
+    expect(within(where).getByRole("radio", { name: "이 프로젝트" })).toBeChecked();
+    await userEvent.click(within(where).getByRole("radio", { name: "새 워크트리" }));
+    await userEvent.type(within(dialog).getByLabelText("워크트리 이름"), "feat");
+    expect(within(dialog).getByLabelText("브랜치")).toHaveValue("dodok/feat");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "wt-coder");
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(hits.map((h) => h.url)).toEqual([
+      `/api/v1/runner-projects/${projectOf(1).id}/worktrees`,
+      "/api/v1/agents",
+    ]);
+    expect(hits[0]?.body).toEqual({
+      label: "feat",
+      branch: "dodok/feat",
+      location: { rootId: "src", relPath: "dodok/.worktrees/feat" },
+    });
+    expect(hits[1]?.body).toMatchObject({ runnerProjectId: projectOf(77).id, handle: "wt-coder" });
+  });
+
+  it("agent failure keeps worktree and shows reason — 다시 누르면 워크트리를 또 만들지 않는다", async () => {
+    const { hits, routes } = serveProject({ agentStatus: 500 });
+    const dialog = await openForm();
+    await userEvent.click(within(dialog).getByRole("radio", { name: "새 워크트리" }));
+    await userEvent.type(within(dialog).getByLabelText("워크트리 이름"), "feat");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "wt-coder");
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    expect(await within(dialog).findByText(/워크트리는 만들었습니다/)).toBeInTheDocument();
+    expect(routes.projects.some((p) => p.id === projectOf(77).id)).toBe(true);
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(hits.filter((h) => h.url === "/api/v1/agents")).toHaveLength(2));
+    expect(hits.filter((h) => h.url.endsWith("/worktrees"))).toHaveLength(1);
+    expect(hits.at(-1)?.body).toMatchObject({ runnerProjectId: projectOf(77).id });
+  });
+
+  it("option hidden for non-git project", async () => {
+    serveProject({ isGit: false });
+    const dialog = await openForm();
+    await within(dialog).findByRole("textbox", { name: "핸들" });
+    expect(within(dialog).queryByRole("radiogroup", { name: "작업 위치" })).toBeNull();
+  });
+});
+
+describe("워크트리의 러너 에이전트 — 경로 줄은 「<부모> · <브랜치>」 [워크트리 스펙 5.5]", () => {
+  it("에이전트 상세의 프로젝트 이름이 부모 이름과 브랜치", async () => {
+    const wt = projectOf(2, {
+      label: "feat",
+      relPath: "dodok/.worktrees/feat",
+      parentProjectId: projectOf(1).id,
+      branch: "dodok/feat",
+    });
+    stubServer({
+      agents: [coder({ projectId: wt.id })],
+      runners: runnersRoutes({
+        runners: [runnerOf(1, { label: "맥북" })],
+        projects: [projectOf(1, { label: "dodok", relPath: "dodok", isGit: true }), wt],
+      }).handle,
+    });
+    renderPage(
+      createQueryClient(() => {}),
+      "admin",
+    );
+    // 경로 줄은 상세 머리(DetailHeader meta)에 있다
+    await screen.findByTestId("agent-detail");
+    expect(await screen.findByRole("link", { name: "dodok · dodok/feat" })).toHaveAttribute(
+      "href",
+      `/settings/connection/project/${wt.id}`,
+    );
   });
 });

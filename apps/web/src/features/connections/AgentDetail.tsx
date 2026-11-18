@@ -7,6 +7,7 @@ import { useRestoreAgent } from "@/features/agents/mutations";
 import { providerIdLabel } from "@/features/agents/providerLabels";
 import { NO_PROJECT_RESTORE } from "@/features/runners/copy";
 import { useRunnerProjects } from "@/features/runners/queries";
+import { worktreeName } from "@/features/runners/copy";
 import { LOCKED_NOTICE } from "@/features/settings/Section";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
@@ -113,7 +114,7 @@ function AgentPath({ agent }: { agent: Agent }) {
               params={{ projectId: project.id }}
               className={link}
             >
-              {project.label}
+              {worktreeName(project, projects.data ?? [])}
             </Link>
           </>
         )}

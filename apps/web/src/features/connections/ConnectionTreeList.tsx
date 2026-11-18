@@ -159,8 +159,14 @@ function ProjectNode({ project, onNavigate }: { project: TreeProject; onNavigate
         <FolderIcon aria-hidden className="size-4 shrink-0 opacity-70" />
         <span className="min-w-0 truncate">{project.label}</span>
       </Link>
-      {project.agents.length > 0 && (
+      {(project.agents.length > 0 || project.worktrees.length > 0) && (
         <ul className="ml-3 flex flex-col border-l pl-1">
+          {/* 워크트리 하위 프로젝트는 부모 아래로(워크트리 스펙 5.5) — 그 에이전트는 워크트리 아래 */}
+          {project.worktrees.map((wt) => (
+            <li key={wt.id}>
+              <ProjectNode project={wt} onNavigate={onNavigate} />
+            </li>
+          ))}
           {project.agents.map((leaf) => (
             <li key={leaf.agent.id}>
               <AgentLink leaf={leaf} onNavigate={onNavigate} />

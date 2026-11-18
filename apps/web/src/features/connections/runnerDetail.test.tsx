@@ -177,7 +177,15 @@ describe("연결의 주인(2단계)", () => {
                   owner: { id: ME_ID, name: "나" },
                 },
               ],
-              projects: [{ id: projectOf(1).id, runnerId: runnerId(1), label: "dodok", archived: false }],
+              projects: [
+                {
+                  id: projectOf(1).id,
+                  runnerId: runnerId(1),
+                  label: "dodok",
+                  archived: false,
+                  parentProjectId: null,
+                },
+              ],
             })
           : json(200, { agents: [] }),
     );

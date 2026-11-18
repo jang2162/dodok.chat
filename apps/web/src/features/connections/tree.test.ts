@@ -133,4 +133,24 @@ describe("buildConnectionTree", () => {
     expect(tree.mine.map((n) => n.id)).toEqual([G1]);
     expect(tree.others.map((n) => n.id)).toEqual([G2]);
   });
+
+  it("worktree nests under parent — 워크트리의 에이전트는 워크트리 아래", () => {
+    const p1 = { id: projectOf(1).id, runnerId: R1, label: "dodok", archived: false };
+    const wt = { id: projectOf(2).id, runnerId: R1, label: "feat", archived: false, parentProjectId: p1.id };
+    const gone = { id: projectOf(3).id, runnerId: R1, label: "old", archived: true, parentProjectId: p1.id };
+    const agent = coder({ runnerAgent: { projectId: wt.id, disallowedTools: [] } });
+    const tree = buildConnectionTree(
+      base({
+        agents: [agent],
+        runners: [{ id: R1, label: "맥북", state: "연결됨" }],
+        projects: [p1, wt, gone],
+      }),
+    );
+    const runner = tree.others[0] as TreeRunner;
+    expect(runner.projects.map((p) => p.id)).toEqual([p1.id]);
+    const parent = runner.projects[0]!;
+    expect(parent.worktrees.map((w) => w.id)).toEqual([wt.id]);
+    expect(parent.worktrees[0]!.agents.map((a) => a.agent.handle)).toEqual(["coder"]);
+    expect(parent.agents).toEqual([]);
+  });
 });

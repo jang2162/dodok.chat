@@ -10,13 +10,18 @@ import { Button } from "@/ui/button";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import {
+  ARCHIVE_BLOCKED,
+  KEEP_FOLDER,
   PROJECT_LABEL_MAX,
   PROJECT_LABEL_RULE,
   ROOT_MISSING,
+  WORKTREE_ARCHIVE_NOTE,
+  WORKTREE_CLEANUP_REASON,
   checkText,
   projectPlace,
   runnerRequestError,
 } from "./copy";
+import { CreateWorktreeDialog } from "./CreateWorktreeDialog";
 import { MoveProjectDialog } from "./MoveProjectDialog";
 import { useArchiveRunnerProject, useCheckRunnerProject, useRenameRunnerProject } from "./mutations";
 import { useRunnerProjects } from "./queries";
@@ -60,19 +65,23 @@ export function ProjectList({
     );
   const active = projects.data.filter((p) => p.archivedAt === null);
   const archived = projects.data.filter((p) => p.archivedAt !== null);
+  // 워크트리는 부모 줄 아래로(워크트리 스펙 5.5) — 부모가 목록에 없으면 맨 위 줄로
+  const activeIds = new Set(active.map((p) => p.id));
+  const top = active.filter((p) => p.parentProjectId === null || !activeIds.has(p.parentProjectId));
   return (
     <>
       {active.length === 0 ? (
         <p className="text-sm text-muted-foreground">프로젝트가 없습니다.</p>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
-          {active.map((project) => (
+          {top.map((project) => (
             <ProjectRow
               key={project.id}
               project={project}
               runner={runner}
               runners={runners}
               afterRemove={afterRemove}
+              worktrees={active.filter((p) => p.parentProjectId === project.id)}
             />
           ))}
         </ul>
@@ -93,6 +102,7 @@ export function ProjectRow({
   runners,
   afterRemove,
   linked = true,
+  worktrees = [],
 }: {
   project: RunnerProject;
   runner: RunnerSummary;
@@ -100,6 +110,8 @@ export function ProjectRow({
   afterRemove: () => HTMLElement | null;
   /** 라벨이 그 프로젝트 상세로 가는 링크인가 — 프로젝트 상세 안에서는 아니다 */
   linked?: boolean;
+  /** 이 프로젝트 아래의 보관하지 않은 워크트리 — 줄 아래 들여 그린다 */
+  worktrees?: readonly RunnerProject[];
 }) {
   const check = useCheckRunnerProject();
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
@@ -107,6 +119,7 @@ export function ProjectRow({
   const renameButton = useRef<HTMLButtonElement>(null);
   const live = runner.connected && !runner.revoked;
   const rootMissing = live && project.rootLabel === null;
+  const isWorktree = project.parentProjectId !== null;
 
   function runCheck() {
     if (check.isPending) return;
@@ -147,7 +160,13 @@ export function ProjectRow({
               {rootMissing && <Badge variant="destructive">{ROOT_MISSING}</Badge>}
             </div>
             <p className="text-xs break-all text-muted-foreground">
-              <code className="font-mono">{projectPlace(project)}</code> · 에이전트 {project.agentCount}
+              {isWorktree && project.branch && (
+                <>
+                  <code className="font-mono">{project.branch}</code> ·{" "}
+                </>
+              )}
+              <code className="font-mono">{projectPlace(project)}</code>
+              {project.isGit && " · git"} · 에이전트 {project.agentCount}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -171,8 +190,19 @@ export function ProjectRow({
             >
               이름 바꾸기
             </Button>
-            <MoveProjectDialog project={project} runner={runner} runners={runners} afterMove={afterRemove} />
-            <ArchiveProjectButton project={project} afterArchive={afterRemove} />
+            {!isWorktree && (
+              <CreateWorktreeDialog parent={project} runner={runner} a11yName={a11yName(project)} />
+            )}
+            {/* 워크트리는 옮기지 않는다(W9) */}
+            {!isWorktree && (
+              <MoveProjectDialog
+                project={project}
+                runner={runner}
+                runners={runners}
+                afterMove={afterRemove}
+              />
+            )}
+            <ArchiveProjectButton project={project} runner={runner} afterArchive={afterRemove} />
           </div>
         </div>
       )}
@@ -182,6 +212,19 @@ export function ProjectRow({
       >
         {result?.text}
       </p>
+      {worktrees.length > 0 && (
+        <ul aria-label={`${project.label} 워크트리`} className="flex flex-col divide-y border-l pl-3">
+          {worktrees.map((wt) => (
+            <ProjectRow
+              key={wt.id}
+              project={wt}
+              runner={runner}
+              runners={runners}
+              afterRemove={afterRemove}
+            />
+          ))}
+        </ul>
+      )}
     </li>
   );
 }
@@ -242,71 +285,121 @@ function RenameForm({ project, onClose }: { project: RunnerProject; onClose: () 
   );
 }
 
-/** 보관 — 확인을 거친다. 이미 있는 에이전트는 남고 계속 답한다(스펙 8장) — 멈추려면 에이전트를 삭제한다 */
+/**
+ * 보관 — 확인을 거친다. 일반 프로젝트의 이미 있는 에이전트는 남고 계속 답한다(스펙 8장) — 멈추려면 에이전트를 삭제한다. 워크트리는
+ * 러너가 폴더를 지워야 보관된다(W7) — 정리가 실패하면(409) 그 줄에 사유와 「폴더를 남기고 보관」(W12). 러너가 폐기됐으면 처음부터
+ * 그 단추만. 보관이 막힌 사유(워크트리·에이전트가 남음)도 그 줄에
+ */
 function ArchiveProjectButton({
   project,
+  runner,
   afterArchive,
 }: {
   project: RunnerProject;
+  runner: RunnerSummary;
   afterArchive: () => HTMLElement | null;
 }) {
-  const archive = useArchiveRunnerProject();
+  const archive = useArchiveRunnerProject({ silent: true });
   const [open, setOpen] = useState(false);
+  const [failure, setFailure] = useState<{ text: string; keepFolder: boolean }>();
   const trigger = useRef<HTMLButtonElement>(null);
   const sending = useRef(false);
   // 보관에 성공하면 줄과 이 버튼이 사라진다 — 초점은 카드의 「프로젝트 추가」(잠겼으면 카드 머리)로
   const returnFocus = useRef<HTMLElement | null>(null);
+  const isWorktree = project.parentProjectId !== null;
+  const revoked = isWorktree && runner.revoked;
+  // 지난 시도의 정리 실패 사유(서버가 그 줄에 남겼다) — 이번 시도의 사유가 있으면 그것
+  const savedIssue = revoked ? "runner_revoked" : (project.cleanupIssue ?? undefined);
+  const shown =
+    failure ??
+    (isWorktree && savedIssue !== undefined
+      ? { text: WORKTREE_CLEANUP_REASON[savedIssue] ?? WORKTREE_CLEANUP_REASON.git_failed!, keepFolder: true }
+      : undefined);
 
-  function confirm() {
+  function send(keepFolder: boolean) {
     if (sending.current) return;
     sending.current = true;
+    setFailure(undefined);
     // 보관을 받은 목록이 다시 오면 이 줄(과 확인 대화상자)이 먼저 사라진다 — 언마운트된 컴포넌트에는 mutate 의 콜백이 불리지 않아
-    // 대화상자의 초점 되돌리기도 돌지 않으므로, mutateAsync 로 이어 초점을 직접 옮긴다(실패는 전역 토스트)
-    archive.mutateAsync(project.id).then(
+    // 대화상자의 초점 되돌리기도 돌지 않으므로, mutateAsync 로 이어 초점을 직접 옮긴다
+    archive.mutateAsync({ id: project.id, ...(keepFolder ? { keepFolder: true } : {}) }).then(
       () => {
         sending.current = false;
         returnFocus.current = afterArchive();
         setOpen(false);
         requestAnimationFrame(() => afterArchive()?.focus());
       },
-      () => {
+      (err: unknown) => {
         sending.current = false;
+        setOpen(false);
+        setFailure(archiveFailure(err));
       },
     );
   }
 
   return (
     <>
-      <Button
-        ref={trigger}
-        type="button"
-        size="sm"
-        variant="outline"
-        aria-label={`${a11yName(project)} 보관`}
-        onClick={() => {
-          returnFocus.current = trigger.current;
-          setOpen(true);
-        }}
-      >
-        보관
-      </Button>
+      {!revoked && (
+        <Button
+          ref={trigger}
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`${a11yName(project)} 보관`}
+          onClick={() => {
+            returnFocus.current = trigger.current;
+            setOpen(true);
+          }}
+        >
+          보관
+        </Button>
+      )}
+      {shown?.keepFolder && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`${a11yName(project)} ${KEEP_FOLDER}`}
+          disabled={archive.isPending}
+          onClick={() => send(true)}
+        >
+          {KEEP_FOLDER}
+        </Button>
+      )}
+      {shown && <p className="basis-full text-xs text-destructive">{shown.text}</p>}
       <ConfirmDialog
         open={open}
         onOpenChange={setOpen}
-        title={`「${project.label}」 프로젝트를 보관할까요?`}
+        title={`「${project.label}」 ${isWorktree ? "워크트리" : "프로젝트"}를 보관할까요?`}
         description={
-          project.agentCount > 0
-            ? `보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다(있는 에이전트 ${project.agentCount}개는 계속 답합니다).`
-            : "보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다."
+          isWorktree
+            ? WORKTREE_ARCHIVE_NOTE
+            : project.agentCount > 0
+              ? `보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다(있는 에이전트 ${project.agentCount}개는 계속 답합니다).`
+              : "보관하면 이 프로젝트에 새 에이전트를 만들 수 없습니다."
         }
         confirmLabel="보관"
-        pendingLabel="보관하는 중…"
+        pendingLabel={isWorktree ? "폴더를 지우는 중…" : "보관하는 중…"}
         pending={archive.isPending}
         returnFocus={returnFocus}
-        onConfirm={confirm}
+        onConfirm={() => send(false)}
       />
     </>
   );
+}
+
+/** 보관 실패 — 정리 실패(409 details.reason)는 「폴더를 남기고 보관」과 함께, 막힘(워크트리·에이전트가 남음)은 사유만 */
+function archiveFailure(err: unknown): { text: string; keepFolder: boolean } {
+  const transport = runnerRequestError(err);
+  if (transport) return { text: transport, keepFolder: false };
+  if (err instanceof ApiRequestError) {
+    const reason = typeof err.details?.reason === "string" ? err.details.reason : undefined;
+    if (reason && reason in WORKTREE_CLEANUP_REASON)
+      return { text: WORKTREE_CLEANUP_REASON[reason] ?? err.message, keepFolder: true };
+    if (reason && reason in ARCHIVE_BLOCKED)
+      return { text: ARCHIVE_BLOCKED[reason] ?? err.message, keepFolder: false };
+  }
+  return { text: "보관하지 못했습니다 — 다시 시도하세요", keepFolder: false };
 }
 
 /** 보관한 프로젝트 — 이름·자리만. 되돌리는 경로는 없다(같은 자리에 프로젝트를 새로 더한다) */

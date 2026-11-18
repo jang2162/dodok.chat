@@ -54,6 +54,7 @@ export function runnerOf(n: number, over: Partial<RunnerSummary> = {}): RunnerSu
         ]
       : [],
     programs: connected ? [programOf()] : [],
+    capabilities: connected ? ["threads", "interrupt", "approvals", "attachments", "worktrees"] : [],
     projectCount: 0,
     ...over,
   };

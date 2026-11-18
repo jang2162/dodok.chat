@@ -5,7 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { useAgents } from "@/api/queries";
 import { RunnerAgentForm } from "@/features/agents/RunnerAgentForm";
 import { useRunnerProjects, useRunners } from "@/features/runners/queries";
-import { projectPlace } from "@/features/runners/copy";
+import { projectPlace, worktreeName } from "@/features/runners/copy";
 import { ProjectRow } from "@/features/runners/ProjectList";
 import { Section } from "@/features/setup/sections";
 import { Badge } from "@/ui/badge";
@@ -72,7 +72,7 @@ function ManagedProject({ runnerHint }: { runnerHint: string | undefined }) {
   return (
     <div data-testid="project-detail" className="flex flex-col gap-6">
       <DetailHeader
-        title={project.label}
+        title={worktreeName(project, projects ?? [])}
         headingRef={heading}
         badge={archived ? <Badge variant="outline">보관됨</Badge> : undefined}
         meta={
@@ -85,6 +85,7 @@ function ManagedProject({ runnerHint }: { runnerHint: string | undefined }) {
               {runner.label}
             </Link>{" "}
             · <code className="font-mono">{projectPlace(project)}</code>
+            {project.parentProjectId !== null && " · 워크트리"}
           </p>
         }
       />
