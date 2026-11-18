@@ -102,6 +102,7 @@ export const WORKTREE_CREATE_REASON: Record<string, string> = {
 /** 보관(폴더 정리) 실패 사유(서버 409 `details.reason`·프로젝트 `cleanupIssue`) — 그 줄에 「폴더를 남기고 보관」과 함께 */
 export const WORKTREE_CLEANUP_REASON: Record<string, string> = {
   dirty: "정리하지 못했습니다 — 커밋하지 않은 변경이 있습니다",
+  unmerged_detached: "정리하지 못했습니다 — 브랜치에 없는 커밋이 있습니다",
   runner_offline: "러너가 연결되어 있어야 정리할 수 있습니다",
   runner_revoked: "러너가 폐기되어 폴더를 정리할 수 없습니다",
   not_worktree: "정리하지 못했습니다 — 그 폴더가 워크트리가 아닙니다",

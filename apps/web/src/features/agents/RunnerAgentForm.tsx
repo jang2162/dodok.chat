@@ -180,7 +180,8 @@ export function RunnerAgentForm({
   // 부모가 git 저장소 맨 위이고 잠금이 없을 때만(옛 러너·끊김·워크트리 자신이면 지름길이 없다)
   const canWorktree =
     project !== undefined && runner !== undefined && worktreeLock(project, runner) === undefined;
-  const toWorktree = canWorktree && where === "worktree";
+  // 이미 만든 워크트리가 있으면 러너가 그 사이 끊겨(canWorktree 거짓) 라디오가 사라져도 그 워크트리에 만든다 — 부모로 새지 않게
+  const toWorktree = where === "worktree" && (canWorktree || madeWorktree !== undefined);
   const pending = create.isPending || createWorktree.isPending;
 
   const handleError =
