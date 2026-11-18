@@ -621,10 +621,15 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       usage.contextTokens = final.usage.contextTokens;
       usage.contextWindow = final.usage.contextWindow;
     }
+    // 런 끝 컨텍스트 세부(작성기 칩 스펙 5.2) — 필드를 손으로 옮기므로 여기서 빠지면 말없이 사라진다. 옛 러너는 싣지 않는다
+    if (final.usage?.contextBreakdown !== undefined) usage.contextBreakdown = final.usage.contextBreakdown;
     // 잴 것이 하나도 없으면(대기열에서 중지된 런 — init 을 못 봐 costKind 는 기본값) 내지 않는다 — 비용 없는 런이
     // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
     const measured =
-      usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.costUsd !== undefined;
+      usage.inputTokens !== undefined ||
+      usage.outputTokens !== undefined ||
+      usage.costUsd !== undefined ||
+      usage.contextBreakdown !== undefined;
     if (measured)
       emitEvent(run.runner.tokenId, run.runId, {
         type: "CUSTOM",

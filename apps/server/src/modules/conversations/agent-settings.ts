@@ -5,9 +5,12 @@
 import type {
   AgentSettingsPatch,
   ConversationAgentSettings,
+  RunnerContextBreakdown,
   RunnerEffort,
+  RunnerModelOption,
   RunnerPermissionMode,
   RunnerProgram,
+  RunUsage,
   TeamRole,
 } from "@dodok/shared";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -134,13 +137,26 @@ export function runnerPermissionCeiling(
 }
 
 /**
- * 그 세션에서 그 에이전트의 마지막 실행 컨텍스트 사용률(S7) — 스레드면 그 스레드 런만, 아니면 대화 세션(스레드 아닌) 런만. 사용량이
- * 실린 가장 최근 런의 round(contextTokens / contextWindow × 100), 없으면 null
+ * 그 러너가 그 프로그램에 대해 hello 로 알린 모델 목록(작성기 칩 스펙 C3) — 러너가 붙어 있지 않거나 옛 러너면 빈 목록(화면은 고정
+ * 목록으로 — C4). member 는 남의 러너가 GET /runners 에 없으므로 상한처럼 대화 설정 응답·agent-ceilings 에 싣는다(5.3)
  */
-export function contextPercentOf(
-  db: DbOrTx,
-  key: { conversationId: string; agentId: string; threadRootId?: string },
-): number | null {
+export function runnerModels(
+  runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
+  agent: { runnerTokenId: string | null; program: RunnerProgram | null },
+): RunnerModelOption[] {
+  if (!runners || agent.runnerTokenId === null || agent.program === null) return [];
+  const live = runners.runnerInfo(agent.runnerTokenId);
+  return live?.programs.find((p) => p.program === agent.program)?.models ?? [];
+}
+
+type SessionKey = { conversationId: string; agentId: string; threadRootId?: string };
+
+/**
+ * 그 세션에서 그 에이전트의 사용량이 실린 마지막 실행(S7) — 스레드면 그 스레드 런만, 아니면 대화 세션(스레드 아닌) 런만, 최근 20행
+ * 안에서. 「실렸다」는 contextTokens·contextWindow 가 둘 다 있거나 세부(contextBreakdown)가 있는 것. 퍼센트와 세부는 이 한 런에서
+ * 나온다 — 게이지와 팝오버가 같은 런을 말하게(작성기 칩 스펙 2장)
+ */
+function lastContextRun(db: DbOrTx, key: SessionKey): RunUsage | null {
   const rows = db
     .select({ usage: runs.usage })
     .from(runs)
@@ -155,26 +171,36 @@ export function contextPercentOf(
     .limit(20)
     .all();
   for (const { usage } of rows) {
-    const tokens = usage?.contextTokens;
-    const window = usage?.contextWindow;
-    if (tokens === undefined || window === undefined || window <= 0) continue;
-    return Math.min(100, Math.max(0, Math.round((tokens / window) * 100)));
+    if (!usage) continue;
+    if (usage.contextBreakdown !== undefined) return usage;
+    const window = usage.contextWindow;
+    if (usage.contextTokens !== undefined && window !== undefined && window > 0) return usage;
   }
   return null;
 }
 
-/** 그 에이전트의 권한 상한(runnerPermissionCeiling) — 에이전트 id 로 러너·프로그램을 찾는다. 러너 에이전트가 아니면 null */
-export function agentPermissionCeiling(
-  db: DbOrTx,
-  runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
-  agentId: string,
-): RunnerPermissionMode | null {
-  const agent = db
-    .select({ runnerTokenId: agents.runnerTokenId, program: agents.program })
-    .from(agents)
-    .where(eq(agents.id, agentId))
-    .get();
-  return agent ? runnerPermissionCeiling(runners, agent) : null;
+/**
+ * 마지막 실행 컨텍스트 사용률 — 그 런에 세부가 있으면 세부의 percentage(창 초과는 100 으로 자른다 — C8), 없으면(옛 러너·세부 받기
+ * 실패) round(contextTokens / contextWindow × 100). 없으면 null
+ */
+export function contextPercentOf(db: DbOrTx, key: SessionKey): number | null {
+  return percentOf(lastContextRun(db, key));
+}
+
+/** 마지막 실행의 컨텍스트 세부 — contextPercentOf 와 같은 런. 그 런이 세부를 싣지 않았으면 null */
+export function contextOf(db: DbOrTx, key: SessionKey): RunnerContextBreakdown | null {
+  return lastContextRun(db, key)?.contextBreakdown ?? null;
+}
+
+const clampPercent = (n: number) => Math.min(100, Math.max(0, Math.round(n)));
+
+function percentOf(usage: RunUsage | null): number | null {
+  if (!usage) return null;
+  if (usage.contextBreakdown !== undefined) return clampPercent(usage.contextBreakdown.percentage);
+  const tokens = usage.contextTokens;
+  const window = usage.contextWindow;
+  if (tokens === undefined || window === undefined || window <= 0) return null;
+  return clampPercent((tokens / window) * 100);
 }
 
 export function toConversationAgentSettings(
@@ -182,13 +208,19 @@ export function toConversationAgentSettings(
   key: { conversationId: string; agentId: string; threadRootId?: string },
   runners: Pick<RunnerLiveApi, "runnerInfo"> | null,
 ): ConversationAgentSettings {
+  const last = lastContextRun(db, key);
+  const agent = db
+    .select({ runnerTokenId: agents.runnerTokenId, program: agents.program })
+    .from(agents)
+    .where(eq(agents.id, key.agentId))
+    .get();
   return {
     agentId: key.agentId,
     ...getEffectiveSettings(db, key),
-    contextPercent: contextPercentOf(db, key),
-    ceiling: agentPermissionCeiling(db, runners, key.agentId),
-    context: null,
-    models: [],
+    contextPercent: percentOf(last),
+    ceiling: agent ? runnerPermissionCeiling(runners, agent) : null,
+    context: last?.contextBreakdown ?? null,
+    models: agent ? runnerModels(runners, agent) : [],
   };
 }
 
