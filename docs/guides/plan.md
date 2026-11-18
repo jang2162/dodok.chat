@@ -966,7 +966,6 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 **작성기 도구 줄·러너 에이전트 여럿(2026-11-18)** — 스펙 `docs/superpowers/specs/2026-11-18-composer-toolbar-design.md`, 계획 `docs/superpowers/plans/2026-11-18-composer-toolbar.md`.
 
 - **2명 이상이면 알약에 노력치·권한이 보이지 않는다** — 알약은 모델과 컨텍스트만 싣고 노력치·권한은 패널을 열어야 보인다(T8 이 받아들인 대가). 기본값이 아닌 노력치·권한을 알약에 표시하는 보완은 쓰면서 필요하면 한다(T9, `apps/web/src/features/composer/AgentPills.tsx`).
-- **패널의 `onInteractOutside` 막기는 지금 시험이 잡지 못한다** — 빼도 jsdom 시험(`panel stays open while picking a chip`)과 실제 Chromium(칩 메뉴를 눌러 고르기) 모두 패널이 남는다. Radix 가 포털로 뜬 칩 메뉴를 React 트리 안으로 보기 때문으로 보인다. 방어로 남겼다.
 
 **실물 확인**
 

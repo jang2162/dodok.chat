@@ -20,6 +20,7 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
 import { doc, flushEditorFrames, mention, p, setDoc, t } from "../../../test/composerHarness";
 import { stubMedia } from "../../../test/media";
+import { agentColorVar } from "../../theme/agentColor";
 import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
 import { ABOVE_CEILING, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
@@ -242,7 +243,7 @@ afterEach(async () => {
   useWireStatus.getState().setStatus("idle");
 });
 
-describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.4]", () => {
+describe("에이전트 칩 — 세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.4]", () => {
   it("그 세션에 초대한 러너 에이전트도 한 줄 — 핸들 옆 「초대됨」, 다른 세션에는 줄이 없다", async () => {
     const GUEST = runnerAgent(3, "guest");
     const OTHER = uid(502);
@@ -263,7 +264,7 @@ describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이�
   });
 });
 
-describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 칩 스펙 5.4]", () => {
+describe("에이전트 칩 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 칩 스펙 5.4]", () => {
   it("러너 에이전트마다 한 줄 — 칩 셋·「기본」·게이지 %·「—」, OpenClaw agents get no chips", async () => {
     serve({
       settings: {
@@ -407,6 +408,13 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
       "@reviewer 설정 — 모델 기본, 컨텍스트 —",
     );
     expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]);
+    // 멘션을 지우면 꼬리도 사라진다
+    setDoc(editorOf(), doc(p(t("멘션 없음"))));
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더"),
+    );
+    expect(screen.getByTestId("agent-pill-reviewer")).not.toHaveAccessibleName(/이 글에서 부름/);
+    expect(screen.getByTestId("agent-pill-coder")).not.toHaveAccessibleName(/이 글에서 부름/);
   });
 
   it("panel stays open while picking a chip", async () => {
@@ -495,6 +503,27 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
       ),
     ).toEqual(["agent-settings-reviewer", "agent-settings-coder", "agent-settings-tester"]);
     await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+  });
+
+  it("좁은 화면 4명 이상 — 점은 순서(70% 이상이 앞)의 앞 셋까지만", async () => {
+    stubMedia(true);
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({
+      settings: {
+        [CONV]: [
+          row(CODER, { contextPercent: 10 }),
+          row(REVIEWER, { contextPercent: 5 }),
+          row(TESTER, { contextPercent: 72 }),
+          row(DOCS, { contextPercent: 1 }),
+        ],
+      },
+    });
+    renderAt(CONV, { agents: four });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    const dots = Array.from(summary().querySelectorAll<HTMLElement>("span[aria-hidden] > span"));
+    expect(dots.map((d) => d.style.backgroundColor)).toEqual(
+      [TESTER, CODER, REVIEWER].map((a) => agentColorVar(a.handle)),
+    );
   });
 
   it("넓은 화면의 스레드 작성기도 모은 알약 — 시트가 아니라 패널", async () => {

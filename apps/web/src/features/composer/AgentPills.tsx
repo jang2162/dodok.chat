@@ -192,12 +192,6 @@ export function AgentPills({
         className="flex w-auto max-w-[min(40rem,calc(100vw-2rem))] flex-col gap-2 p-3 text-xs"
         onOpenAutoFocus={autoFocus}
         onCloseAutoFocus={returnFocus}
-        // 칩의 드롭다운은 포털로 떠 패널 밖이다 — 거기서 고르거나 초점이 가도 패널을 닫지 않는다(Review Focus 1)
-        onInteractOutside={(e) => {
-          const target = e.target;
-          if (target instanceof Element && target.closest("[data-radix-popper-content-wrapper]"))
-            e.preventDefault();
-        }}
       >
         <PanelBody titleId={titleId} count={items.length} isNew={isNew}>
           {lines}
