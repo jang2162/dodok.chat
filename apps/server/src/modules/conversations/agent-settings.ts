@@ -187,9 +187,28 @@ export function contextPercentOf(db: DbOrTx, key: SessionKey): number | null {
   return percentOf(lastContextRun(db, key));
 }
 
-/** 마지막 실행의 컨텍스트 세부 — contextPercentOf 와 같은 런. 그 런이 세부를 싣지 않았으면 null */
+/**
+ * 마지막 실행의 컨텍스트 세부 — contextPercentOf 와 같은 런. 그 런이 세부를 싣지 않았으면(옛 러너) 그 런의 contextTokens·contextWindow
+ * 로 항목 없는 세부를 채운다 — 팝오버가 `사용/창` 한 줄을 보인다(작성기 칩 스펙 C4). 둘 다 없으면 null
+ */
 export function contextOf(db: DbOrTx, key: SessionKey): RunnerContextBreakdown | null {
-  return lastContextRun(db, key)?.contextBreakdown ?? null;
+  return contextOfUsage(lastContextRun(db, key));
+}
+
+function contextOfUsage(usage: RunUsage | null): RunnerContextBreakdown | null {
+  if (!usage) return null;
+  if (usage.contextBreakdown !== undefined) return usage.contextBreakdown;
+  const tokens = usage.contextTokens;
+  const window = usage.contextWindow;
+  if (tokens === undefined || window === undefined || window <= 0) return null;
+  // percentage 는 자르지 않는다 — 세부처럼 100 을 넘으면 팝오버가 「창 초과」를 보인다(게이지 퍼센트는 percentOf 가 자른다)
+  return {
+    model: (usage.model ?? "").slice(0, 128),
+    totalTokens: tokens,
+    maxTokens: window,
+    percentage: (tokens / window) * 100,
+    categories: [],
+  };
 }
 
 const clampPercent = (n: number) => Math.min(100, Math.max(0, Math.round(n)));
@@ -219,7 +238,7 @@ export function toConversationAgentSettings(
     ...getEffectiveSettings(db, key),
     contextPercent: percentOf(last),
     ceiling: agent ? runnerPermissionCeiling(runners, agent) : null,
-    context: last?.contextBreakdown ?? null,
+    context: contextOfUsage(last),
     models: agent ? runnerModels(runners, agent) : [],
   };
 }

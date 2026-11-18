@@ -10,6 +10,7 @@ import {
   contextPercentOf,
   getEffectiveSettings,
   getSettingsRow,
+  toConversationAgentSettings,
   upsertSettings,
 } from "../src/modules/conversations/agent-settings";
 import { insertRun } from "../src/modules/runs/store";
@@ -148,11 +149,31 @@ describe("컨텍스트 % 와 세부 — 같은 런에서 [작성기 칩 스펙 C
     // 더 최근의 옛 러너 런 — 그 런의 계산, 세부는 없다(앞 런의 세부를 빌리지 않는다)
     run(fx, { contextTokens: 42_000, contextWindow: 100_000 });
     expect(contextPercentOf(fx.db, fx.key)).toBe(42);
-    expect(contextOf(fx.db, fx.key)).toBeNull();
+    expect(contextOf(fx.db, fx.key)?.categories).toEqual([]);
     // 사용량이 없는 런은 건너뛴다
     run(fx, null);
     run(fx, { inputTokens: 3 });
     expect(contextPercentOf(fx.db, fx.key)).toBe(42);
+  });
+
+  it("old runner run fills context with usage/window and no categories", () => {
+    const fx = setup();
+    run(fx, { model: "claude-opus-5-5", contextTokens: 42_000, contextWindow: 100_000 });
+    expect(contextOf(fx.db, fx.key)).toEqual({
+      model: "claude-opus-5-5",
+      totalTokens: 42_000,
+      maxTokens: 100_000,
+      percentage: 42,
+      categories: [],
+    });
+    // 응답의 context 도 같은 것 — 게이지 퍼센트와 한 런
+    const settings = toConversationAgentSettings(fx.db, fx.key, null);
+    expect(settings.contextPercent).toBe(42);
+    expect(settings.context).toEqual(contextOf(fx.db, fx.key));
+    // 창을 넘은 옛 런 — 게이지는 100, 세부 percentage 는 그대로(팝오버의 「창 초과」)
+    run(fx, { contextTokens: 120_000, contextWindow: 100_000 });
+    expect(contextPercentOf(fx.db, fx.key)).toBe(100);
+    expect(contextOf(fx.db, fx.key)).toMatchObject({ model: "", percentage: 120, categories: [] });
   });
 
   it("thread run uses its own breakdown", () => {
