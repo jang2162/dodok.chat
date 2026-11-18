@@ -262,9 +262,9 @@ describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 �
     expect(chip("coder", "노력치")).toHaveTextContent("높음");
     expect(chip("coder", "권한")).toHaveTextContent("default");
     expect(within(lineOf("coder")).getByRole("button", { name: "컨텍스트 42%" })).toBeInTheDocument();
-    expect(chip("reviewer", "모델")).toHaveTextContent("기본 모델");
-    expect(chip("reviewer", "노력치")).toHaveTextContent("기본 노력");
-    expect(chip("reviewer", "권한")).toHaveTextContent("기본 권한");
+    expect(chip("reviewer", "모델")).toHaveTextContent("모델 기본");
+    expect(chip("reviewer", "노력치")).toHaveTextContent("노력 기본");
+    expect(chip("reviewer", "권한")).toHaveTextContent("권한 기본");
     expect(within(lineOf("reviewer")).getByRole("button", { name: "컨텍스트 —" })).toBeInTheDocument();
     expect(within(bar()).queryByText("@dev")).toBeNull();
     expect(screen.queryByTestId("agent-settings-dev")).toBeNull();
@@ -300,7 +300,7 @@ describe("모델 칩 [작성기 칩 스펙 C3·C4·C9]", () => {
   it("picking a model chip saves immediately (PATCH model)", async () => {
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("기본 모델"));
+    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("모델 기본"));
     await pick("coder", "모델", "Opus 5.5");
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("Opus 5.5"));
     expect(patches()).toEqual([
@@ -463,7 +463,7 @@ describe("권한 칩 [S2]", () => {
     renderAt(CONV, { agents: [CODER], role: "admin" });
     await pick("coder", "권한", "plan");
     await waitFor(() => expect(within(lineOf("coder")).getByRole("alert")).toHaveTextContent(RAISE_LOCKED));
-    expect(chip("coder", "권한")).toHaveTextContent("기본 권한");
+    expect(chip("coder", "권한")).toHaveTextContent("권한 기본");
   });
 
   it("save failure shows 저장하지 못했습니다", async () => {
@@ -531,7 +531,7 @@ describe("새 세션 창 [S11]", () => {
     await waitFor(() => expect(chip("coder", "노력치")).toHaveTextContent("낮음"));
     act(() => rerender(CONV));
     act(() => rerender(NEW_CONVERSATION));
-    expect(chip("coder", "노력치")).toHaveTextContent("기본 노력");
+    expect(chip("coder", "노력치")).toHaveTextContent("노력 기본");
     expect(chip("coder", "모델")).toHaveTextContent("sonnet");
   });
 });
