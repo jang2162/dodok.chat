@@ -18,7 +18,9 @@ import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
-import { doc, flushEditorFrames, p, setDoc, t } from "../../../test/composerHarness";
+import { doc, flushEditorFrames, mention, p, setDoc, t } from "../../../test/composerHarness";
+import { stubMedia } from "../../../test/media";
+import { agentColorVar } from "../../theme/agentColor";
 import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
 import { ABOVE_CEILING, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
@@ -78,6 +80,8 @@ const MODELS: RunnerModelOption[] = [
   { value: "haiku", displayName: "Haiku 5.5", efforts: [] },
 ];
 const REVIEWER = runnerAgent(2, "reviewer");
+const TESTER = runnerAgent(3, "tester");
+const DOCS = runnerAgent(4, "docs");
 
 const memberOf = (memberId: string): ChannelMember => ({
   id: `m-${memberId}`,
@@ -211,6 +215,18 @@ async function pick(handle: string, kind: ChipKind, name: string) {
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 }
 const patches = () => calls.filter((c) => c.method === "PATCH");
+const pills = () =>
+  within(bar())
+    .getAllByRole("button", { name: /설정 — |명 더/ })
+    .map((b) => b.getAttribute("data-testid"));
+/** 알약(이름을 안 주면 첫 알약)이나 「+N」을 눌러 설정 패널을 연다 */
+async function openPanel(name?: RegExp) {
+  const button = await waitFor(() =>
+    name ? within(bar()).getByRole("button", { name }) : within(bar()).getAllByRole("button")[0]!,
+  );
+  await userEvent.click(button);
+  return screen.findByRole("dialog");
+}
 
 beforeEach(() => {
   restoreDom = stubEditorDom();
@@ -227,7 +243,7 @@ afterEach(async () => {
   useWireStatus.getState().setStatus("idle");
 });
 
-describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.4]", () => {
+describe("에이전트 칩 — 세션에 초대한 러너 에이전트 [세션 에이전트 초대 스펙 5.4]", () => {
   it("그 세션에 초대한 러너 에이전트도 한 줄 — 핸들 옆 「초대됨」, 다른 세션에는 줄이 없다", async () => {
     const GUEST = runnerAgent(3, "guest");
     const OTHER = uid(502);
@@ -238,7 +254,8 @@ describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이�
       qc.setQueryData(invitedAgentKeys.of(CONV), [{ agentId: GUEST.id, invitedBy: USER, invitedAt: TS }]);
       qc.setQueryData(invitedAgentKeys.of(OTHER), []);
     });
-    await waitFor(() => expect(lineOf("guest")).toHaveTextContent("opus"));
+    await waitFor(() => expect(screen.getByTestId("agent-pill-guest")).toHaveTextContent("opus"));
+    await openPanel(/^@guest 설정/);
     expect(within(lineOf("guest")).getByText("초대됨")).toBeInTheDocument();
     expect(within(lineOf("coder")).queryByText("초대됨")).toBeNull();
     rerender(OTHER);
@@ -247,7 +264,7 @@ describe("상태 줄 — 세션에 초대한 러너 에이전트 [세션 에이�
   });
 });
 
-describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 칩 스펙 5.4]", () => {
+describe("에이전트 칩 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 칩 스펙 5.4]", () => {
   it("러너 에이전트마다 한 줄 — 칩 셋·「기본」·게이지 %·「—」, OpenClaw agents get no chips", async () => {
     serve({
       settings: {
@@ -258,16 +275,19 @@ describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 �
       },
     });
     renderAt(CONV);
+    await waitFor(() => expect(screen.getByTestId("agent-pill-coder")).toHaveTextContent("opus"));
+    await openPanel();
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("opus"));
     expect(chip("coder", "노력치")).toHaveTextContent("높음");
     expect(chip("coder", "권한")).toHaveTextContent("default");
     expect(within(lineOf("coder")).getByRole("button", { name: "컨텍스트 42%" })).toBeInTheDocument();
-    expect(chip("reviewer", "모델")).toHaveTextContent("기본 모델");
-    expect(chip("reviewer", "노력치")).toHaveTextContent("기본 노력");
-    expect(chip("reviewer", "권한")).toHaveTextContent("기본 권한");
+    expect(chip("reviewer", "모델")).toHaveTextContent("모델 기본");
+    expect(chip("reviewer", "노력치")).toHaveTextContent("노력 기본");
+    expect(chip("reviewer", "권한")).toHaveTextContent("권한 기본");
     expect(within(lineOf("reviewer")).getByRole("button", { name: "컨텍스트 —" })).toBeInTheDocument();
-    expect(within(bar()).queryByText("@dev")).toBeNull();
+    expect(screen.queryByText("@dev")).toBeNull();
     expect(screen.queryByTestId("agent-settings-dev")).toBeNull();
+    expect(screen.queryByTestId("agent-pill-dev")).toBeNull();
   });
 
   it("러너 에이전트가 없으면 그리지도 묻지도 않는다", () => {
@@ -276,23 +296,278 @@ describe("상태 줄 — 칩·게이지 [세션 설정 스펙 S3 · 작성기 �
     expect(screen.queryByTestId("agent-settings-bar")).toBeNull();
     expect(calls).toEqual([]);
   });
+});
 
-  it("넷이면 「러너 에이전트 4」 한 줄로 접히고, 펼치면 넷 — 셋은 접지 않는다", async () => {
-    const four = [1, 2, 3, 4].map((n) => runnerAgent(n, `r${n}`));
-    serve({ settings: { [CONV]: four.map((a) => row(a)) } });
-    renderAt(CONV, { agents: four });
-    expect(bar()).toHaveTextContent("러너 에이전트 4");
-    expect(within(bar()).queryByText("@r1")).toBeNull();
-    await userEvent.click(within(bar()).getByRole("button", { name: "펼치기" }));
-    for (const a of four) expect(within(bar()).getByText(`@${a.handle}`)).toBeInTheDocument();
+describe("도구 줄 — 1명 [작성기 도구 줄 스펙 T1·T2]", () => {
+  it("1명이면 칩 셋을 도구 줄에 펼치고 게이지는 「컨텍스트 —」", async () => {
+    serve({ settings: { [CONV]: [row(CODER)] } });
+    renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    const line = await waitFor(() =>
+      within(screen.getByTestId("composer-toolbar")).getByTestId("agent-settings-coder"),
+    );
+    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("모델 기본"));
+    expect(within(line).getByRole("button", { name: "컨텍스트 —" }).textContent).toBe("컨텍스트 —");
+  });
+});
+
+describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3·T4·T6]", () => {
+  const editorOf = () =>
+    (screen.getByRole("textbox", { name: "메시지 입력" }) as unknown as { editor: Editor }).editor;
+  const linesIn = (dialog: HTMLElement) =>
+    Array.from(dialog.querySelectorAll("[data-testid^='agent-settings-']")).map((el) =>
+      el.getAttribute("data-testid"),
+    );
+
+  it("2명이면 알약 둘 — 점·핸들·모델·컨텍스트, 누르면 패널에 줄 둘이고 누른 에이전트 줄로 초점", async () => {
+    serve({
+      settings: {
+        [CONV]: [row(CODER, { model: "opus", contextPercent: 31 }), row(REVIEWER, { models: MODELS })],
+      },
+    });
+    renderAt(CONV);
+    const coder = await screen.findByRole("button", { name: "@coder 설정 — 모델 opus, 컨텍스트 31%" });
+    expect(coder).toHaveTextContent("@coderopus31%");
+    expect(coder).toHaveAttribute("aria-haspopup", "dialog");
+    expect(coder).toHaveAttribute("aria-expanded", "false");
+    const reviewer = screen.getByRole("button", { name: "@reviewer 설정 — 모델 기본, 컨텍스트 —" });
+    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer"]);
+    // 칩은 패널을 열기 전에는 없다
+    expect(screen.queryByTestId("agent-settings-coder")).toBeNull();
+    const dialog = await openPanel(/^@reviewer 설정/);
+    expect(dialog).toHaveAccessibleName("러너 에이전트 2");
+    expect(dialog).toHaveTextContent("바꾸면 이 세션에 바로 저장됩니다");
+    expect(linesIn(dialog)).toEqual(["agent-settings-coder", "agent-settings-reviewer"]);
+    expect(reviewer).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
   });
 
-  it("셋이면 접지 않는다", () => {
-    const three = [1, 2, 3].map((n) => runnerAgent(n, `r${n}`));
-    serve({});
+  it("셋이면 알약 셋, 넷이면 알약 둘 + 「+2」 — 70% 이상이 앞", async () => {
+    const three = [CODER, REVIEWER, TESTER];
+    serve({ settings: { [CONV]: three.map((a) => row(a)) } });
     renderAt(CONV, { agents: three });
-    expect(bar()).not.toHaveTextContent("러너 에이전트 3");
-    expect(within(bar()).queryByRole("button", { name: "펼치기" })).toBeNull();
+    await waitFor(() =>
+      expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-tester"]),
+    );
+    expect(screen.queryByTestId("agent-pill-more")).toBeNull();
+    cleanup();
+
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({
+      settings: {
+        [CONV]: [
+          row(CODER, { contextPercent: 10 }),
+          row(REVIEWER),
+          row(TESTER, { contextPercent: 72 }),
+          row(DOCS, { contextPercent: 5 }),
+        ],
+      },
+    });
+    renderAt(CONV, { agents: four });
+    await waitFor(() =>
+      expect(pills()).toEqual(["agent-pill-tester", "agent-pill-coder", "agent-pill-more"]),
+    );
+    const more = screen.getByTestId("agent-pill-more");
+    expect(more).toHaveAccessibleName("에이전트 2명 더");
+    expect(more).toHaveTextContent("+2");
+    const dialog = await openPanel(/명 더$/);
+    expect(dialog).toHaveAccessibleName("러너 에이전트 4");
+    expect(linesIn(dialog)).toEqual([
+      "agent-settings-tester",
+      "agent-settings-coder",
+      "agent-settings-reviewer",
+      "agent-settings-docs",
+    ]);
+    // 「+N」은 첫 줄로
+    await waitFor(() => expect(chip("tester", "모델")).toHaveFocus());
+  });
+
+  it("mention highlights without reordering", async () => {
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({ settings: { [CONV]: four.map((a) => row(a)) } });
+    renderAt(CONV, { agents: four });
+    await waitFor(() =>
+      expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]),
+    );
+    setDoc(editorOf(), doc(p(mention(`a:${REVIEWER.id}`, "reviewer"), t(" 봐 줘"))));
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
+        "@reviewer 설정 — 모델 기본, 컨텍스트 — — 이 글에서 부름",
+      ),
+    );
+    expect(screen.getByTestId("agent-pill-coder")).toHaveAccessibleName(
+      "@coder 설정 — 모델 기본, 컨텍스트 —",
+    );
+    expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더");
+    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]);
+    // 접힌 에이전트(docs)를 부르면 「+N」에 꼬리
+    setDoc(editorOf(), doc(p(mention(`a:${DOCS.id}`, "docs"))));
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더 — 이 글에서 부름"),
+    );
+    expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
+      "@reviewer 설정 — 모델 기본, 컨텍스트 —",
+    );
+    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]);
+    // 멘션을 지우면 꼬리도 사라진다
+    setDoc(editorOf(), doc(p(t("멘션 없음"))));
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더"),
+    );
+    expect(screen.getByTestId("agent-pill-reviewer")).not.toHaveAccessibleName(/이 글에서 부름/);
+    expect(screen.getByTestId("agent-pill-coder")).not.toHaveAccessibleName(/이 글에서 부름/);
+  });
+
+  it("panel stays open while picking a chip", async () => {
+    serve({ settings: { [CONV]: [row(CODER), row(REVIEWER)] } });
+    renderAt(CONV);
+    await openPanel(/^@reviewer 설정/);
+    await pick("reviewer", "모델", "opus");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(patches().map((c) => [c.url, c.body])).toEqual([
+      [`/api/v1/conversations/${CONV}/agent-settings/${REVIEWER.id}`, { model: "opus" }],
+    ]);
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveTextContent("모델 opus"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("new-session pending via panel", async () => {
+    serve({});
+    fake.onAck("message.send", (payload) => {
+      const { clientMsgId, bodyMd } = payload as { clientMsgId: string; bodyMd: string };
+      return { ok: true, data: { message: msg(1, { clientMsgId, bodyMd, conversationId: CONV }) } };
+    });
+    renderAt(NEW_CONVERSATION, { agents: [CODER, REVIEWER] });
+    const dialog = await openPanel(/^@reviewer 설정/);
+    expect(dialog).toHaveTextContent("첫 메시지와 함께 저장됩니다");
+    await pick("reviewer", "노력치", "낮음");
+    await waitFor(() => expect(chip("reviewer", "노력치")).toHaveTextContent("노력 낮음"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const box = screen.getByRole("textbox", { name: "메시지 입력" });
+    setDoc(editorOf(), doc(p(t("시작"))));
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(fake.sentOf("message.send")).toHaveLength(1));
+    expect(fake.sentOf("message.send")[0]).toMatchObject({
+      newConversation: {},
+      agentSettings: [{ agentId: REVIEWER.id, effort: "low" }],
+    });
+    expect(patches()).toEqual([]);
+  });
+
+  it("panel closes when agents drop to one", async () => {
+    serve({ settings: { [CONV]: [row(CODER), row(REVIEWER)] } });
+    const { qc } = renderAt(CONV);
+    await openPanel();
+    act(() => qc.setQueryData(qk.members(CH), [memberOf(CODER.id), memberOf(OPENCLAW.id)]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      within(screen.getByTestId("composer-toolbar")).getByTestId("agent-settings-coder"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("agent-pill-coder")).toBeNull();
+  });
+
+  it("escape returns focus", async () => {
+    serve({ settings: { [CONV]: [row(CODER), row(REVIEWER)] } });
+    renderAt(CONV);
+    await openPanel(/^@reviewer 설정/);
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByTestId("agent-pill-reviewer")).toHaveFocus();
+    expect(screen.getByTestId("agent-pill-reviewer")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구 줄 스펙 T5]", () => {
+  const three = [CODER, REVIEWER, TESTER];
+  const rows = () => [row(CODER, { contextPercent: 10 }), row(REVIEWER, { contextPercent: 72 }), row(TESTER)];
+  const summary = () => screen.getByTestId("agent-pill-summary");
+
+  it("좁은 화면 3명 — 모은 알약 하나, 가장 높은 %, 누르면 아래 시트에 줄 셋", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    expect(summary()).toHaveTextContent("에이전트 3");
+    expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정");
+    expect(summary()).toHaveAttribute("aria-haspopup", "dialog");
+    expect(screen.queryByTestId("agent-pill-coder")).toBeNull();
+    await userEvent.click(summary());
+    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    expect(dialog).toHaveAttribute("data-slot", "sheet-content");
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+    // 줄 순서도 T4 — 70% 이상(reviewer)이 앞
+    expect(
+      Array.from(dialog.querySelectorAll("[data-testid^='agent-settings-']")).map((el) =>
+        el.getAttribute("data-testid"),
+      ),
+    ).toEqual(["agent-settings-reviewer", "agent-settings-coder", "agent-settings-tester"]);
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+  });
+
+  it("좁은 화면 4명 이상 — 점은 순서(70% 이상이 앞)의 앞 셋까지만", async () => {
+    stubMedia(true);
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({
+      settings: {
+        [CONV]: [
+          row(CODER, { contextPercent: 10 }),
+          row(REVIEWER, { contextPercent: 5 }),
+          row(TESTER, { contextPercent: 72 }),
+          row(DOCS, { contextPercent: 1 }),
+        ],
+      },
+    });
+    renderAt(CONV, { agents: four });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    const dots = Array.from(summary().querySelectorAll<HTMLElement>("span[aria-hidden] > span"));
+    expect(dots.map((d) => d.style.backgroundColor)).toEqual(
+      [TESTER, CODER, REVIEWER].map((a) => agentColorVar(a.handle)),
+    );
+  });
+
+  it("넓은 화면의 스레드 작성기도 모은 알약 — 시트가 아니라 패널", async () => {
+    serve({ settings: { [CONV]: rows(), [`${CONV}:${ROOT}`]: rows() } });
+    renderAt(CONV, { agents: three, threadRootId: ROOT });
+    await waitFor(() => expect(summary()).toHaveTextContent("72%"));
+    await userEvent.click(summary());
+    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    expect(dialog).toHaveAttribute("data-slot", "popover-content");
+  });
+
+  it("좁은 화면 1명은 펼친 칩 그대로", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: [row(CODER)] } });
+    renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("composer-toolbar")).getByTestId("agent-settings-coder"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("agent-pill-summary")).toBeNull();
+  });
+
+  it("모은 알약도 멘션하면 이름에 「이 글에서 부름」", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정"));
+    const editor = (screen.getByRole("textbox", { name: "메시지 입력" }) as unknown as { editor: Editor })
+      .editor;
+    setDoc(editor, doc(p(mention(`a:${TESTER.id}`, "tester"))));
+    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정 — 이 글에서 부름"));
+  });
+
+  it("escape returns focus — 시트", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
+    await userEvent.click(await waitFor(() => summary()));
+    await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(summary()).toHaveFocus();
   });
 });
 
@@ -300,7 +575,7 @@ describe("모델 칩 [작성기 칩 스펙 C3·C4·C9]", () => {
   it("picking a model chip saves immediately (PATCH model)", async () => {
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
-    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("기본 모델"));
+    await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("모델 기본"));
     await pick("coder", "모델", "Opus 5.5");
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("Opus 5.5"));
     expect(patches()).toEqual([
@@ -463,7 +738,7 @@ describe("권한 칩 [S2]", () => {
     renderAt(CONV, { agents: [CODER], role: "admin" });
     await pick("coder", "권한", "plan");
     await waitFor(() => expect(within(lineOf("coder")).getByRole("alert")).toHaveTextContent(RAISE_LOCKED));
-    expect(chip("coder", "권한")).toHaveTextContent("기본 권한");
+    expect(chip("coder", "권한")).toHaveTextContent("권한 기본");
   });
 
   it("save failure shows 저장하지 못했습니다", async () => {
@@ -486,6 +761,7 @@ describe("새 세션 창 [S11]", () => {
     serve({});
     fake.onAck("message.send", sent);
     renderAt(NEW_CONVERSATION, { agents: [CODER, REVIEWER] });
+    await openPanel(/^@coder 설정/);
     expect(chip("coder", "모델")).toHaveTextContent("sonnet");
     await pick("coder", "권한", "plan");
     await waitFor(() => expect(chip("coder", "권한")).toHaveTextContent("plan"));
@@ -531,7 +807,7 @@ describe("새 세션 창 [S11]", () => {
     await waitFor(() => expect(chip("coder", "노력치")).toHaveTextContent("낮음"));
     act(() => rerender(CONV));
     act(() => rerender(NEW_CONVERSATION));
-    expect(chip("coder", "노력치")).toHaveTextContent("기본 노력");
+    expect(chip("coder", "노력치")).toHaveTextContent("노력 기본");
     expect(chip("coder", "모델")).toHaveTextContent("sonnet");
   });
 });

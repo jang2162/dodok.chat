@@ -963,6 +963,10 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **새 사유 문구 「정리하지 못했습니다 — 브랜치에 없는 커밋이 있습니다」(`unmerged_detached`)에 웹 시험이 없다.**
 - **기존 프로젝트는 「확인」을 한 번 눌러야 「워크트리 만들기」가 열린다** — `is_git` 기본값이 거짓이고 만들 때·확인 때만 채운다.
 
+**작성기 도구 줄·러너 에이전트 여럿(2026-11-18)** — 스펙 `docs/superpowers/specs/2026-11-18-composer-toolbar-design.md`, 계획 `docs/superpowers/plans/2026-11-18-composer-toolbar.md`.
+
+- **2명 이상이면 알약에 노력치·권한이 보이지 않는다** — 알약은 모델과 컨텍스트만 싣고 노력치·권한은 패널을 열어야 보인다(T8 이 받아들인 대가). 기본값이 아닌 노력치·권한을 알약에 표시하는 보완은 쓰면서 필요하면 한다(T9, `apps/web/src/features/composer/AgentPills.tsx`).
+
 **실물 확인**
 
 - **러너 일반화를 실제 러너 설치본·번들 CLI 로 본 것은 실연(`docs/superpowers/reports/2026-10-30-runner-generalization-live-smoke-report.md` — 가짜 Messages API, 모델 런 0회)이다.** 앱에서 만든 프로젝트 디렉터리에서 CLI 가 도는 것(`cwd` 세 방법)·지시 틀·천장 카드 넷·옛 설정 거절·DB 와 서버 로그에 러너 머신 절대 경로 없음을 그 절이 본다.

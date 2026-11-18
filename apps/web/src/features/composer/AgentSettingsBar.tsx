@@ -17,12 +17,12 @@ import {
 } from "@/features/conversations/agentSettings";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
-import { Button } from "@/ui/button";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { agentColorVar } from "@/theme/agentColor";
 import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
-import { ContextGauge } from "./ContextGauge";
+import { AgentPills, type PillItem } from "./AgentPills";
+import { CONTEXT_WARN_PERCENT, ContextGauge } from "./ContextGauge";
 
-/** 줄이 이보다 많으면 「러너 에이전트 N」 한 줄로 접는다(세션 설정 스펙 S3) */
-export const FOLD_OVER = 3;
 const SAVE_FAILED = "저장하지 못했습니다";
 const CEILING_REFUSED = "러너 상한 위의 권한 모드입니다";
 
@@ -30,6 +30,19 @@ const CEILING_REFUSED = "러너 상한 위의 권한 모드입니다";
 export type PendingAgentSettings = Readonly<Record<string, AgentSettingsPatch>>;
 
 const NO_DEFAULTS: SessionDefaults = { model: null, effort: null, permissionMode: null };
+
+/**
+ * 알약·패널 줄 순서(작성기 도구 줄 스펙 T4) — 컨텍스트가 주의 구간(70%) 이상인 것이 앞, 그 안과 나머지는 받은 순서(채널 멤버 →
+ * 세션에 초대한 순). 멘션으로는 바꾸지 않는다(입력 중 흔들림 — T6)
+ */
+export function orderForPills<T extends { agent: Agent; row: ConversationAgentSettings }>(
+  items: readonly T[],
+): T[] {
+  const warn = (i: T) => i.row.contextPercent !== null && i.row.contextPercent >= CONTEXT_WARN_PERCENT;
+  return [...items.filter(warn), ...items.filter((i) => !warn(i))];
+}
+
+const NO_MENTIONS: ReadonlySet<string> = new Set();
 
 function errorText(e: unknown): string {
   if (e instanceof ApiRequestError) {
@@ -40,7 +53,7 @@ function errorText(e: unknown): string {
 }
 
 /**
- * 작성기 바로 위 상태 줄(세션 설정 스펙 S3·5.4, 작성기 칩 스펙 5.4) — 그 대화에 든 러너 에이전트(S13)마다 한 줄: 모델·effort·권한 칩과
+ * 작성기 도구 줄의 에이전트 칸(세션 설정 스펙 S3·5.4, 작성기 칩 스펙 5.4, 도구 줄 스펙 T4·T5) — 그 대화에 든 러너 에이전트(S13)마다 한 줄: 모델·effort·권한 칩과
  * 컨텍스트 게이지.
  * 대화가 있으면 서버 값(`GET …/agent-settings`, 스레드면 컨텍스트 % 만 그 스레드의 것 — S9), 새 세션 창이면 에이전트 시작값에 화면에서
  * 바꾼 값(`pending`)을 얹는다 — 저장하지 않고 첫 글이 싣는다(S11). 러너 에이전트가 없으면(OpenClaw 만) 그리지 않는다
@@ -49,19 +62,22 @@ export function AgentSettingsBar({
   channelId,
   conversationId,
   threadRootId,
+  mentioned = NO_MENTIONS,
   pending,
   onPendingChange,
 }: {
   channelId: string;
   conversationId: string;
   threadRootId?: string;
+  /** 초안이 부르는 에이전트 id(작성기 도구 줄 스펙 T6) */
+  mentioned?: ReadonlySet<string>;
   pending?: PendingAgentSettings;
   onPendingChange?: (agentId: string, patch: AgentSettingsPatch) => void;
 }) {
   const isNew = conversationId === NEW_CONVERSATION && threadRootId === undefined;
   const members = useMembers(channelId);
   const agents = useAgents();
-  const [expanded, setExpanded] = useState(false);
+  const narrow = useIsNarrow();
   const memberRunners = (members.data ?? []).flatMap((m) => {
     if (m.memberType !== "agent") return [];
     const agent = agents.data?.find((a) => a.id === m.memberId);
@@ -96,55 +112,47 @@ export function AgentSettingsBar({
     };
   };
 
-  const folded = runnerAgents.length > FOLD_OVER && !expanded;
+  // 1명 — 칩 셋을 도구 줄에 펼친다(작성기 도구 줄 스펙 T2)
+  if (runnerAgents.length === 1) {
+    const agent = runnerAgents[0]!;
+    return (
+      <div className="flex min-w-0 flex-1 text-xs text-muted-foreground" data-testid="agent-settings-bar">
+        <SettingsLine
+          agent={agent}
+          invited={invitedIds.has(agent.id)}
+          row={rowOf(agent)}
+          conversationId={conversationId}
+          isNew={isNew}
+          inToolbar
+          {...(onPendingChange ? { onPendingChange } : {})}
+        />
+      </div>
+    );
+  }
+
+  // 2명 이상 — 에이전트마다 알약, 누르면 설정 패널(T3·T4). 좁은 화면·스레드 작성기는 모은 알약 하나(T5)
+  const items: PillItem[] = orderForPills(
+    runnerAgents.map((agent) => ({ agent, row: rowOf(agent), invited: invitedIds.has(agent.id) })),
+  );
   return (
-    <div
-      className="mb-1 flex flex-col gap-0.5 px-1 text-xs text-muted-foreground"
-      data-testid="agent-settings-bar"
-    >
-      {folded ? (
-        <div className="flex items-center gap-2">
-          <span>러너 에이전트 {runnerAgents.length}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs"
-            aria-expanded={false}
-            onClick={() => setExpanded(true)}
-          >
-            펼치기
-          </Button>
-        </div>
-      ) : (
-        <>
-          {runnerAgents.map((agent) => (
-            <SettingsLine
-              key={agent.id}
-              agent={agent}
-              invited={invitedIds.has(agent.id)}
-              row={rowOf(agent)}
-              conversationId={conversationId}
-              isNew={isNew}
-              {...(onPendingChange ? { onPendingChange } : {})}
-            />
-          ))}
-          {runnerAgents.length > FOLD_OVER && (
-            <div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                aria-expanded
-                onClick={() => setExpanded(false)}
-              >
-                접기
-              </Button>
-            </div>
-          )}
-        </>
-      )}
+    <div className="flex min-w-0 flex-1 text-xs text-muted-foreground" data-testid="agent-settings-bar">
+      <AgentPills
+        items={items}
+        mentioned={mentioned}
+        compact={narrow || threadRootId !== undefined}
+        sheet={narrow}
+        isNew={isNew}
+        renderLine={(item) => (
+          <SettingsLine
+            agent={item.agent}
+            invited={item.invited}
+            row={item.row}
+            conversationId={conversationId}
+            isNew={isNew}
+            {...(onPendingChange ? { onPendingChange } : {})}
+          />
+        )}
+      />
     </div>
   );
 }
@@ -155,6 +163,7 @@ function SettingsLine({
   row,
   conversationId,
   isNew,
+  inToolbar = false,
   onPendingChange,
 }: {
   agent: Agent;
@@ -163,6 +172,8 @@ function SettingsLine({
   row: ConversationAgentSettings;
   conversationId: string;
   isNew: boolean;
+  /** 도구 줄에 바로 펼친 1명 — 핸들·칩을 한 묶음으로, 게이지는 「컨텍스트」를 붙여 보내기 앞(T2) */
+  inToolbar?: boolean;
   onPendingChange?: (agentId: string, patch: AgentSettingsPatch) => void;
 }) {
   const role = useRole();
@@ -189,23 +200,52 @@ function SettingsLine({
     }
   }
 
+  const chips = (
+    <AgentSettingChips
+      handle={agent.handle}
+      row={row}
+      models={row.models}
+      canRaise={canRaise}
+      saving={patch.isPending}
+      error={error}
+      onSave={save}
+    />
+  );
+  const name = (
+    <>
+      <span
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: agentColorVar(agent.handle) }}
+        aria-hidden
+      />
+      <span className="max-w-32 truncate font-medium text-foreground">@{agent.handle}</span>
+      {invited && <span className="rounded-sm bg-muted px-1 text-xs">초대됨</span>}
+    </>
+  );
+  if (inToolbar)
+    return (
+      // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
+      <div
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5"
+        data-testid={`agent-settings-${agent.handle}`}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-2xl bg-muted/60 py-0.5 pr-0.5 pl-2">
+          {name}
+          {chips}
+        </div>
+        <span className="ml-auto">
+          <ContextGauge percent={row.contextPercent} context={row.context} label />
+        </span>
+      </div>
+    );
   return (
     // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
     <div
       className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5"
       data-testid={`agent-settings-${agent.handle}`}
     >
-      <span className="font-medium text-foreground">@{agent.handle}</span>
-      {invited && <span className="rounded-sm bg-muted px-1 text-[10px]">초대됨</span>}
-      <AgentSettingChips
-        handle={agent.handle}
-        row={row}
-        models={row.models}
-        canRaise={canRaise}
-        saving={patch.isPending}
-        error={error}
-        onSave={save}
-      />
+      {name}
+      {chips}
       <ContextGauge percent={row.contextPercent} context={row.context} />
     </div>
   );

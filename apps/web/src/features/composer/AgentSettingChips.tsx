@@ -34,10 +34,6 @@ export const RAISE_LOCKED = "러너 주인·admin 만 올릴 수 있습니다";
 export const ABOVE_CEILING = (ceiling: RunnerPermissionMode) => `러너 상한(${ceiling}) 위는 고를 수 없습니다`;
 /** 지금 노력치를 고른 모델이 받지 않는다 — 값은 그대로 둔다(작성기 칩 스펙 5.4) */
 export const EFFORT_UNSUPPORTED = "이 모델이 받지 않는 노력치";
-/** 칩이 「기본」일 때의 글 — 칩 셋이 모두 「기본」이어도 어느 칩인지 보이게 */
-export const DEFAULT_MODEL_LABEL = `${DEFAULT_LABEL} 모델`;
-export const DEFAULT_EFFORT_LABEL = `${DEFAULT_LABEL} 노력`;
-export const DEFAULT_PERMISSION_LABEL = `${DEFAULT_LABEL} 권한`;
 const CUSTOM_LABEL = "직접 입력";
 /** supportedModels 의 「기본」 줄 — 따로 보이지 않고 「기본」(null)에 합친다(C9) */
 const DEFAULT_MODEL_VALUE = "default";
@@ -82,6 +78,21 @@ export function effortChoices(models: readonly RunnerModelOption[], model: strin
   return row ? row.efforts : [...RUNNER_EFFORTS];
 }
 
+/** 칩이 보이는 모델 값 — 「기본」(null)·러너가 알린 표시 이름·목록에 없으면 저장값 그대로(알약도 같은 값 — 작성기 도구 줄 스펙 T3) */
+export function modelLabelOf(row: ConversationAgentSettings, models: readonly RunnerModelOption[]): string {
+  if (row.model === null) return DEFAULT_LABEL;
+  return modelChoices(models, row.model).find((c) => c.value === row.model)?.label ?? row.model;
+}
+
+/** 칩 안의 보이는 글 — 「이름 값」, 이름은 흐린 색(칩 셋이 모두 「기본」이어도 어느 칩인지 보이게 — 작성기 도구 줄 스펙 T2) */
+function ChipText({ name, value }: { name: string; value: string }) {
+  return (
+    <>
+      <span className="shrink-0 text-muted-foreground">{name}</span> <span className="truncate">{value}</span>
+    </>
+  );
+}
+
 const CHIP =
   "h-6 max-w-48 gap-1 rounded-full border border-input bg-background px-2 text-xs font-normal text-foreground";
 
@@ -110,10 +121,7 @@ export function AgentSettingChips({
   const [custom, setCustom] = useState<string | null>(null);
   const ceiling = row.ceiling ?? undefined;
   const choices = modelChoices(models, row.model);
-  const modelLabel =
-    row.model === null
-      ? DEFAULT_MODEL_LABEL
-      : (choices.find((c) => c.value === row.model)?.label ?? row.model);
+  const modelLabel = modelLabelOf(row, models);
   const efforts = effortChoices(models, row.model);
   const effortOff = row.effort !== null && !efforts.includes(row.effort);
   const locks = RUNNER_PERMISSION_MODES.map((mode) => ({
@@ -146,7 +154,7 @@ export function AgentSettingChips({
             disabled={saving}
             aria-label={`@${handle} 모델: ${modelLabel}`}
           >
-            <span className="truncate">{modelLabel}</span>
+            <ChipText name="모델" value={modelLabel} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -203,9 +211,7 @@ export function AgentSettingChips({
             aria-invalid={effortOff || undefined}
           >
             {effortOff && <TriangleAlertIcon className="size-3 text-amber-600" aria-hidden />}
-            <span className="truncate">
-              {row.effort === null ? DEFAULT_EFFORT_LABEL : EFFORT_LABEL[row.effort]}
-            </span>
+            <ChipText name="노력" value={row.effort === null ? DEFAULT_LABEL : EFFORT_LABEL[row.effort]} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -242,7 +248,7 @@ export function AgentSettingChips({
             disabled={saving}
             aria-label={`@${handle} 권한: ${row.permissionMode ?? DEFAULT_LABEL}`}
           >
-            <span className="truncate">{row.permissionMode ?? DEFAULT_PERMISSION_LABEL}</span>
+            <ChipText name="권한" value={row.permissionMode ?? DEFAULT_LABEL} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>

@@ -45,6 +45,17 @@ describe("ContextGauge [작성기 칩 스펙 5.4·C8]", () => {
     expect(tip).toHaveTextContent("컨텍스트 —");
   });
 
+  it("label 이면 보이는 글이 「컨텍스트 31%」, 접근 이름은 「컨텍스트 31%」 그대로", () => {
+    render(<ContextGauge percent={31} context={null} label />);
+    const trigger = screen.getByRole("button", { name: "컨텍스트 31%" });
+    expect(trigger.textContent).toBe("컨텍스트 31%");
+  });
+
+  it("label 이 없으면 보이는 글은 퍼센트만", () => {
+    render(<ContextGauge percent={31} context={null} />);
+    expect(screen.getByRole("button", { name: "컨텍스트 31%" }).textContent).toBe("31%");
+  });
+
   it("focus opens breakdown with 248.5k / 800k", async () => {
     render(<ContextGauge percent={31} context={CONTEXT} />);
     expect(screen.getByRole("button", { name: "컨텍스트 31%" })).toHaveTextContent("31%");
