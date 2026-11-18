@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import {
   archiveAgent,
   createAgent,
+  listAgents,
   restoreAgent,
   RUNNER_AGENT_WITHOUT_PROJECT,
   updateAgent,
@@ -12,14 +13,25 @@ import {
 import { runnerAgentDefinition } from "../src/modules/runners/definition";
 import {
   archiveProject,
+  archiveRunnerProject,
   createProject,
+  createWorktreeProject,
   getProject,
   listProjects,
   renameProject,
+  slugOf,
 } from "../src/modules/runners/projects";
+import { runnerProjects, runs } from "../src/db/schema.sqlite";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
+import { insertRun } from "../src/modules/runs/store";
+import type { RunnerWorktreeCreateResult, RunnerWorktreeRemoveResult } from "@dodok/shared";
 import { newTestDb } from "./helpers/db";
-import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
+import {
+  channelConversation,
+  createRunnerAgentForTest,
+  seedChannelWithAgent,
+  seedWorkspace,
+} from "./helpers/seed";
 
 // 러너 일반화 계획 태스크 3 — 러너 프로젝트 서비스와 러너 에이전트 갈래(PR4)·정의(run.start.agent)
 
@@ -178,7 +190,7 @@ describe("createAgent — 러너 갈래(계획 판정 PR4)", () => {
       disallowedToolsJson: [],
       instructionsRevision: 0,
     });
-    expect(agent.runner).toEqual({ tokenId: token, label: "laptop", revoked: false });
+    expect(agent.runner).toEqual({ tokenId: token, label: "laptop", revoked: false, projectLabel: "dodok" });
   });
 
   it.each([
@@ -308,5 +320,299 @@ describe("되살리기 — 보관되지 않은 러너 에이전트는 프로젝�
     expect(
       db.select({ a: agents.archivedAt }).from(agents).where(eq(agents.id, agent.id)).get()?.a,
     ).not.toBeNull();
+  });
+});
+
+describe("워크트리 — slugOf·보관 막기 [워크트리 스펙 W3·W9·W11]", () => {
+  it("slugOf — 소문자 ASCII·숫자·- 만, 40자, 비면 wt-<6 hex>", () => {
+    expect(slugOf("Feat Login")).toBe("feat-login");
+    expect(slugOf("--x")).toBe("x");
+    expect(slugOf("로그인")).toMatch(/^wt-[0-9a-f]{6}$/);
+    expect(slugOf("a__b..c")).toBe("a-b-c");
+    expect(slugOf("x".repeat(60))).toHaveLength(40);
+    expect(slugOf(`${"a".repeat(39)}-b`)).toBe("a".repeat(39));
+  });
+
+  const worktreeOf = (parentId: string, relPath: string) => {
+    const row = createProject(db, { workspaceId: ws, runnerTokenId: token, rootId: "src", relPath });
+    db.update(runnerProjects)
+      .set({ parentProjectId: parentId, branch: "dodok/x" })
+      .where(eq(runnerProjects.id, row.id))
+      .run();
+    return row;
+  };
+
+  it("보관 안 된 워크트리가 있는 부모는 보관을 409 「워크트리를 먼저 보관하세요」", () => {
+    const parent = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "repo",
+    });
+    const wt = worktreeOf(parent.id, "repo/.worktrees/x");
+    const error = errorOf(() => archiveProject(db, { workspaceId: ws, id: parent.id }));
+    expect(error.status).toBe(409);
+    expect(error.body).toMatchObject({ code: "CONFLICT", message: "워크트리를 먼저 보관하세요" });
+    archiveProject(db, { workspaceId: ws, id: wt.id });
+    expect(archiveProject(db, { workspaceId: ws, id: parent.id }).archivedAt).not.toBeNull();
+  });
+
+  it("보관 안 된 에이전트가 있는 워크트리는 보관을 409 「에이전트를 먼저 보관하세요」 — 일반 프로젝트는 그대로", async () => {
+    const parent = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "repo",
+    });
+    const wt = worktreeOf(parent.id, "repo/.worktrees/x");
+    const { agent } = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "wtc",
+      runnerTokenId: token,
+      relPath: "repo/.worktrees/x",
+    });
+    const error = errorOf(() => archiveProject(db, { workspaceId: ws, id: wt.id }));
+    expect(error.body).toMatchObject({ code: "CONFLICT", message: "에이전트를 먼저 보관하세요" });
+    await archiveAgent(db, noop, agent.id, ws);
+    expect(archiveProject(db, { workspaceId: ws, id: wt.id }).archivedAt).not.toBeNull();
+    const { projectId } = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "plain",
+      runnerTokenId: token,
+    });
+    expect(archiveProject(db, { workspaceId: ws, id: projectId }).archivedAt).not.toBeNull();
+  });
+
+  const asyncErrorOf = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (error) {
+      return error as {
+        status: number;
+        body: { code: string; message: string; details?: Record<string, unknown> };
+      };
+    }
+    throw new Error("expected a rejection");
+  };
+
+  /** 러너 어댑터의 워크트리 몫 — 답을 손으로 풀 수 있게 */
+  const fakeRunners = (opts: {
+    create?: () => Promise<RunnerWorktreeCreateResult>;
+    remove?: () => Promise<RunnerWorktreeRemoveResult>;
+  }) => ({
+    runnerInfo: () => ({}),
+    hasCapability: () => true,
+    worktreeCreate: async () =>
+      opts.create ? opts.create() : { ok: true as const, created: true, adopted: false, base: "abc" },
+    worktreeRemove: async () => (opts.remove ? opts.remove() : { ok: true as const }),
+  });
+
+  const gitParent = () => {
+    const parent = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "repo",
+      isGit: true,
+    });
+    return parent;
+  };
+
+  it("W11 — 에이전트는 보관했어도 그 에이전트의 런이 아직 돌면 보관 409 active_agents", async () => {
+    const s = seedChannelWithAgent(db);
+    const t = issueRunnerToken(db, s.workspaceId, "desk", null).record.id;
+    const parent = createProject(db, {
+      workspaceId: s.workspaceId,
+      runnerTokenId: t,
+      rootId: "src",
+      relPath: "repo",
+    });
+    const { agent, projectId } = createRunnerAgentForTest(db, {
+      workspaceId: s.workspaceId,
+      handle: "wtrun",
+      runnerTokenId: t,
+      relPath: "repo/.worktrees/r",
+    });
+    db.update(runnerProjects)
+      .set({ parentProjectId: parent.id, branch: "dodok/r" })
+      .where(eq(runnerProjects.id, projectId))
+      .run();
+    await archiveAgent(db, noop, agent.id, s.workspaceId);
+    const run = insertRun(db, {
+      channelId: s.channelId,
+      conversationId: channelConversation(db, s.channelId),
+      agentId: agent.id,
+      triggerKind: "mention",
+      rootMessageId: "00000000-0000-4000-8000-0000000000aa",
+      relayDepth: 0,
+      sessionKey: `k:${agent.id}`,
+      createdAt: new Date(),
+    });
+    const error = errorOf(() => archiveProject(db, { workspaceId: s.workspaceId, id: projectId }));
+    expect(error.status).toBe(409);
+    expect(error.body.details).toMatchObject({ reason: "active_agents" });
+    db.update(runs).set({ status: "done" }).where(eq(runs.id, run.id)).run();
+    expect(archiveProject(db, { workspaceId: s.workspaceId, id: projectId }).archivedAt).not.toBeNull();
+  });
+
+  it("만들기 — 러너를 기다리는 사이 부모가 보관되면 400, 행 없음", async () => {
+    const parent = gitParent();
+    const runners = fakeRunners({
+      create: async () => {
+        archiveProject(db, { workspaceId: ws, id: parent.id });
+        return { ok: true, created: true, adopted: false, base: "abc" };
+      },
+    });
+    const error = await asyncErrorOf(
+      createWorktreeProject(db, runners, { workspaceId: ws, parentId: parent.id, label: "feat" }),
+    );
+    expect(error.status).toBe(400);
+    expect(error.body.message).toBe("보관한 프로젝트에는 워크트리를 만들 수 없습니다");
+    expect(listProjects(db, token).filter((p) => p.parentProjectId === parent.id)).toEqual([]);
+  });
+
+  it("보관 — 러너가 폴더를 지우는 동안 그 워크트리의 에이전트 만들기·되살리기는 409 worktree_archiving", async () => {
+    const parent = gitParent();
+    const wt = await createWorktreeProject(db, fakeRunners({}), {
+      workspaceId: ws,
+      parentId: parent.id,
+      label: "feat",
+    });
+    const { agent } = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "old",
+      runnerTokenId: token,
+      relPath: wt.relPath,
+    });
+    await archiveAgent(db, noop, agent.id, ws);
+    let release!: () => void;
+    const pending = new Promise<void>((r) => (release = r));
+    const archiving = archiveRunnerProject(
+      db,
+      fakeRunners({
+        remove: async () => {
+          await pending;
+          return { ok: true };
+        },
+      }),
+      { workspaceId: ws, id: wt.id },
+    );
+    await Promise.resolve();
+    const create = errorOf(() =>
+      createAgent(db, {
+        workspaceId: ws,
+        provider: "runner",
+        runnerProjectId: wt.id,
+        program: "claude",
+        handle: "late",
+        name: "late",
+      }),
+    );
+    expect(create.status).toBe(409);
+    expect(create.body.details).toMatchObject({ reason: "worktree_archiving" });
+    const restore = errorOf(() => restoreAgent(db, agent.id, ws));
+    expect(restore.status).toBe(409);
+    expect(restore.body.details).toMatchObject({ reason: "worktree_archiving" });
+    release();
+    expect((await archiving).archivedAt).not.toBeNull();
+    // 끝나면 표시가 풀린다 — 일반 프로젝트의 만들기는 그대로
+    const other = createProject(db, {
+      workspaceId: ws,
+      runnerTokenId: token,
+      rootId: "src",
+      relPath: "plain",
+    });
+    expect(() =>
+      createAgent(db, {
+        workspaceId: ws,
+        provider: "runner",
+        runnerProjectId: other.id,
+        program: "claude",
+        handle: "fresh",
+        name: "fresh",
+      }),
+    ).not.toThrow();
+  });
+
+  it("보관 — 러너가 unmerged_detached 로 답하면 409 「브랜치에 없는 커밋」, 사유가 그 줄에 남는다", async () => {
+    const parent = gitParent();
+    const wt = await createWorktreeProject(db, fakeRunners({}), {
+      workspaceId: ws,
+      parentId: parent.id,
+      label: "d",
+    });
+    const error = await asyncErrorOf(
+      archiveRunnerProject(
+        db,
+        fakeRunners({ remove: async () => ({ ok: false, reason: "unmerged_detached" }) }),
+        {
+          workspaceId: ws,
+          id: wt.id,
+        },
+      ),
+    );
+    expect(error.status).toBe(409);
+    expect(error.body).toMatchObject({
+      message: "정리하지 못했습니다 — 브랜치에 없는 커밋이 있습니다",
+      details: { reason: "unmerged_detached" },
+    });
+    const row = getProject(db, ws, wt.id);
+    expect(row?.archivedAt).toBeNull();
+    expect(row?.worktreeCleanup).toBe("unmerged_detached");
+  });
+
+  it("만들기 — 이름·브랜치·위치에 제어 문자가 있으면 러너에 묻기 전에 400", async () => {
+    const parent = gitParent();
+    let asked = 0;
+    const runners = fakeRunners({
+      create: async () => {
+        asked += 1;
+        return { ok: true, created: true, adopted: false, base: "abc" };
+      },
+    });
+    for (const [input, field] of [
+      [{ label: "a\nb" }, "label"],
+      [{ label: "ok", branch: "dodok/a\rb" }, "branch"],
+      [{ label: "ok", location: { rootId: "src", relPath: "repo/sub\nREADME.md" } }, "location"],
+      [{ label: "ok", branch: "dodok/\x7f" }, "branch"],
+    ] as const) {
+      const error = await asyncErrorOf(
+        createWorktreeProject(db, runners, { workspaceId: ws, parentId: parent.id, ...input }),
+      );
+      expect(error.status, field).toBe(400);
+      expect(error.body.details, field).toMatchObject({ field });
+    }
+    expect(asked).toBe(0);
+  });
+
+  it("Agent.runner.projectLabel — 워크트리면 「부모 라벨 · 브랜치」, 일반 프로젝트면 그 라벨(경로는 없다)", async () => {
+    const parent = gitParent();
+    const wt = await createWorktreeProject(db, fakeRunners({}), {
+      workspaceId: ws,
+      parentId: parent.id,
+      label: "feat",
+    });
+    const inWt = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "w1",
+      runnerTokenId: token,
+      relPath: wt.relPath,
+    });
+    const inRepo = createRunnerAgentForTest(db, {
+      workspaceId: ws,
+      handle: "w2",
+      runnerTokenId: token,
+      relPath: "repo",
+    });
+    expect(inWt.agent.runner?.projectLabel).toBe("repo · dodok/feat");
+    expect(inRepo.agent.runner?.projectLabel).toBe("repo");
+    const listed = new Map(listAgents(db, ws).map((a) => [a.id, a]));
+    expect(listed.get(inWt.agent.id)?.runner).toEqual({
+      tokenId: token,
+      label: "laptop",
+      revoked: false,
+      projectLabel: "repo · dodok/feat",
+    });
+    expect(listed.get(inRepo.agent.id)?.runner?.projectLabel).toBe("repo");
   });
 });

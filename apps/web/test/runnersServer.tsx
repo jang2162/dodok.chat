@@ -54,6 +54,7 @@ export function runnerOf(n: number, over: Partial<RunnerSummary> = {}): RunnerSu
         ]
       : [],
     programs: connected ? [programOf()] : [],
+    capabilities: connected ? ["threads", "interrupt", "approvals", "attachments", "worktrees"] : [],
     projectCount: 0,
     ...over,
   };
@@ -69,6 +70,10 @@ export function projectOf(n: number, over: Partial<RunnerProject> = {}): RunnerP
     label: `app${n}`,
     agentCount: 0,
     archivedAt: null,
+    parentProjectId: null,
+    branch: null,
+    isGit: false,
+    cleanupIssue: null,
     ...over,
   };
 }

@@ -2704,6 +2704,46 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     ]);
   });
 
+  it("main fake runner advertises worktrees, limited does not [워크트리 스펙 5.2]", async () => {
+    type Project = {
+      id: string;
+      relPath: string;
+      isGit: boolean;
+      branch: string | null;
+      archivedAt: string | null;
+    };
+    const projectsOf = async (runnerId: string) =>
+      (await rest<{ projects: Project[] }>("GET", `/runners/${runnerId}/projects`)).projects;
+    const dodok = (await projectsOf(DEV_FAKE_RUNNER_ID)).find(
+      (p) => p.relPath === "dodok" && p.archivedAt === null,
+    );
+    expect(dodok?.isGit).toBe(true);
+    const made = await rest<{ project?: Project; code?: string }>(
+      "POST",
+      `/runner-projects/${dodok!.id}/worktrees`,
+      {
+        label: "devfake wt",
+      },
+    );
+    expect(made.project).toMatchObject({
+      relPath: "dodok/.worktrees/devfake-wt",
+      branch: "dodok/devfake-wt",
+    });
+    const archived = await rest<{ project: Project }>("POST", `/runner-projects/${made.project!.id}/archive`);
+    expect(archived.project.archivedAt).not.toBeNull();
+
+    const demo = (await projectsOf(DEV_FAKE_LIMITED_RUNNER_ID)).find((p) => p.relPath === "demo");
+    // 제한 러너는 옛 러너 흉내 — isGitTop 을 싣지 않아 git 여부를 모른다. 능력 검사만 보려고 행을 git 으로 둔다
+    dev.app.db.update(runnerProjects).set({ isGit: true }).where(eq(runnerProjects.id, demo!.id)).run();
+    const refused = await rest("POST", `/runner-projects/${demo!.id}/worktrees`, { label: "x" }).then(
+      () => "ok",
+      (err: Error) => err.message,
+    );
+    expect(refused).toContain("→ 400");
+    expect(refused).toContain("러너를 업데이트하세요(워크트리는 0.7.0 부터)");
+    dev.app.db.update(runnerProjects).set({ isGit: false }).where(eq(runnerProjects.id, demo!.id)).run();
+  });
+
   it("main fake runner hello has models, limited has none [작성기 칩 스펙 C3·C4]", async () => {
     type Summary = { id: string; programs: Array<{ program: string; models?: unknown }> };
     const { runners } = await rest<{ runners: Summary[] }>("GET", "/runners");

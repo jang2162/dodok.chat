@@ -17,6 +17,8 @@ export type TreeProject = {
   label: string;
   runnerId: string;
   agents: TreeAgent[];
+  /** 이 프로젝트(git 저장소) 아래의 워크트리 하위 프로젝트(워크트리 스펙 W2) — 워크트리 자신은 늘 빈 목록 */
+  worktrees: TreeProject[];
 };
 export type TreeGateway = {
   kind: "gateway";
@@ -53,6 +55,8 @@ export type TreeProjectInput = {
   runnerId: string;
   label: string;
   archived: boolean;
+  /** 워크트리면 부모 프로젝트 id — 연결 목록(member)은 싣지 않아 그때는 부모 아래로 묶지 않는다 */
+  parentProjectId?: string | null;
 };
 export type TreeInput = {
   agents: Agent[];
@@ -109,13 +113,28 @@ export function buildConnectionTree(input: TreeInput): ConnectionTree {
   };
   for (const r of input.runners ?? []) runnerNode(r.id, r.label, r.state, r.ownerUserId ?? null);
   const projects = new Map<string, TreeProject>();
+  const children: { node: TreeProject; parentId: string; runner: TreeRunner }[] = [];
   for (const p of input.projects ?? []) {
     if (p.archived) continue;
     const runner = runners.get(p.runnerId);
     if (!runner) continue;
-    const node: TreeProject = { kind: "project", id: p.id, label: p.label, runnerId: p.runnerId, agents: [] };
-    runner.projects.push(node);
+    const node: TreeProject = {
+      kind: "project",
+      id: p.id,
+      label: p.label,
+      runnerId: p.runnerId,
+      agents: [],
+      worktrees: [],
+    };
     projects.set(p.id, node);
+    if (p.parentProjectId) children.push({ node, parentId: p.parentProjectId, runner });
+    else runner.projects.push(node);
+  }
+  // 워크트리는 부모 아래로 — 부모가 목록에 없으면(보관·다른 러너) 러너 바로 아래에 둔다
+  for (const { node, parentId, runner } of children) {
+    const parent = projects.get(parentId);
+    if (parent && parent.runnerId === node.runnerId) parent.worktrees.push(node);
+    else runner.projects.push(node);
   }
 
   const orphaned: TreeAgent[] = [];

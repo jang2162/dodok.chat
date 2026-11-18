@@ -1,6 +1,7 @@
 import {
   type Agent,
   type DmAccess,
+  type RunnerProject,
   RUNNER_EFFORTS,
   RUNNER_PERMISSION_MODES,
   RUNNER_PROGRAM_NAME,
@@ -19,7 +20,11 @@ import {
   ROOT_MISSING,
   projectPlace,
   runnerRequestError,
+  worktreeLock,
+  worktreeName,
 } from "@/features/runners/copy";
+import { useCreateWorktree } from "@/features/runners/mutations";
+import { WorktreeFields, useWorktreeDraft, worktreeCreateError } from "@/features/runners/worktreeFields";
 import { useRunnerProjects, useRunners } from "@/features/runners/queries";
 import { ReasonHint } from "@/features/components/DisabledHint";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -53,6 +58,8 @@ export const PICKED_PROJECT_ROOT_MISSING =
   "러너가 이 프로젝트의 루트를 알리지 않습니다 — 다른 프로젝트를 고르세요";
 /** 고른 프로그램을 러너가 못 쓴다고 알렸다 */
 export const PICKED_PROGRAM_UNAVAILABLE = "선택된 프로그램을 지금 쓸 수 없습니다 — 다른 프로그램을 고르세요";
+/** 「새 워크트리」로 워크트리는 만들었는데 에이전트 만들기가 실패했다 — 워크트리는 남는다(하위 프로젝트로 보인다) */
+export const WORKTREE_KEPT = "워크트리는 만들었습니다 — 에이전트는 만들지 못했습니다";
 /** 만들기 실패 가운데 칸·충돌·러너 연결로 가르지 못한 것 — 전역 토스트를 끄므로 폼 아래 이 한 줄 */
 export const CREATE_FAILED = "에이전트를 만들지 못했습니다 — 다시 시도하세요";
 
@@ -139,6 +146,10 @@ export function RunnerAgentForm({
   const [prompt, setPrompt] = useState("");
   const [dmAccess, setDmAccess] = useState<DmAccess>("admins");
   const [serverError, setServerError] = useState<{ field: string; message: string }>();
+  // 「작업 위치」 — 이 프로젝트 또는 새 워크트리(워크트리 스펙 5.5). 만든 워크트리는 에이전트가 실패해도 남아 다시 누르면 그것을 쓴다
+  const [where, setWhere] = useState<"here" | "worktree">("here");
+  const [madeWorktree, setMadeWorktree] = useState<RunnerProject>();
+  const createWorktree = useCreateWorktree(projectId);
   const ids = useId();
 
   const list = useMemo(() => (runners.data ?? []).filter((r) => !r.revoked), [runners.data]);
@@ -165,7 +176,13 @@ export function RunnerAgentForm({
   const programIssue =
     live && programPick !== undefined && program === undefined ? PICKED_PROGRAM_UNAVAILABLE : undefined;
   const currentName = name ?? handle;
-  const pending = create.isPending;
+  const draft = useWorktreeDraft(project ?? { rootId: "", relPath: "" });
+  // 부모가 git 저장소 맨 위이고 잠금이 없을 때만(옛 러너·끊김·워크트리 자신이면 지름길이 없다)
+  const canWorktree =
+    project !== undefined && runner !== undefined && worktreeLock(project, runner) === undefined;
+  // 이미 만든 워크트리가 있으면 러너가 그 사이 끊겨(canWorktree 거짓) 라디오가 사라져도 그 워크트리에 만든다 — 부모로 새지 않게
+  const toWorktree = where === "worktree" && (canWorktree || madeWorktree !== undefined);
+  const pending = create.isPending || createWorktree.isPending;
 
   const handleError =
     serverError?.field === "handle"
@@ -182,17 +199,38 @@ export function RunnerAgentForm({
     handle !== "" &&
     handleIssue(handle, takenHandles) === undefined &&
     nameProblem(currentName) === undefined &&
+    (!toWorktree || madeWorktree !== undefined || draft.valid) &&
     !pending;
 
   const clear = () => setServerError(undefined);
 
-  function submit(e: FormEvent<HTMLFormElement>) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (toWorktree) draft.touch();
     if (!ready || !project || !program) return;
     clear();
+    let target = project.id;
+    let kept: RunnerProject | undefined;
+    if (toWorktree) {
+      kept = madeWorktree;
+      if (!kept) {
+        try {
+          kept = await createWorktree.mutateAsync(draft.body());
+        } catch (err) {
+          const failure = worktreeCreateError(err);
+          return setServerError({
+            field: "worktree",
+            message: failure.detail ? `${failure.text} (${failure.detail})` : failure.text,
+          });
+        }
+        setMadeWorktree(kept);
+      }
+      target = kept.id;
+    }
+    const keptPrefix = (message: string) => (kept ? `${WORKTREE_KEPT} — ${message}` : message);
     const input: CreateRunnerAgentInput = {
       provider: "runner",
-      runnerProjectId: project.id,
+      runnerProjectId: target,
       program: program.program,
       handle,
       name: currentName.trim(),
@@ -203,12 +241,13 @@ export function RunnerAgentForm({
       onSuccess: onCreated,
       onError: (err) => {
         const field = serverCreateError(err);
-        if (field) return setServerError(field);
+        if (field)
+          return setServerError(kept ? { field: "form", message: keptPrefix(field.message) } : field);
         if (err instanceof ApiRequestError && err.code === "CONFLICT")
           return setServerError({ field: "handle", message: HANDLE_TAKEN });
         setServerError({
           field: "form",
-          message: runnerRequestError(err) ?? formError(err) ?? CREATE_FAILED,
+          message: keptPrefix(runnerRequestError(err) ?? formError(err) ?? CREATE_FAILED),
         });
       },
     });
@@ -231,7 +270,7 @@ export function RunnerAgentForm({
     );
   const fixedProject = (projects.data ?? []).find((p) => p.id === projectPick);
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4">
       <dl className="grid gap-1.5 text-sm">
         <div className="flex flex-wrap gap-x-2">
           <dt className="text-muted-foreground">러너</dt>
@@ -245,7 +284,7 @@ export function RunnerAgentForm({
           <dd className="min-w-0 break-all">
             {fixedProject ? (
               <>
-                {fixedProject.label} — {projectPlace(fixedProject)}
+                {worktreeName(fixedProject, projects.data ?? [])} — {projectPlace(fixedProject)}
                 {rootMissing(fixedProject) ? ` (${ROOT_MISSING})` : ""}
               </>
             ) : (
@@ -257,6 +296,49 @@ export function RunnerAgentForm({
           {projectIssue ?? (serverError?.field === "runnerProjectId" ? serverError.message : undefined)}
         </FieldError>
       </dl>
+      {canWorktree && runner && (
+        <div className="flex flex-col gap-3">
+          <RadioGroup
+            aria-label="작업 위치"
+            value={where}
+            disabled={pending || madeWorktree !== undefined}
+            onValueChange={(v) => {
+              clear();
+              setWhere(v as "here" | "worktree");
+            }}
+            className="flex flex-wrap gap-4"
+          >
+            <span className="text-sm font-medium">작업 위치</span>
+            {(
+              [
+                ["here", "이 프로젝트"],
+                ["worktree", "새 워크트리"],
+              ] as const
+            ).map(([value, text]) => (
+              <div key={value} className="flex items-center gap-2">
+                <RadioGroupItem id={`${ids}-where-${value}`} value={value} />
+                <Label htmlFor={`${ids}-where-${value}`} className="font-normal">
+                  {text}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+          {toWorktree &&
+            (madeWorktree ? (
+              <p className="text-sm text-muted-foreground">
+                워크트리 <code className="font-mono">{madeWorktree.branch}</code> 를 만들었습니다 — 이
+                워크트리에 에이전트를 만듭니다.
+              </p>
+            ) : (
+              <WorktreeFields draft={draft} runner={runner} disabled={pending} />
+            ))}
+          {serverError?.field === "worktree" && (
+            <Alert variant="destructive">
+              <AlertDescription>{serverError.message}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
       {runner === undefined ? null : (
         <>
           <fieldset className="grid gap-2" disabled={pending}>

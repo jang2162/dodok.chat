@@ -131,7 +131,14 @@ describe("연결 목록·걸러진 설정 상태", () => {
       ]),
     );
     expect(body.projects).toEqual([
-      { id: expect.any(String), runnerId: miaRunner.id, label: "dodok", archived: false },
+      {
+        id: expect.any(String),
+        runnerId: miaRunner.id,
+        label: "dodok",
+        archived: false,
+        // 워크트리면 부모 프로젝트 id(워크트리 스펙 5.5 — member 트리도 부모 아래로 묶는다)
+        parentProjectId: null,
+      },
     ]);
     // 주소·호스트·공유 토큰·토큰 원문·접두사·루트는 응답 어디에도 없다
     for (const secret of [
@@ -290,5 +297,27 @@ describe("연결 목록·걸러진 설정 상태", () => {
     const got = waitFor(bobSocket, "connections.changed");
     await call(mia.token, "POST", "/setup/runner-tokens", { label: `w${++n}` });
     expect(await got).toEqual({});
+  });
+
+  it("워크트리 프로젝트는 parentProjectId 로 부모를 가리킨다 — member 트리도 부모 아래로 묶는다 [워크트리 스펙 5.5]", async () => {
+    const memberToken = (await userWithRole(app, `wt-reader-${Date.now()}`, "member")).token;
+    const before = ConnectionsResponse.parse((await call(memberToken, "GET", "/connections")).json());
+    const parent = before.projects.find((p) => p.label === "dodok");
+    const wt = createProject(app.db, {
+      workspaceId: app.workspaceId,
+      runnerTokenId: miaRunner.id,
+      rootId: "src",
+      relPath: "dodok/.worktrees/feat",
+      parentProjectId: parent!.id,
+      branch: "dodok/feat",
+    });
+    const after = ConnectionsResponse.parse((await call(memberToken, "GET", "/connections")).json());
+    expect(after.projects.find((p) => p.id === wt.id)).toEqual({
+      id: wt.id,
+      runnerId: miaRunner.id,
+      label: "feat",
+      archived: false,
+      parentProjectId: parent!.id,
+    });
   });
 });

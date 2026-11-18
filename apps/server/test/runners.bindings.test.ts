@@ -20,7 +20,7 @@ describe("에이전트↔러너 토큰 묶임 저장소", () => {
   it("러너 에이전트는 만들 때 그 프로젝트의 러너 토큰에 묶이고, 응답 Agent.runner 에 라벨을 붙인다 — OpenClaw 는 묶임이 없다", () => {
     const a = issueRunnerToken(db, ws, "laptop", null).record.id;
     const coder = createRunnerAgentForTest(db, { workspaceId: ws, handle: "coder", runnerTokenId: a }).agent;
-    expect(coder.runner).toEqual({ tokenId: a, label: "laptop", revoked: false });
+    expect(coder.runner).toEqual({ tokenId: a, label: "laptop", revoked: false, projectLabel: "coder" });
     const dev = createAgent(db, { workspaceId: ws, providerAgentId: "dev", handle: "dev", name: "Dev" });
     expect(dev.runner).toBeUndefined();
     expect(

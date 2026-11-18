@@ -254,7 +254,7 @@ function TypedPath({ rootLabel, onPick }: { rootLabel: string; onPick: (relPath:
  * 404·끊김·429 는 이 칸 안에 문구와 「다시 시도」. 서버가 분당 60번으로 막으므로 한 번 받은 목록은 이 대화상자가 열린 동안 다시 받지 않는다
  * (wire 러너 상태도 둘러보기는 낡게 하지 않는다)
  */
-function DirectoryBrowser({
+export function DirectoryBrowser({
   runnerId,
   root,
   onDenied,

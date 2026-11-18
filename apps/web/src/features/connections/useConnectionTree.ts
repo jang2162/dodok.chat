@@ -94,6 +94,7 @@ export function useConnectionTree() {
           runnerId: p.runnerId,
           label: p.label,
           archived: p.archivedAt !== null,
+          parentProjectId: p.parentProjectId,
         }))
       : (list.data?.projects ?? null);
     return buildConnectionTree({

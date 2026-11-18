@@ -265,6 +265,35 @@ describe("연결의 주인 — REST·제어 도구", () => {
     expect((await call(mia.token, "DELETE", `/agents/${agentId}`)).statusCode).toBe(200);
   });
 
+  it("member creates and archives a worktree on own runner — 남의 러너의 저장소는 403", async () => {
+    const issued = issueRunnerToken(app.db, app.workspaceId, "mia-git", mia.id);
+    fakeRunners.push(
+      await startFakeRunner({
+        url: app.url,
+        token: issued.token,
+        hello: { capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees"] },
+        tree: { src: { children: { repo: { git: true, children: {} } } } },
+      }),
+    );
+    const added = await call(mia.token, "POST", `/runners/${issued.record.id}/projects`, {
+      rootId: "src",
+      relPath: "repo",
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    const parentId = (added.json() as { project: { id: string; isGit: boolean } }).project.id;
+    const made = await call(mia.token, "POST", `/runner-projects/${parentId}/worktrees`, { label: "feat" });
+    expect(made.statusCode, made.body).toBe(201);
+    const worktreeId = (made.json() as { project: { id: string } }).project.id;
+    // 남(bob)은 mia 의 러너의 워크트리를 만들지도 보관하지도 못한다
+    expect(
+      (await call(bob.token, "POST", `/runner-projects/${parentId}/worktrees`, { label: "x" })).statusCode,
+    ).toBe(403);
+    expect((await call(bob.token, "POST", `/runner-projects/${worktreeId}/archive`)).statusCode).toBe(403);
+    const archived = await call(mia.token, "POST", `/runner-projects/${worktreeId}/archive`);
+    expect(archived.statusCode, archived.body).toBe(200);
+    expect((archived.json() as { project: { archivedAt: string | null } }).project.archivedAt).not.toBeNull();
+  });
+
   it("admin can manage agents on a member's runner", async () => {
     const agent = runnerAgentOn(miaRunnerA);
     expect(

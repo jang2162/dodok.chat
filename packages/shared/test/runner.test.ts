@@ -107,7 +107,13 @@ describe("/runner 상수(P1)", () => {
     expect(RUNNER_NAMESPACE).toBe("/runner");
     expect(RUNNER_ATTACHMENTS_PATH).toBe("/runner/attachments");
     expect(RUNNER_PROTOCOL).toBe(2);
-    expect(RunnerCapability.options).toEqual(["threads", "interrupt", "approvals", "attachments"]);
+    expect(RunnerCapability.options).toEqual([
+      "threads",
+      "interrupt",
+      "approvals",
+      "attachments",
+      "worktrees",
+    ]);
   });
 });
 

@@ -15,6 +15,10 @@ import {
   RunnerRunFinal,
   RunnerRunSession,
   RunnerRunStart,
+  RunnerWorktreeCreate,
+  RunnerWorktreeCreateResult,
+  RunnerWorktreeRemove,
+  RunnerWorktreeRemoveResult,
 } from "../src";
 
 const ID = "01a09fc9-d204-7551-89d6-38544d07a101";
@@ -264,6 +268,75 @@ describe("둘러보기·프로젝트 확인·세션 프레임", () => {
       expect(RunnerProjectCheckResult.safeParse({ ok: false, reason }).success).toBe(true);
     }
     expect(RunnerProjectCheckResult.safeParse({ ok: false, reason: "nope" }).success).toBe(false);
+  });
+
+  it("project.check ok 의 isGitTop — 옛 러너(없음)도 통과", () => {
+    expect(RunnerProjectCheckResult.parse({ ok: true, isGitRepo: true, isGitTop: true })).toEqual({
+      ok: true,
+      isGitRepo: true,
+      isGitTop: true,
+    });
+    expect(RunnerProjectCheckResult.parse({ ok: true, isGitRepo: true })).toEqual({
+      ok: true,
+      isGitRepo: true,
+    });
+  });
+
+  it("worktree.create 요청·결과", () => {
+    const ref = { rootId: "src", relPath: "dodok" };
+    const target = { rootId: "src", relPath: "dodok/.worktrees/feat" };
+    expect(RunnerWorktreeCreate.safeParse({ repo: ref, target, branch: "dodok/feat" }).success).toBe(true);
+    expect(RunnerWorktreeCreate.safeParse({ repo: ref, target, branch: "" }).success).toBe(false);
+    expect(RunnerWorktreeCreate.safeParse({ repo: ref, target, branch: "b".repeat(201) }).success).toBe(
+      false,
+    );
+    expect(
+      RunnerWorktreeCreate.safeParse({ repo: ref, target: { rootId: "src", relPath: "../x" }, branch: "b" })
+        .success,
+    ).toBe(false);
+    const ok = { ok: true, created: true, adopted: false, base: "abc1234" };
+    expect(RunnerWorktreeCreateResult.parse(ok)).toEqual(ok);
+    expect(RunnerWorktreeCreateResult.safeParse({ ...ok, base: "a".repeat(65) }).success).toBe(false);
+    for (const reason of [
+      "not_git",
+      "is_worktree",
+      "target_exists",
+      "outside_root",
+      "root_missing",
+      "branch_in_use",
+      "invalid_branch",
+      "git_failed",
+    ]) {
+      expect(RunnerWorktreeCreateResult.safeParse({ ok: false, reason }).success, reason).toBe(true);
+    }
+    expect(RunnerWorktreeCreateResult.safeParse({ ok: false, reason: "dirty" }).success).toBe(false);
+    expect(
+      RunnerWorktreeCreateResult.safeParse({ ok: false, reason: "git_failed", message: "m".repeat(200) })
+        .success,
+    ).toBe(true);
+    expect(
+      RunnerWorktreeCreateResult.safeParse({ ok: false, reason: "git_failed", message: "m".repeat(201) })
+        .success,
+    ).toBe(false);
+  });
+
+  it("worktree.remove 요청·결과", () => {
+    const ref = { rootId: "src", relPath: "dodok" };
+    expect(
+      RunnerWorktreeRemove.safeParse({
+        repo: ref,
+        target: { rootId: "src", relPath: "dodok/.worktrees/feat" },
+      }).success,
+    ).toBe(true);
+    expect(RunnerWorktreeRemove.safeParse({ repo: ref }).success).toBe(false);
+    expect(RunnerWorktreeRemoveResult.parse({ ok: true })).toEqual({ ok: true });
+    for (const reason of ["dirty", "not_worktree", "git_failed"]) {
+      expect(RunnerWorktreeRemoveResult.safeParse({ ok: false, reason }).success, reason).toBe(true);
+    }
+    expect(RunnerWorktreeRemoveResult.safeParse({ ok: false, reason: "target_exists" }).success).toBe(false);
+    expect(
+      RunnerWorktreeRemoveResult.safeParse({ ok: false, reason: "dirty", message: "m".repeat(201) }).success,
+    ).toBe(false);
   });
 
   it("run.session", () => {

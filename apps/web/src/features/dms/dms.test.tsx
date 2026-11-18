@@ -360,13 +360,13 @@ describe("DM 화면", () => {
   });
 
   it.each(["owner", "member"])(
-    "러너 에이전트면 「러너 · <프로그램> · <러너 라벨>」 — 정의(모델·권한)는 싣지 않는다(%s) [러너 일반화 Task 5 Step 3b]",
+    "러너 에이전트면 「러너 · <프로그램> · <러너 라벨> · <프로젝트>」 — 정의(모델·권한)는 싣지 않는다(%s) [러너 일반화 Task 5 Step 3b, 워크트리 스펙 5.5]",
     async (role) => {
       const runner: Agent = {
         ...DEV,
         provider: "runner",
         program: "claude",
-        runner: { tokenId: uid(77), label: "맥북", revoked: false },
+        runner: { tokenId: uid(77), label: "맥북", revoked: false, projectLabel: "dodok.chat · dodok/feat" },
         ...(role === "owner"
           ? {
               runnerAgent: {
@@ -381,7 +381,9 @@ describe("DM 화면", () => {
       const heading = await within(await screen.findByTestId("dm-header")).findByRole("heading", {
         name: /Dev 봇/,
       });
-      expect(within(heading).getByText("러너 · Claude Code · 맥북")).toBeInTheDocument();
+      expect(
+        within(heading).getByText("러너 · Claude Code · 맥북 · dodok.chat · dodok/feat"),
+      ).toBeInTheDocument();
       expect(heading).not.toHaveTextContent("opus");
       expect(heading).not.toHaveTextContent("acceptEdits");
     },

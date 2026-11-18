@@ -23,8 +23,9 @@ import { DM_READ_ONLY_TEXT, invalidateDms, useDm } from "./queries";
 export const DM_INSTRUCTION_LABEL = "이 DM 의 지시";
 
 /**
- * DM 머리의 제공자 줄 — OpenClaw 는 「OpenClaw」, 러너 에이전트는 「러너 · <프로그램> · <러너 라벨>」(러너 일반화 계획 Task 5 Step 3b).
- * 프로그램을 붙이는 까닭: 한 러너가 프로그램 여럿을 돌린다 — 러너 라벨만으로는 무엇과 말하는지 모른다. 정의(모델·권한)는 싣지 않는다
+ * DM 머리의 제공자 줄 — OpenClaw 는 「OpenClaw」, 러너 에이전트는 「러너 · <프로그램> · <러너 라벨> · <프로젝트>」(러너 일반화 계획 Task 5
+ * Step 3b, 워크트리 스펙 5.5). 프로그램을 붙이는 까닭: 한 러너가 프로그램 여럿을 돌린다 — 러너 라벨만으로는 무엇과 말하는지 모른다.
+ * 프로젝트는 표시 이름(워크트리면 「부모 · 브랜치」)이라 같은 저장소의 워크트리 에이전트를 가른다. 정의(모델·권한)·경로는 싣지 않는다
  * (member 의 Agent 에는 없다 — 계획 판정 PR11)
  */
 export function dmProviderLine(agent: Agent): string {
@@ -33,6 +34,7 @@ export function dmProviderLine(agent: Agent): string {
     providerName(agent.provider),
     agent.program && RUNNER_PROGRAM_NAME[agent.program],
     agent.runner?.label,
+    agent.runner?.projectLabel,
   ]
     .filter(Boolean)
     .join(" · ");

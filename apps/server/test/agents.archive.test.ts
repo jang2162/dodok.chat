@@ -8,7 +8,10 @@ import type { Agent, ChannelMember, Message, OutboundMessage } from "@dodok/shar
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App, AppDeps } from "../src/app";
+import { eq } from "drizzle-orm";
+import { runnerProjects } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { createProject } from "../src/modules/runners/projects";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, runErrorMessages } from "../src/modules/messages/service";
 import { createRunGate } from "../src/modules/ops/budget";
@@ -81,6 +84,40 @@ async function setup(deps: Pick<AppDeps, "runnerAdapter" | "pushSend"> = {}) {
 }
 
 describe("보관·되살리기 REST", () => {
+  it("restore agent of archived worktree → 409 [워크트리 스펙 W11]", async () => {
+    const { app, archive, restore } = await setup();
+    const { agent, runnerTokenId, projectId } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: "wtcoder",
+      relPath: "repo/.worktrees/a",
+    });
+    const parent = createProject(app.db, {
+      workspaceId: app.workspaceId,
+      runnerTokenId,
+      rootId: "src",
+      relPath: "repo",
+    });
+    app.db
+      .update(runnerProjects)
+      .set({ parentProjectId: parent.id, branch: "dodok/a" })
+      .where(eq(runnerProjects.id, projectId))
+      .run();
+    expect((await archive(agent.id)).statusCode).toBe(200);
+    // 워크트리가 살아 있으면 되살린다
+    expect((await restore(agent.id)).statusCode).toBe(200);
+    expect((await archive(agent.id)).statusCode).toBe(200);
+    app.db
+      .update(runnerProjects)
+      .set({ archivedAt: new Date() })
+      .where(eq(runnerProjects.id, projectId))
+      .run();
+    const res = await restore(agent.id);
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { message: string }).message).toBe(
+      "워크트리를 보관해 폴더가 없습니다 — 에이전트를 되살릴 수 없습니다",
+    );
+  });
+
   it("admin 이 보관하면 200·archivedAt 이 시각, 다시 해도 200(멱등), member 403, 없는 id 404", async () => {
     const { app, dev, archive } = await setup();
     const admin = { authorization: `Bearer ${(await userWithRole(app, "ada", "admin")).token}` };

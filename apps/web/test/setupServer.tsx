@@ -338,6 +338,7 @@ export function stubSetupServer(
           browse: connected ? true : null,
           roots: [],
           programs: [],
+          capabilities: [],
           projectCount: 0,
         };
       });

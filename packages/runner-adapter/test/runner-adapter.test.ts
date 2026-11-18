@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRunnerAdapter,
   RUNNER_APPROVAL_TTL_MS,
+  RUNNER_GIT_ACK_TIMEOUT_MS,
   type RunnerAdapter,
   type RunnerAdapterOptions,
   type RunnerAgentDefinition,
@@ -1030,6 +1031,89 @@ describe("fs.list·project.check — 서버 → 러너 ack 요청", () => {
     await until(() => h.adapter.status().runners.connected === 0, "runner gone");
     await vi.advanceTimersByTimeAsync(10_000);
     expect((await gone).code).toBe("ADAPTER_UNAVAILABLE");
+  });
+});
+
+describe("worktree.create·worktree.remove — 서버 → 러너 ack 요청(워크트리 스펙 5.2)", () => {
+  const REQ = {
+    repo: { rootId: "src", relPath: "dodok" },
+    target: { rootId: "src", relPath: "dodok/.worktrees/feat" },
+    branch: "dodok/feat",
+  };
+
+  it("worktree.create uses 30s ack and parses result", async () => {
+    expect(RUNNER_GIT_ACK_TIMEOUT_MS).toBe(30_000);
+    const h = await setup({ fakeTimers: true });
+    const r = await readyRunner(h);
+    const seen: unknown[] = [];
+    let answer: ((v: unknown) => void) | undefined;
+    r.socket.on("worktree.create", (p: unknown, ack: (v: unknown) => void) => {
+      seen.push(p);
+      answer = ack;
+    });
+    const pending = h.adapter.worktreeCreate(RUNNER_A_CONNECTION, REQ);
+    await until(() => answer !== undefined, "worktree.create");
+    // 10초(fs 상한)를 넘겨도 기다린다
+    await vi.advanceTimersByTimeAsync(20_000);
+    answer!({ ok: true, created: true, adopted: false, base: "abc1234" });
+    expect(await pending).toEqual({ ok: true, created: true, adopted: false, base: "abc1234" });
+    expect(seen).toEqual([REQ]);
+
+    r.socket.off("worktree.create");
+    r.socket.on("worktree.create", () => undefined);
+    const late = rejection(h.adapter.worktreeCreate(RUNNER_A_CONNECTION, REQ));
+    await vi.advanceTimersByTimeAsync(29_000);
+    let settled = false;
+    void late.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await late).code).toBe("TIMEOUT");
+  });
+
+  it("worktree.remove 답을 계약대로 돌려준다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    r.socket.on("worktree.remove", (_p: unknown, ack: (v: unknown) => void) =>
+      ack({ ok: false, reason: "dirty", message: "x" }),
+    );
+    expect(
+      await h.adapter.worktreeRemove(RUNNER_A_CONNECTION, { repo: REQ.repo, target: REQ.target }),
+    ).toEqual({
+      ok: false,
+      reason: "dirty",
+      message: "x",
+    });
+  });
+
+  it("bad ack → INTERNAL", async () => {
+    const h = await setup();
+    expect((await rejection(h.adapter.worktreeCreate(RUNNER_A_CONNECTION, REQ))).code).toBe(
+      "ADAPTER_UNAVAILABLE",
+    );
+    const r = await readyRunner(h);
+    r.socket.on("worktree.create", (_p: unknown, ack: (v: unknown) => void) =>
+      ack({ ok: false, reason: "nope" }),
+    );
+    r.socket.on("worktree.remove", (_p: unknown, ack: (v: unknown) => void) => ack({ ok: "yes" }));
+    expect((await rejection(h.adapter.worktreeCreate(RUNNER_A_CONNECTION, REQ))).code).toBe("INTERNAL");
+    expect(
+      (await rejection(h.adapter.worktreeRemove(RUNNER_A_CONNECTION, { repo: REQ.repo, target: REQ.target })))
+        .code,
+    ).toBe("INTERNAL");
+    expect(
+      (await rejection(h.adapter.worktreeCreate(RUNNER_A_CONNECTION, { ...REQ, branch: "" }))).code,
+    ).toBe("VALIDATION");
+  });
+
+  it("hasCapability — hello 가 알린 능력만", async () => {
+    const h = await setup();
+    expect(h.adapter.hasCapability(RUNNER_A_CONNECTION, "worktrees")).toBe(false);
+    const r = await h.runner(TOKEN_A);
+    await r.hello({ capabilities: ["threads", "worktrees"] });
+    await until(() => h.adapter.status().runners.connected === 1, "hello");
+    expect(h.adapter.hasCapability(RUNNER_A_CONNECTION, "worktrees")).toBe(true);
+    expect(h.adapter.hasCapability(RUNNER_A_CONNECTION, "interrupt")).toBe(false);
   });
 });
 

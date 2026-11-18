@@ -9,6 +9,7 @@ import {
 } from "@dodok/shared";
 import { isInside, resolveProject } from "./ceiling";
 import type { ResolvedRunnerConfig } from "./config";
+import { type GitRunner, isGitTop } from "./worktrees";
 
 // 디렉터리 둘러보기·프로젝트 확인(러너 일반화 스펙 3장) — 앱에서 프로젝트를 더할 때 서버가 묻는다. 나가는 것은 루트 아래
 // 항목 이름과 git 여부뿐이다. 숨김(`.` 시작)과 루트 밖을 가리키는 링크는 보이지 않는다
@@ -57,11 +58,14 @@ export function listDirectory(
   return { ok: true, entries, truncated: dirs.length > RUNNER_FS_LIST_MAX };
 }
 
-export function checkProject(
+/** isGitTop — 저장소의 주 작업 트리 맨 위인가(워크트리 스펙 W14). `.git` 이 없으면 git 을 부르지 않는다 */
+export async function checkProject(
   cfg: Pick<ResolvedRunnerConfig, "roots">,
   ref: RunnerProjectRef,
-): RunnerProjectCheckResult {
+  git?: GitRunner,
+): Promise<RunnerProjectCheckResult> {
   const project = resolveProject(cfg.roots, ref);
   if (!project.ok) return project;
-  return { ok: true, isGitRepo: isGitRepo(project.path) };
+  const gitRepo = isGitRepo(project.path);
+  return { ok: true, isGitRepo: gitRepo, isGitTop: gitRepo ? await isGitTop(project.path, git) : false };
 }

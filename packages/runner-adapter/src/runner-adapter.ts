@@ -39,6 +39,11 @@ import {
   type RunnerOutboundAck,
   RunnerProjectCheckResult,
   RunnerProjectRef,
+  RunnerWorktreeCreate,
+  RunnerWorktreeCreateResult,
+  RunnerWorktreeRemove,
+  RunnerWorktreeRemoveResult,
+  type RunnerCapability,
   RunnerRunAck,
   type RunnerPermissionMode,
   type RunnerRunAgent,
@@ -112,6 +117,9 @@ export function resolvePermissionMode(
 /** fs.list·project.check 의 ack 상한 — 러너가 디렉터리 하나를 읽는 시간 */
 export const RUNNER_FS_ACK_TIMEOUT_MS = 10_000;
 
+/** worktree.create·worktree.remove 의 ack 상한 — git 이 체크아웃·삭제에 오래 걸릴 수 있다(워크트리 스펙 5.2) */
+export const RUNNER_GIT_ACK_TIMEOUT_MS = 30_000;
+
 export type RunnerAdapterOptions = {
   /** 서버의 Socket.IO — 이 어댑터가 `io.of(RUNNER_NAMESPACE)` 를 맡는다 */
   io: Server;
@@ -168,6 +176,12 @@ export interface RunnerAdapter extends AgentAdapter {
   fsList(tokenId: string, ref: RunnerProjectRef): Promise<RunnerFsListResult>;
   /** 그 러너에서 프로젝트 자리가 쓸 만한가(project.check) — 오류는 fsList 와 같다 */
   projectCheck(tokenId: string, ref: RunnerProjectRef): Promise<RunnerProjectCheckResult>;
+  /** 그 러너에 git 워크트리를 만든다(worktree.create) — ack 상한 RUNNER_GIT_ACK_TIMEOUT_MS, 오류는 fsList 와 같다 */
+  worktreeCreate(tokenId: string, req: RunnerWorktreeCreate): Promise<RunnerWorktreeCreateResult>;
+  /** 그 러너의 git 워크트리 폴더를 지운다(worktree.remove) — 오류는 worktreeCreate 와 같다 */
+  worktreeRemove(tokenId: string, req: RunnerWorktreeRemove): Promise<RunnerWorktreeRemoveResult>;
+  /** 그 토큰으로 지금 붙은 러너가 hello 로 그 능력을 알렸나. 붙어 있지 않으면 false */
+  hasCapability(tokenId: string, capability: RunnerCapability): boolean;
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
 }
 
@@ -927,20 +941,27 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
   }
 
-  /** 서버 → 러너 ack 요청(fs.list·project.check) — 답은 계약 스키마로 거른다 */
-  async function askRunner<R>(
+  /** 서버 → 러너 ack 요청(fs.list·project.check·worktree.*) — 요청·답 모두 계약 스키마로 거른다 */
+  async function askRunner<Q, R>(
     tokenId: string,
-    event: "fs.list" | "project.check",
-    ref: RunnerProjectRef,
+    event: "fs.list" | "project.check" | "worktree.create" | "worktree.remove",
+    payload: Q,
+    requestSchema: z.ZodType<Q>,
     schema: z.ZodType<R>,
+    timeoutMs: number = RUNNER_FS_ACK_TIMEOUT_MS,
   ): Promise<R> {
-    const request = RunnerProjectRef.safeParse(ref);
+    const request = requestSchema.safeParse(payload);
     if (!request.success) throw new AdapterError("VALIDATION", issues(request.error));
     const runner = registry.byToken(tokenId);
     if (closed || !runner) throw new AdapterError("ADAPTER_UNAVAILABLE", "runner is not connected");
     let raw: unknown;
     try {
-      raw = await runner.socket.timeout(RUNNER_FS_ACK_TIMEOUT_MS).emitWithAck(event, request.data);
+      // 이벤트마다 페이로드 타입이 달라 emitWithAck 의 오버로드를 고를 수 없다 — 요청은 위에서 계약으로 걸렀다
+      raw = await (
+        runner.socket.timeout(timeoutMs) as unknown as {
+          emitWithAck(e: string, p: unknown): Promise<unknown>;
+        }
+      ).emitWithAck(event, request.data);
     } catch {
       // 기다리는 사이 끊긴 것과 늦은 것을 가른다 — 끊김은 다시 붙으면 되고, 늦음은 러너 쪽 디스크가 느린 것이다
       throw isLive(runner)
@@ -1080,8 +1101,29 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return runner ? runnerLive(runner) : null;
     },
 
-    fsList: (tokenId, ref) => askRunner(tokenId, "fs.list", ref, RunnerFsListResult),
-    projectCheck: (tokenId, ref) => askRunner(tokenId, "project.check", ref, RunnerProjectCheckResult),
+    fsList: (tokenId, ref) => askRunner(tokenId, "fs.list", ref, RunnerProjectRef, RunnerFsListResult),
+    projectCheck: (tokenId, ref) =>
+      askRunner(tokenId, "project.check", ref, RunnerProjectRef, RunnerProjectCheckResult),
+    worktreeCreate: (tokenId, req) =>
+      askRunner(
+        tokenId,
+        "worktree.create",
+        req,
+        RunnerWorktreeCreate,
+        RunnerWorktreeCreateResult,
+        RUNNER_GIT_ACK_TIMEOUT_MS,
+      ),
+    worktreeRemove: (tokenId, req) =>
+      askRunner(
+        tokenId,
+        "worktree.remove",
+        req,
+        RunnerWorktreeRemove,
+        RunnerWorktreeRemoveResult,
+        RUNNER_GIT_ACK_TIMEOUT_MS,
+      ),
+    hasCapability: (tokenId, capability) =>
+      !closed && (registry.byToken(tokenId)?.capabilities.includes(capability) ?? false),
     capabilitiesFor,
 
     revokeTokenSessions(tokenId) {

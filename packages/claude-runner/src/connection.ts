@@ -9,6 +9,8 @@ import {
   RunnerHelloResult,
   RunnerOutboundAck,
   RunnerProjectRef,
+  RunnerWorktreeCreate,
+  RunnerWorktreeRemove,
   RunnerRunAbort,
   RunnerRunStart,
   type RunnerCapability,
@@ -24,6 +26,7 @@ import { checkCeiling } from "./ceiling";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "./config";
 import { capabilityList, type ProgramDriver, type RunSpec } from "./driver";
 import { checkProject, listDirectory } from "./fs-browse";
+import { createWorktree, removeWorktree } from "./worktrees";
 import { createScheduler } from "./scheduler";
 import { abortedFinal, type ApprovalOutcome, createRunSink, type RunBridge, type RunEmitter } from "./sink";
 
@@ -34,7 +37,7 @@ export type RunnerVersions = Pick<RunnerHello, "runnerVersion" | "sdkVersion" | 
 /** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다 */
 export const NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
 
-const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt", "approvals", "attachments"];
+const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt", "approvals", "attachments", "worktrees"];
 const HELLO_TIMEOUT_MS = 15_000;
 /** outbound.post ack — 서버가 메시지를 저장하고 답한다. 넘으면 도구 결과로 실패를 돌려준다 */
 const POST_ACK_TIMEOUT_MS = 30_000;
@@ -460,7 +463,21 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
 
   socket.on("project.check", (payload, ack) => {
     const parsed = RunnerProjectRef.safeParse(payload);
-    ack(parsed.success ? checkProject(config, parsed.data) : { ok: false, reason: "not_found" });
+    if (!parsed.success) return ack({ ok: false, reason: "not_found" });
+    void checkProject(config, parsed.data).then(ack);
+  });
+
+  // git 워크트리(워크트리 스펙 5.3) — 형식이 틀린 요청은 git 을 부르지 않고 git_failed
+  socket.on("worktree.create", (payload, ack) => {
+    const parsed = RunnerWorktreeCreate.safeParse(payload);
+    if (!parsed.success) return ack({ ok: false, reason: "git_failed" });
+    void createWorktree(config, parsed.data).then(ack);
+  });
+
+  socket.on("worktree.remove", (payload, ack) => {
+    const parsed = RunnerWorktreeRemove.safeParse(payload);
+    if (!parsed.success) return ack({ ok: false, reason: "git_failed" });
+    void removeWorktree(config, parsed.data).then(ack);
   });
 
   socket.on("run.abort", (payload) => {
