@@ -27,7 +27,7 @@ export const RUNNER_ATTACHMENTS_PATH = "/runner/attachments";
 /** 2 — 러너는 천장만 쥐고 서버가 run.start 에 에이전트 정의를 싣는다(러너 일반화 스펙 3장). 옛 러너(1)는 PROTOCOL_MISMATCH */
 export const RUNNER_PROTOCOL = 2;
 
-export const RunnerCapability = z.enum(["threads", "interrupt", "approvals", "attachments"]);
+export const RunnerCapability = z.enum(["threads", "interrupt", "approvals", "attachments", "worktrees"]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
@@ -155,6 +155,8 @@ export interface RunnerServerToClientEvents {
   "approval.resolve": (p: RunnerApprovalResolve) => void;
   "fs.list": (p: RunnerProjectRef, ack: (r: RunnerFsListResult) => void) => void;
   "project.check": (p: RunnerProjectRef, ack: (r: RunnerProjectCheckResult) => void) => void;
+  "worktree.create": (p: RunnerWorktreeCreate, ack: (r: RunnerWorktreeCreateResult) => void) => void;
+  "worktree.remove": (p: RunnerWorktreeRemove, ack: (r: RunnerWorktreeRemoveResult) => void) => void;
 }
 
 // ── 천장·프로젝트(러너 일반화 스펙 2·3장) — 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를
@@ -306,13 +308,65 @@ export const RunnerFsListResult = z.discriminatedUnion("ok", [
 export type RunnerFsListResult = z.infer<typeof RunnerFsListResult>;
 
 export const RunnerProjectCheckResult = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), isGitRepo: z.boolean() }),
+  // isGitTop — 저장소의 주 작업 트리 맨 위일 때만 참(워크트리 스펙 W14). 옛 러너는 싣지 않는다(서버는 false 로 읽는다)
+  z.object({ ok: z.literal(true), isGitRepo: z.boolean(), isGitTop: z.boolean().optional() }),
   z.object({
     ok: z.literal(false),
     reason: z.enum(["root_missing", "not_found", "not_directory", "outside_root"]),
   }),
 ]);
 export type RunnerProjectCheckResult = z.infer<typeof RunnerProjectCheckResult>;
+
+// ── git 워크트리(워크트리 스펙 5.2) — 서버 → 러너 ack 요청. message 는 러너가 경로를 가리고 200자로 자른 git stderr
+
+/** worktree.create — repo 는 저장소(주 작업 트리 맨 위), target 은 만들 워크트리 폴더(아직 없거나 빈 디렉터리) */
+export const RunnerWorktreeCreate = z.object({
+  repo: RunnerProjectRef,
+  target: RunnerProjectRef,
+  branch: z.string().min(1).max(200),
+});
+export type RunnerWorktreeCreate = z.infer<typeof RunnerWorktreeCreate>;
+
+export const RunnerWorktreeCreateResult = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    /** 새 브랜치였나 */
+    created: z.boolean(),
+    /** 이미 그 자리에 같은 브랜치로 등록된 워크트리를 받아들였나(W13) */
+    adopted: z.boolean(),
+    /** 기준 커밋 짧은 해시 */
+    base: z.string().max(64),
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum([
+      "not_git",
+      "is_worktree",
+      "target_exists",
+      "outside_root",
+      "root_missing",
+      "branch_in_use",
+      "invalid_branch",
+      "git_failed",
+    ]),
+    message: z.string().max(200).optional(),
+  }),
+]);
+export type RunnerWorktreeCreateResult = z.infer<typeof RunnerWorktreeCreateResult>;
+
+/** worktree.remove — `--force` 없이 지운다. 커밋하지 않은 변경·추적 안 된 파일이 있으면 dirty(W7) */
+export const RunnerWorktreeRemove = z.object({ repo: RunnerProjectRef, target: RunnerProjectRef });
+export type RunnerWorktreeRemove = z.infer<typeof RunnerWorktreeRemove>;
+
+export const RunnerWorktreeRemoveResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum(["dirty", "not_worktree", "git_failed"]),
+    message: z.string().max(200).optional(),
+  }),
+]);
+export type RunnerWorktreeRemoveResult = z.infer<typeof RunnerWorktreeRemoveResult>;
 
 /** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
 export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools"]);

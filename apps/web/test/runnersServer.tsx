@@ -69,6 +69,10 @@ export function projectOf(n: number, over: Partial<RunnerProject> = {}): RunnerP
     label: `app${n}`,
     agentCount: 0,
     archivedAt: null,
+    parentProjectId: null,
+    branch: null,
+    isGit: false,
+    cleanupIssue: null,
     ...over,
   };
 }

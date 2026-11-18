@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ArchiveRunnerProjectBody,
   CreateAgentBody,
+  CreateWorktreeBody,
   CreateRunnerAgentBody,
   DiscoverAgentsQuery,
   findControlTool,
   RunnerFsQuery,
+  RunnerProject,
   RunnerRunAgent,
   UpdateAgentBody,
 } from "../src";
@@ -79,5 +82,42 @@ describe("제어 도구는 러너 구성을 받지 않는다", () => {
     expect(update.safeParse({ agentId: ID, name: "새 이름" }).success).toBe(true);
     for (const key of ["model", "permissionMode", "allowedTools", "disallowedTools", "dmAccess", "enabled"])
       expect(update.safeParse({ agentId: ID, [key]: null }).success, key).toBe(false);
+  });
+});
+
+describe("러너 워크트리 REST", () => {
+  const project = {
+    id: ID,
+    runnerId: ID,
+    rootId: "src",
+    rootLabel: "src",
+    relPath: "dodok/.worktrees/feat",
+    label: "feat",
+    agentCount: 0,
+    archivedAt: null,
+  };
+
+  it("RunnerProject 에 parentProjectId·branch·isGit·cleanupIssue", () => {
+    const wt = { ...project, parentProjectId: ID, branch: "dodok/feat", isGit: false, cleanupIssue: "dirty" };
+    expect(RunnerProject.parse(wt)).toEqual(wt);
+    const plain = { ...project, parentProjectId: null, branch: null, isGit: true, cleanupIssue: null };
+    expect(RunnerProject.parse(plain)).toEqual(plain);
+    expect(RunnerProject.safeParse(project).success).toBe(false);
+  });
+
+  it("CreateWorktreeBody — 이름 필수, 브랜치·위치 선택", () => {
+    expect(CreateWorktreeBody.parse({ label: "feat" })).toEqual({ label: "feat" });
+    const full = { label: "feat", branch: "dodok/x", location: { rootId: "src", relPath: "wt/feat" } };
+    expect(CreateWorktreeBody.parse(full)).toEqual(full);
+    expect(CreateWorktreeBody.safeParse({}).success).toBe(false);
+    expect(
+      CreateWorktreeBody.safeParse({ label: "x", location: { rootId: "src", relPath: "/abs" } }).success,
+    ).toBe(false);
+  });
+
+  it("ArchiveRunnerProjectBody — keepFolder 는 true 만", () => {
+    expect(ArchiveRunnerProjectBody.parse({})).toEqual({});
+    expect(ArchiveRunnerProjectBody.parse({ keepFolder: true })).toEqual({ keepFolder: true });
+    expect(ArchiveRunnerProjectBody.safeParse({ keepFolder: false }).success).toBe(false);
   });
 });

@@ -79,6 +79,10 @@ function toApiProject(
     label: row.label,
     agentCount: agentCounts.get(row.id) ?? 0,
     archivedAt: row.archivedAt?.toISOString() ?? null,
+    parentProjectId: null,
+    branch: null,
+    isGit: false,
+    cleanupIssue: null,
   };
 }
 
