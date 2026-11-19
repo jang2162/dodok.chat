@@ -1,6 +1,6 @@
 import { type Conversation, ConversationTitle as TitleSchema } from "@dodok/shared";
 import { CircleSlashIcon } from "lucide-react";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { useChannelArchived } from "@/features/channels/archived";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
@@ -143,14 +143,9 @@ export function CloseConversationButton({
   channelId: string;
   conversationId: string;
 }) {
-  const conversation = useConversationView(conversationId).data;
-  const { canManage } = useConversationPermissions(channelId);
-  const patch = usePatchConversation(conversationId);
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
-  const archived = useChannelArchived();
-  if (!conversation || conversation.closedAt !== undefined || archived || !canManage(conversation))
-    return null;
+  if (!useCanCloseConversation(channelId, conversationId)) return null;
   return (
     <>
       <Button
@@ -163,17 +158,50 @@ export function CloseConversationButton({
       >
         <CircleSlashIcon />
       </Button>
-      <ConfirmDialog
+      <CloseConversationDialog
+        conversationId={conversationId}
         open={open}
         onOpenChange={setOpen}
-        title="세션 닫기"
-        description={`「${conversation.title}」 세션을 닫습니다 — 진행 중인 실행은 멈춥니다.`}
-        confirmLabel="세션 닫기"
-        pendingLabel="닫는 중…"
-        pending={patch.isPending}
         returnFocus={opener}
-        onConfirm={() => patch.mutate({ closed: true }, { onSuccess: () => setOpen(false) })}
       />
     </>
+  );
+}
+
+/** 「세션 닫기」를 보일 때인가 — 바꿀 권한이 있고 열린 세션이고 보관한 채널이 아니다(좁은 화면 「더 보기」도 같은 판정) */
+export function useCanCloseConversation(channelId: string, conversationId: string): boolean {
+  const conversation = useConversationView(conversationId).data;
+  const { canManage } = useConversationPermissions(channelId);
+  const archived = useChannelArchived();
+  return Boolean(conversation && conversation.closedAt === undefined && !archived && canManage(conversation));
+}
+
+/** 「세션 닫기」 확인 — 머리 단추와 좁은 화면 「더 보기」 메뉴가 함께 쓴다. 여는 자리가 트리거가 아니라 `returnFocus` 로 초점을 돌려준다 */
+export function CloseConversationDialog({
+  conversationId,
+  open,
+  onOpenChange,
+  returnFocus,
+}: {
+  conversationId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  returnFocus?: RefObject<HTMLElement | null>;
+}) {
+  const conversation = useConversationView(conversationId).data;
+  const patch = usePatchConversation(conversationId);
+  if (!conversation) return null;
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="세션 닫기"
+      description={`「${conversation.title}」 세션을 닫습니다 — 진행 중인 실행은 멈춥니다.`}
+      confirmLabel="세션 닫기"
+      pendingLabel="닫는 중…"
+      pending={patch.isPending}
+      returnFocus={returnFocus}
+      onConfirm={() => patch.mutate({ closed: true }, { onSuccess: () => onOpenChange(false) })}
+    />
   );
 }

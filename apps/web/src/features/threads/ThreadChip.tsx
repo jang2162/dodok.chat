@@ -3,8 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { MessageSquareReplyIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useAgents } from "@/api/queries";
-import { agentColorVar } from "@/theme/agentColor";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { threadRootOf } from "./queries";
 import { useNoteThreadOpener } from "./threadOpener";
 
@@ -42,15 +41,16 @@ export function ThreadChip({ message, summary }: { message: Message; summary: Th
       {faces.length > 0 && (
         <span className="flex -space-x-1.5" aria-hidden>
           {faces.map((a) => (
-            <Avatar
+            <IdentityAvatar
               key={a.id}
-              size="sm"
-              className="size-5 border-2"
-              style={{ borderColor: agentColorVar(a.handle) }}
-            >
-              {a.avatarUrl && <AvatarImage src={a.avatarUrl} alt="" />}
-              <AvatarFallback className="text-[10px]">{a.name.slice(0, 1)}</AvatarFallback>
-            </Avatar>
+              kind="agent"
+              id={a.id}
+              name={a.name}
+              handle={a.handle}
+              avatarUrl={a.avatarUrl}
+              size={24}
+              className="size-5"
+            />
           ))}
         </span>
       )}

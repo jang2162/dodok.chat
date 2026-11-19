@@ -5,17 +5,21 @@ import { isDeactivated } from "@/features/members/deactivated";
 import { WithPresence } from "@/features/presence/PresenceDot";
 import { MENTIONS_MAX, useChannelUnread } from "@/features/reads/useUnread";
 import { cn } from "@/lib/utils";
-import { agentColorVar } from "@/theme/agentColor";
-import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from "@/ui/avatar";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { directNames, directPeer, isLoneGroup, personName } from "./queries";
 
-/** 사람 아바타 — 사진이 없으면 이름 첫 글자 */
+const PX = { sm: 24, default: 32 } as const;
+
+/** 사람 아바타 — 사진이 없으면 이니셜(옅은 채움, 테두리 없음 — ui/identity-avatar) */
 export function PersonAvatar({ person, size = "sm" }: { person: Person; size?: "sm" | "default" }) {
   return (
-    <Avatar size={size}>
-      {person.avatarUrl && <AvatarImage src={person.avatarUrl} alt="" />}
-      <AvatarFallback className="text-[10px]">{personName(person).slice(0, 1)}</AvatarFallback>
-    </Avatar>
+    <IdentityAvatar
+      kind="person"
+      id={person.id}
+      name={personName(person)}
+      avatarUrl={person.avatarUrl}
+      size={PX[size]}
+    />
   );
 }
 
@@ -33,33 +37,31 @@ export function PersonPresenceAvatar({ person, size = "sm" }: { person: Person; 
 export function DmAgentAvatar({ agent, size = "sm" }: { agent: Agent; size?: "sm" | "default" }) {
   return (
     <WithPresence kind="agent" id={agent.id}>
-      <Avatar size={size} className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
-        {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-        <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
-      </Avatar>
+      <IdentityAvatar
+        kind="agent"
+        id={agent.id}
+        name={agent.name}
+        handle={agent.handle}
+        avatarUrl={agent.avatarUrl}
+        size={PX[size]}
+      />
     </WithPresence>
   );
 }
 
-function AgentAvatar({ agent }: { agent: Agent }) {
-  return (
-    <Avatar size="sm" className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
-      {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-      <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
-    </Avatar>
-  );
-}
-
-/** 그룹 DM 의 겹친 아바타 둘 — 사람 먼저, 그다음 에이전트(나를 뺀 참여자) */
+/**
+ * 그룹 DM 표시 — 겹친 얼굴 대신 나를 포함한 참여자 수를 적은 둥근 사각형(스펙 2026-11-19 U5). 1:1(원)과 모양부터 다르다.
+ * 이름은 옆 글(참여자 이름 나열)이 읽히므로 숨긴다
+ */
 export function GroupAvatars({ direct }: { direct: Pick<DirectSummary, "users" | "agents"> }) {
-  const faces = [
-    ...direct.users.map((p) => <PersonAvatar key={`u:${p.id}`} person={p} />),
-    ...direct.agents.map((a) => <AgentAvatar key={`a:${a.id}`} agent={a} />),
-  ].slice(0, 2);
   return (
-    <AvatarGroup aria-hidden className="shrink-0">
-      {faces}
-    </AvatarGroup>
+    <span
+      data-testid="group-count"
+      aria-hidden
+      className="flex size-6 shrink-0 items-center justify-center rounded-md bg-secondary text-xs font-semibold text-secondary-foreground tabular-nums"
+    >
+      {direct.users.length + direct.agents.length + 1}
+    </span>
   );
 }
 
@@ -125,7 +127,7 @@ export function DmRowLink({
 
 /**
  * 사람 DM·그룹 DM 한 줄(사람 간 DM 스펙 「목록 — 사이드바 「다이렉트 메시지」」) — 1:1 은 상대 아바타·접속 점·이름(비활성이면 흐리게 +
- * 「(비활성)」), 그룹은 겹친 아바타 둘과 나를 뺀 이름 나열
+ * 「(비활성)」), 그룹은 나를 포함한 인원수와 나를 뺀 이름 나열
  */
 export function DirectRow({ direct, onNavigate }: { direct: DirectSummary; onNavigate?: () => void }) {
   const peer = directPeer(direct);

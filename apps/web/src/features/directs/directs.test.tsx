@@ -30,6 +30,7 @@ import { stubEditorDom, stubNotification } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { AGENT, approval, CH, msg, uid } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
+import { stubMedia } from "../../../test/media";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { agentOf } from "../../../test/settingsServer";
 import { channelOf, conversationOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
@@ -281,8 +282,8 @@ describe("사이드바 「다이렉트 메시지」 — 두 목록을 합친 최
     stubServer({ directs: [GROUP_D, AGROUP_D, ONE_D], dms: [FIN_DM] });
     renderRoute(`/c/${CH}/s/new`);
     const nav = await dmNav();
-    // 줄 글자는 아바타 머리글자 + 이름 — ONE(03:00) · FIN(02:30) · GROUP(02:00), 글 없는 AGROUP 은 빠진다
-    await waitFor(() => expect(rowTexts(nav)).toEqual(["미미아", "FFin 봇", "미준미아, 준"]));
+    // 줄 글자는 아바타 머리글자(그룹은 인원수) + 이름 — ONE(03:00) · FIN(02:30) · GROUP(02:00), 글 없는 AGROUP 은 빠진다
+    await waitFor(() => expect(rowTexts(nav)).toEqual(["미미아", "FFin 봇", "3미아, 준"]));
     const channels = screen.getByRole("navigation", { name: "채널" });
     expect(within(channels).queryByText(/direct/)).toBeNull();
   });
@@ -303,6 +304,28 @@ describe("사이드바 「다이렉트 메시지」 — 두 목록을 합친 최
     const link = await within(await dmNav()).findByRole("link", { name: /올드/ });
     expect(link).toHaveTextContent("(비활성)");
     expect(link).toHaveAttribute("data-dim", "true");
+  });
+
+  it("그룹 DM 줄은 겹친 아바타 대신 나를 포함한 인원수", async () => {
+    stubServer({ directs: [{ ...AGROUP_D, lastMessageAt: "2026-11-09T01:00:00.000Z" }] });
+    renderRoute(`/c/${CH}/s/new`);
+    const link = await within(await dmNav()).findByRole("link", { name: /미아, @dev/ });
+    // 사람 1(미아)·에이전트 1(dev) + 나
+    expect(within(link).getByTestId("group-count")).toHaveTextContent(/^3$/);
+    expect(link.querySelector("[data-slot=avatar]")).toBeNull();
+  });
+
+  it("사람 아바타 이니셜은 대문자·12px, 테두리 없음 — 에이전트는 테두리", async () => {
+    const LOWER = person(uid(6_004), "olive", "olive");
+    stubServer({ directs: [directOf(uid(35), [LOWER], [])], dms: [FIN_DM] });
+    renderRoute(`/c/${CH}/s/new`);
+    const nav = await dmNav();
+    const initial = await within(await within(nav).findByRole("link", { name: /olive/ })).findByText("O");
+    expect(initial).toHaveClass("text-xs");
+    expect(initial.closest("[data-slot=avatar]")).not.toHaveClass("border-2");
+    const fin = within(within(nav).getByRole("link", { name: /Fin 봇/ })).getByText("F");
+    expect(fin).toHaveClass("text-xs");
+    expect(fin.closest("[data-slot=avatar]")).toHaveClass("border-2");
   });
 
   it("direct 의 channel.created·channel.updated 는 채널 목록이 아니라 direct 목록을 다시 받고, 모르는 채널의 활동·people.changed 도 다시 받는다", async () => {
@@ -553,6 +576,73 @@ describe("대화 화면", () => {
   });
 });
 
+/** 「더 보기」 메뉴를 연다 — 트리거에 초점을 준 뒤 Enter(jsdom 의 window blur 가 클릭으로 연 Radix 메뉴를 닫는다 — invitedAgents.test) */
+async function openMore(user: ReturnType<typeof userEvent.setup>, header: HTMLElement) {
+  const more = await within(header).findByRole("button", { name: "더 보기" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  return { more, menu: await screen.findByRole("menu") };
+}
+const menuLabels = (menu: HTMLElement) =>
+  within(menu)
+    .getAllByRole("menuitem")
+    .map((i) => i.textContent);
+
+describe("좁은 화면 머리(스펙 2026-11-19 U6)", () => {
+  it("그룹 세션 — 제목 두 줄(이름·세션 제목)과 「더 보기」, 메뉴는 데스크톱 단추와 같은 순서·같은 동작", async () => {
+    stubMedia(true);
+    stubServer({
+      directs: [{ ...AGROUP_D, lastMessageAt: "2026-11-09T01:00:00.000Z" }],
+      conversations: { [AGROUP]: [conv(AGROUP, S1)] },
+    });
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/c/${AGROUP}/s/${S1}`);
+    const header = await screen.findByTestId("direct-header");
+    const session = await within(header).findByTestId("direct-session-title");
+    await within(session).findByTestId("conversation-title");
+    // 위 참여자 이름, 아래 세션 제목 — 한 칸 안에 위아래로
+    const titles = session.parentElement as HTMLElement;
+    expect(titles).toHaveClass("flex-col");
+    expect(within(titles).getByRole("button", { name: /^참여자 — / })).toBeInTheDocument();
+    const outside = within(header)
+      .getAllByRole("button")
+      .filter((b) => !titles.contains(b))
+      .map((b) => b.getAttribute("aria-label"));
+    expect(outside).toEqual(["채널 목록 열기", "세션 목록", "더 보기"]);
+    expect(within(header).queryAllByRole("link")).toEqual([]);
+
+    let { more, menu } = await openMore(user, header);
+    await waitFor(() => expect(menuLabels(menu)).toEqual(["참여자", "새 세션", "파일", "활동", "세션 닫기"]));
+
+    // 「참여자」는 제목 단추와 같은 목록 — 닫으면 초점이 「더 보기」로
+    await user.click(within(menu).getByRole("menuitem", { name: "참여자" }));
+    const dialog = await screen.findByRole("dialog", { name: "참여자" });
+    expect(within(dialog).getAllByRole("button").length).toBeGreaterThan(0);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "참여자" })).toBeNull());
+    await waitFor(() => expect(more).toHaveFocus());
+
+    // 「활동」은 데스크톱 링크와 같은 주소로(좁은 화면이면 패널이 시트로 덮는다)
+    ({ more, menu } = await openMore(user, header));
+    await user.click(within(menu).getByRole("menuitem", { name: "활동" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${AGROUP}/s/${S1}/activity`));
+  });
+
+  it("1:1 한 줄기 — 상대 제목은 그대로, 메뉴는 「파일」 하나(데스크톱 단추와 같다)", async () => {
+    stubMedia(true);
+    stubServer({ directs: [ONE_D], conversations: { [ONE]: [conv(ONE, ONE_CONV)] } });
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/c/${ONE}/s/${ONE_CONV}`);
+    const header = await screen.findByTestId("direct-header");
+    expect(await within(header).findByRole("button", { name: "미아 프로필" })).toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "세션 목록" })).toBeNull();
+    const { menu } = await openMore(user, header);
+    expect(menuLabels(menu)).toEqual(["파일"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "파일" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${ONE}/s/${ONE_CONV}/files`));
+  });
+});
+
 /**
  * 태스크 5 리뷰 M1 — 에이전트를 보관하면 서버가 그 에이전트를 agents 에서 빼므로 [jun, @dev] 그룹이 1:1 [jun] 줄과 users·agents 가
  * 같아진다. 서버가 실은 sessions 로 가른다
@@ -567,7 +657,7 @@ describe("보관한 에이전트가 든 그룹(sessions 참, agents 빔)", () =>
     stubServer({ directs: [ARCH_D, JUN_D] });
     renderRoute(`/c/${CH}/s/new`);
     const nav = await dmNav();
-    await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "준준(그룹)"]));
+    await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "2준(그룹)"]));
   });
 
   it("검색 결과 — 사이드바처럼 1:1 은 「DM · 준」, 그룹은 「DM · 준 (그룹)」(재리뷰 L3)", async () => {

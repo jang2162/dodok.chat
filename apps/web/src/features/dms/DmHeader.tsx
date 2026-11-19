@@ -1,15 +1,31 @@
 import { type Agent, type Channel, RUNNER_PROGRAM_NAME } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useMatchRoute } from "@tanstack/react-router";
-import { ActivityIcon, ListIcon, NotebookPenIcon, SquarePenIcon } from "lucide-react";
-import { type FormEvent, type RefObject, useId, useState } from "react";
+import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import {
+  ActivityIcon,
+  CircleSlashIcon,
+  FolderIcon,
+  ListIcon,
+  NotebookPenIcon,
+  SquarePenIcon,
+  UserIcon,
+} from "lucide-react";
+import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
+import { HeaderOverflow, type OverflowItem } from "@/app/layout/HeaderOverflow";
 import { FilesTabLink } from "@/app/layout/PanelTabs";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { providerName } from "@/features/agents/providerLabels";
-import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
+import {
+  CloseConversationButton,
+  CloseConversationDialog,
+  ConversationTitle,
+  useCanCloseConversation,
+} from "@/features/conversations/ConversationTitle";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { cn } from "@/lib/utils";
 import { usePatchChannel } from "@/features/settings/mutations";
 import { PROMPT_MAX, PROMPT_SAVED_NOTICE } from "@/features/settings/PromptSection";
 import { Button } from "@/ui/button";
@@ -44,7 +60,8 @@ export function dmProviderLine(agent: Agent): string {
  * DM 머리(에이전트 DM 스펙 3.2): 에이전트 아바타·이름·제공자 줄(`dmProviderLine`), 지금 세션 제목(바꾸기·닫기는 채널과 같은 것), 「이 DM 의 지시」,
  * 「새 세션」, 「활동」 패널 여닫기. 채널 머리의 참여 에이전트 묶음·채널 설정은 없다 — DM 에서는 채널 관리를 하지 않는다(서버 VALIDATION, 계획 판정 PD9).
  * `activityRef` 는 「활동」 링크 — 패널을 닫으면 초점이 여기로 돌아온다(채널 머리의 설정 링크 자리). 읽기 전용이면 「새 세션」을 두지 않고
- * 지시는 읽기만 한다
+ * 지시는 읽기만 한다. 좁은 화면은 `[채널 목록 열기] [세션 목록] [이름·세션 제목 두 줄] [더 보기]` — 아바타(프로필)·제공자 줄은 숨기고
+ * 프로필·지시·새 세션·파일·활동·세션 닫기는 「더 보기」 메뉴로(스펙 2026-11-19 U6)
  */
 export function DmHeader({
   channel,
@@ -70,6 +87,79 @@ export function DmHeader({
   const matchRoute = useMatchRoute();
   const params = { channelId: channel.id, conversationId };
   const activityOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/activity", params }));
+  const filesOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/files", params }));
+  const narrow = useIsNarrow();
+  const navigate = useNavigate();
+  const [instructionOpen, setInstructionOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  // 「더 보기」 단추 — 메뉴에서 연 확인 대화상자가 닫히면 초점이 여기로
+  const moreRef = useRef<HTMLElement | null>(null);
+  const canClose = useCanCloseConversation(channel.id, conversationId);
+  const canNew = readOnly === null && conversationId !== NEW_CONVERSATION;
+  const overflow: OverflowItem[] = [
+    ...(agent && openProfile
+      ? [
+          {
+            key: "profile",
+            label: `${agent.name} 프로필`,
+            icon: <UserIcon />,
+            onSelect: () => openProfile({ kind: "agent", id: agent.id }),
+          },
+        ]
+      : []),
+    {
+      key: "instruction",
+      label: DM_INSTRUCTION_LABEL,
+      icon: <NotebookPenIcon />,
+      onSelect: () => setInstructionOpen(true),
+    },
+    ...(canNew
+      ? [
+          {
+            key: "new",
+            label: "새 세션",
+            icon: <SquarePenIcon />,
+            onSelect: () =>
+              void navigate({
+                to: "/c/$channelId/s/$conversationId",
+                params: { channelId: channel.id, conversationId: NEW_CONVERSATION },
+              }),
+          },
+        ]
+      : []),
+    {
+      key: "files",
+      label: "파일",
+      icon: <FolderIcon />,
+      onSelect: () =>
+        void navigate({
+          to: filesOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/files",
+          params,
+        }),
+    },
+    {
+      key: "activity",
+      label: "활동",
+      icon: <ActivityIcon />,
+      onSelect: () =>
+        void navigate({
+          to: activityOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/activity",
+          params,
+        }),
+    },
+    ...(canClose
+      ? [
+          {
+            key: "close",
+            label: "세션 닫기",
+            icon: <CircleSlashIcon />,
+            destructive: true,
+            separatorBefore: true,
+            onSelect: () => setCloseOpen(true),
+          },
+        ]
+      : []),
+  ];
 
   return (
     <header data-testid="dm-header" className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
@@ -81,10 +171,12 @@ export function DmHeader({
         aria-label="세션 목록"
         aria-expanded={listOpen}
         onClick={onToggleList}
+        className={cn(narrow && "size-11")}
       >
         <ListIcon />
       </Button>
-      {agent &&
+      {!narrow &&
+        agent &&
         (openProfile ? (
           <button
             type="button"
@@ -100,7 +192,7 @@ export function DmHeader({
       <div className="min-w-0 flex-1">
         <h1 className="flex items-baseline gap-2 text-base font-semibold">
           <span className="truncate">{agent?.name ?? "DM"}</span>
-          {agent && (
+          {!narrow && agent && (
             // 이름보다 먼저 줄어든다 — 좁은 화면에서 라벨이 자리를 쥐면 이름이 한 글자로 잘린다
             <span className="min-w-0 shrink-1000 truncate text-xs font-normal text-muted-foreground">
               {dmProviderLine(agent)}
@@ -111,8 +203,28 @@ export function DmHeader({
           <ConversationTitle channelId={channel.id} conversationId={conversationId} />
         </div>
       </div>
-      <DmInstructionDialog channel={channel} readOnly={readOnly !== null} />
-      {readOnly === null && conversationId !== NEW_CONVERSATION && (
+      <DmInstructionDialog
+        channel={channel}
+        readOnly={readOnly !== null}
+        open={instructionOpen}
+        onOpenChange={setInstructionOpen}
+        trigger={!narrow}
+        returnFocus={narrow ? moreRef : undefined}
+      />
+      {narrow && (
+        <>
+          <HeaderOverflow items={overflow} triggerRefs={[activityRef, moreRef]} />
+          {canClose && (
+            <CloseConversationDialog
+              conversationId={conversationId}
+              open={closeOpen}
+              onOpenChange={setCloseOpen}
+              returnFocus={moreRef}
+            />
+          )}
+        </>
+      )}
+      {!narrow && canNew && (
         <Button asChild variant="ghost" size="icon-sm">
           <Link
             to="/c/$channelId/s/$conversationId"
@@ -124,20 +236,26 @@ export function DmHeader({
           </Link>
         </Button>
       )}
-      <CloseConversationButton channelId={channel.id} conversationId={conversationId} />
-      <FilesTabLink channelId={channel.id} conversationId={conversationId} />
-      <Button asChild variant="ghost" size="icon-sm">
-        <Link
-          ref={activityRef}
-          to={activityOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/activity"}
-          params={params}
-          activeOptions={{ exact: true }}
-          aria-label="활동"
-          aria-expanded={activityOpen}
-        >
-          <ActivityIcon />
-        </Link>
-      </Button>
+      {!narrow && (
+        <>
+          <CloseConversationButton channelId={channel.id} conversationId={conversationId} />
+          <FilesTabLink channelId={channel.id} conversationId={conversationId} />
+          <Button asChild variant="ghost" size="icon-sm">
+            <Link
+              ref={activityRef}
+              to={
+                activityOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/activity"
+              }
+              params={params}
+              activeOptions={{ exact: true }}
+              aria-label="활동"
+              aria-expanded={activityOpen}
+            >
+              <ActivityIcon />
+            </Link>
+          </Button>
+        </>
+      )}
     </header>
   );
 }
@@ -147,10 +265,26 @@ export function DmHeader({
  * 에서 `prompt` 만 받는다, PD9). 공백뿐이면 지운다(null). 읽기 전용 DM 이면 값만 보인다(서버가 409 DM_READ_ONLY).
  * 저장이 409 로 거절되면(이 탭이 읽기 전용을 아직 모른다) 전역 토스트가 사유를 알리고, DM 목록을 다시 받아 읽기만 하게 바뀐다
  */
-function DmInstructionDialog({ channel, readOnly }: { channel: Channel; readOnly: boolean }) {
+function DmInstructionDialog({
+  channel,
+  readOnly,
+  open,
+  onOpenChange: setOpen,
+  trigger,
+  returnFocus,
+}: {
+  channel: Channel;
+  readOnly: boolean;
+  /** 열림은 머리가 쥔다 — 좁은 화면 「더 보기」도 같은 대화상자를 연다 */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** 거짓이면 머리 단추 없이 대화상자만(좁은 화면) */
+  trigger: boolean;
+  /** 트리거 없이 열었을 때 닫으면 초점이 돌아갈 자리(좁은 화면 「더 보기」) */
+  returnFocus?: RefObject<HTMLElement | null>;
+}) {
   const qc = useQueryClient();
   const save = usePatchChannel(channel.id);
-  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>();
   const [saved, setSaved] = useState(false);
   const id = useId();
@@ -182,12 +316,27 @@ function DmInstructionDialog({ channel, readOnly }: { channel: Channel; readOnly
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={DM_INSTRUCTION_LABEL} title={DM_INSTRUCTION_LABEL}>
-          <NotebookPenIcon />
-        </Button>
-      </DialogTrigger>
-      <DialogContent aria-describedby={undefined}>
+      {trigger && (
+        <DialogTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={DM_INSTRUCTION_LABEL}
+            title={DM_INSTRUCTION_LABEL}
+          >
+            <NotebookPenIcon />
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent
+        aria-describedby={undefined}
+        onCloseAutoFocus={(e) => {
+          const el = returnFocus?.current;
+          if (!el?.isConnected) return;
+          e.preventDefault();
+          el.focus();
+        }}
+      >
         <form onSubmit={submit} className="flex flex-col gap-3">
           <DialogHeader>
             <DialogTitle>{DM_INSTRUCTION_LABEL}</DialogTitle>

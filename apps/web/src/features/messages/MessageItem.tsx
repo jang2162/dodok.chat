@@ -1,5 +1,6 @@
 import type { Message } from "@dodok/shared";
 import { useMe } from "@/api/queries";
+import { BotIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
@@ -16,19 +17,32 @@ import { useSetReaction } from "@/features/reactions/useSetReaction";
 import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
 
 const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full", timeStyle: "short" });
 
-export function MessageTime({ iso, className }: { iso: string; className?: string }) {
+/** 12시간 숫자만(오전·오후 없이) — 이어진 메시지의 36px 칸에 들어가게(스펙 2026-11-19 U3). 오전·오후는 title 에 남는다 */
+function shortTime(d: Date): string {
+  return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+export function MessageTime({
+  iso,
+  className,
+  short = false,
+}: {
+  iso: string;
+  className?: string;
+  short?: boolean;
+}) {
   const d = new Date(iso);
   return (
     <time dateTime={iso} title={FULL.format(d)} className={className}>
-      {TIME.format(d)}
+      {short ? shortTime(d) : TIME.format(d)}
     </time>
   );
 }
@@ -36,13 +50,15 @@ export function MessageTime({ iso, className }: { iso: string; className?: strin
 /** 아바타 36px(스펙 7.1). 에이전트는 테두리 2px 에이전트 색, 사람은 테두리 없음(스펙 7.2) */
 export function AuthorAvatar({ author, onOpen }: { author: Author; onOpen?: () => void }) {
   const avatar = (
-    <Avatar
-      className={author.isAgent ? "size-9 border-2" : "size-9"}
-      style={author.colorVar ? { borderColor: author.colorVar } : undefined}
-    >
-      {author.avatarUrl && <AvatarImage src={author.avatarUrl} alt="" />}
-      <AvatarFallback>{author.name.slice(0, 1)}</AvatarFallback>
-    </Avatar>
+    <IdentityAvatar
+      kind={author.isAgent ? "agent" : "person"}
+      // 누구인지 모르는 작성자(시스템·자동화)는 이름으로 색을 고정한다
+      id={author.ref?.id ?? author.name}
+      name={author.name}
+      handle={author.handle}
+      avatarUrl={author.avatarUrl}
+      size={36}
+    />
   );
   // 접속 점(프로필 스펙 3.3) — 누구인지 모르는 작성자(시스템·자동화)는 점이 없다
   if (!author.ref) return avatar;
@@ -80,17 +96,24 @@ export function AuthorLine({
         <span className="truncate font-semibold">{author.name}</span>
       )}
       {author.isAgent && (
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+        <Badge
+          variant="outline"
+          className="gap-0.5 self-center border-transparent px-1.5 py-0 text-xs text-foreground [&>svg]:size-[13px]"
+          style={{
+            backgroundColor: `color-mix(in oklch, ${author.colorVar ?? "var(--muted-foreground)"} 18%, transparent)`,
+          }}
+        >
+          <BotIcon aria-hidden />
           AI
         </Badge>
       )}
       {author.archived && (
-        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+        <Badge variant="secondary" className="px-1.5 py-0 text-xs text-muted-foreground">
           삭제됨
         </Badge>
       )}
       {author.deactivated && (
-        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+        <Badge variant="secondary" className="px-1.5 py-0 text-xs text-muted-foreground">
           비활성
         </Badge>
       )}
@@ -160,7 +183,8 @@ export function MessageItem({
         ) : (
           <MessageTime
             iso={message.createdAt}
-            className="pt-1 text-[10px] whitespace-nowrap text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+            short
+            className="pt-1 text-xs whitespace-nowrap tabular-nums text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
           />
         )}
       </div>

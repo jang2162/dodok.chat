@@ -400,6 +400,55 @@ describe("DM 화면", () => {
     expect(provider).toHaveClass("min-w-0", "shrink-1000", "truncate");
   });
 
+  it("좁은 화면 — 제목 두 줄(이름·세션 제목)과 「더 보기」, 메뉴는 데스크톱 단추와 같은 순서·같은 동작(스펙 2026-11-19 U6)", async () => {
+    stubMedia(true);
+    stubServer();
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/c/${DM}/s/${A}`);
+    const header = await screen.findByTestId("dm-header");
+    const heading = await within(header).findByRole("heading", { name: "Dev 봇" });
+    // 제공자 줄·아바타는 숨는다 — 아래 줄은 세션 제목
+    expect(heading).not.toHaveTextContent("OpenClaw");
+    const title = await within(header).findByTestId("conversation-title");
+    expect(heading.parentElement).toContainElement(title);
+    const outside = within(header)
+      .getAllByRole("button")
+      .filter((b) => b !== title)
+      .map((b) => b.getAttribute("aria-label"));
+    expect(outside).toEqual(["채널 목록 열기", "세션 목록", "더 보기"]);
+    expect(within(header).queryAllByRole("link")).toEqual([]);
+
+    const more = within(header).getByRole("button", { name: "더 보기" });
+    const open = async () => {
+      more.focus();
+      await user.keyboard("{Enter}");
+      return screen.findByRole("menu");
+    };
+    let menu = await open();
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["Dev 봇 프로필", "이 DM 의 지시", "새 세션", "파일", "활동", "세션 닫기"]);
+
+    // 「이 DM 의 지시」 — 데스크톱과 같은 대화상자, 닫으면 초점이 「더 보기」로
+    await user.click(within(menu).getByRole("menuitem", { name: "이 DM 의 지시" }));
+    const dialog = await screen.findByRole("dialog", { name: "이 DM 의 지시" });
+    expect(within(dialog).getByRole("textbox", { name: "이 DM 의 지시" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "이 DM 의 지시" })).toBeNull());
+    await waitFor(() => expect(more).toHaveFocus());
+
+    // 「활동」 — 데스크톱 링크와 같은 주소, 시트를 닫으면 초점이 「더 보기」로(데스크톱의 「활동」 링크 자리)
+    menu = await open();
+    await user.click(within(menu).getByRole("menuitem", { name: "활동" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${DM}/s/${A}/activity`));
+    await screen.findByTestId("page-channel-panel");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${DM}/s/${A}`));
+    await waitFor(() => expect(more).toHaveFocus());
+  });
+
   it("「이 DM 의 지시」 를 저장하면 PATCH { prompt } 하나", async () => {
     const server = stubServer();
     renderRoute(`/c/${DM}/s/${A}`);

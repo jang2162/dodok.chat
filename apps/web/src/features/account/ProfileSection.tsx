@@ -19,6 +19,8 @@ export function ProfileSection({ displayName }: { displayName: ReactNode }) {
         프로필
       </h2>
       <AvatarPicker
+        kind="person"
+        id={me.user.id}
         name={me.user.displayName || me.user.handle}
         currentUrl={me.user.avatarUrl}
         upload={(image) => avatar.upload.mutateAsync(image)}

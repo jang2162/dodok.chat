@@ -270,6 +270,29 @@ describe("MessageItem", () => {
     expect(time).not.toHaveClass("invisible");
   });
 
+  it("AI 배지는 12px 에 로봇 아이콘, 배경은 에이전트 색 18%", () => {
+    renderWithClient(<MessageItem message={msg(1, { authorType: "agent", authorId: AGENT })} head />);
+    const badge = within(screen.getByRole("article")).getByText("AI");
+    expect(badge).toHaveClass("text-xs");
+    expect(badge.className).not.toContain("text-[10px]");
+    expect(badge.querySelector("svg")).not.toBeNull();
+    expect(badge.style.backgroundColor).toBe(`color-mix(in oklch, ${agentColorVar("dev")} 18%, transparent)`);
+  });
+
+  it("이어진 메시지 시각은 짧은 꼴 12px — 오전·오후는 title 에만", () => {
+    renderWithClient(
+      <>
+        <MessageItem message={msg(1, { bodyMd: "첫째" })} head />
+        <MessageItem message={msg(2, { bodyMd: "둘째" })} head={false} />
+      </>,
+    );
+    const second = screen.getAllByRole("article")[1] as HTMLElement;
+    const time = within(second).getByRole("time");
+    expect(time.textContent).toMatch(/^\d{1,2}:\d{2}$/);
+    expect(time).toHaveAttribute("title", expect.stringMatching(/오전|오후/));
+    expect(time).toHaveClass("text-xs", "tabular-nums");
+  });
+
   it("모르는 작성자(지워진 에이전트)는 「알 수 없음」", () => {
     renderWithClient(<MessageItem message={msg(1, { authorType: "agent", authorId: uid(77) })} head />);
     expect(within(screen.getByRole("article")).getByText("알 수 없음")).toBeInTheDocument();

@@ -59,7 +59,8 @@ export function OpenSidebarButton() {
       variant="ghost"
       size="icon-sm"
       aria-label={n > 0 ? `채널 목록 열기 (확인 안 한 운영 사건 ${n})` : "채널 목록 열기"}
-      className="relative"
+      // 좁은 화면에서만 그린다 — 손가락 단추 44px(스펙 2026-11-19 U6)
+      className="relative size-11"
       onClick={openSidebar}
     >
       <MenuIcon />
@@ -67,7 +68,7 @@ export function OpenSidebarButton() {
         <span
           data-ops-dot
           aria-hidden
-          className="absolute top-0.5 right-0.5 size-2 rounded-full bg-destructive ring-2 ring-background"
+          className="absolute top-2 right-2 size-2 rounded-full bg-destructive ring-2 ring-background"
         />
       )}
     </Button>

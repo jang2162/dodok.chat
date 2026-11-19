@@ -8,10 +8,9 @@ import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { isDeactivated } from "@/features/members/deactivated";
 import { PRESENCE_LABEL, WithPresence } from "@/features/presence/PresenceDot";
 import { usePresence } from "@/features/presence/store";
-import { agentColorVar } from "@/theme/agentColor";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { requestMention } from "./openProfile";
 import { Field, NotFound } from "./ProfileParts";
 
@@ -49,10 +48,14 @@ export function AgentProfile({ agentId }: { agentId: string }) {
     <div className="flex flex-col gap-4 p-4" data-testid="profile-agent">
       <div className="flex items-center gap-3">
         <WithPresence kind="agent" id={agent.id} size="lg">
-          <Avatar className="size-16 border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
-            {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-            <AvatarFallback className="text-xl">{agent.name.slice(0, 1)}</AvatarFallback>
-          </Avatar>
+          <IdentityAvatar
+            kind="agent"
+            id={agent.id}
+            name={agent.name}
+            handle={agent.handle}
+            avatarUrl={agent.avatarUrl}
+            size={64}
+          />
         </WithPresence>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
