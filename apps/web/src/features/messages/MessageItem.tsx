@@ -16,8 +16,8 @@ import { useSetReaction } from "@/features/reactions/useSetReaction";
 import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
 
@@ -36,13 +36,15 @@ export function MessageTime({ iso, className }: { iso: string; className?: strin
 /** 아바타 36px(스펙 7.1). 에이전트는 테두리 2px 에이전트 색, 사람은 테두리 없음(스펙 7.2) */
 export function AuthorAvatar({ author, onOpen }: { author: Author; onOpen?: () => void }) {
   const avatar = (
-    <Avatar
-      className={author.isAgent ? "size-9 border-2" : "size-9"}
-      style={author.colorVar ? { borderColor: author.colorVar } : undefined}
-    >
-      {author.avatarUrl && <AvatarImage src={author.avatarUrl} alt="" />}
-      <AvatarFallback>{author.name.slice(0, 1)}</AvatarFallback>
-    </Avatar>
+    <IdentityAvatar
+      kind={author.isAgent ? "agent" : "person"}
+      // 누구인지 모르는 작성자(시스템·자동화)는 이름으로 색을 고정한다
+      id={author.ref?.id ?? author.name}
+      name={author.name}
+      handle={author.handle}
+      avatarUrl={author.avatarUrl}
+      size={36}
+    />
   );
   // 접속 점(프로필 스펙 3.3) — 누구인지 모르는 작성자(시스템·자동화)는 점이 없다
   if (!author.ref) return avatar;

@@ -281,8 +281,8 @@ describe("사이드바 「다이렉트 메시지」 — 두 목록을 합친 최
     stubServer({ directs: [GROUP_D, AGROUP_D, ONE_D], dms: [FIN_DM] });
     renderRoute(`/c/${CH}/s/new`);
     const nav = await dmNav();
-    // 줄 글자는 아바타 머리글자 + 이름 — ONE(03:00) · FIN(02:30) · GROUP(02:00), 글 없는 AGROUP 은 빠진다
-    await waitFor(() => expect(rowTexts(nav)).toEqual(["미미아", "FFin 봇", "미준미아, 준"]));
+    // 줄 글자는 아바타 머리글자(그룹은 인원수) + 이름 — ONE(03:00) · FIN(02:30) · GROUP(02:00), 글 없는 AGROUP 은 빠진다
+    await waitFor(() => expect(rowTexts(nav)).toEqual(["미미아", "FFin 봇", "3미아, 준"]));
     const channels = screen.getByRole("navigation", { name: "채널" });
     expect(within(channels).queryByText(/direct/)).toBeNull();
   });
@@ -303,6 +303,28 @@ describe("사이드바 「다이렉트 메시지」 — 두 목록을 합친 최
     const link = await within(await dmNav()).findByRole("link", { name: /올드/ });
     expect(link).toHaveTextContent("(비활성)");
     expect(link).toHaveAttribute("data-dim", "true");
+  });
+
+  it("그룹 DM 줄은 겹친 아바타 대신 나를 포함한 인원수", async () => {
+    stubServer({ directs: [{ ...AGROUP_D, lastMessageAt: "2026-11-09T01:00:00.000Z" }] });
+    renderRoute(`/c/${CH}/s/new`);
+    const link = await within(await dmNav()).findByRole("link", { name: /미아, @dev/ });
+    // 사람 1(미아)·에이전트 1(dev) + 나
+    expect(within(link).getByTestId("group-count")).toHaveTextContent(/^3$/);
+    expect(link.querySelector("[data-slot=avatar]")).toBeNull();
+  });
+
+  it("사람 아바타 이니셜은 대문자·12px, 테두리 없음 — 에이전트는 테두리", async () => {
+    const LOWER = person(uid(6_004), "olive", "olive");
+    stubServer({ directs: [directOf(uid(35), [LOWER], [])], dms: [FIN_DM] });
+    renderRoute(`/c/${CH}/s/new`);
+    const nav = await dmNav();
+    const initial = await within(await within(nav).findByRole("link", { name: /olive/ })).findByText("O");
+    expect(initial).toHaveClass("text-xs");
+    expect(initial.closest("[data-slot=avatar]")).not.toHaveClass("border-2");
+    const fin = within(within(nav).getByRole("link", { name: /Fin 봇/ })).getByText("F");
+    expect(fin).toHaveClass("text-xs");
+    expect(fin.closest("[data-slot=avatar]")).toHaveClass("border-2");
   });
 
   it("direct 의 channel.created·channel.updated 는 채널 목록이 아니라 direct 목록을 다시 받고, 모르는 채널의 활동·people.changed 도 다시 받는다", async () => {
@@ -567,7 +589,7 @@ describe("보관한 에이전트가 든 그룹(sessions 참, agents 빔)", () =>
     stubServer({ directs: [ARCH_D, JUN_D] });
     renderRoute(`/c/${CH}/s/new`);
     const nav = await dmNav();
-    await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "준준(그룹)"]));
+    await waitFor(() => expect(rowTexts(nav)).toEqual(["준준", "2준(그룹)"]));
   });
 
   it("검색 결과 — 사이드바처럼 1:1 은 「DM · 준」, 그룹은 「DM · 준 (그룹)」(재리뷰 L3)", async () => {

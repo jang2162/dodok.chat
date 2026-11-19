@@ -11,10 +11,10 @@ import { useRemoveInvitedAgent, useSessionInvitedAgents } from "@/features/conve
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversationView } from "@/features/conversations/queries";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
-import { agentColorVar } from "@/theme/agentColor";
-import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
+import { AvatarGroup, AvatarGroupCount } from "@/ui/avatar";
 import { Button } from "@/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { FilesTabLink } from "./PanelTabs";
 import { OpenSidebarButton } from "./sidebarSheet";
 
@@ -118,18 +118,18 @@ export function ChannelHeader({
       {shown.length > 0 && (
         <AvatarGroup role="group" aria-label="참여 에이전트">
           {shown.map((agent) => (
-            <Avatar
+            <IdentityAvatar
               key={agent.id}
-              size="sm"
+              kind="agent"
+              id={agent.id}
+              name={agent.name}
+              handle={agent.handle}
+              avatarUrl={agent.avatarUrl}
+              size={24}
               role="img"
               aria-label={`@${agent.handle}`}
               title={`${agent.name} (@${agent.handle})`}
-              className="border-2"
-              style={{ borderColor: agentColorVar(agent.handle) }}
-            >
-              {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-              <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
-            </Avatar>
+            />
           ))}
           {hidden > 0 && (
             <AvatarGroupCount role="img" className="size-6 text-xs" aria-label={`에이전트 ${hidden}명 더`}>
@@ -191,11 +191,15 @@ function InvitedAgentFace({
   const remove = useRemoveInvitedAgent(conversationId);
   const face = (
     <span className="flex items-center gap-1">
-      <Avatar size="sm" className="border-2" style={{ borderColor: agentColorVar(agent.handle) }}>
-        {agent.avatarUrl && <AvatarImage src={agent.avatarUrl} alt="" />}
-        <AvatarFallback className="text-[10px]">{agent.name.slice(0, 1)}</AvatarFallback>
-      </Avatar>
-      <span className="rounded-sm bg-muted px-1 text-[10px] text-muted-foreground">초대됨</span>
+      <IdentityAvatar
+        kind="agent"
+        id={agent.id}
+        name={agent.name}
+        handle={agent.handle}
+        avatarUrl={agent.avatarUrl}
+        size={24}
+      />
+      <span className="rounded-sm bg-muted px-1 text-xs text-muted-foreground">초대됨</span>
     </span>
   );
   const label = `@${agent.handle} 초대됨`;

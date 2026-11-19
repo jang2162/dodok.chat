@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorIndex, agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
@@ -32,7 +32,8 @@ export function IdentityAvatar({
   avatarUrl,
   size,
   className,
-}: {
+  ...rest
+}: Omit<ComponentProps<typeof Avatar>, "size" | "children" | "style" | "id"> & {
   kind: "person" | "agent";
   id: string;
   name: string;
@@ -60,6 +61,7 @@ export function IdentityAvatar({
   }
   return (
     <Avatar
+      {...rest}
       data-kind={kind}
       size={size === 24 ? "sm" : "default"}
       className={cn(ROOT_SIZE[size], kind === "agent" && "border-2", className)}
