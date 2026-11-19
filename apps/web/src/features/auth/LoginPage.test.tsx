@@ -81,7 +81,22 @@ const mutationStates = (qc: QueryClient) =>
       .map((m) => m.state),
   );
 
+/** 로그인 전 화면의 카드(UI 점검 스펙 U7) — 마크·「dodok」·소개 한 줄이 제목과 같은 카드 안에 있다 */
+function expectAuthCard(heading: HTMLElement) {
+  const card = heading.closest("[data-slot=auth-card]");
+  expect(card).not.toBeNull();
+  expect(card).toHaveTextContent("dodok");
+  expect(card).toHaveTextContent("사람과 AI 에이전트가 같은 채널에서 대화합니다");
+  expect(card?.querySelector('img[src="/favicon.svg"]')).toHaveAttribute("alt", "");
+}
+
 describe("LoginPage — 이메일·비밀번호(기본)", () => {
+  it("카드에 dodok 과 소개 한 줄", async () => {
+    stubServer(() => json(401, {}));
+    renderAt("/login");
+    expectAuthCard(await screen.findByRole("heading", { level: 1, name: "로그인" }));
+  });
+
   it("기본은 이메일·비밀번호 폼이고 토큰 칸은 접혀 있다", async () => {
     stubServer(() => json(401, {}));
     renderAt("/login");
