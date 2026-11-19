@@ -1327,7 +1327,8 @@ it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 �
   ]);
 });
 
-it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정」 링크로 돌아간다(D14)", async () => {
+// 좁은 화면 머리의 「채널 설정」은 「더 보기」 메뉴 줄이라(스펙 2026-11-19 U6) 초점은 그 메뉴를 여는 단추가 받는다
+it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「더 보기」로 돌아간다(D14)", async () => {
   stubMedia(true);
   stubServer({ runs: [] });
   const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
@@ -1338,7 +1339,7 @@ it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정�
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   const header = await screen.findByTestId("channel-header");
-  const opener = within(header).getByRole("link", { name: "채널 설정" });
+  const opener = within(header).getByRole("button", { name: "더 보기" });
   await waitFor(() => expect(opener).toHaveFocus());
 });
 

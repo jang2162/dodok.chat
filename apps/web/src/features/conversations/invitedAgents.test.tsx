@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { ME, channelOf, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
+import { stubMedia } from "../../../test/media";
 import { invitedAgentKeys } from "./invitedAgents";
 
 // 세션에 에이전트 초대(세션 에이전트 초대 스펙 5.4) — 머리의 「초대됨」·「에이전트 초대」 대화상자·「세션에서 내보내기」·wire 반영
@@ -162,6 +163,42 @@ describe("세션 머리 — 초대한 에이전트", () => {
           String(url) === `/api/v1/conversations/${SESSION}/agents/${GUEST.id}` && init?.method === "DELETE",
       ),
     ).toBe(true);
+  });
+
+  it("좁은 화면 — 얼굴은 숨고 「더 보기」 메뉴의 「@guest 세션에서 내보내기」가 데스크톱과 같은 DELETE", async () => {
+    stubMedia(true);
+    const fetch = stubServer({ invited: { [SESSION]: [invitedRow(GUEST.id)] } });
+    renderRoute(`/c/a/s/${SESSION}`);
+    const user = userEvent.setup();
+    const head = await header();
+    const more = await within(head).findByRole("button", { name: "더 보기" });
+    // 초대 목록을 받은 뒤 메뉴를 연다
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([url]) => String(url) === `/api/v1/conversations/${SESSION}/agents`),
+      ).toBe(true),
+    );
+    expect(within(head).queryByRole("list", { name: "초대한 에이전트" })).toBeNull();
+    expect(within(head).queryByRole("group", { name: "참여 에이전트" })).toBeNull();
+    more.focus();
+    await user.keyboard("{Enter}");
+    const menu = await screen.findByRole("menu");
+    await user.click(await within(menu).findByRole("menuitem", { name: "@guest 세션에서 내보내기" }));
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([url, init]) =>
+            String(url) === `/api/v1/conversations/${SESSION}/agents/${GUEST.id}` &&
+            init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    // 내보낸 뒤 메뉴에서도 빠진다
+    more.focus();
+    await user.keyboard("{Enter}");
+    const again = await screen.findByRole("menu");
+    expect(within(again).queryByRole("menuitem", { name: /세션에서 내보내기/ })).toBeNull();
+    expect(within(again).getByRole("menuitem", { name: "에이전트 초대" })).toBeInTheDocument();
   });
 
   it("닫힌 세션·새 세션 창에서는 「에이전트 초대」가 없다 — 닫힌 세션의 얼굴에는 메뉴가 없다", async () => {

@@ -30,6 +30,7 @@ import { stubEditorDom, stubNotification } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { AGENT, approval, CH, msg, uid } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
+import { stubMedia } from "../../../test/media";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { agentOf } from "../../../test/settingsServer";
 import { channelOf, conversationOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
@@ -572,6 +573,73 @@ describe("대화 화면", () => {
     const header = await screen.findByTestId("direct-header");
     expect(await within(header).findByRole("link", { name: "새 세션" })).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).toBeNull();
+  });
+});
+
+/** 「더 보기」 메뉴를 연다 — 트리거에 초점을 준 뒤 Enter(jsdom 의 window blur 가 클릭으로 연 Radix 메뉴를 닫는다 — invitedAgents.test) */
+async function openMore(user: ReturnType<typeof userEvent.setup>, header: HTMLElement) {
+  const more = await within(header).findByRole("button", { name: "더 보기" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  return { more, menu: await screen.findByRole("menu") };
+}
+const menuLabels = (menu: HTMLElement) =>
+  within(menu)
+    .getAllByRole("menuitem")
+    .map((i) => i.textContent);
+
+describe("좁은 화면 머리(스펙 2026-11-19 U6)", () => {
+  it("그룹 세션 — 제목 두 줄(이름·세션 제목)과 「더 보기」, 메뉴는 데스크톱 단추와 같은 순서·같은 동작", async () => {
+    stubMedia(true);
+    stubServer({
+      directs: [{ ...AGROUP_D, lastMessageAt: "2026-11-09T01:00:00.000Z" }],
+      conversations: { [AGROUP]: [conv(AGROUP, S1)] },
+    });
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/c/${AGROUP}/s/${S1}`);
+    const header = await screen.findByTestId("direct-header");
+    const session = await within(header).findByTestId("direct-session-title");
+    await within(session).findByTestId("conversation-title");
+    // 위 참여자 이름, 아래 세션 제목 — 한 칸 안에 위아래로
+    const titles = session.parentElement as HTMLElement;
+    expect(titles).toHaveClass("flex-col");
+    expect(within(titles).getByRole("button", { name: /^참여자 — / })).toBeInTheDocument();
+    const outside = within(header)
+      .getAllByRole("button")
+      .filter((b) => !titles.contains(b))
+      .map((b) => b.getAttribute("aria-label"));
+    expect(outside).toEqual(["채널 목록 열기", "세션 목록", "더 보기"]);
+    expect(within(header).queryAllByRole("link")).toEqual([]);
+
+    let { more, menu } = await openMore(user, header);
+    await waitFor(() => expect(menuLabels(menu)).toEqual(["참여자", "새 세션", "파일", "활동", "세션 닫기"]));
+
+    // 「참여자」는 제목 단추와 같은 목록 — 닫으면 초점이 「더 보기」로
+    await user.click(within(menu).getByRole("menuitem", { name: "참여자" }));
+    const dialog = await screen.findByRole("dialog", { name: "참여자" });
+    expect(within(dialog).getAllByRole("button").length).toBeGreaterThan(0);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "참여자" })).toBeNull());
+    await waitFor(() => expect(more).toHaveFocus());
+
+    // 「활동」은 데스크톱 링크와 같은 주소로(좁은 화면이면 패널이 시트로 덮는다)
+    ({ more, menu } = await openMore(user, header));
+    await user.click(within(menu).getByRole("menuitem", { name: "활동" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${AGROUP}/s/${S1}/activity`));
+  });
+
+  it("1:1 한 줄기 — 상대 제목은 그대로, 메뉴는 「파일」 하나(데스크톱 단추와 같다)", async () => {
+    stubMedia(true);
+    stubServer({ directs: [ONE_D], conversations: { [ONE]: [conv(ONE, ONE_CONV)] } });
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/c/${ONE}/s/${ONE_CONV}`);
+    const header = await screen.findByTestId("direct-header");
+    expect(await within(header).findByRole("button", { name: "미아 프로필" })).toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "세션 목록" })).toBeNull();
+    const { menu } = await openMore(user, header);
+    expect(menuLabels(menu)).toEqual(["파일"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "파일" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${ONE}/s/${ONE_CONV}/files`));
   });
 });
 

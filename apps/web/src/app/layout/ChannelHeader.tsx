@@ -1,20 +1,37 @@
 import { type Agent, roleAtLeast } from "@dodok/shared";
-import { Link, useMatchRoute } from "@tanstack/react-router";
-import { HashIcon, ListIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
-import type { RefObject } from "react";
+import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import {
+  CircleSlashIcon,
+  FolderIcon,
+  HashIcon,
+  ListIcon,
+  SettingsIcon,
+  SquarePenIcon,
+  UserMinusIcon,
+  UserPlusIcon,
+} from "lucide-react";
+import { type RefObject, useRef, useState } from "react";
 import { useAgents, useChannel, useMembers, useRole } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
 import { isChannelArchived } from "@/features/channels/archived";
-import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
-import { InviteAgentDialog } from "@/features/conversations/InviteAgentDialog";
+import {
+  CloseConversationButton,
+  CloseConversationDialog,
+  ConversationTitle,
+  useCanCloseConversation,
+} from "@/features/conversations/ConversationTitle";
+import { InviteAgentDialog, useInviteFull } from "@/features/conversations/InviteAgentDialog";
 import { useRemoveInvitedAgent, useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversationView } from "@/features/conversations/queries";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { cn } from "@/lib/utils";
 import { AvatarGroup, AvatarGroupCount } from "@/ui/avatar";
 import { Button } from "@/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { IdentityAvatar } from "@/ui/identity-avatar";
+import { HeaderOverflow, type OverflowItem } from "./HeaderOverflow";
 import { FilesTabLink } from "./PanelTabs";
 import { OpenSidebarButton } from "./sidebarSheet";
 
@@ -24,7 +41,8 @@ const MAX_AVATARS = 4;
 /**
  * 채널 헤더(스펙 2.4): 이름(보관한 채널이면 「보관됨」), 지금 세션 제목(채널 세션 스펙 「웹」 장 — 권한이 있으면 눌러 이름 바꾸기)·주제,
  * 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 「새 세션」(만들 수 있는 사람에게만)·「세션 닫기」, 설정 패널 여닫기.
- * 좁은 화면이면 왼쪽에 「채널 목록 열기」. `settingsRef` 는 그 설정 링크 — 좁은 화면 시트가 닫히면
+ * 좁은 화면이면 왼쪽에 「채널 목록 열기」, 오른쪽 단추들은 「더 보기」 메뉴 하나로(스펙 2026-11-19 U6 — 에이전트 얼굴·초대한 얼굴·주제는
+ * 숨기고, 초대한 에이전트 내보내기는 메뉴 줄로). `settingsRef` 는 그 설정 링크 — 좁은 화면 시트가 닫히면
  * 초점이 여기로 돌아온다(브라우저 검증 D14). `onToggleList` 를 주면 「세션 목록」 여닫기 단추를 그린다 — `listRef` 는 그 단추(좁은 화면
  * 시트가 닫히면 초점이 여기로 돌아온다)
  */
@@ -51,6 +69,16 @@ export function ChannelHeader({
   const matchRoute = useMatchRoute();
   const params = { channelId, conversationId };
   const settingsOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/settings", params }));
+  const filesOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/files", params }));
+  const narrow = useIsNarrow();
+  const navigate = useNavigate();
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  // 「더 보기」 단추 — 메뉴에서 연 확인 대화상자가 닫히면 초점이 여기로
+  const moreRef = useRef<HTMLElement | null>(null);
+  const canClose = useCanCloseConversation(channelId, conversationId);
+  const inviteFull = useInviteFull(conversationId);
+  const remove = useRemoveInvitedAgent(conversationId);
 
   const byId = new Map((agents.data ?? []).map((a) => [a.id, a]));
   const channelAgents = (members.data ?? []).flatMap((m): Agent[] => {
@@ -76,6 +104,77 @@ export function ChannelHeader({
     channel.data !== undefined &&
     !isChannelArchived(channel.data);
 
+  const canNew = canCreate && conversationId !== NEW_CONVERSATION;
+  // 데스크톱 단추와 같은 순서·같은 이름, 되돌릴 수 없는 「세션 닫기」만 구분선 아래 맨 끝
+  const overflow: OverflowItem[] = [
+    ...(canInvite
+      ? invited.map((agent): OverflowItem => ({
+          key: `remove:${agent.id}`,
+          label: `@${agent.handle} 세션에서 내보내기`,
+          icon: <UserMinusIcon />,
+          disabled: remove.isPending,
+          onSelect: () => remove.mutate(agent.id),
+        }))
+      : []),
+    ...(canInvite
+      ? [
+          {
+            key: "invite",
+            label: "에이전트 초대",
+            icon: <UserPlusIcon />,
+            disabled: inviteFull,
+            onSelect: () => setInviteOpen(true),
+          },
+        ]
+      : []),
+    ...(canNew
+      ? [
+          {
+            key: "new",
+            label: "새 세션",
+            icon: <SquarePenIcon />,
+            onSelect: () =>
+              void navigate({
+                to: "/c/$channelId/s/$conversationId",
+                params: { channelId, conversationId: NEW_CONVERSATION },
+              }),
+          },
+        ]
+      : []),
+    {
+      key: "files",
+      label: "파일",
+      icon: <FolderIcon />,
+      onSelect: () =>
+        void navigate({
+          to: filesOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/files",
+          params,
+        }),
+    },
+    {
+      key: "settings",
+      label: "채널 설정",
+      icon: <SettingsIcon />,
+      onSelect: () =>
+        void navigate({
+          to: settingsOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/settings",
+          params,
+        }),
+    },
+    ...(canClose
+      ? [
+          {
+            key: "close",
+            label: "세션 닫기",
+            icon: <CircleSlashIcon />,
+            destructive: true,
+            separatorBefore: true,
+            onSelect: () => setCloseOpen(true),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <header data-testid="channel-header" className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <OpenSidebarButton />
@@ -84,6 +183,7 @@ export function ChannelHeader({
           ref={listRef}
           variant="ghost"
           size="icon-sm"
+          className={cn(narrow && "size-11")}
           aria-label="세션 목록"
           aria-expanded={listOpen}
           onClick={onToggleList}
@@ -103,7 +203,7 @@ export function ChannelHeader({
         </h1>
         <div className="flex min-w-0 items-center gap-1 text-xs">
           <ConversationTitle channelId={channelId} conversationId={conversationId} />
-          {channel.data?.topic && (
+          {!narrow && channel.data?.topic && (
             <>
               <span aria-hidden className="shrink-0 text-muted-foreground">
                 ·
@@ -115,7 +215,7 @@ export function ChannelHeader({
           )}
         </div>
       </div>
-      {shown.length > 0 && (
+      {!narrow && shown.length > 0 && (
         <AvatarGroup role="group" aria-label="참여 에이전트">
           {shown.map((agent) => (
             <IdentityAvatar
@@ -138,7 +238,7 @@ export function ChannelHeader({
           )}
         </AvatarGroup>
       )}
-      {invited.length > 0 && (
+      {!narrow && invited.length > 0 && (
         <ul aria-label="초대한 에이전트" className="flex shrink-0 items-center gap-1">
           {invited.map((agent) => (
             <li key={agent.id}>
@@ -147,8 +247,30 @@ export function ChannelHeader({
           ))}
         </ul>
       )}
-      {canInvite && <InviteAgentDialog channelId={channelId} conversationId={conversationId} />}
-      {canCreate && conversationId !== NEW_CONVERSATION && (
+      {canInvite && (
+        <InviteAgentDialog
+          channelId={channelId}
+          conversationId={conversationId}
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          trigger={!narrow}
+          returnFocus={narrow ? moreRef : undefined}
+        />
+      )}
+      {narrow && (
+        <>
+          <HeaderOverflow items={overflow} triggerRefs={[settingsRef, moreRef]} />
+          {canClose && (
+            <CloseConversationDialog
+              conversationId={conversationId}
+              open={closeOpen}
+              onOpenChange={setCloseOpen}
+              returnFocus={moreRef}
+            />
+          )}
+        </>
+      )}
+      {!narrow && canNew && (
         <Button asChild variant="ghost" size="icon-sm">
           <Link
             to="/c/$channelId/s/$conversationId"
@@ -160,20 +282,26 @@ export function ChannelHeader({
           </Link>
         </Button>
       )}
-      <CloseConversationButton channelId={channelId} conversationId={conversationId} />
-      <FilesTabLink channelId={channelId} conversationId={conversationId} />
-      <Button asChild variant="ghost" size="icon-sm">
-        <Link
-          ref={settingsRef}
-          to={settingsOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/settings"}
-          params={params}
-          activeOptions={{ exact: true }}
-          aria-label="채널 설정"
-          aria-expanded={settingsOpen}
-        >
-          <SettingsIcon />
-        </Link>
-      </Button>
+      {!narrow && (
+        <>
+          <CloseConversationButton channelId={channelId} conversationId={conversationId} />
+          <FilesTabLink channelId={channelId} conversationId={conversationId} />
+          <Button asChild variant="ghost" size="icon-sm">
+            <Link
+              ref={settingsRef}
+              to={
+                settingsOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/settings"
+              }
+              params={params}
+              activeOptions={{ exact: true }}
+              aria-label="채널 설정"
+              aria-expanded={settingsOpen}
+            >
+              <SettingsIcon />
+            </Link>
+          </Button>
+        </>
+      )}
     </header>
   );
 }
