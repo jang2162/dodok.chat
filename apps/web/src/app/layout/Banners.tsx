@@ -13,7 +13,7 @@ import { gatewayDown } from "./gatewayHealth";
  * `protocol_mismatch`·`rejected` 는 재연결을 멈춘 상태라 사용자가 할 일을 알린다. `rejected` 는 REST 세션은 살아 있는데
  * wire 가 UNAUTHORIZED 일 때라(`realtime/handlers.ts` `verifySession`) 원인은 브라우저 주소와 서버 APP_ORIGIN 의 불일치뿐이다 —
  * 그래서 지금 연 주소를 그대로 보인다(운영 주소는 배포마다 달라 박을 수 없다).
- * OpenClaw 배너는 점(ConnectionDots)과 같은 규칙을 따른다 — wire 가 끊기면 `adapter.status` 가 더는 오지 않아
+ * OpenClaw 배너는 연결 상태 단추(ConnectionDots)와 같은 규칙을 따른다 — wire 가 끊기면 `adapter.status` 가 더는 오지 않아
  * 마지막 값이 남으므로 「모름」으로 보고 띄우지 않는다. 그 사정은 끊김 배너가 이미 알린다(브라우저 재검증 걱정 3).
  * 오프라인(스펙 4장 — 브라우저 오프라인이거나 me 가 네트워크 오류)이면 「오프라인」 배너 하나만 — 그동안 wire 도
  * `reconnecting` 이지만 같은 사실을 두 번 말하지 않는다. OpenClaw 배너는 wire 가 붙어 있을 때만이라 겹치지 않는다.

@@ -156,7 +156,7 @@ export function NewMessageDialog({ onNavigate }: { onNavigate?: () => void }) {
           <Button
             size="sm"
             aria-disabled={count === 0 || openDirect.isPending || undefined}
-            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            className="aria-disabled:cursor-not-allowed"
             onClick={submit}
           >
             {openDirect.isPending ? "여는 중…" : "열기"}

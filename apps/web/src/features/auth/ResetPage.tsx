@@ -4,8 +4,9 @@ import { type FormEvent, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
+import { AuthCard } from "./AuthCard";
 import { AuthField, CONFIRM_MISMATCH, PASSWORD_HINT, authErrorText, passwordProblem } from "./fields";
-import { AuthScreen, InviteGate, InviteInvalid } from "./invite";
+import { InviteGate, InviteInvalid } from "./invite";
 import { useFinishInvite, useResetPassword } from "./mutations";
 
 const route = getRouteApi("/reset/$token");
@@ -56,9 +57,8 @@ function ResetForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
   }
 
   return (
-    <AuthScreen>
-      <form onSubmit={submit} noValidate className="flex w-full max-w-sm flex-col gap-4">
-        <h1 className="text-xl font-semibold break-words">{lookup.workspaceName} 비밀번호 재설정</h1>
+    <AuthCard title={`${lookup.workspaceName} 비밀번호 재설정`}>
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
         <AuthField
           label="새 비밀번호"
           type="password"
@@ -90,6 +90,6 @@ function ResetForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
           {reset.isPending ? "바꾸는 중…" : "비밀번호 바꾸기"}
         </Button>
       </form>
-    </AuthScreen>
+    </AuthCard>
   );
 }

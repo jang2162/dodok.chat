@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import { AuthCard } from "./AuthCard";
 import { AuthField, authErrorText } from "./fields";
 import { useLogin } from "./mutations";
 
@@ -65,27 +66,25 @@ export function LoginPage() {
   if (me.isSuccess) return <Navigate<RegisteredRouter, string, string> href={next ?? "/"} replace />;
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <div className="flex w-full max-w-sm flex-col gap-6">
-        <EmailForm />
-        <div className="flex flex-col gap-3 border-t pt-4">
-          <button
-            type="button"
-            aria-expanded={tokenOpen}
-            aria-controls={tokenOpen ? "login-token-form" : undefined}
-            onClick={() => setTokenOpen((open) => !open)}
-            className="flex items-center gap-1 self-start rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-4 transition-transform", tokenOpen ? "rotate-0" : "-rotate-90")}
-            />
-            owner 로컬 토큰으로 로그인
-          </button>
-          {tokenOpen && <TokenForm />}
-        </div>
+    <AuthCard title="로그인">
+      <EmailForm />
+      <div className="flex flex-col gap-3 border-t pt-4">
+        <button
+          type="button"
+          aria-expanded={tokenOpen}
+          aria-controls={tokenOpen ? "login-token-form" : undefined}
+          onClick={() => setTokenOpen((open) => !open)}
+          className="flex items-center gap-1 self-start rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronDownIcon
+            aria-hidden
+            className={cn("size-4 transition-transform", tokenOpen ? "rotate-0" : "-rotate-90")}
+          />
+          owner 로컬 토큰으로 로그인
+        </button>
+        {tokenOpen && <TokenForm />}
       </div>
-    </main>
+    </AuthCard>
   );
 }
 
@@ -117,7 +116,6 @@ function EmailForm() {
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold">로그인</h1>
       <AuthField
         label="이메일"
         type="email"

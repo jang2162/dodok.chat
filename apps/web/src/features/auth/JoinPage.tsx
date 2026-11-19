@@ -6,8 +6,9 @@ import { ApiRequestError } from "@/api/http";
 import { useCachedMe } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
+import { AuthCard } from "./AuthCard";
 import { AuthField, CONFIRM_MISMATCH, PASSWORD_HINT, fieldErrorText, passwordProblem } from "./fields";
-import { AuthScreen, InviteGate, InviteInvalid } from "./invite";
+import { InviteGate, InviteInvalid } from "./invite";
 import { useAcceptInvite, useFinishInvite } from "./mutations";
 
 const route = getRouteApi("/join/$token");
@@ -121,12 +122,11 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
   }
 
   return (
-    <AuthScreen>
-      <form onSubmit={submit} noValidate className="flex w-full max-w-sm flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold break-words">{lookup.workspaceName}에 가입</h1>
-          {lookup.role && <p className="text-sm text-muted-foreground">{ROLE_TEXT[lookup.role]}</p>}
-        </div>
+    <AuthCard
+      title={`${lookup.workspaceName}에 가입`}
+      description={lookup.role ? ROLE_TEXT[lookup.role] : undefined}
+    >
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
         {signedInAs && (
           <p className="rounded-lg border px-4 py-3 text-sm break-words text-muted-foreground">
             지금 @{signedInAs} 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다
@@ -166,6 +166,6 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
           {accept.isPending ? "가입 중…" : "가입"}
         </Button>
       </form>
-    </AuthScreen>
+    </AuthCard>
   );
 }

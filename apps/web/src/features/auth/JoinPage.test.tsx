@@ -86,7 +86,22 @@ async function fillForm(over: Partial<Record<string, string>> = {}) {
   }
 }
 
+/** 로그인 전 화면의 카드(UI 점검 스펙 U7) — 마크·「dodok」·소개 한 줄이 제목과 같은 카드 안에 있다 */
+function expectAuthCard(heading: HTMLElement) {
+  const card = heading.closest("[data-slot=auth-card]");
+  expect(card).not.toBeNull();
+  expect(card).toHaveTextContent("dodok");
+  expect(card).toHaveTextContent("사람과 AI 에이전트가 같은 채널에서 대화합니다");
+  expect(card?.querySelector('img[src="/favicon.svg"]')).toHaveAttribute("alt", "");
+}
+
 describe("JoinPage", () => {
+  it("카드에 dodok 과 소개 한 줄", async () => {
+    stubServer();
+    renderRoute(`/join/${TOKEN}`);
+    expectAuthCard(await screen.findByRole("heading", { level: 1, name: "도독 팀에 가입" }));
+  });
+
   it("토큰은 URL 이 아니라 본문으로 조회하고, 워크스페이스 이름·역할을 보인다", async () => {
     const fetch = stubServer();
     renderRoute(`/join/${TOKEN}`);
@@ -409,8 +424,12 @@ describe("JoinPage", () => {
   it("390px 폭에서도 폼이 화면 폭을 넘지 않게 w-full·max-w 로만 잡는다", async () => {
     stubServer();
     renderRoute(`/join/${TOKEN}`);
-    const form = (await screen.findByRole("heading", { name: "도독 팀에 가입" })).closest("form");
-    expect(form).toHaveClass("w-full", "max-w-sm");
+    // 폭은 폼을 감싼 카드가 잡는다(UI 점검 스펙 U7)
+    const card = (await screen.findByRole("heading", { name: "도독 팀에 가입" })).closest(
+      "[data-slot=auth-card]",
+    );
+    expect(card).toHaveClass("w-full", "max-w-sm");
+    const form = (card as HTMLElement).querySelector("form");
     expect(within(form as HTMLElement).getByRole("button", { name: "가입" })).toBeInTheDocument();
   });
 });
