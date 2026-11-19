@@ -86,7 +86,7 @@ export function connectionSummary(
 /**
  * 사이드바 하단 연결 상태 단추 하나(UI 점검 스펙 U1, 옛 점 두 개 — 스펙 6.5) — OpenClaw Gateway 와 그 안의 dodok 채널 플러그인을
  * 각각 Gateway 들로 모은 값을 한 줄로 보이고, 마우스를 올리거나 초점을 주면 둘의 Gateway 별 상태를 한 툴팁에 위아래로 보인다.
- * 접근 이름은 두 점 라벨을 잇는다. 값은 `["adapter"]` 캐시(REST 로 불러오고 wire `adapter.status` 가 고친다).
+ * 접근 이름은 보이는 글로 시작하고 두 라벨을 잇는다(`<보이는 글> — Gateway: <라벨>, 플러그인: <라벨>` — 말로 부르는 이름이 화면 글과 맞게, WCAG 2.5.3). 값은 `["adapter"]` 캐시(REST 로 불러오고 wire `adapter.status` 가 고친다).
  * wire 가 끊기면 `adapter.status` 가 더는 오지 않아 마지막 값이 남는다 — 초록으로 두면 틀린 정보라
  * 「알 수 없음」(회색)으로 바꾼다(브라우저 검증 결함 6). 살아 있는 값의 유일한 출처가 wire 이므로 기준도 wire 다
  */
@@ -109,7 +109,7 @@ export function ConnectionDots() {
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label={`연결 상태 — ${gateway.label}, ${bridge.label}`}
+          aria-label={`${text} — Gateway: ${gateway.label}, 플러그인: ${bridge.label}`}
           className="flex min-w-0 max-w-40 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-sidebar-foreground/80 outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         >
           {tone === "ok" || tone === "unknown" ? (

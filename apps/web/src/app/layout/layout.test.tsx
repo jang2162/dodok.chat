@@ -79,16 +79,16 @@ function renderWithAdapter(ui: ReactNode, gateways: OpenClawGatewayStatus[]) {
 }
 
 describe("ConnectionDots", () => {
-  const NAME = /^연결 상태 — /;
+  const NAME = / — Gateway: .+, 플러그인: /;
   /** 사이드바 아래 연결 상태 단추 하나 — 보이는 글·아이콘·접근 이름을 한 번에 본다 */
   const status = () => screen.findByRole("button", { name: NAME });
   const icon = (button: HTMLElement) => button.querySelector("svg");
   const dot = (button: HTMLElement) => button.querySelector("[data-slot=status-dot]");
 
-  it("모두 연결이면 「연결됨」, 접근 이름은 두 점 라벨을 잇는다", async () => {
+  it("모두 연결이면 「연결됨」, 접근 이름은 보이는 글 뒤에 두 라벨을 잇는다", async () => {
     renderWithAdapter(<ConnectionDots />, [gw(), HOME()]);
     const button = await screen.findByRole("button", {
-      name: "연결 상태 — Gateway 연결됨, 플러그인 연결됨",
+      name: "연결됨 — Gateway: Gateway 연결됨, 플러그인: 플러그인 연결됨",
     });
     expect(button).toHaveTextContent(/^연결됨$/);
     expect(dot(button)).toHaveClass("bg-success");
@@ -100,7 +100,7 @@ describe("ConnectionDots", () => {
   it("켜진 Gateway 하나만 끊기면 「<이름> 끊김」과 경고 아이콘", async () => {
     const { push } = renderWithAdapter(<ConnectionDots />, [gw(), HOME({ gateway: "down", bridge: "down" })]);
     let button = await screen.findByRole("button", {
-      name: "연결 상태 — Gateway 일부 끊김, 플러그인 일부 끊김",
+      name: "집 끊김 — Gateway: Gateway 일부 끊김, 플러그인: 플러그인 일부 끊김",
     });
     expect(button).toHaveTextContent(/^집 끊김$/);
     expect(icon(button)).toHaveClass("text-warning");
@@ -113,7 +113,7 @@ describe("ConnectionDots", () => {
     push([gw({ gateway: "down", bridge: "down" })]);
     await waitFor(async () => expect(await status()).toHaveTextContent(/^사무실 끊김$/));
     button = await status();
-    expect(button).toHaveAccessibleName("연결 상태 — Gateway 끊김, 플러그인 끊김");
+    expect(button).toHaveAccessibleName("사무실 끊김 — Gateway: Gateway 끊김, 플러그인: 플러그인 끊김");
     expect(icon(button)).toHaveClass("text-destructive");
   });
 
@@ -132,7 +132,9 @@ describe("ConnectionDots", () => {
     // 플러그인도 같은 꼴
     push([gw({ bridge: "down" }), HOME()]);
     await waitFor(async () => expect(await status()).toHaveTextContent(/^사무실 플러그인 끊김$/));
-    expect(await status()).toHaveAccessibleName("연결 상태 — Gateway 연결됨, 플러그인 일부 끊김");
+    expect(await status()).toHaveAccessibleName(
+      "사무실 플러그인 끊김 — Gateway: Gateway 연결됨, 플러그인: 플러그인 일부 끊김",
+    );
     expect(icon(await status())).toHaveClass("text-warning");
 
     push([gw({ bridge: "down" }), HOME({ bridge: "down" }), STORE()]);
@@ -147,7 +149,9 @@ describe("ConnectionDots", () => {
     // 사무실은 플러그인만, 집은 Gateway 가 끊겼다 — 보이는 글은 Gateway 쪽(집)
     renderWithAdapter(<ConnectionDots />, [gw({ bridge: "down" }), HOME({ gateway: "down" })]);
     await waitFor(async () => expect(await status()).toHaveTextContent(/^집 끊김$/));
-    expect(await status()).toHaveAccessibleName("연결 상태 — Gateway 일부 끊김, 플러그인 일부 끊김");
+    expect(await status()).toHaveAccessibleName(
+      "집 끊김 — Gateway: Gateway 일부 끊김, 플러그인: 플러그인 일부 끊김",
+    );
   });
 
   it("꺼진 Gateway 는 세지 않는다 — 모두 꺼졌거나 없으면 회색 「Gateway 없음」", async () => {
@@ -155,7 +159,9 @@ describe("ConnectionDots", () => {
     const { push } = renderWithAdapter(<ConnectionDots />, [off]);
     await waitFor(async () => expect(await status()).toHaveTextContent(/^Gateway 없음$/));
     expect(dot(await status())).toHaveClass("bg-muted-foreground/40");
-    expect(await status()).toHaveAccessibleName("연결 상태 — Gateway 없음, 플러그인 없음");
+    expect(await status()).toHaveAccessibleName(
+      "Gateway 없음 — Gateway: Gateway 없음, 플러그인: 플러그인 없음",
+    );
 
     // 꺼진 Gateway 의 플러그인은 늘 down 이다 — 세면 「플러그인 끊김」이 된다
     push([off, HOME()]);
@@ -171,7 +177,7 @@ describe("ConnectionDots", () => {
 
     act(() => useWireStatus.getState().setStatus("reconnecting"));
     const button = await screen.findByRole("button", {
-      name: "연결 상태 — Gateway 상태 모름, 플러그인 상태 모름",
+      name: "상태 모름 — Gateway: Gateway 상태 모름, 플러그인: 플러그인 상태 모름",
     });
     expect(button).toHaveTextContent(/^상태 모름$/);
     expect(dot(button)).toHaveClass("bg-muted-foreground/40");
@@ -179,6 +185,27 @@ describe("ConnectionDots", () => {
 
     act(() => useWireStatus.getState().setStatus("connected"));
     await waitFor(async () => expect(await status()).toHaveTextContent(/^연결됨$/));
+  });
+
+  it("접근 이름은 보이는 글로 시작한다 — 말로 부르는 이름이 화면 글과 맞게(WCAG 2.5.3)", async () => {
+    const { push } = renderWithAdapter(<ConnectionDots />, [
+      gw(),
+      HOME({ gateway: "reconnecting", bridge: "down" }),
+    ]);
+    await waitFor(async () => expect(await status()).toHaveTextContent(/^집 다시 연결 중$/));
+    const starts = async () => {
+      const button = await status();
+      const text = button.textContent ?? "";
+      expect(text).not.toBe("");
+      expect(button.getAttribute("aria-label")?.startsWith(`${text} — `)).toBe(true);
+    };
+    await starts();
+    push([gw({ bridge: "down" }), HOME()]);
+    await waitFor(async () => expect(await status()).toHaveTextContent(/^사무실 플러그인 끊김$/));
+    await starts();
+    act(() => useWireStatus.getState().setStatus("reconnecting"));
+    await waitFor(async () => expect(await status()).toHaveTextContent(/^상태 모름$/));
+    await starts();
   });
 
   it("툴팁 하나에 Gateway·플러그인을 위아래로 — Gateway 별 줄, 꺼진 것은 「꺼짐」", async () => {
@@ -211,7 +238,7 @@ describe("ConnectionDots", () => {
     expect(button).not.toHaveFocus();
   });
 
-  it("long gateway name truncates", async () => {
+  it("긴 Gateway 이름은 말줄임 — 단추가 사이드바 밖으로 나가지 않는다", async () => {
     const long = "아주아주아주아주아주아주아주아주긴이름의OpenClawGateway서버".repeat(3);
     renderWithAdapter(<ConnectionDots />, [gw(), HOME({ name: long, gateway: "down", bridge: "down" })]);
     await waitFor(async () => expect(await status()).toHaveTextContent(`${long} 끊김`));

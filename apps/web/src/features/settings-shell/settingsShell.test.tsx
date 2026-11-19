@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stubMedia } from "../../../test/media";
 import { OPS_STATUS_OK, ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
-// 설정 통합 스펙 「설정 통합」 장 — 사이드바 하단은 연결 점 + 「설정」 하나, 설정은 /settings/<탭> 에서 역할대로
+// 설정 통합 스펙 「설정 통합」 장 — 사이드바 하단은 연결 상태 단추 + 「설정」 하나, 설정은 /settings/<탭> 에서 역할대로
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -58,7 +58,7 @@ describe("사이드바 하단", () => {
     // 연결 상태 단추는 그대로 — wire 없이 띄우므로 「상태 모름」
     expect(
       within(await sidebar()).getByRole("button", {
-        name: "연결 상태 — Gateway 상태 모름, 플러그인 상태 모름",
+        name: "상태 모름 — Gateway: Gateway 상태 모름, 플러그인: 플러그인 상태 모름",
       }),
     ).toHaveTextContent("상태 모름");
   });

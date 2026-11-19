@@ -31,9 +31,9 @@ function useInviteLookup(token: string, kind: InviteKind) {
   });
 }
 
-/** 로그인 전 화면의 틀 — 로그인 화면과 같은 가운데 한 줄(390px 에서 가로 스크롤 없이 w-full) */
+/** 카드 없이 쓰는 로그인 전 화면(무효 링크·조회 중)의 틀 — 바깥 여백은 `AuthCard` 와 같게(390px 에서 가로 스크롤 없이 w-full) */
 export function AuthScreen({ children }: { children: ReactNode }) {
-  return <main className="flex min-h-svh items-center justify-center p-6">{children}</main>;
+  return <main className="flex min-h-svh items-center justify-center p-4 sm:p-6">{children}</main>;
 }
 
 /** 무효 링크 화면 — 로그인 화면으로 가는 길만 둔다(이미 계정이 있는 사람) */
