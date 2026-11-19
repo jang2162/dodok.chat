@@ -377,7 +377,7 @@ function DmInstructionDialog({
                 type="submit"
                 size="sm"
                 aria-disabled={draft === undefined || save.isPending || undefined}
-                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                className="aria-disabled:cursor-not-allowed"
               >
                 {save.isPending ? "저장 중…" : "저장"}
               </Button>

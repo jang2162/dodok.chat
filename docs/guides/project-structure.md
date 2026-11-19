@@ -944,8 +944,10 @@ src/
 │     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(켜진 Gateway 가운데 끊긴 것 — 하나면 「「<이름>」」, 둘 이상이면 「<N>개」. 둘은 함께 보일 수 있다,
 │     │                    owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
-│     ├─ ConnectionDots.tsx Gateway·플러그인 점 — 켜진 Gateway 를 모아 하나로(모두 연결 초록 · 일부 끊김 노랑 · 붙은 것이 없어도 다시 붙는 중이면 노랑 「Gateway 다시 연결 중」 ·
-│     │                    모두 끊김 빨강 · 켜진 Gateway 없음 회색 「Gateway 없음」), 툴팁에 Gateway 마다 한 줄. wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
+│     ├─ ConnectionDots.tsx 연결 상태 단추 하나 — Gateway·플러그인을 각각 켜진 Gateway 로 모은 뒤(모두 연결 초록 · 일부 끊김 노랑 · 붙은 것이 없어도 다시 붙는 중이면 노랑 「Gateway 다시 연결 중」 ·
+│     │                    모두 끊김 빨강 · 켜진 Gateway 없음 회색 「Gateway 없음」) connectionSummary 가 한 줄로(「연결됨」, Gateway 문제가 먼저 — 하나면 「<이름> 끊김」·「<이름> 다시 연결 중」·「<이름> 플러그인 끊김」,
+│     │                    여럿이면 모은 라벨, 노랑·빨강은 경고 삼각형, 초록·회색은 점, 글은 말줄임). 접근 이름은 보이는 글로 시작 「<보이는 글> — Gateway: <라벨>, 플러그인: <라벨>」, 툴팁 하나에 둘을 위아래로(Gateway 마다 한 줄).
+│     │                    wire 가 끊기면 마지막 값을 믿지 않고 회색 「상태 모름」
 │     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」·「파일」, 스레드를 연 동안만 「스레드」 — 대화 종류별로 그리는 탭은 ChannelPage 의 `only`, 세 머리(채널·DM·direct)가 쓰는 「파일」 단추 FilesTabLink, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
 │     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다.
 │     │                    초점: 좁은 화면 시트는 열면 지금 탭 링크(`data-tab-id`), Esc·닫기면 헤더 「채널 설정」 링크. 넓은 화면은 「설정 닫기」·「활동 닫기」
@@ -1014,7 +1016,7 @@ src/
 │  │                       ImageViewer.tsx(크게 보기 — ui/dialog 위, ←/→·`n / 전체`·「원본 내려받기」·Esc, 닫으면 연 이미지로 초점. `useImageViewer` 를 메시지 격자와 media 블록이 같이 쓴다) ·
 │  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
 │  │                       upload.ts(XHR 업로드·진행·취소, 크기 검사와 문구 — 빈 파일 「빈 파일은 보낼 수 없습니다」, 이미지 MIME 이면 「5 MB 를 넘습니다」, 그 밖 「20 MB 를 넘습니다」(형식은 막지 않는다, 413 은 늘 20 MB 문구), 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」, 409 CHANNEL_ARCHIVED 면 「보관된 채널입니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10개 상한 「첨부는 한 번에 10개까지 보낼 수 있습니다」). 이름은 displayAttachmentName + `<bdi>` 로 그린다(FileCard·ImageViewer·AttachmentImage·칩)
-│  ├─ auth/                LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」, 403 MEMBER_DEACTIVATED 는 서버 문구가 아니라 코드로 「비활성화된 계정입니다. 관리자에게 문의하세요.」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
+│  ├─ auth/                AuthCard(로그인·가입·재설정의 카드 하나 — 마크·「dodok」·한 줄 소개 위에 제목과 폼) · LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」, 403 MEMBER_DEACTIVATED 는 서버 문구가 아니라 코드로 「비활성화된 계정입니다. 관리자에게 문의하세요.」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
 │  │                       `POST /invites/lookup` 을 본문 토큰으로 부른 뒤 폼(무효·다른 종류 링크는 한 문구, 초대 경로 IP 버킷이라 `retry: false`, 쿼리 키에 토큰 원문 대신 `useId` — 토큰이 바뀌면 `key={token}` 으로 다시 마운트), 409 는 `details.field` 칸 아래, 수락 404 는 무효 화면.
 │  │                       성공하면 `useFinishInvite` 가 클라이언트 상태를 비우고 `/` 로 replace(주소창의 토큰을 걷는다). 로그인된 채 열면 폼 위에 「지금 @<핸들> 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다」 ·
 │  │                       fields.tsx(AuthField·비밀번호 규칙·로그인 전 경로 공통 문구 authErrorText — 429 는 버킷을 따른다: 로그인 「(1분 5회)」, 초대 경로는 숫자 없이 ·
@@ -1128,7 +1130,7 @@ src/
 │  ├─ ops/                 Phase 3 ③. 운영 화면 `/settings/operations` — admin 이상(member·role 없는 옛 me 는 ops API 를 부르지 않고 「권한이 없습니다」).
 │  │                       OpsPage.tsx(섹션 넷 — 상태를 30초마다 다시 받는 것은 이 화면만(OPS_STATUS_POLL_MS, 탭이 가려지면 쉰다)) ·
 │  │                       StatusCard.tsx(켜진 Gateway 마다 Gateway·플러그인·Gateway 버전 세 줄(줄 이름에 Gateway 이름, 꺼진 Gateway 는 줄 없음, drift 면 「저장소가 검증한 버전(<핀>)과 다릅니다」)·디스크·직전 종료·서버·DB, 문제가 있는 줄만 `data-problem` 강조 + sr-only 「문제:」.
-│  │                       연결 줄은 wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·연결 점과 같은 캐시), 아니면 ops/status 값) ·
+│  │                       연결 줄은 wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·사이드바 연결 상태와 같은 캐시), 아니면 ops/status 값) ·
 │  │                       RunsTable.tsx(「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단, 채널 이름은 채널 링크. usageTrusted 가 false 면 「토큰·금액은 측정 불가 — … (ADR 0005)」 한 줄,
 │  │                       768px 미만은 표 대신 카드 목록) ·
 │  │                       LimitForm.tsx(워크스페이스 일일 상한 — 빈칸 null(무제한), 1~10000 정수 아니면 보내지 않음, 오늘 사용량 막대 또는 「오늘 n회 · 무제한」, 「오늘 워크스페이스 상한으로 막힌 런 n회」,

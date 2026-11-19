@@ -48,7 +48,22 @@ async function fillPasswords(password: string, confirm = password) {
   await userEvent.type(screen.getByLabelText("비밀번호 확인"), confirm);
 }
 
+/** 로그인 전 화면의 카드(UI 점검 스펙 U7) — 마크·「dodok」·소개 한 줄이 제목과 같은 카드 안에 있다 */
+function expectAuthCard(heading: HTMLElement) {
+  const card = heading.closest("[data-slot=auth-card]");
+  expect(card).not.toBeNull();
+  expect(card).toHaveTextContent("dodok");
+  expect(card).toHaveTextContent("사람과 AI 에이전트가 같은 채널에서 대화합니다");
+  expect(card?.querySelector('img[src="/favicon.svg"]')).toHaveAttribute("alt", "");
+}
+
 describe("ResetPage", () => {
+  it("카드에 dodok 과 소개 한 줄", async () => {
+    stubServer();
+    renderRoute(`/reset/${TOKEN}`);
+    expectAuthCard(await screen.findByRole("heading", { level: 1, name: "도독 팀 비밀번호 재설정" }));
+  });
+
   it("본문으로 조회한 워크스페이스 이름과 비밀번호 두 칸만 보인다", async () => {
     const fetch = stubServer();
     renderRoute(`/reset/${TOKEN}`);
