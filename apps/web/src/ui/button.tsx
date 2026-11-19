@@ -8,9 +8,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // 주 버튼의 비활성은 흐린 파랑 대신 회색 — 눌러도 되는 것처럼 보이지 않게(UI 점검 스펙 U8). 나머지는 투명도 50%
+        // 주 버튼의 비활성은 흐린 파랑 대신 회색 — 눌러도 되는 것처럼 보이지 않게(UI 점검 스펙 U8). `disabled` 와 초점을 지키려 `aria-disabled` 로만 잠근 것 둘 다. 나머지는 투명도 50%
         default:
-          "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-secondary disabled:text-muted-foreground",
+          "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-secondary disabled:text-muted-foreground aria-disabled:bg-secondary aria-disabled:text-muted-foreground aria-disabled:hover:bg-secondary",
         destructive:
           "bg-destructive text-white disabled:opacity-50 hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
         outline:

@@ -56,11 +56,16 @@ it("기본 변형 비활성은 회색 — 투명도 50% 가 아니다(UI 점검 
       <Button disabled variant="outline">
         취소
       </Button>
+      <Button aria-disabled>열기</Button>
     </>,
   );
   const primary = screen.getByRole("button", { name: "보내기" });
   expect(primary).toHaveClass("disabled:bg-secondary", "disabled:text-muted-foreground");
   expect(primary).not.toHaveClass("disabled:opacity-50");
+  // 초점을 지키려 `aria-disabled` 로만 잠근 주 버튼도 같은 회색
+  const locked = screen.getByRole("button", { name: "열기" });
+  expect(locked).toHaveClass("aria-disabled:bg-secondary", "aria-disabled:text-muted-foreground");
+  expect(locked).not.toHaveClass("aria-disabled:opacity-50");
   // 다른 변형은 지금처럼 투명도 50%
   const outline = screen.getByRole("button", { name: "취소" });
   expect(outline).toHaveClass("disabled:opacity-50");
