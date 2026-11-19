@@ -196,7 +196,7 @@ docker compose logs app | grep -E 'bridge plugin hello|bridge connection rejecte
 3. 사이드바 하단 「설정」 → 「알림」 탭(`/settings/notifications`)에서 「푸시 알림 켜기」 → OS 권한 허용.
 4. [PC] 브라우저에서 에이전트에게 사람을 부르는 답을 내게 한다(예: 「@<핸들> 불러 줘」 류) — 또는 승인 요청.
 5. 폰을 잠근 채 푸시가 오는지, 누르면 그 채널이 열리는지 본다.
-6. **CSP 확인** — 처음 배포에서는 PC 브라우저 개발자 도구 콘솔(가능하면 iOS 는 Mac Safari 웹 속성)에서 `Content-Security-Policy` 위반 줄이 0 인지, 서비스 워커가 등록되는지, wire 가 붙는지(연결 점) 본다. 정책 글은 `apps/server/src/http/web-static.ts` 의 `SECURITY_HEADERS`(각 허용의 까닭은 그 주석). 위반이 나면 결과 표에 그 줄을 적는다.
+6. **CSP 확인** — 처음 배포에서는 PC 브라우저 개발자 도구 콘솔(가능하면 iOS 는 Mac Safari 웹 속성)에서 `Content-Security-Policy` 위반 줄이 0 인지, 서비스 워커가 등록되는지, wire 가 붙는지(사이드바 아래 연결 상태 단추) 본다. 정책 글은 `apps/server/src/http/web-static.ts` 의 `SECURITY_HEADERS`(각 허용의 까닭은 그 주석). 위반이 나면 결과 표에 그 줄을 적는다.
 
 결과는 아래 「사람이 한 번 따라 한 결과」 절에 적는다.
 
@@ -385,7 +385,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 「설정 → 연결」의 Gateway 상세 머리의 버튼 셋이다 — 「수정」·「끄기」(꺼져 있으면 「켜기」)·「삭제」(화면 읽기 프로그램에는 「<이름> 수정」처럼 Gateway 이름이 붙는다). 그 Gateway 의 주인과 admin 이상이 하고, 저장하면 재시작 없이 곧바로 반영된다(member 가 주소를 바꾸면 승인 대기로 돌아가 끊긴다).
 
 - **수정** — 이름·주소·토큰. 이름만 바꾸면 다시 붙지 않는다. 주소나 토큰을 바꾸면 이 Gateway 만 다시 붙고, 진행 중인 런은 「다시 실행」 카드로 닫힌다. 주소를 바꾸면 디바이스 토큰이 지워져 다시 페어링한다(체크리스트 3 「페어링」). 플러그인과 브리지 토큰은 그대로다 — 브리지 토큰은 Gateway 주소와 상관없다.
-- **끄기** — 확인 없이 바로 끈다. Gateway 연결과 그 Gateway 플러그인의 브리지 세션을 끊고, 진행 중인 런은 `ADAPTER_UNAVAILABLE` run_error 카드(「다시 실행」)로 닫는다. 꺼진 동안 그 Gateway 의 에이전트를 부르면 곧바로 같은 카드가 남는다. 꺼진 Gateway 의 브리지 토큰은 핸드셰이크·첨부 HTTP 모두 거절된다(인증 실패로는 세지 않는다). 꺼진 Gateway 는 연결 점·배너·운영 화면 상태 카드·끊김 사건에서 빠진다. 「켜기」로 다시 붙으면 그 Gateway 의 플러그인이 hello 할 때 그 Gateway 에 에이전트를 둔 채널의 프롬프트를 다시 보낸다.
+- **끄기** — 확인 없이 바로 끈다. Gateway 연결과 그 Gateway 플러그인의 브리지 세션을 끊고, 진행 중인 런은 `ADAPTER_UNAVAILABLE` run_error 카드(「다시 실행」)로 닫는다. 꺼진 동안 그 Gateway 의 에이전트를 부르면 곧바로 같은 카드가 남는다. 꺼진 Gateway 의 브리지 토큰은 핸드셰이크·첨부 HTTP 모두 거절된다(인증 실패로는 세지 않는다). 꺼진 Gateway 는 연결 상태 단추·배너·운영 화면 상태 카드·끊김 사건에서 빠진다. 「켜기」로 다시 붙으면 그 Gateway 의 플러그인이 hello 할 때 그 Gateway 에 에이전트를 둔 채널의 프롬프트를 다시 보낸다.
 - **삭제** — 상세 안에서 한 번 더 묻는다: 「「<이름>」 Gateway 를 삭제할까요?」 + 「이 Gateway 의 에이전트 N개는 남고 연결이 비어 옮기기를 기다립니다 · 브리지 토큰 M개가 지워집니다」(M 은 폐기된 토큰도 센다). 지우면 그 Gateway 의 브리지 토큰과 디바이스 디렉터리(`/data/gateways/<Gateway id>/`)가 지워지고, 에이전트는 남아 연결이 빈다 — 「연결」 목록의 「연결 없음」에 서고, 그 에이전트 상세에 「Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요」.
   - **옮기기** — 그 에이전트 상세의 「Gateway 옮기기」(admin 이상 — member 는 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것일 때만)에서 옮길 Gateway 를 고른다. 그 Gateway 의 OpenClaw 에 같은 id 의 에이전트가 있어야 답하고, 그 Gateway 로 이미 등록된 같은 id 가 있으면 옮길 수 없다(「옮길 Gateway 에 같은 id 의 에이전트가 이미 있습니다」). 옮긴 뒤 그 에이전트의 run_error 카드 「다시 실행」은 새 Gateway 로 간다. 「Gateway 옮기기」는 연결된 에이전트 상세에도 있다 — 잘못 고른 Gateway 를 바로잡는 길도 같다.
   - 지운 Gateway 의 [B] 플러그인은 계속 다시 붙으려다 `token mismatch` 로 거절된다(카운터에는 세지 않는다) — [B] 에서 플러그인을 내리거나 계정 설정을 지운다.
