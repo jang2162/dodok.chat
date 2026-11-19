@@ -18,10 +18,26 @@ describe("initialOf", () => {
 });
 
 describe("personHue", () => {
-  it("에이전트 8색 사이(22.5° 어긋남)에 온다", () => {
-    for (const id of ["u1", "owner", "mia", "00000000-0000-4000-8000-000000000001"]) {
-      expect(personHue(id)).toBe((agentColorIndex(id) * 45 + 25 + 22.5) % 360);
+  // tokens.css --agent-1…8 의 색상각
+  const AGENT_HUES = [25, 70, 110, 150, 195, 240, 285, 330];
+  const gap = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+
+  it("사람 색상각은 가장 가까운 에이전트 색상각과 20° 이상 떨어진다(여덟 칸 전부)", () => {
+    // 칸마다 그 칸으로 떨어지는 id 를 하나씩 찾는다
+    const byIndex = new Map<number, string>();
+    for (let i = 0; byIndex.size < 8 && i < 10000; i++) {
+      const id = `u${i}`;
+      if (!byIndex.has(agentColorIndex(id))) byIndex.set(agentColorIndex(id), id);
     }
+    expect(byIndex.size).toBe(8);
+    for (const id of byIndex.values()) {
+      const nearest = Math.min(...AGENT_HUES.map((h) => gap(personHue(id), h)));
+      expect(nearest).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it("같은 id 는 같은 색상각", () => {
+    expect(personHue("owner")).toBe(personHue("owner"));
   });
 });
 
@@ -56,12 +72,15 @@ describe("IdentityAvatar", () => {
         <IdentityAvatar kind="person" id="u1" name="a" size={24} />
         <IdentityAvatar kind="person" id="u2" name="b" size={32} />
         <IdentityAvatar kind="person" id="u3" name="c" size={36} />
+        <IdentityAvatar kind="person" id="u4" name="d" size={64} />
       </>,
     );
     expect(screen.getByText("A")).toHaveClass("text-xs");
     expect(screen.getByText("B")).toHaveClass("text-sm");
     expect(screen.getByText("C")).toHaveClass("text-[15px]");
-    for (const t of ["A", "B", "C"]) expect(screen.getByText(t).className).not.toContain("text-[10px]");
+    expect(screen.getByText("D")).toHaveClass("text-xl");
+    expect(screen.getByText("D").closest("[data-slot=avatar]")).toHaveClass("size-16");
+    for (const t of ["A", "B", "C", "D"]) expect(screen.getByText(t).className).not.toContain("text-[10px]");
   });
 
   it("image wins over initials", () => {

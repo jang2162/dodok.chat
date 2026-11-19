@@ -10,7 +10,7 @@ import { DeactivatedTag } from "@/features/members/DeactivatedTag";
 import { isDeactivated } from "@/features/members/deactivated";
 import { PRESENCE_LABEL, SELF_INVISIBLE_LABEL, WithPresence } from "@/features/presence/PresenceDot";
 import { useDot } from "@/features/presence/store";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { Button } from "@/ui/button";
 import { untilLabel } from "./format";
 import { requestMention } from "./openProfile";
@@ -51,10 +51,10 @@ export function PersonProfile({ userId }: { userId: string }) {
     <div className="flex flex-col gap-4 p-4" data-testid="profile-person">
       <div className="flex items-center gap-3">
         {deactivated ? (
-          <BigAvatar url={person.avatarUrl} name={name} />
+          <BigAvatar id={userId} url={person.avatarUrl} name={name} />
         ) : (
           <WithPresence kind="user" id={userId} size="lg">
-            <BigAvatar url={person.avatarUrl} name={name} />
+            <BigAvatar id={userId} url={person.avatarUrl} name={name} />
           </WithPresence>
         )}
         <div className="min-w-0">
@@ -136,11 +136,6 @@ export function PersonProfile({ userId }: { userId: string }) {
   );
 }
 
-function BigAvatar({ url, name }: { url: string | undefined; name: string }) {
-  return (
-    <Avatar className="size-16">
-      {url && <AvatarImage src={url} alt="" />}
-      <AvatarFallback className="text-xl">{name.slice(0, 1)}</AvatarFallback>
-    </Avatar>
-  );
+function BigAvatar({ id, url, name }: { id: string; url: string | undefined; name: string }) {
+  return <IdentityAvatar kind="person" id={id} name={name} avatarUrl={url} size={64} />;
 }

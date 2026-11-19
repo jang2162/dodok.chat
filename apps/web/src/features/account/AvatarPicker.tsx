@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { formError } from "@/api/formErrors";
-import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { cropToSquare } from "./avatarImage";
 
 /**
@@ -9,12 +9,19 @@ import { cropToSquare } from "./avatarImage";
  * 올린다. 서버의 400(형식·크기·가로세로) 문구는 이 자리 안에 보인다
  */
 export function AvatarPicker({
+  kind,
+  id,
+  handle,
   name,
   currentUrl,
   upload,
   remove,
   label = "사진",
 }: {
+  kind: "person" | "agent";
+  id: string;
+  /** 에이전트 색은 핸들로 정한다 */
+  handle?: string;
   name: string;
   currentUrl: string | undefined;
   upload: (image: Blob) => Promise<unknown>;
@@ -54,10 +61,15 @@ export function AvatarPicker({
   const shown = draft?.url ?? currentUrl;
   return (
     <div className="flex items-center gap-3">
-      <Avatar className="size-16">
-        {shown && <AvatarImage src={shown} alt={draft ? "새 사진 미리보기" : ""} />}
-        <AvatarFallback className="text-xl">{name.slice(0, 1)}</AvatarFallback>
-      </Avatar>
+      <IdentityAvatar
+        kind={kind}
+        id={id}
+        name={name}
+        handle={handle}
+        avatarUrl={shown}
+        imageAlt={draft ? "새 사진 미리보기" : ""}
+        size={64}
+      />
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline" size="sm" disabled={busy}>

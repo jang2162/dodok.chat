@@ -129,6 +129,9 @@ export function AgentAvatarField({ agent }: { agent: Agent }) {
   const avatar = useAgentAvatar(agent.id);
   return (
     <AvatarPicker
+      kind="agent"
+      id={agent.id}
+      handle={agent.handle}
       name={agent.name}
       currentUrl={agent.avatarUrl}
       upload={(image) => avatar.upload.mutateAsync(image)}

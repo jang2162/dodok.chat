@@ -12,13 +12,19 @@ export function initialOf(name: string): string {
   return /\p{Script=Latin}/u.test(first) ? first.toUpperCase() : first;
 }
 
-/** 사람 색상각 — 에이전트 8색(tokens.css --agent-1…8, 25°부터 45° 간격)의 사이에 오게 22.5° 어긋낸다 */
+/**
+ * 사람 색상각 표 — 에이전트 8색(tokens.css --agent-1…8: 25·70·110·150·195·240·285·330°, 등간격이 아니다)의 이웃한 두 색상각 한가운데.
+ * 어느 칸이든 가장 가까운 에이전트 색과 20° 이상 떨어진다
+ */
+const PERSON_HUE = [47.5, 90, 130, 172.5, 217.5, 262.5, 307.5, 357.5] as const;
+
+/** 사람 색상각 — 사람 id 로 고정(`agentColorIndex` 와 같은 칸 고르기) */
 export function personHue(id: string): number {
-  return (agentColorIndex(id) * 45 + 25 + 22.5) % 360;
+  return PERSON_HUE[agentColorIndex(id)] as number;
 }
 
-const ROOT_SIZE = { 24: "size-6", 32: "size-8", 36: "size-9" } as const;
-const INITIAL_SIZE = { 24: "text-xs", 32: "text-sm", 36: "text-[15px]" } as const;
+const ROOT_SIZE = { 24: "size-6", 32: "size-8", 36: "size-9", 64: "size-16" } as const;
+const INITIAL_SIZE = { 24: "text-xs", 32: "text-sm", 36: "text-[15px]", 64: "text-xl" } as const;
 
 /**
  * 사람·에이전트 아바타 하나 — 사진이 있으면 사진, 없거나 받는 사이에는 이니셜(스펙 2026-11-19 U4). 사람은 테두리 없이 옅은 채움,
@@ -30,6 +36,7 @@ export function IdentityAvatar({
   name,
   handle,
   avatarUrl,
+  imageAlt = "",
   size,
   className,
   ...rest
@@ -40,7 +47,9 @@ export function IdentityAvatar({
   /** 에이전트 색은 핸들로 정한다(없으면 id) */
   handle?: string;
   avatarUrl?: string | null;
-  size: 24 | 32 | 36;
+  /** 사진의 대체 글 — 기본은 장식(빈 글) */
+  imageAlt?: string;
+  size: 24 | 32 | 36 | 64;
   className?: string;
 }) {
   let rootStyle: CSSProperties | undefined;
@@ -67,7 +76,7 @@ export function IdentityAvatar({
       className={cn(ROOT_SIZE[size], kind === "agent" && "border-2", className)}
       style={rootStyle}
     >
-      {avatarUrl && <AvatarImage src={avatarUrl} alt="" />}
+      {avatarUrl && <AvatarImage src={avatarUrl} alt={imageAlt} />}
       <AvatarFallback className={cn("font-medium", INITIAL_SIZE[size])} style={fillStyle}>
         {initialOf(name)}
       </AvatarFallback>
