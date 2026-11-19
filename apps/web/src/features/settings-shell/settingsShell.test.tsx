@@ -44,7 +44,7 @@ const tabNames = async () =>
     .map((l) => l.textContent?.replace(/\d+$/, "").trim());
 
 describe("사이드바 하단", () => {
-  it("연결 점과 「설정」 하나뿐 — 에이전트·멤버·연결·운영·내 계정·로그아웃·알림이 없다", async () => {
+  it("연결 상태와 「설정」 하나뿐 — 에이전트·멤버·연결·운영·내 계정·로그아웃·알림이 없다", async () => {
     stubShell();
     renderRoute("/c/a");
     const settings = await within(await sidebar()).findByRole("link", { name: /^설정/ });
@@ -55,8 +55,12 @@ describe("사이드바 하단", () => {
     for (const name of ["내 계정", "로그아웃", "알림"]) {
       expect(within(await sidebar()).queryByRole("button", { name })).toBeNull();
     }
-    // 연결 점은 그대로 — wire 없이 띄우므로 이름은 「상태 모름」
-    expect(within(await sidebar()).getByRole("img", { name: /^Gateway / })).toBeInTheDocument();
+    // 연결 상태 단추는 그대로 — wire 없이 띄우므로 「상태 모름」
+    expect(
+      within(await sidebar()).getByRole("button", {
+        name: "연결 상태 — Gateway 상태 모름, 플러그인 상태 모름",
+      }),
+    ).toHaveTextContent("상태 모름");
   });
 
   it("admin 이상이면 「설정」에 확인 안 한 사건 수 배지", async () => {
