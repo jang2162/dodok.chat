@@ -1,6 +1,6 @@
 # 에이전트 명령(Claude Code·OpenClaw 슬래시 명령) — 설계
 
-상태: 승인 대기(2026-11-21) · 결정: 사용자와의 대화(2026-11-21), 빌더 확인 1회
+상태: 승인 대기(2026-11-21) · 결정: 사용자와의 대화(2026-11-21), 빌더 확인 1회, SDK 스파이크 1회
 
 ## 1. 왜
 
@@ -41,12 +41,15 @@
 | C5 | 그 밖의 이름은 목록에 없어도 넘긴다(자동완성 목록은 도움말일 뿐, 허용 목록이 아니다) — 새 스킬·명령을 막지 않게 | 조율자 |
 | C6 | 누가 — 그 에이전트를 멘션해 부를 수 있는 사람이면 누구나(지금 멘션 규칙 그대로). 막는 명령(C4)은 owner 도 막는다 | 조율자 |
 | C7 | 옛 러너·옛 플러그인(능력 `commands` 없음)이면 서버가 그 명령을 보내지 않고 대화에 시스템 줄 「이 에이전트는 명령을 지원하지 않습니다 — 러너·플러그인을 업데이트하세요」 | 조율자 |
-| C8 | 러너 명령 목록: hello 프로그램 상태에 `commands`(이름·설명·인자 힌트) — 모델 목록을 받는 같은 가벼운 query 에서 `supportedCommands()`. 프로젝트(cwd)마다 다를 수 있으나(프로젝트 `.claude/commands`·스킬) 1차는 러너 첫 루트 기준 — 프로젝트별 목록은 이월 | 조율자 |
+| C8 | 러너 명령 목록은 **프로젝트마다** 묻는다 — 프로젝트 명령이 cwd 마다 다르므로(C14 의 `project` 감싸개). 서버 → 러너 ack 요청 `commands.list { project: RunnerProjectRef }`(상한 30초) → 러너가 그 cwd·감싸개로 프롬프트 없는 query 를 열어 `supportedCommands()`(스파이크: 모델 요청 0) → `{ name, description, argumentHint?, aliases? }[]`. 서버는 프로젝트 id 별로 10분 캐시하고 러너 재접속 때 비운다. hello 에는 싣지 않는다 | 조율자(스파이크로 바꿈) |
 | C10 | **OpenClaw 는 허용 목록으로 바꾼다**(C4·C5 의 OpenClaw 부분을 대신한다) — Gateway 명령 상당수가 호스트·설정·페어링·승인·세션을 건드리고(`/login` `/allowlist` `/pair` `/approve` `/send` `/export-session` `/loop` `/diagnostics` `/openclaw` `/acp` `/codex` `/dreaming` `/activation` 등) 판마다 늘어난다. 허용: `/status` `/help` `/commands` `/whoami` `/usage` `/compact` `/skill`, 지시어 `/think` `/fast` `/verbose` `/reasoning` `/queue` `/model`(인자에 `-g`·`-a` 가 있으면 막음). `/new`·`/reset` 은 막고 「새 세션을 여세요」(dodok 세션과 Gateway 세션이 갈라지지 않게 — 러너 `/clear` 와 대칭). 스킬은 `/skill <이름>` 로. 러너(Claude)는 C4 막는 목록 + C5 그대로 | 조율자(빌더 확인 Q3) |
 | C11 | 역할 차등 없음 — 허용 목록(C10)이 호스트를 건드리지 않는 것만 담으므로 멘션할 수 있으면 누구나(C6) | 조율자(빌더 확인 Q4) |
 | C12 | OpenClaw 명령 허가 — 명령 갈래에서만 플러그인이 `CommandInterpretationSuppressed` 를 빼고 ingress 를 `command: { allowTextCommands: true, hasControlCommand: true }` + `useAccessGroups: false`·`modeWhenAccessGroupsOff: "allow"` 로 넘긴다(dodok 서버가 이미 판정했으므로). Gateway 에 `commands.ownerAllowFrom` 이 있으면 owner 전용 명령은 Gateway 가 조용히 무시한다 — 그것은 Gateway 주인의 설정으로 둔다(dodok 이 owner 를 사칭하지 않는다). 무시된 명령은 C13 로 닫힌다 | 조율자(빌더 확인 Q2·a) |
 | C13 | 답이 없는 명령 런은 **성공으로** 닫는다 — 플러그인 admission `handled`·`drop`(지금은 `DROPPED:handled` 실패 런·운영 사건·「다시 실행」이 된다)과 러너 `num_turns: 0` 결과(지금 `stream-map` 이 「resume 직후 빈 result」로 버려 런이 안 끝난다)를 명령 런에서는 끝으로 본다. 결과 글이 비면 「`/이름` 완료」 한 줄(5.1) | 조율자(빌더 확인 b·c) |
-| C14 | 러너가 사람의 명령·스킬을 읽게 한다 — **명령·스킬만 골라 연다**: 설정 파일(권한 규칙·훅·env·CLAUDE.md)은 지금처럼 끈 채(`settingSources: []` 유지), 사용자(`~/.claude` 또는 전용 `configDir`)·프로젝트의 `commands/`·`skills/` 만 SDK 옵션(`skills`·`plugins` 등)으로 들인다. 런·모델/명령 목록 query 양쪽 같게. **SDK 가 이것을 지원하는지 스파이크로 먼저 확인한다**(`.superpowers/sdd/2026-11-21-agent-commands/spike-report.md`) — 안 되면 설계를 멈추고 사용자에게 다시 묻는다(A 전체 설정 켜기 / C 내장 명령만) | 사용자(B) |
+| C14 | 러너가 사람의 명령·스킬을 읽게 한다 — **명령·스킬만 골라 연다**(사용자 B). 스파이크 결과(`.superpowers/sdd/2026-11-21-agent-commands/spike-report.md`, SDK 0.3.283·CLI 2.1.283/2.1.330, 모델 런 0회)대로: `settingSources: []` 그대로 두고, 러너가 임시 디렉터리에 플러그인 감싸개 둘을 만든다 — `user`(`.claude-plugin/plugin.json` `{"name":"user"}`, `commands`·`skills` → `<configDir 또는 ~/.claude>/` 의 같은 폴더로 심볼릭 링크)와 `project`(→ `<cwd>/.claude/commands`·`skills`, 있는 것만). `plugins: [{type:"local", path, skipMcpDiscovery:true}]`. 사람 폴더에는 아무것도 쓰지 않는다. 확인된 것: settings.json 의 permissions·hooks·env·CLAUDE.md 는 0, `skills:"all"`·`additionalDirectories` 는 효과 없음 | 사용자(B), 꼴은 스파이크 |
+| C15 | 명령·스킬 파일이 스스로 지닌 권한·훅을 막는다(스파이크가 실측으로 확인): `settings: { disableAllHooks: true, disableSkillShellExecution: true }`(스킬 frontmatter 훅·본문 `` !`cmd` `` 끔 — 러너의 SDK 콜백 훅은 그대로 돈다), 그리고 명령 frontmatter `allowed-tools` 가 승인 카드를 건너뛰지 않게 러너 SDK `PreToolUse` 콜백 훅이 「지금 권한 모드가 자동 허용하지 않는 도구이고 러너가 늘 허용하는 dodok 도구가 아닌 것」에 `permissionDecision: "ask"` 를 돌려 `canUseTool`(승인 카드)로 되돌린다. 러너 천장(`disallowedTools`·plan 상한)은 스파이크에서 이미 뚫리지 않았다 | 조율자(스파이크) |
+| C16 | 이름: `supportedCommands()` 의 `builtin` 이 아닌 행은 `user:이름`·`project:이름` 꼴이다. 앱은 그 이름 그대로 보이고 넘긴다. 스킬은 접두사 없는 별칭(`aliases`)도 실행되므로 자동완성에 별칭을 함께 싣는다(명령에는 별칭이 없다 — `/user:review` 로만 실행). 목록에 없는 이름은 CLI 가 오류 없이 글 그대로 모델에 보낸다(C5 와 맞는다) | 조율자(스파이크) |
+| C17 | 결과: 마지막 result 에 `local_command` 가 있으면(CLI 가 모델 없이 처리 — `/context`·`/compact`·`/cost` 등) 그 런의 답은 **result 글**이고 그 사이 assistant 글은 모으지 않는다(`/compact` 가 앞 턴 글을 다시 내므로). result 가 비면 「`/이름` 완료」(C13). 없으면 지금처럼 | 조율자(스파이크) |
 | C9 | OpenClaw 명령 목록: shared 에 2026.9.4 문서(`docs/tools/slash-commands.md`)의 명령·지시어 중 C4 를 뺀 고정 목록(이름·한 줄 설명). Gateway 의 스킬 명령(`nativeSkills`)은 자동완성에 없어도 넘긴다(C5) | 조율자 |
 
 ## 4. 방법(고른 것과 버린 것)
@@ -69,7 +72,7 @@
 - `RunTriggerKind` 에 `"command"`.
 - 러너 `run.start` 의 deliver 에 `command?: { name: string; args: string }`. 브리지 `inbound.deliver` 에도 같은 필드.
 - 러너 hello 능력·플러그인 hello 능력에 `"commands"`(각 enum 에 값을 더한다 — 옛 서버는 모르는 값을 버린다).
-- `RunnerProgramStatus.commands?: { name; description; argumentHint? }[]`(상한 200개·이름 64자·설명 200자).
+- 러너 ack 요청 `commands.list`(C8) — 결과 `{ name; description; argumentHint?; aliases? }[]`(상한 200개·이름 64자·설명 200자).
 - `OPENCLAW_COMMANDS`(C9), `BLOCKED_COMMANDS`(C4 — 프로그램별), `parseAgentCommand(text, …)`(C2 — 웹·서버가 같은 함수).
 - 대화 설정 응답·`agent-ceilings`(작성기 칩이 이미 받는 자리)에 에이전트별 `commands` — 러너면 hello 목록, OpenClaw 면 고정 목록, 끊겼거나 옛 판이면 빈 목록. (OpenClaw 에이전트는 지금 그 응답에 없다 — 명령 목록만은 OpenClaw 에이전트도 싣는다. 자리가 맞지 않으면 빌더가 새 GET 을 둔다.)
 
@@ -79,7 +82,8 @@
 - 결과는 지금처럼 final. 결과 글이 비면 서버가 5.1 의 한 줄을 게시한다(러너는 빈 글 그대로).
 - 러너도 C4 의 Claude 목록을 한 번 더 막는다(서버를 지나도 — 이중 방어).
 - 명령 런에도 `UserPromptSubmit` 훅의 채널 사실(`additionalContext`)은 그대로 붙는다 — 스킬이 어느 대화에서 도는지 알게(조율자).
-- 능력 `commands`, hello `commands` 목록(C8).
+- 능력 `commands`, `commands.list` 응답(C8). 감싸개(C14)·막기 옵션(C15)·결과 꼴(C17).
+- 스트림 매퍼(`stream-map.ts`)가 `num_turns: 0` 결과를 「resume 직후 빈 result」로 버리는 것을 명령 런에서는 끝으로 본다(C13).
 
 ### 5.4 OpenClaw 플러그인
 
