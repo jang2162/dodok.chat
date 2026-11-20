@@ -487,3 +487,108 @@ describe("해시", () => {
     expect(computeRelayHash(A, B, "t")).not.toBe(computeRelayHash(B, A, "t"));
   });
 });
+
+describe("decideRuns — 에이전트 명령(에이전트 명령 스펙 C2·C4·C7)", () => {
+  const runnerAgent = (id: string, handle: string): Agent => ({
+    ...agent(id, handle),
+    provider: "runner",
+    program: "claude",
+  });
+
+  it("command mention creates one command run", () => {
+    const r = decideRuns(input({ message: userMsg([A], `<@a:${A}> /status`) }));
+    expect(r).toEqual({
+      runs: [
+        {
+          agentId: A,
+          triggerKind: "command",
+          rootMessageId: ID(30),
+          relayDepth: 0,
+          command: { name: "status", args: "" },
+        },
+      ],
+      blocked: [],
+    });
+  });
+
+  it("two mentions with slash → normal mention runs", () => {
+    const r = decideRuns(input({ message: userMsg([A, B], `<@a:${A}> <@a:${B}> /status`) }));
+    expect(r.runs.map((p) => p.triggerKind)).toEqual(["mention", "mention"]);
+    expect(r.notice).toBeUndefined();
+  });
+
+  it("첨부가 있으면 명령이 아니다", () => {
+    const msg = { ...userMsg([A], `<@a:${A}> /status`), attachments: [{ id: ID(60) }] } as unknown as Message;
+    expect(decideRuns(input({ message: msg })).runs[0]?.triggerKind).toBe("mention");
+  });
+
+  it("blocked command → no run + system line text", () => {
+    const r = decideRuns(input({ message: userMsg([A], `<@a:${A}> /restart`) }));
+    expect(r).toEqual({
+      runs: [],
+      blocked: [],
+      notice: { agentId: A, text: "이 명령은 dodok 에서 쓸 수 없습니다" },
+    });
+    const runner = decideRuns(
+      input({ message: userMsg([A], `<@a:${A}> /model opus`), agents: [runnerAgent(A, "a"), agent(B, "b")] }),
+    );
+    expect(runner.notice).toEqual({ agentId: A, text: "모델은 작성기 칩에서 바꾸세요" });
+  });
+
+  it("old runner without commands capability → C7 line", () => {
+    const r = decideRuns(
+      input({
+        message: userMsg([A], `<@a:${A}> /compact`),
+        agents: [runnerAgent(A, "a"), agent(B, "b")],
+        supportsCommands: () => false,
+      }),
+    );
+    expect(r).toEqual({
+      runs: [],
+      blocked: [],
+      notice: { agentId: A, text: "이 에이전트는 명령을 지원하지 않습니다 — 러너·플러그인을 업데이트하세요" },
+    });
+  });
+
+  it("@dev /stop → use_stop line", () => {
+    const r = decideRuns(input({ message: userMsg([A], `<@a:${A}> /stop`) }));
+    expect(r.notice).toEqual({ agentId: A, text: "중지는 `/stop` 만 쓰세요" });
+    expect(r.runs).toEqual([]);
+  });
+
+  it("1:1 에이전트 DM 은 맨 앞 /이름", () => {
+    const dm = { ...channel(), kind: "dm" as const, dmOwnerId: USER, dmAgentId: A };
+    const r = decideRuns(
+      input({
+        channel: dm,
+        members: [member(A, { autoRespond: true })],
+        agents: [agent(A, "a")],
+        message: userMsg([], "/think high"),
+      }),
+    );
+    expect(r.runs).toEqual([
+      {
+        agentId: A,
+        triggerKind: "command",
+        rootMessageId: ID(30),
+        relayDepth: 0,
+        command: { name: "think", args: "high" },
+      },
+    ]);
+    // 일반 채널의 맨 앞 /status 는 평범한 글(자동 응답)
+    const plain = decideRuns(
+      input({ message: userMsg([], "/status"), members: [member(A, { autoRespond: true })] }),
+    );
+    expect(plain.runs[0]?.triggerKind).toBe("auto_respond");
+  });
+
+  it("relay from command run is suppressed", () => {
+    const source = { ...run(A, 0), triggerKind: "command" as const };
+    const r = decideRuns(input({ message: agentMsg(A, [B], `<@a:${B}> 봐 줘`), sourceRun: source }));
+    expect(r).toEqual({ runs: [], blocked: [] });
+    // 대조 — 멘션 런의 답은 릴레이한다
+    expect(
+      decideRuns(input({ message: agentMsg(A, [B], `<@a:${B}> 봐 줘`), sourceRun: run(A, 0) })).runs,
+    ).toHaveLength(1);
+  });
+});

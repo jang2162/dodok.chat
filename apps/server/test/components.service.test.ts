@@ -159,7 +159,13 @@ function retryNotice(t: ReturnType<typeof setup>, runId: string): Message {
 /** error 로 끝난 런과 그 run_error 카드 — relay 면 트리거는 fromAgent 의 메시지다 */
 function failedRun(
   t: ReturnType<typeof setup>,
-  opts: { agent: Agent; triggerKind: "mention" | "relay"; relayDepth?: number; fromAgent?: Agent },
+  opts: {
+    agent: Agent;
+    triggerKind: "mention" | "relay" | "command";
+    relayDepth?: number;
+    fromAgent?: Agent;
+    body?: string;
+  },
 ): { run: Run; notice: Message } {
   const trigger = opts.fromAgent
     ? createAgentMessage(t.db, t.bus, {
@@ -171,7 +177,7 @@ function failedRun(
     : createUserMessage(t.db, t.bus, {
         conversationId: channelConversation(t.db, t.channel.id),
         authorId: t.userId,
-        bodyMd: `@${opts.agent.handle} 해줘`,
+        bodyMd: opts.body ?? `@${opts.agent.handle} 해줘`,
         clientMsgId: `c-${uuid()}`,
       });
   const run = insertRun(t.db, {
@@ -496,6 +502,31 @@ describe("components service — interact", () => {
     await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
       body: { code: "CONSUMED" },
     });
+  });
+
+  it("retry of command run re-parses trigger — 같은 명령을 다시 싣는다", async () => {
+    const t = setup();
+    const { run: failed, notice } = failedRun(t, {
+      agent: t.dev,
+      triggerKind: "command",
+      body: `@${t.dev.handle} /think high`,
+    });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      triggerKind: "command",
+      parentRunId: failed.id,
+      command: { name: "think", args: "high" },
+    });
+  });
+
+  it("명령 런의 트리거 글이 명령으로 풀리지 않으면 VALIDATION — 런 없음", async () => {
+    const t = setup();
+    const { notice } = failedRun(t, { agent: t.dev, triggerKind: "command", body: `@${t.dev.handle} 해줘` });
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
   });
 
   it("retry_run 대상이 error 가 아니거나 트리거 메시지가 없거나 런이 없으면 VALIDATION — 버튼은 남는다", async () => {

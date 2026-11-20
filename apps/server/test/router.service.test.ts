@@ -556,3 +556,43 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
     }
   });
 });
+
+describe("router service — 에이전트 명령", () => {
+  const created = (t: ReturnType<typeof setup>) => listMessages(t.db, t.channel.id, { limit: 50 }).messages;
+  it("@dev /status → command 런 하나에 명령을 싣는다", async () => {
+    const t = setup();
+    await t.router.routeMessage(t.human("@dev /status"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      agentId: t.dev.id,
+      triggerKind: "command",
+      command: { name: "status", args: "" },
+    });
+    expect(t.systemMessages()).toEqual([]);
+  });
+
+  it("막는 명령은 런 없이 그 자리에 시스템 줄 하나 — 사람 글은 남는다", async () => {
+    const t = setup();
+    const message = t.human("@dev /restart");
+    await t.router.routeMessage(message);
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual(["이 명령은 dodok 에서 쓸 수 없습니다"]);
+    expect(created(t).some((m) => m.id === message.id)).toBe(true);
+  });
+
+  it("옛 플러그인(supportsCommands false)이면 C7 줄", async () => {
+    const t = setup();
+    const router = createRouter({
+      db: t.db,
+      bus: t.bus,
+      logger: t.logger,
+      enqueue: t.enqueue,
+      supportsCommands: () => false,
+    });
+    await router.routeMessage(t.human("@dev /status"));
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual([
+      "이 에이전트는 명령을 지원하지 않습니다 — 러너·플러그인을 업데이트하세요",
+    ]);
+  });
+});

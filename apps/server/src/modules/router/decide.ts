@@ -3,9 +3,13 @@ import {
   type Agent,
   type Channel,
   type ChannelMember,
+  checkCommand,
+  COMMANDS_UNSUPPORTED_MESSAGE,
+  type DeliverCommand,
   MENTION_TOKEN_RE,
   type Message,
   type Run,
+  parseAgentCommand,
   type RunTriggerKind,
 } from "@dodok/shared";
 import { isAgentActive } from "../agents/service";
@@ -24,6 +28,11 @@ export type RoutingInput = {
   threadRoot?: Message; // message가 스레드 답글일 때 그 루트
   chainHashes: Set<string>; // 같은 rootMessageId 체인의 relayHash 집합
   now: Date;
+  /**
+   * 그 에이전트를 맡은 쪽이 명령(능력 commands)을 받나(에이전트 명령 C7). 없으면 받는다고 본다 — 맡은 쪽이 지금 붙어 있지 않으면
+   * 막지 않는다(보낼 때 ADAPTER_UNAVAILABLE 로 닫힌다)
+   */
+  supportsCommands?: (agent: Agent) => boolean;
 };
 
 export type RunPlan = {
@@ -36,7 +45,11 @@ export type RunPlan = {
   parentRunId?: string;
   /** 스레드 하위 세션의 런이면 그 루트 */
   threadRootId?: string;
+  /** 명령 런(triggerKind command)만 — 런 시작에 InboundDeliver.command 로 싣는다 */
+  command?: DeliverCommand;
 };
+/** 런 없이 그 자리에 남길 시스템 줄 — 막은 명령(C4·C10)·옛 판(C7) */
+export type RoutingNotice = { agentId: string; text: string };
 export type BlockedReason = "pair_not_allowed" | "max_turns" | "repeat" | "disabled";
 export type Blocked = { agentId: string; reason: BlockedReason };
 
@@ -80,7 +93,36 @@ function autoResponder(agentMembers: ChannelMember[], isActive: (id: string) => 
     .sort((a, b) => Date.parse(a.joinedAt) - Date.parse(b.joinedAt))[0]?.memberId;
 }
 
-export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blocked[] } {
+/** 명령을 받는 프로그램 — 러너 에이전트는 Claude Code 목록, 그 밖(OpenClaw)은 허용 목록 */
+export function commandProgramOf(agent: Pick<Agent, "provider">): "claude" | "openclaw" {
+  return agent.provider === "runner" ? "claude" : "openclaw";
+}
+
+/** 1:1 에이전트 DM 이면 그 에이전트 — 맨 앞 `/이름` 이 그 에이전트의 명령이다 */
+export function directAgentOf(channel: Pick<Channel, "kind" | "dmAgentId">): string | undefined {
+  return channel.kind === "dm" ? (channel.dmAgentId ?? undefined) : undefined;
+}
+
+/**
+ * 그 사람 글이 명령이면 명령(C2) — 첨부가 있으면 명령이 아니다. 라우팅·「다시 실행」이 같이 쓴다(다시 실행은 트리거 글을 다시 푼다)
+ */
+export function commandOfMessage(
+  channel: Pick<Channel, "kind" | "dmAgentId">,
+  message: Pick<Message, "bodyMd" | "attachments">,
+): { agentId: string; command: DeliverCommand } | null {
+  if (message.attachments.length > 0) return null;
+  const directAgentId = directAgentOf(channel);
+  const parsed = parseAgentCommand(message.bodyMd, directAgentId === undefined ? {} : { directAgentId });
+  return parsed === null
+    ? null
+    : { agentId: parsed.agentId, command: { name: parsed.name, args: parsed.args } };
+}
+
+export function decideRuns(input: RoutingInput): {
+  runs: RunPlan[];
+  blocked: Blocked[];
+  notice?: RoutingNotice;
+} {
   const { message, channel, members, agents, sourceRun } = input;
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const agentMembers = members.filter((m) => m.memberType === "agent");
@@ -107,6 +149,35 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
   if (message.authorType === "automation") return { runs: mentionRuns(), blocked: [] };
 
   if (message.authorType === "user") {
+    // 에이전트 명령(C2) — 첨부가 있으면 명령이 아니다. 부를 수 없는 에이전트면 평범한 글처럼 흘려 보낸다
+    const parsed = commandOfMessage(channel, message);
+    const commandAgent = parsed === null ? undefined : agentById.get(parsed.agentId);
+    if (parsed !== null && commandAgent !== undefined && isActive(parsed.agentId)) {
+      const { command } = parsed;
+      const verdict = checkCommand(commandProgramOf(commandAgent), command.name, command.args);
+      if (!verdict.ok)
+        return { runs: [], blocked: [], notice: { agentId: parsed.agentId, text: verdict.message } };
+      if (input.supportsCommands?.(commandAgent) === false) {
+        return {
+          runs: [],
+          blocked: [],
+          notice: { agentId: parsed.agentId, text: COMMANDS_UNSUPPORTED_MESSAGE },
+        };
+      }
+      return {
+        runs: [
+          {
+            agentId: parsed.agentId,
+            triggerKind: "command",
+            rootMessageId: message.id,
+            relayDepth: 0,
+            command,
+            ...thread,
+          },
+        ],
+        blocked: [],
+      };
+    }
     const runs = mentionRuns();
     if (runs.length > 0) return { runs, blocked: [] };
     if (message.mentions.agents.length > 0) return { runs: [], blocked: [] }; // 멘션이 전부 비활성: 폴백 없음
@@ -128,6 +199,8 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
 
   if (message.authorType === "agent") {
     if (!sourceRun) return { runs: [], blocked: [] };
+    // 명령 런의 답은 다른 에이전트를 부르지 않는다(에이전트 명령 스펙 5.1) — 답 글에 멘션이 있어도 릴레이하지 않는다
+    if (sourceRun.triggerKind === "command") return { runs: [], blocked: [] };
     const policy = channel.relayPolicy;
     const runs: RunPlan[] = [];
     const blocked: Blocked[] = [];

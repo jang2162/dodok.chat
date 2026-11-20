@@ -25,6 +25,7 @@ import { allowedOrigins } from "./http/origins";
 import { registerWebStatic } from "./http/web-static";
 import { createLogger, type Logger, RedactingLogController, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
+import { registerAgentCommandRoutes } from "./modules/agents/commands.routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
@@ -542,6 +543,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     };
     registerChannelRoutes(fastify, routeContext);
     registerAgentRoutes(fastify, routeContext);
+    registerAgentCommandRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
     registerAgentSettingsRoutes(fastify, routeContext);

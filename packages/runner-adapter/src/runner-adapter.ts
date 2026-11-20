@@ -32,6 +32,9 @@ import {
   RunnerApprovalWithdrawn,
   type RunnerClientToServerEvents,
   RunnerControlCall,
+  RunnerCommandsList,
+  RunnerCommandsListResult,
+  RUNNER_COMMANDS_LIST_TIMEOUT_MS,
   RunnerFsListResult,
   RunnerHello,
   type RunnerHelloResult,
@@ -180,6 +183,11 @@ export interface RunnerAdapter extends AgentAdapter {
   worktreeCreate(tokenId: string, req: RunnerWorktreeCreate): Promise<RunnerWorktreeCreateResult>;
   /** 그 러너의 git 워크트리 폴더를 지운다(worktree.remove) — 오류는 worktreeCreate 와 같다 */
   worktreeRemove(tokenId: string, req: RunnerWorktreeRemove): Promise<RunnerWorktreeRemoveResult>;
+  /**
+   * 그 러너의 그 프로젝트에서 쓸 수 있는 명령(commands.list — 에이전트 명령 스펙 C8). ack 상한 RUNNER_COMMANDS_LIST_TIMEOUT_MS(30초),
+   * 오류는 fsList 와 같다. 능력 commands 가 없는 러너에는 부르지 않는다(부르는 쪽이 hasCapability 로 본다)
+   */
+  commandsList(tokenId: string, project: RunnerProjectRef): Promise<RunnerCommandsListResult>;
   /** 그 토큰으로 지금 붙은 러너가 hello 로 그 능력을 알렸나. 붙어 있지 않으면 false */
   hasCapability(tokenId: string, capability: RunnerCapability): boolean;
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
@@ -944,7 +952,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   /** 서버 → 러너 ack 요청(fs.list·project.check·worktree.*) — 요청·답 모두 계약 스키마로 거른다 */
   async function askRunner<Q, R>(
     tokenId: string,
-    event: "fs.list" | "project.check" | "worktree.create" | "worktree.remove",
+    event: "fs.list" | "project.check" | "worktree.create" | "worktree.remove" | "commands.list",
     payload: Q,
     requestSchema: z.ZodType<Q>,
     schema: z.ZodType<R>,
@@ -1121,6 +1129,15 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         RunnerWorktreeRemove,
         RunnerWorktreeRemoveResult,
         RUNNER_GIT_ACK_TIMEOUT_MS,
+      ),
+    commandsList: (tokenId, project) =>
+      askRunner(
+        tokenId,
+        "commands.list",
+        { project },
+        RunnerCommandsList,
+        RunnerCommandsListResult,
+        RUNNER_COMMANDS_LIST_TIMEOUT_MS,
       ),
     hasCapability: (tokenId, capability) =>
       !closed && (registry.byToken(tokenId)?.capabilities.includes(capability) ?? false),

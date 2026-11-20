@@ -24,6 +24,8 @@ export type RouterDeps = {
   /** 런 관문(ops/budget) — 한도에 막히면 null 이고 알림은 관문이 남긴다 */
   enqueue: RunGate["enqueue"];
   now?: () => Date;
+  /** 그 에이전트를 맡은 쪽이 명령을 받나(에이전트 명령 C7) — 없으면 받는다고 본다 */
+  supportsCommands?: (agent: Agent) => boolean;
 };
 
 export type Router = {
@@ -164,7 +166,19 @@ export function createRouter(deps: RouterDeps): Router {
         ...(threadRoot ? { threadRoot } : {}),
         chainHashes: sourceRun ? store.chainHashes(db, sourceRun.rootMessageId) : new Set(),
         now: at,
+        ...(deps.supportsCommands === undefined ? {} : { supportsCommands: deps.supportsCommands }),
       });
+
+      // 막은 명령·옛 판(에이전트 명령 C4·C7) — 런 없이 그 자리에 시스템 줄 하나. 사람 글은 남는다
+      if (decision.notice !== undefined) {
+        createSystemMessage(db, bus, {
+          conversationId: message.conversationId,
+          ...(message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId }),
+          kind: "info",
+          bodyMd: decision.notice.text,
+          systemMeta: { kind: "info" },
+        });
+      }
 
       // 그룹 DM 은 런마다 시킨 사람이 그 에이전트의 dmAccess 를 지금 통과하는지 본다(사람 간 DM 스펙 6.3) — 막히면 런을 만들지 않고 그
       // 자리(스레드면 그 스레드)에 시스템 메시지 하나. 대화는 계속 쓴다. 시킨 사람은 오케스트레이터가 저장할 값과 같게 넘긴다

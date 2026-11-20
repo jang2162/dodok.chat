@@ -12,6 +12,7 @@ import {
   type InboundDeliver,
   OutboundMessage,
   type ProviderApproval,
+  RUNNER_COMMANDS_LIST_TIMEOUT_MS,
   type RunEventBody,
   type RunnerControlCall,
   type RunnerPermissionMode,
@@ -2511,5 +2512,52 @@ describe("control.call", () => {
     const input = await startRun(h, r);
     await emit(r, call(input.runId));
     expect(h.logs.filter((l) => l.msg?.includes("unknown frame"))).toEqual([]);
+  });
+});
+
+describe("commands.list — 서버 → 러너 ack 요청(에이전트 명령 스펙 C8)", () => {
+  const PROJECT = { rootId: "src", relPath: "dodok" };
+
+  it("commandsList uses 30s ack", async () => {
+    expect(RUNNER_COMMANDS_LIST_TIMEOUT_MS).toBe(30_000);
+    const h = await setup({ fakeTimers: true });
+    const r = await readyRunner(h);
+    const seen: unknown[] = [];
+    let answer: ((v: unknown) => void) | undefined;
+    r.socket.on("commands.list", (p: unknown, ack: (v: unknown) => void) => {
+      seen.push(p);
+      answer = ack;
+    });
+    const pending = h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT);
+    await until(() => answer !== undefined, "commands.list");
+    // 10초(fs 상한)를 넘겨도 기다린다
+    await vi.advanceTimersByTimeAsync(20_000);
+    const commands = [{ name: "user:review", description: "(user) 리뷰", aliases: ["review"] }];
+    answer!({ ok: true, commands });
+    expect(await pending).toEqual({ ok: true, commands });
+    expect(seen).toEqual([{ project: PROJECT }]);
+
+    r.socket.off("commands.list");
+    r.socket.on("commands.list", () => undefined);
+    const late = rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT));
+    await vi.advanceTimersByTimeAsync(29_000);
+    let settled = false;
+    void late.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await late).code).toBe("TIMEOUT");
+  });
+
+  it("계약 밖 답은 INTERNAL, 끊긴 러너는 ADAPTER_UNAVAILABLE", async () => {
+    const h = await setup();
+    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT))).code).toBe(
+      "ADAPTER_UNAVAILABLE",
+    );
+    const r = await readyRunner(h);
+    r.socket.on("commands.list", (_p: unknown, ack: (v: unknown) => void) =>
+      ack({ ok: true, commands: [{ name: "x".repeat(65), description: "" }] }),
+    );
+    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT))).code).toBe("INTERNAL");
   });
 });

@@ -2593,3 +2593,118 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
     t.orch.stop();
   });
 });
+
+describe("에이전트 명령 런(에이전트 명령 스펙 5.1·C13)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const commandRun = (t: ReturnType<typeof setup>, body: string, name: string, args = "") =>
+    t.enqueue(t.say(body), { triggerKind: "command", command: { name, args } });
+  const agentMessages = (db: DbOrTx) =>
+    db.select().from(messages).where(eq(messages.authorType, "agent")).all().map(rowToMessage);
+
+  it("command run deliver carries command", async () => {
+    const t = setup();
+    await commandRun(t, "@dev /think high", "think", "high");
+    await t.flush();
+    expect(t.adapter.calls.send).toHaveLength(1);
+    expect(t.adapter.calls.send[0]?.command).toEqual({ name: "think", args: "high" });
+    // 평범한 멘션 런에는 싣지 않는다
+    await t.enqueue(t.say("@dev 안녕"));
+    t.orch.stop();
+  });
+
+  it("평범한 멘션 런의 deliver 에는 command 가 없다", async () => {
+    const t = setup();
+    await t.enqueue(t.say("@dev /status 는 뭐야"));
+    await t.flush();
+    expect(t.adapter.calls.send[0]?.command).toBeUndefined();
+    t.orch.stop();
+  });
+
+  it('handled drop closes command run as done with "/status 완료"', async () => {
+    const t = setup();
+    t.adapter.script(() => ({ admission: "drop", reason: "handled" }));
+    const run = await commandRun(t, "@dev /status", "status");
+    await t.flush();
+    expect(t.runOf(run.id).status).toBe("finalizing");
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.finalizingMs);
+    expect(t.runOf(run.id)).toMatchObject({ status: "done" });
+    expect(agentMessages(t.db).map((m) => [m.bodyMd, m.runId])).toEqual([["`/status` 완료", run.id]]);
+    expect(systemMessages(t.db)).toEqual([]);
+    t.orch.stop();
+  });
+
+  it("handled drop 뒤 답 글이 오면 그 글로 닫고 「완료」 줄을 붙이지 않는다", async () => {
+    const t = setup();
+    t.adapter.script(() => ({ admission: "drop", reason: "handled" }));
+    const run = await commandRun(t, "@dev /status", "status");
+    await t.flush();
+    await t.orch.onCanonical(t.outbound({ text: "상태: 좋음" }), "openclaw", FAKE_GATEWAY_ID);
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.finalizingMs);
+    expect(t.runOf(run.id).status).toBe("done");
+    expect(agentMessages(t.db).map((m) => m.bodyMd)).toEqual(["상태: 좋음"]);
+    t.orch.stop();
+  });
+
+  it('empty final → "/compact 완료"', async () => {
+    const t = setup();
+    const run = await commandRun(t, "@dev /compact", "compact");
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "" });
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.finalizingMs);
+    expect(t.runOf(run.id).status).toBe("done");
+    expect(agentMessages(t.db).map((m) => m.bodyMd)).toEqual(["`/compact` 완료"]);
+    t.orch.stop();
+  });
+
+  it("non-command handled drop still errors", async () => {
+    const t = setup();
+    t.adapter.script(() => ({ admission: "drop", reason: "handled" }));
+    const run = await t.enqueue(t.say("@dev 안녕"));
+    await t.flush();
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "DROPPED:handled" } });
+    t.orch.stop();
+  });
+
+  it("평범한 런의 빈 final 은 「완료」 줄을 남기지 않는다", async () => {
+    const t = setup();
+    const run = await t.enqueue(t.say("@dev 안녕"));
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "" });
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.finalizingMs);
+    expect(t.runOf(run.id).status).toBe("done");
+    expect(agentMessages(t.db)).toEqual([]);
+    t.orch.stop();
+  });
+
+  it("명령 런이 명령 없이 들어오면(서버를 다시 띄운 뒤 트리거 글이 명령이 아니다) 평범한 글로 보내지 않고 닫는다", async () => {
+    const t = setup();
+    const run = await t.enqueue(t.say("@dev 안녕"), { triggerKind: "command" });
+    await t.flush();
+    expect(t.adapter.calls.send).toHaveLength(0);
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "VALIDATION" } });
+    t.orch.stop();
+  });
+
+  it("맡을 때 명령이 없으면 트리거 글을 다시 푼다", async () => {
+    const t = setup();
+    await t.enqueue(t.say("@dev /help"), { triggerKind: "command" });
+    await t.flush();
+    expect(t.adapter.calls.send[0]?.command).toEqual({ name: "help", args: "" });
+    t.orch.stop();
+  });
+
+  it("supportsCommands — 붙은 플러그인의 능력, 플러그인이 없으면 막지 않는다", () => {
+    const t = setup();
+    const agent = { id: t.agentId, provider: "openclaw", providerAgentId: "dev" } as const;
+    expect(t.orch.supportsCommands(agent)).toBe(true);
+    t.adapter.setPluginCapabilities(["threads"]);
+    expect(t.orch.supportsCommands(agent)).toBe(false);
+    t.orch.stop();
+  });
+});

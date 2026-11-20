@@ -1,5 +1,8 @@
 import {
+  type Agent,
+  commandDoneText,
   CONVERSATION_ONLY_REASON,
+  type DeliverCommand,
   type InboundDeliver,
   isOpenClawAgentId,
   type Message,
@@ -40,12 +43,13 @@ import {
   consumeComponentItem,
   createAgentMessage,
   createSystemMessage,
+  getMessage,
   runErrorMessages,
 } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import { advanceReactionCursor, type PendingReactions, pendingReactionsFor } from "../reactions/service";
 import type { UploadedBy } from "../attachments/service";
-import type { RunPlan } from "../router/decide";
+import { commandOfMessage, type RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
 import {
   ensureProviderSessionId,
@@ -149,6 +153,11 @@ export interface Orchestrator {
     connectionId: string,
   ): Promise<{ messageId?: string }>;
   activeRuns(channelId: string): RunState[];
+  /**
+   * 그 에이전트를 맡은 쪽이 명령(능력 commands)을 받나(에이전트 명령 C7) — 라우터가 명령 런을 만들기 전에 본다. 맡은 쪽이 지금 붙어
+   * 있지 않으면(러너·플러그인 없음) true — 보낼 때 ADAPTER_UNAVAILABLE 로 닫힌다(lacksThreads 와 같은 까닭)
+   */
+  supportsCommands(agent: Pick<Agent, "id" | "provider" | "providerAgentId">): boolean;
   recoverOnBoot(): Promise<number>;
   /** 타이머 전부 해제·어댑터 구독 해제 */
   stop(): void;
@@ -233,7 +242,8 @@ const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protectio
 type Coalescable = Extract<RunEventBody, { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" }>;
 type DeltaBuffer = { channelId: string; type: Coalescable["type"]; key: string; delta: string };
 type TextFilter = { channelId: string; messageId: string; state: MediaLineFilter };
-type Pending = { queueKey: string; order: number; trigger: EnqueueTrigger };
+/** command 는 명령 런만(RunPlan.command) — 보낼 때 InboundDeliver.command 로 싣는다 */
+type Pending = { queueKey: string; order: number; trigger: EnqueueTrigger; command?: DeliverCommand };
 
 /**
  * 세션 큐 키 — 연결 id + 세션 키(멀티 Gateway 계획 판정 PG3). 두 Gateway 의 같은 id 에이전트는 세션 키가 같지만 서로 다른 Gateway
@@ -909,7 +919,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         threadRootId: run.threadRootId ?? null,
         since: reactionsSince,
       });
-      const inbound = withReactionFacts(built, reactions);
+      const withReactions = withReactionFacts(built, reactions);
+      // 명령 런은 명령을 싣는다 — 받는 쪽이 머리말 없이 `/<name>[ <args>]` 만 넘긴다(에이전트 명령 스펙 5.3·5.4)
+      const command = run.triggerKind === "command" ? commandOf(run) : undefined;
+      if (run.triggerKind === "command" && command === undefined) {
+        applySignal(runId, {
+          kind: "gateway_error",
+          code: "VALIDATION",
+          message: "command run without a command",
+        });
+        return;
+      }
+      const inbound = command === undefined ? withReactions : { ...withReactions, command };
       // 서버가 세션 id 를 정하는 프로그램(판정 P4)은 늘 서버 값, 스스로 짓는 프로그램은 run_session 으로 저장한 값이 있을 때만
       const providerSessionId = capabilities.serverSessionIds
         ? ensureProviderSessionId(db, session.id)
@@ -939,6 +960,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (!current || TERMINAL_STATUSES.has(current.status)) return; // 기다리는 사이 abort·Gateway 오류로 끝났다
       if (result.admission === "drop") {
         const reason = result.reason ?? "unknown";
+        // 명령 런은 Gateway 가 런 없이 처리했거나(handled) 조용히 무시한 것(C12·C13)이라 실패가 아니다 — 끝(finalizing)으로 두고, 그
+        // 사이 답 글이 오지 않으면 finalizeFromSnapshot 이 「`/이름` 완료」 한 줄로 닫는다
+        if (current.triggerKind === "command") {
+          logger.info({ runId, reason }, "command run dropped by provider — closing as done");
+          applySignal(runId, { kind: "gateway_final" });
+          return;
+        }
         applySignal(runId, { kind: "gateway_error", code: `DROPPED:${reason}`, message: reason });
         return;
       }
@@ -1002,17 +1030,34 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * Gateway 것을 본다 — 계약의 단수 setupDetail 은 첫 Gateway 것이라 Gateway 가 둘이면 다른 Gateway 의 플러그인을 보게 된다
    */
   function lacksThreads(adapter: AgentAdapter, agentId: string, connectionId: string | null): boolean {
-    const detail = adapter.setupDetail();
-    if (detail.provider === "openclaw") {
-      if (connectionId === null) return false;
-      const plugin = hasGateways(adapter)
-        ? (adapter.gatewaySetupDetails().find((g) => g.id === connectionId)?.bridge.plugin ?? null)
-        : detail.bridge.plugin;
-      if (plugin === null) return false;
-    }
+    if (pluginUnknown(adapter, connectionId)) return false;
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
     return providerAgentId !== undefined && !adapter.supports(providerAgentId, connectionId, "threads");
+  }
+
+  /** OpenClaw 연결에 지금 붙은 플러그인이 없어(또는 연결이 없어) 그 능력을 단정할 수 없다 — 러너는 어댑터 supports 가 가른다 */
+  function pluginUnknown(adapter: AgentAdapter, connectionId: string | null): boolean {
+    const detail = adapter.setupDetail();
+    if (detail.provider !== "openclaw") return false;
+    if (connectionId === null) return true;
+    const plugin = hasGateways(adapter)
+      ? (adapter.gatewaySetupDetails().find((g) => g.id === connectionId)?.bridge.plugin ?? null)
+      : detail.bridge.plugin;
+    return plugin === null;
+  }
+
+  /**
+   * 명령 런의 명령 — 맡을 때 받은 것(pending), 없으면(다시 띄운 서버가 이어 받은 런) 트리거 글을 다시 푼다. 풀리지 않으면 undefined —
+   * 평범한 글로 보내지 않게 부르는 쪽이 본다
+   */
+  function commandOf(run: Run): DeliverCommand | undefined {
+    const held = pending.get(run.id)?.command;
+    if (held !== undefined) return held;
+    const channel = getChannel(db, run.channelId);
+    const trigger = run.triggerMessageId === undefined ? undefined : getMessage(db, run.triggerMessageId);
+    const parsed = channel && trigger ? commandOfMessage(channel, trigger) : null;
+    return parsed?.agentId === run.agentId ? parsed.command : undefined;
   }
 
   // ── 정본 ────────────────────────────────────────────────────
@@ -1222,10 +1267,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     const { text, dropped } = stripMediaLines(snapshots.get(runId) ?? "");
     if (dropped > 0)
       logger.warn({ runId, mediaLinesDropped: dropped }, "gateway snapshot media lines dropped");
+    // 답 글 없이 끝난 명령 런(C13) — Claude `/compact` 처럼 결과 글이 비거나 Gateway 가 런 없이 처리했다. 그 에이전트 이름으로 한 줄
+    const commandName =
+      run?.status === "finalizing" && run.triggerKind === "command" ? commandOf(run)?.name : undefined;
+    const body = text.trim() === "" && commandName !== undefined ? commandDoneText(commandName) : text;
     // 라우팅을 기다리는 사이 정본이 이미 저장됐으면 스냅샷으로 겹쳐 쓰지 않는다
     if (
       run?.status === "finalizing" &&
-      text.trim() !== "" &&
+      body.trim() !== "" &&
       store.listRunMessageIds(db, runId).length === 0
     ) {
       try {
@@ -1235,7 +1284,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           agentId: run.agentId,
           runId,
           externalId: `gateway-final:${runId}`,
-          bodyMd: text,
+          bodyMd: body,
           replyTo: run.triggerMessageId,
         });
       } catch (err) {
@@ -1304,7 +1353,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           applySignal(run.id, { kind: "gateway_error", code: refusal.code, message: refusal.message }) ?? run
         );
       }
-      pending.set(run.id, { queueKey, order: ++order, trigger });
+      pending.set(run.id, {
+        queueKey,
+        order: ++order,
+        trigger,
+        ...(plan.command === undefined ? {} : { command: plan.command }),
+      });
       queue.push(run.id);
       sessionQueues.set(queueKey, queue);
       try {
@@ -1494,6 +1548,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         .listOpenRuns(db)
         .filter((run) => run.conversationId === conversationId && run.agentId === agentId);
       for (const run of open.reverse()) await api.abort(run.id);
+    },
+
+    supportsCommands(agent) {
+      let adapter: AgentAdapter;
+      try {
+        adapter = registry.forAgent(agent);
+      } catch {
+        return true; // 어댑터가 없으면 enqueueRun 의 refusalFor 가 사유 있는 run_error 로 닫는다
+      }
+      const connectionId = agentConnectionId(db, agent.id);
+      if (pluginUnknown(adapter, connectionId)) return true;
+      return adapter.supports(agent.providerAgentId, connectionId, "commands");
     },
 
     activeRuns(channelId) {

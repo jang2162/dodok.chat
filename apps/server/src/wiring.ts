@@ -87,7 +87,13 @@ export function createServices(deps: ServicesDeps): Services {
   const enqueue: Orchestrator["enqueueRun"] = (plan, trigger) => orchestrator.enqueueRun(plan, trigger);
   // 런을 만드는 경로(라우터·상호작용·다시 실행)는 모두 관문을 지난다(스펙 3.2)
   const gate = createRunGate({ db, bus, ops, workspaceId, enqueue });
-  const router = createRouter({ db, bus, logger, enqueue: gate.enqueue });
+  const router = createRouter({
+    db,
+    bus,
+    logger,
+    enqueue: gate.enqueue,
+    supportsCommands: (agent) => orchestrator.supportsCommands(agent),
+  });
   let control: ControlHooks | undefined;
   // 승인 서비스도 같은 방식으로 먼저 만든다 — 런 이벤트·신호를 오케스트레이터로 되돌려 보내고,
   // 오케스트레이터는 어댑터 승인 이벤트를 이 서비스로 넘긴다(서로가 서로를 부른다)

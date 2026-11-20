@@ -14,7 +14,7 @@ import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
-import { isPairAllowed } from "../router/decide";
+import { commandOfMessage, isPairAllowed } from "../router/decide";
 import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
 import { getRun, getRunRequestedBy } from "../runs/store";
 import { formatInteractionText, validateInteraction } from "./interact";
@@ -96,6 +96,9 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
   const { message, target, interactionId, interactionText } = result;
   if (target.triggerKind === "retry") {
     const { run } = target;
+    // 명령 런은 트리거 글을 다시 풀어 같은 명령을 보낸다(에이전트 명령 스펙 5.1) — retryTarget 이 풀리는지 이미 봤다
+    const command =
+      run.triggerKind === "command" ? retryCommand(deps.db, run, target.triggerMessage) : undefined;
     await deps.gate.enqueue(
       {
         agentId: run.agentId,
@@ -106,6 +109,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
         relayDepth: run.relayDepth,
         parentRunId: run.id,
         ...withThread(threadOf(target, message)),
+        ...(command === undefined ? {} : { command }),
       },
       { message: target.triggerMessage, requestedBy: getRunRequestedBy(deps.db, run.id) },
     );
@@ -225,7 +229,16 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
       throw apiError("VALIDATION", "relay pair is not allowed");
     }
   }
+  if (run.triggerKind === "command") retryCommand(tx, run, triggerMessage);
   return { agentId: run.agentId, triggerKind: "retry", run, triggerMessage };
+}
+
+/** 명령 런의 트리거 글을 다시 푼 명령 — 그 에이전트의 명령으로 풀리지 않으면(글이 바뀌었다) 다시 실행할 수 없다 */
+function retryCommand(tx: DbOrTx, run: Run, triggerMessage: Message) {
+  const channel = getChannel(tx, run.channelId);
+  const parsed = channel ? commandOfMessage(channel, triggerMessage) : null;
+  if (parsed === null || parsed.agentId !== run.agentId) throw apiError("VALIDATION", "run is not retryable");
+  return parsed.command;
 }
 
 /**
