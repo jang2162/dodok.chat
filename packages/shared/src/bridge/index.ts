@@ -3,6 +3,7 @@ import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
 import type { BridgeControlCall, ControlResult } from "../control";
+import { DeliverCommand } from "../commands";
 import { ATTACHMENT_LIMITS, Attachment, ConversationTitle, ReactionEmoji } from "../domain";
 import { parseDodokSessionKey } from "../session-key";
 import { Sha256Hex } from "../setup";
@@ -14,6 +15,7 @@ export const BridgeCapability = z.enum([
   "run_id_in_outbound",
   "threads",
   "control", // 제어 도구를 등록하고 control.call 을 보낸다 — 없는 플러그인에는 서버가 아무것도 바꾸지 않는다
+  "commands", // InboundDeliver.command 를 Gateway 명령으로 넘긴다 — 없는 플러그인에는 서버가 명령을 보내지 않는다(에이전트 명령 C7)
 ]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 
@@ -114,6 +116,11 @@ export const InboundDeliver = z.object({
     ts: IsoDateTime,
   }),
   context: InboundContext,
+  /**
+   * 명령 런만(에이전트 명령 스펙 5.2) — 받는 쪽은 머리말·대화 동봉 없이 `/<name>[ <args>]` 만 넘긴다. 선택 필드라 옛 플러그인·러너는
+   * 버리고 받으므로 서버는 능력 commands 가 있을 때만 싣는다
+   */
+  command: DeliverCommand.optional(),
   options: z
     .object({ queueMode: z.enum(["steer", "followup", "collect", "interrupt"]).optional() })
     .default({}),

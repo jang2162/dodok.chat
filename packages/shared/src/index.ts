@@ -1,6 +1,7 @@
 export * from "./adapter";
 export * from "./automations";
 export * from "./bridge";
+export * from "./commands";
 export * from "./common";
 export * from "./components";
 export * from "./control";

@@ -314,7 +314,7 @@ describe("Message", () => {
 });
 
 describe("Run", () => {
-  it("상태 8종, 트리거 5종", () => {
+  it("상태 8종, 트리거 6종", () => {
     expect(RunStatus.options).toEqual([
       "queued",
       "streaming",
@@ -325,7 +325,14 @@ describe("Run", () => {
       "error",
       "aborted",
     ]);
-    expect(RunTriggerKind.options).toEqual(["mention", "auto_respond", "relay", "interaction", "continue"]);
+    expect(RunTriggerKind.options).toEqual([
+      "mention",
+      "auto_respond",
+      "relay",
+      "interaction",
+      "continue",
+      "command",
+    ]);
   });
   it("hasCanonical 기본값 false", () => {
     const r = Run.parse({
