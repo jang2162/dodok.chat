@@ -8,6 +8,7 @@ import type {
   SdkOptions,
   SdkPort,
   SdkQuery,
+  SdkSlashCommand,
   SdkUserMessage,
 } from "../../src/drivers/claude/sdk";
 
@@ -74,7 +75,31 @@ export type FakeSdk = SdkPort & {
   models: (options: SdkOptions) => Promise<SdkModelInfo[]>;
   /** listModels 를 부른 options — 부를 때마다 하나(CLI 를 몇 번 띄웠나) */
   listModelsCalls: SdkOptions[];
+  /** listCommands 의 답 — 시험이 바꿔 끼운다. 기본은 FAKE_COMMANDS */
+  commands: (options: SdkOptions) => Promise<SdkSlashCommand[]>;
+  /** listCommands 를 부른 options */
+  listCommandsCalls: SdkOptions[];
 };
+
+/** 가짜 supportedCommands() 의 기본 답 — 스파이크 2절의 꼴(내장은 builtin, 사람 것은 플러그인 접두사·설명 앞 `(이름) `) */
+export const FAKE_COMMANDS = [
+  {
+    name: "compact",
+    description: "Clear conversation history but keep a summary",
+    argumentHint: "<instructions>",
+    builtin: true,
+  },
+  { name: "login", description: "Sign in", argumentHint: "", builtin: true },
+  { name: "model", description: "Set the AI model", argumentHint: "[model]", builtin: true },
+  { name: "user:user-cmd", description: "(user) SPIKE user command desc", argumentHint: "<topic>" },
+  {
+    name: "user:user-skill",
+    description: "(user) SPIKE user skill desc",
+    argumentHint: "<thing>",
+    aliases: ["user-skill"],
+  },
+  { name: "project:proj-cmd", description: "(project) SPIKE project command desc", argumentHint: "" },
+] as SdkSlashCommand[];
 
 /** 가짜 supportedModels() 의 기본 답 — 실제 응답처럼 description 등 계약에 없는 필드도 싣는다 */
 export const FAKE_MODELS = [
@@ -138,6 +163,8 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
     contextUsage: async (_call: FakeCall): Promise<SdkContextUsage> => FAKE_CONTEXT_USAGE,
     models: async (_options: SdkOptions): Promise<SdkModelInfo[]> => FAKE_MODELS,
     listModelsCalls: [] as SdkOptions[],
+    commands: async (_options: SdkOptions): Promise<SdkSlashCommand[]> => FAKE_COMMANDS,
+    listCommandsCalls: [] as SdkOptions[],
   };
 
   function query(args: { prompt: AsyncIterable<SdkUserMessage>; options: SdkOptions }): SdkQuery {
@@ -272,7 +299,14 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       fake.listModelsCalls.push(options);
       return fake.models(options);
     },
-  } satisfies Omit<FakeSdk, "contextUsage" | "models" | "listModelsCalls">) as FakeSdk;
+    listCommands: async ({ options }) => {
+      fake.listCommandsCalls.push(options);
+      return fake.commands(options);
+    },
+  } satisfies Omit<
+    FakeSdk,
+    "contextUsage" | "models" | "listModelsCalls" | "commands" | "listCommandsCalls"
+  >) as FakeSdk;
 }
 
 /** 대본 조각 — ADR 0007 4.1 의 턴 하나 모양 */

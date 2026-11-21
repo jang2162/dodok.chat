@@ -1,10 +1,21 @@
-import { renderRunnerPrompt, RUNNER_PROGRAM_NAME, type ErrorCode, type RunnerRunFinal } from "@dodok/shared";
+import {
+  checkCommand,
+  formatCommandText,
+  renderRunnerPrompt,
+  RUNNER_PROGRAM_NAME,
+  type ErrorCode,
+  type RunnerPermissionMode,
+  type RunnerRunFinal,
+} from "@dodok/shared";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { CONTROL_TOOL_FULL_NAMES, createControlTools } from "../../control-tools";
 import type { RunSpec } from "../../driver";
 import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../images";
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
 import { abortedFinal, abortStopReason, type RunSink } from "../../sink";
 import { createCanUseTool } from "./approvals";
+import { type CommandWrapperPlugin, type CommandWrappers, createCommandWrappers } from "./command-wrappers";
 import { fetchContextBreakdown } from "./context-usage";
 import type {
   CanUseTool,
@@ -88,6 +99,68 @@ export function cliEnv(baseEnv: NodeJS.ProcessEnv, configDirOverride?: string): 
   return env;
 }
 
+/** acceptEdits 가 묻지 않고 허용하는 편집 도구 */
+const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * CLI 가 원래 묻지 않고 허용하는 안전 도구(에이전트 명령 C15, 조율자 판정 2026-11-21 — 목록 밖은 묻는다: fail-safe). 앞 열 개는
+ * 조율자 목록, Skill 은 번들 CLI 2.1.283 default 모드에서 카드 없이 도는 것을 실측했다(보고서). 새 CLI 도구는 여기 없으므로 카드로
+ * 간다 — 번거로움은 받아들인다
+ */
+export const SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "NotebookRead",
+  "TodoWrite",
+  "Task",
+  "ListAgents",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Skill",
+]);
+/** 러너가 늘 허용하는 dodok 도구(post·제어 도구) — allowedTools 에 늘 든다 */
+const isSafeTool = (toolName: string): boolean =>
+  SAFE_TOOLS.has(toolName) || toolName.startsWith("mcp__dodok__");
+
+/**
+ * 명령·스킬 파일의 frontmatter `allowed-tools` 가 권한 모드를 뚫지 않게(에이전트 명령 C15) PreToolUse 훅이 내릴 판정. 실측(보고서):
+ * `ask` 는 CLI 가 원래 묻지 않던 도구도 canUseTool(승인 카드)로 보내고, plan·dontAsk 에서는 거절되던 도구를 카드로 연다. 그래서
+ * default → 안전 도구 밖이면 ask, acceptEdits → 안전·편집 도구 밖이면 ask, dontAsk → 안전 도구 밖이면 deny(묻지 않고 거절 — 모드
+ * 뜻 그대로), plan → 손대지 않는다(CLI 가 이미 막는다). null 이면 CLI 판단 그대로
+ */
+export function preToolDecision(
+  toolName: string,
+  permissionMode: RunnerPermissionMode | string | undefined,
+): "ask" | "deny" | null {
+  if (isSafeTool(toolName)) return null;
+  switch (permissionMode) {
+    case "default":
+      return "ask";
+    case "acceptEdits":
+      return EDIT_TOOLS.has(toolName) ? null : "ask";
+    case "dontAsk":
+      return "deny";
+    default:
+      return null;
+  }
+}
+
+/**
+ * 감싸개 원본의 Claude 설정 자리 — 전용 로그인이면 그 디렉터리, 평소면 셸의 CLAUDE_CONFIG_DIR, 없으면 HOME/.claude(CLI 가 읽는 자리와
+ * 같게 — cliEnv)
+ */
+export function commandsConfigDir(baseEnv: NodeJS.ProcessEnv, configDir?: string): string {
+  return configDir ?? (baseEnv.CLAUDE_CONFIG_DIR || join(baseEnv.HOME || homedir(), ".claude"));
+}
+
+/**
+ * 명령·스킬을 들이며 막을 것(C15) — 스킬 frontmatter 훅·본문 인라인 셸을 끈다. 러너의 SDK 콜백 훅(UserPromptSubmit·PreToolUse)은
+ * 그대로 돈다(스파이크 3절)
+ */
+export const COMMAND_SAFETY_SETTINGS = { disableAllHooks: true, disableSkillShellExecution: true } as const;
+
 export function buildQueryOptions(
   spec: ClaudeRunSpec,
   deps: {
@@ -97,6 +170,8 @@ export function buildQueryOptions(
     resume: boolean;
     /** 머신에 설치된 claude 의 경로 — 없으면 SDK 번들 CLI */
     executable?: string;
+    /** 사람의 명령·스킬 감싸개(command-wrappers.ts) — 모든 런에 싣는다(사람 글 속에서 모델이 스킬을 부를 수 있게) */
+    plugins?: CommandWrapperPlugin[];
   },
 ): SdkOptions {
   const env = cliEnv(deps.baseEnv, spec.configDir);
@@ -125,7 +200,36 @@ export function buildQueryOptions(
       append: start.channelRulesAppend,
       snapshot: false,
     },
+    plugins: deps.plugins ?? [],
+    settings: { ...COMMAND_SAFETY_SETTINGS },
     hooks: {
+      PreToolUse: [
+        {
+          hooks: [
+            async (input) => {
+              const { tool_name: toolName, permission_mode: mode } = input as {
+                tool_name?: string;
+                permission_mode?: string;
+              };
+              const decision =
+                toolName === undefined ? null : preToolDecision(toolName, mode ?? spec.permissionMode);
+              if (decision === null) return {};
+              return {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  permissionDecision: decision,
+                  ...(decision === "deny"
+                    ? {
+                        permissionDecisionReason:
+                          "이 권한 모드에서는 묻지 않고 거절합니다(명령·스킬의 allowed-tools 는 쓰지 않습니다)",
+                      }
+                    : {}),
+                },
+              };
+            },
+          ],
+        },
+      ],
       UserPromptSubmit: [
         {
           hooks: [
@@ -183,6 +287,12 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   const sessionId = start.providerSessionId;
   const runId = start.deliver.runId;
+  const command = start.deliver.command;
+  // 서버를 지나도 막는 명령은 한 번 더 막는다(에이전트 명령 스펙 5.3 — 이중 방어)
+  if (command !== undefined) {
+    const verdict = checkCommand("claude", command.name, command.args);
+    if (!verdict.ok) return void ctx.sink.error("VALIDATION", verdict.message);
+  }
   let resume = false;
   let lookup = "";
   try {
@@ -194,14 +304,32 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   }
   ctx.log?.(`dodok-runner: 런 ${runId} 세션 ${resume ? "resume" : "새로 열기"}${lookup}`);
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-  // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
-  const images = await loadImageBlocks(start.deliver, ctx.sink.http, ctx.signal);
+  // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다. 명령 런은 글 그대로라 이미지를 싣지 않는다
+  const images =
+    command === undefined
+      ? await loadImageBlocks(start.deliver, ctx.sink.http, ctx.signal)
+      : { blocks: [], failed: 0 };
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-  const outcome = await attempt(spec, ctx, resume, images);
-  if (outcome !== "session-in-use") return;
-  if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-  ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
-  await attempt(spec, ctx, true, images);
+  // 감싸개를 못 만들면(임시 디렉터리 실패) 명령·스킬 없이 돈다 — 런을 막지 않는다
+  let wrappers: CommandWrappers | undefined;
+  try {
+    wrappers = await createCommandWrappers({
+      configDir: commandsConfigDir(ctx.baseEnv, spec.configDir),
+      cwd: spec.workdir,
+    });
+  } catch (error) {
+    ctx.log?.(`dodok-runner: 런 ${runId} 명령·스킬 감싸개를 만들지 못했습니다 — ${String(error)}`);
+  }
+  const plugins = wrappers?.plugins ?? [];
+  try {
+    const outcome = await attempt(spec, ctx, resume, images, plugins);
+    if (outcome !== "session-in-use") return;
+    if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+    ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
+    await attempt(spec, ctx, true, images, plugins);
+  } finally {
+    await wrappers?.dispose().catch(() => {});
+  }
 }
 
 /** 이미지가 있으면 이미지 블록 뒤에 글(이미지를 글보다 앞에 두기를 Messages API 문서가 권한다), 못 불러온 수는 글 끝 한 줄 */
@@ -209,6 +337,8 @@ function promptContent(
   start: ClaudeRunSpec["start"],
   images: { blocks: SdkImageBlock[]; failed: number },
 ): SdkUserMessage["message"]["content"] {
+  // 명령 런은 머리말 없이 `/<name>[ <args>]` 그대로 — CLI 가 명령으로 처리한다(에이전트 명령 C1). 턴 사실은 훅 문맥으로 그대로 붙는다
+  if (start.deliver.command !== undefined) return formatCommandText(start.deliver.command);
   const text =
     renderRunnerPrompt(start.deliver) + (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "");
   return images.blocks.length > 0 ? [...images.blocks, { type: "text", text }] : text;
@@ -220,12 +350,17 @@ async function attempt(
   ctx: RunContext,
   resume: boolean,
   images: { blocks: SdkImageBlock[]; failed: number },
+  plugins: CommandWrapperPlugin[],
 ): Promise<"done" | "session-in-use"> {
   const { start } = spec;
   const sessionId = start.providerSessionId;
   const now = ctx.now ?? Date.now;
   const mask = ctx.sink.mask;
-  const mapper = createStreamMapper(now, { runId: start.deliver.runId, mask });
+  const mapper = createStreamMapper(now, {
+    runId: start.deliver.runId,
+    mask,
+    command: start.deliver.command !== undefined,
+  });
 
   let finishInput!: () => void;
   const inputDone = new Promise<void>((resolve) => (finishInput = resolve));
@@ -284,6 +419,7 @@ async function attempt(
           signal: ctx.signal,
         }),
         resume,
+        plugins,
       }),
     });
   } catch (error) {

@@ -11,6 +11,7 @@ import {
   type SDKControlGetContextUsageResponse,
   type SDKMessage,
   type SDKUserMessage,
+  type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 
 export type SdkMessage = SDKMessage;
@@ -18,6 +19,7 @@ export type SdkUserMessage = SDKUserMessage;
 export type SdkOptions = Options;
 export type SdkContextUsage = SDKControlGetContextUsageResponse;
 export type SdkModelInfo = ModelInfo;
+export type SdkSlashCommand = SlashCommand;
 export type { CanUseTool };
 // tool() 은 입력 스키마마다 다른 제네릭을 돌려준다 — createSdkMcpServer 가 받는 원소 타입을 그대로 쓴다
 export type SdkMcpTool = NonNullable<Parameters<typeof createSdkMcpServer>[0]["tools"]>[number];
@@ -42,7 +44,33 @@ export type SdkPort = {
    * 호출이 없다(작성기 칩 스펙 5.1 — 런 0회 하네스가 확인한다). options.abortController 로 끊는다
    */
   listModels: (args: { options: SdkOptions }) => Promise<SdkModelInfo[]>;
+  /**
+   * 그 CLI·cwd·플러그인에서 쓸 수 있는 명령(supportedCommands — 에이전트 명령 C8). listModels 와 같이 프롬프트 없는 query 라 모델 호출이
+   * 없다(스파이크 2절)
+   */
+  listCommands: (args: { options: SdkOptions }) => Promise<SdkSlashCommand[]>;
 };
+
+/** 프롬프트를 보내지 않는 query 를 열어 fn 의 답을 받고 닫는다 — 입력은 닫을 때까지 아무것도 내지 않는다 */
+async function withIdleQuery<T>(
+  options: SdkOptions,
+  fn: (q: ReturnType<typeof query>) => Promise<T>,
+): Promise<T> {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  const noPrompt: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]: () => ({
+      next: () => released.then(() => ({ done: true as const, value: undefined })),
+    }),
+  };
+  const q = query({ prompt: noPrompt, options });
+  try {
+    return await fn(q);
+  } finally {
+    release();
+    q.close();
+  }
+}
 
 export const realSdk: SdkPort = {
   query: (args) => query(args),
@@ -50,21 +78,7 @@ export const realSdk: SdkPort = {
   sessionExists: async (sessionId, cwd) => (await getSessionInfo(sessionId, { dir: cwd })) !== undefined,
   // alwaysLoad — 없으면 dodok 도구가 ToolSearch 뒤로 밀려 모델이 스키마 없이 첫 호출을 한다(ADR 0007 5.7)
   createMcpServer: (tools) => createSdkMcpServer({ name: "dodok", alwaysLoad: true, tools }),
-  listModels: async ({ options }) => {
-    // 입력은 닫을 때까지 아무것도 내지 않는다 — 닫히면 끝나 SDK 가 stdin 을 닫는다
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    const noPrompt: AsyncIterable<SDKUserMessage> = {
-      [Symbol.asyncIterator]: () => ({
-        next: () => released.then(() => ({ done: true as const, value: undefined })),
-      }),
-    };
-    const q = query({ prompt: noPrompt, options });
-    try {
-      return await q.supportedModels();
-    } finally {
-      release();
-      q.close();
-    }
-  },
+  // 입력은 닫을 때까지 아무것도 내지 않는다 — 닫히면 끝나 SDK 가 stdin 을 닫는다
+  listModels: ({ options }) => withIdleQuery(options, (q) => q.supportedModels()),
+  listCommands: ({ options }) => withIdleQuery(options, (q) => q.supportedCommands()),
 };
