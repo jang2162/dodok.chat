@@ -338,6 +338,7 @@ export function Composer({
       attachments: attachments.ready.length,
       ...(directAgentId === undefined ? {} : { directAgentId }),
       agents: agents.data,
+      commands: agentCommands.data,
     });
     if (refused) {
       setCommandError(refused.message);

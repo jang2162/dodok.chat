@@ -5,6 +5,7 @@ import {
   checkCommand,
   type CommandVerdict,
   parseAgentCommand,
+  skillAliasesOf,
 } from "@dodok/shared";
 import type { JSONContent } from "@tiptap/core";
 import { useQuery } from "@tanstack/react-query";
@@ -94,11 +95,17 @@ export const commandProgramOf = (agent: Pick<Agent, "provider">): "claude" | "op
 
 /**
  * 보내기 전 막기(에이전트 명령 C4·C10) — 글이 명령이고 그 에이전트를 알면 checkCommand. 명령이 아니거나(첨부가 있음 포함) 에이전트를
- * 모르면 null(보낸다 — 서버가 다시 본다)
+ * 모르면 null(보낸다 — 서버가 다시 본다). 그 에이전트의 명령 목록을 받아 두었으면 러너 스킬 별칭도 본다 — 못 받았으면 별칭을 모르는
+ * 채 보내고 서버가 다시 본다
  */
 export function commandBlock(
   bodyMd: string,
-  opts: { attachments: number; directAgentId?: string; agents: readonly Agent[] | undefined },
+  opts: {
+    attachments: number;
+    directAgentId?: string;
+    agents: readonly Agent[] | undefined;
+    commands?: AgentCommandsResponse["agents"] | undefined;
+  },
 ): Extract<CommandVerdict, { ok: false }> | null {
   if (opts.attachments > 0) return null;
   const parsed = parseAgentCommand(
@@ -108,6 +115,12 @@ export function commandBlock(
   if (!parsed) return null;
   const agent = opts.agents?.find((a) => a.id === parsed.agentId);
   if (!agent) return null;
-  const verdict = checkCommand(commandProgramOf(agent), parsed.name, parsed.args);
+  const row = opts.commands?.find((a) => a.agentId === agent.id);
+  const verdict = checkCommand(
+    commandProgramOf(agent),
+    parsed.name,
+    parsed.args,
+    row?.supported === true ? { skillAliases: skillAliasesOf(row.commands) } : {},
+  );
   return verdict.ok ? null : verdict;
 }

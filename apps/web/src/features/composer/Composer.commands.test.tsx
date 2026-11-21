@@ -1,4 +1,4 @@
-import type { AgentCommandsResponse } from "@dodok/shared";
+import type { Agent, AgentCommandsResponse } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ import {
   t,
 } from "../../../test/composerHarness";
 import { commandSuggestion } from "./CommandList";
-import { agentCommandsKeys, commandTrigger, matchCommands } from "./commands";
+import { agentCommandsKeys, commandBlock, commandTrigger, matchCommands } from "./commands";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -74,6 +74,29 @@ const optionNames = (list: HTMLElement) =>
   within(list)
     .getAllByRole("option")
     .map((o) => o.querySelector("span")?.textContent);
+
+describe("commandBlock — 러너 내장 허용 목록·스킬 별칭", () => {
+  const runner = { id: AGENT, provider: "runner" } as Agent;
+  const block = (body: string, commands?: AgentCommandsResponse["agents"]) =>
+    commandBlock(`<@a:${AGENT}> ${body}`, { attachments: 0, agents: [runner], commands })?.message ?? null;
+  const listed: AgentCommandsResponse["agents"] = [{ agentId: AGENT, supported: true, commands: COMMANDS }];
+
+  it("막는 내장은 목록이 없어도, 목록 밖 이름은 목록이 있으면 막는다", () => {
+    expect(block("/insights")).toBe("이 명령은 dodok 에서 쓸 수 없습니다");
+    expect(block("/nope")).toBeNull();
+    expect(block("/nope", listed)).toBe("이 명령은 dodok 에서 쓸 수 없습니다");
+  });
+
+  it("허용 내장·사람 명령·스킬 별칭은 보낸다", () => {
+    for (const body of ["/compact", "/context", "/user:review x", "/user-skill"]) {
+      expect(block(body, listed)).toBeNull();
+    }
+  });
+
+  it("인자에 멘션이 있으면 명령이 아니다", () => {
+    expect(block(`/nope <@a:${AGENT}>`, listed)).toBeNull();
+  });
+});
 
 describe("commandTrigger·matchCommands", () => {
   it("칩 하나 + 공백 + `/` 앞부분일 때만", () => {
