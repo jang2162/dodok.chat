@@ -157,7 +157,12 @@ export const FAKE_CONTEXT_USAGE = {
 /** 테스트용 SDK 메시지 — 쓰는 필드만 채우고 SDK 타입으로 본다 */
 export const sdkMsg = (m: Record<string, unknown>): SdkMessage => m as unknown as SdkMessage;
 
-export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
+/**
+ * - `lateCancel` 권한 콜백 signal 을 close 에만 끊는다(CLI 가 취소를 늦게 보내는 경우)
+ * - `eagerInput` query() 안에서 곧바로 입력의 첫 `next()` 를 부른다 — 실제 SDK 가 옵션이 단순한 query 에서 그렇게 한다(재리뷰
+ *   N2 실측). 기본은 결과를 돌 때에야 입력을 당긴다
+ */
+export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean } = {}): FakeSdk {
   const scripts: ScriptStep[][] = [];
   const calls: FakeCall[] = [];
   const sessions = new Set<string>();
@@ -198,9 +203,10 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
     let closed = false;
     const closedSignal = new Promise<void>((resolve) => (onClose = resolve));
 
+    const input = args.prompt[Symbol.asyncIterator]();
+    const eagerFirst = opts.eagerInput ? input.next() : undefined;
     async function* run(): AsyncGenerator<SdkMessage> {
-      const input = args.prompt[Symbol.asyncIterator]();
-      const first = await input.next();
+      const first = await (eagerFirst ?? input.next());
       if (!first.done) call.prompt = first.value;
       const rest = input.next().then(() => void (inputEnded = true));
       try {

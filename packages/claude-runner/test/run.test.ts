@@ -19,6 +19,8 @@ import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
 import { realSdk, type SdkContextUsage, type SdkMcpServer } from "../src/drivers/claude/sdk";
 import { toContextBreakdown } from "../src/drivers/claude/context-usage";
 import { createRunSink } from "../src/sink";
+import { alwaysAllowKey } from "../src/drivers/claude/approvals";
+import { toAgentCommands } from "../src/drivers/claude";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, FAKE_CONTEXT_USAGE, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runSpec, runStart, SESSION_ID } from "./helpers/fixtures";
@@ -1163,6 +1165,39 @@ describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", (
     }
   });
 
+  it("SDK 가 query() 안에서 곧바로 입력을 당겨도 별칭 확인은 q 대입 뒤에 목록을 묻는다(N2)", async () => {
+    const { fake, ctx, emitted } = harness(createFakeSdk({ eagerInput: true }));
+    fake.script(script.init(), ...script.textTurn("msg_1", ["스킬 답"]));
+    await runOnce(commandSpec("user-skill", "x"), ctx);
+    expect(fake.calls[0]!.supportedCommandsCalls).toBe(1);
+    expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: "/user-skill x" } });
+    expect(errors(emitted)).toEqual([]);
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "스킬 답" } });
+  });
+
+  it("허용 내장은 compact·context·usage(별칭 cost) — 목록에 usage 가 나오고 /usage·/cost 는 목록을 묻지 않는다(N6)", async () => {
+    // 핀한 CLI 의 supportedCommands() 꼴 — usage 의 별칭은 cost·stats, help 는 이 판에 없다
+    const listed = toAgentCommands([
+      {
+        name: "usage",
+        description: "Show plan usage limits",
+        argumentHint: "",
+        aliases: ["cost", "stats"],
+        builtin: true,
+      },
+      { name: "help", description: "Show help", argumentHint: "", builtin: true },
+      { name: "doctor", description: "Diagnose", argumentHint: "", builtin: true },
+    ] as never);
+    expect(listed.map((c) => c.name)).toEqual(["usage"]);
+    for (const name of ["usage", "cost"]) {
+      const { fake, ctx } = harness();
+      fake.script(script.init(), script.success("", { num_turns: 0, local_command: name }));
+      await runOnce(commandSpec(name), ctx);
+      expect(fake.calls[0]!.supportedCommandsCalls).toBe(0);
+      expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: `/${name}` } });
+    }
+  });
+
   it("목록을 못 받으면 별칭도 막는다(fail-safe)", async () => {
     const { fake, ctx, emitted } = harness();
     fake.commands = async () => {
@@ -1284,9 +1319,13 @@ describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", (
     expect(await preToolUse("default", "Edit")).toEqual(ASK);
   });
 
-  it("PreToolUse — 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다(Bash 는 같은 명령만)", async () => {
-    const alwaysAllowed = new Set(["Bash\0make", "Write"]);
-    const o = buildQueryOptions(runSpec({ permissionMode: "default" }), { ...deps(false), alwaysAllowed });
+  it("PreToolUse — 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다(Bash 는 같은 명령, 파일 도구는 같은 파일만)", async () => {
+    const spec = runSpec({ permissionMode: "default" });
+    const alwaysAllowed = new Set([
+      alwaysAllowKey("Bash", { command: "make" }, spec.workdir),
+      alwaysAllowKey("Write", { file_path: "a" }, spec.workdir),
+    ]);
+    const o = buildQueryOptions(spec, { ...deps(false), alwaysAllowed });
     const hook = o.hooks?.PreToolUse?.[0]?.hooks[0];
     if (!hook) throw new Error("no PreToolUse hook");
     const call = (toolName: string, toolInput: unknown) =>
@@ -1303,6 +1342,9 @@ describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", (
     expect(await call("Bash", { command: "make" })).toEqual({});
     expect(await call("Bash", { command: "make install" })).toEqual(ASK);
     expect(await call("Write", { file_path: "a" })).toEqual({});
+    // 같은 파일을 절대 경로로 불러도 같은 키, 다른 파일·다른 도구는 다시 묻는다(N1)
+    expect(await call("Write", { file_path: `${spec.workdir}/a` })).toEqual({});
+    expect(await call("Write", { file_path: "b" })).toEqual(ASK);
     expect(await call("Edit", { file_path: "a" })).toEqual(ASK);
   });
 

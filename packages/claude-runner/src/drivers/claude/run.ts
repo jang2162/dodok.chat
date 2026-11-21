@@ -228,7 +228,7 @@ export function buildQueryOptions(
               // 사람이 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다 — `ask` 는 CLI 세션 규칙을 덮어 카드가 다시 뜬다
               if (
                 decision === "ask" &&
-                deps.alwaysAllowed?.has(alwaysAllowKey(toolName as string, toolInput))
+                deps.alwaysAllowed?.has(alwaysAllowKey(toolName as string, toolInput, spec.workdir))
               )
                 return {};
               return {
@@ -409,9 +409,13 @@ async function attempt(
   // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다.
   // 명령 런의 이름이 사람 명령·허용 내장이 아니면 프롬프트를 내기 전에 이 CLI 의 목록으로 스킬 별칭인지 본다 — 아니면(목록을 못
   // 받아도) 프롬프트 없이 VALIDATION 으로 닫는다. 서버가 같은 판정을 하지만 목록을 모를 때 넘기므로 여기가 마지막 자리다
+  // SDK 가 query() 안에서 곧바로 입력을 당길 수 있다(옵션이 단순하면 그렇다 — 재리뷰 N2 실측) — q 가 대입된 뒤에 목록을 묻는다
   const command = start.deliver.command;
+  let queryAssigned!: () => void;
+  const queryReady = new Promise<void>((resolve) => (queryAssigned = resolve));
   async function* prompt(): AsyncGenerator<SdkUserMessage> {
     if (command !== undefined && needsAliasCheck(command)) {
+      await queryReady;
       let alias = false;
       try {
         alias = isSkillAlias(command.name, await q.supportedCommands());
@@ -477,6 +481,7 @@ async function attempt(
         alwaysAllowed,
       }),
     });
+    queryAssigned();
   } catch (error) {
     if (retryable(error)) return "session-in-use";
     failed(error);
