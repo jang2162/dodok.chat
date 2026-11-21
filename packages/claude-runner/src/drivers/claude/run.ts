@@ -1,5 +1,8 @@
 import {
   checkCommand,
+  CLAUDE_BUILTIN_ALLOWED,
+  COMMAND_BLOCKED_MESSAGE,
+  type DeliverCommand,
   formatCommandText,
   renderRunnerPrompt,
   RUNNER_PROGRAM_NAME,
@@ -14,7 +17,7 @@ import type { RunSpec } from "../../driver";
 import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../images";
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
 import { abortedFinal, abortStopReason, type RunSink } from "../../sink";
-import { createCanUseTool } from "./approvals";
+import { type AlwaysAllowed, alwaysAllowKey, createCanUseTool } from "./approvals";
 import { type CommandWrapperPlugin, type CommandWrappers, createCommandWrappers } from "./command-wrappers";
 import { fetchContextBreakdown } from "./context-usage";
 import type {
@@ -24,6 +27,7 @@ import type {
   SdkOptions,
   SdkPort,
   SdkQuery,
+  SdkSlashCommand,
   SdkUserMessage,
 } from "./sdk";
 import { createStreamMapper, isAuthFailureText } from "./stream-map";
@@ -172,6 +176,8 @@ export function buildQueryOptions(
     executable?: string;
     /** 사람의 명령·스킬 감싸개(command-wrappers.ts) — 모든 런에 싣는다(사람 글 속에서 모델이 스킬을 부를 수 있게) */
     plugins?: CommandWrapperPlugin[];
+    /** 그 런에서 「항상 허용」한 것 — PreToolUse 훅이 끼어들지 않는다(canUseTool 이 카드 없이 허용한다) */
+    alwaysAllowed?: AlwaysAllowed;
   },
 ): SdkOptions {
   const env = cliEnv(deps.baseEnv, spec.configDir);
@@ -207,13 +213,24 @@ export function buildQueryOptions(
         {
           hooks: [
             async (input) => {
-              const { tool_name: toolName, permission_mode: mode } = input as {
+              const {
+                tool_name: toolName,
+                tool_input: toolInput,
+                permission_mode: mode,
+              } = input as {
                 tool_name?: string;
+                tool_input?: unknown;
                 permission_mode?: string;
               };
               const decision =
                 toolName === undefined ? null : preToolDecision(toolName, mode ?? spec.permissionMode);
               if (decision === null) return {};
+              // 사람이 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다 — `ask` 는 CLI 세션 규칙을 덮어 카드가 다시 뜬다
+              if (
+                decision === "ask" &&
+                deps.alwaysAllowed?.has(alwaysAllowKey(toolName as string, toolInput))
+              )
+                return {};
               return {
                 hookSpecificOutput: {
                   hookEventName: "PreToolUse",
@@ -321,15 +338,34 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
     ctx.log?.(`dodok-runner: 런 ${runId} 명령·스킬 감싸개를 만들지 못했습니다 — ${String(error)}`);
   }
   const plugins = wrappers?.plugins ?? [];
+  const alwaysAllowed: AlwaysAllowed = new Set();
   try {
-    const outcome = await attempt(spec, ctx, resume, images, plugins);
+    const outcome = await attempt(spec, ctx, resume, images, plugins, alwaysAllowed);
     if (outcome !== "session-in-use") return;
     if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
     ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
-    await attempt(spec, ctx, true, images, plugins);
+    await attempt(spec, ctx, true, images, plugins, alwaysAllowed);
   } finally {
     await wrappers?.dispose().catch(() => {});
   }
+}
+
+/**
+ * 명령 런의 이름을 그 런의 CLI 명령 목록으로 다시 봐야 하나(에이전트 명령 C4 이중 방어) — 사람 명령·스킬(이름에 `:`)과 허용 내장은
+ * checkCommand 가 이미 통과시켰다. 나머지는 스킬 별칭일 때만 넘긴다
+ */
+export function needsAliasCheck(command: DeliverCommand): boolean {
+  const key = command.name.toLowerCase();
+  return !key.includes(":") && !CLAUDE_BUILTIN_ALLOWED.has(key);
+}
+
+/** 그 이름이 내장이 아닌 줄(사람 스킬)의 별칭인가 — 내장 이름·별칭과 겹치면 CLI 가 내장으로 읽을 수 있어 아니라고 본다 */
+export function isSkillAlias(name: string, list: readonly SdkSlashCommand[]): boolean {
+  const key = name.toLowerCase();
+  const lower = (names: readonly string[] | undefined) => (names ?? []).map((n) => n.toLowerCase());
+  if (list.some((c) => c.builtin === true && [c.name.toLowerCase(), ...lower(c.aliases)].includes(key)))
+    return false;
+  return list.some((c) => c.builtin !== true && lower(c.aliases).includes(key));
 }
 
 /** 이미지가 있으면 이미지 블록 뒤에 글(이미지를 글보다 앞에 두기를 Messages API 문서가 권한다), 못 불러온 수는 글 끝 한 줄 */
@@ -351,6 +387,7 @@ async function attempt(
   resume: boolean,
   images: { blocks: SdkImageBlock[]; failed: number },
   plugins: CommandWrapperPlugin[],
+  alwaysAllowed: AlwaysAllowed,
 ): Promise<"done" | "session-in-use"> {
   const { start } = spec;
   const sessionId = start.providerSessionId;
@@ -369,8 +406,24 @@ async function attempt(
     message: { role: "user", content: promptContent(start, images) },
     parent_tool_use_id: null,
   };
-  // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다
+  // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다.
+  // 명령 런의 이름이 사람 명령·허용 내장이 아니면 프롬프트를 내기 전에 이 CLI 의 목록으로 스킬 별칭인지 본다 — 아니면(목록을 못
+  // 받아도) 프롬프트 없이 VALIDATION 으로 닫는다. 서버가 같은 판정을 하지만 목록을 모를 때 넘기므로 여기가 마지막 자리다
+  const command = start.deliver.command;
   async function* prompt(): AsyncGenerator<SdkUserMessage> {
+    if (command !== undefined && needsAliasCheck(command)) {
+      let alias = false;
+      try {
+        alias = isSkillAlias(command.name, await q.supportedCommands());
+      } catch {
+        alias = false;
+      }
+      if (!alias) {
+        if (!ended) ctx.sink.error("VALIDATION", COMMAND_BLOCKED_MESSAGE);
+        end();
+        return;
+      }
+    }
     yield promptMessage;
     await inputDone;
   }
@@ -417,9 +470,11 @@ async function attempt(
           withdraw: (id) => ctx.sink.withdrawApproval(id),
           waitDecision: (id, signal) => ctx.sink.waitDecision(id, signal),
           signal: ctx.signal,
+          alwaysAllowed,
         }),
         resume,
         plugins,
+        alwaysAllowed,
       }),
     });
   } catch (error) {

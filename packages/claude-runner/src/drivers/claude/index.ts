@@ -1,7 +1,7 @@
 import {
   AGENT_COMMANDS_MAX,
   type AgentCommand,
-  checkCommand,
+  CLAUDE_BUILTIN_ALLOWED,
   Id,
   RUNNER_EFFORTS,
   RunnerModelOption,
@@ -93,13 +93,13 @@ export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
 
 /**
  * SDK supportedCommands() 를 계약 모양으로(에이전트 명령 C8·C16) — 사람의 명령·스킬(builtin 아님, `user:`·`project:` 이름)은 그대로,
- * 내장은 막는 것(checkCommand)을 뺀다. 이름 64자·설명 200자·별칭 8개를 넘는 줄은 자르거나 뺀다. 200줄까지
+ * 내장은 허용 목록(CLAUDE_BUILTIN_ALLOWED) 밖을 뺀다. 이름 64자·설명 200자·별칭 8개를 넘는 줄은 자르거나 뺀다. 200줄까지
  */
 export function toAgentCommands(list: SdkSlashCommand[]): AgentCommand[] {
   const out: AgentCommand[] = [];
   for (const c of list) {
     if (typeof c?.name !== "string" || c.name === "" || c.name.length > 64) continue;
-    if (c.builtin === true && !checkCommand("claude", c.name, "").ok) continue;
+    if (c.builtin === true && !CLAUDE_BUILTIN_ALLOWED.has(c.name.toLowerCase())) continue;
     const aliases = (c.aliases ?? [])
       .filter((a) => typeof a === "string" && a !== "" && a.length <= 64)
       .slice(0, 8);

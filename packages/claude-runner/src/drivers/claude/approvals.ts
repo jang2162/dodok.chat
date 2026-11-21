@@ -37,7 +37,26 @@ export type CanUseToolDeps = {
   waitDecision: (providerApprovalId: string, signal: AbortSignal) => Promise<ApprovalOutcome>;
   /** 런의 signal(중지·연결 끊김). SDK 가 콜백 signal 을 끊는 것은 CLI 의 취소 요청이 온 뒤라 따로 본다 */
   signal?: AbortSignal;
+  /**
+   * 그 런에서 사람이 「항상 허용」한 것 — 주면 CLI 제안이 없어도 「항상 허용」을 내고(러너가 기억한다), 기억한 것은 카드 없이
+   * 허용한다. PreToolUse 훅이 `ask` 를 돌리면 CLI 는 제안을 싣지 않고 세션 규칙도 보지 않아 같은 도구를 매번 다시 묻는다(R3 실측)
+   */
+  alwaysAllowed?: AlwaysAllowed;
 };
+
+/**
+ * 런 안의 「항상 허용」 기억 — Bash 는 같은 명령 글자 그대로, 그 밖의 도구는 도구 이름. 러너 프로세스 메모리에만, 그 런 동안만 있다
+ * (런마다 CLI 프로세스가 새로 떠 CLI 의 세션 규칙도 그 런 동안만 살던 것과 같다)
+ */
+export type AlwaysAllowed = Set<string>;
+
+export function alwaysAllowKey(toolName: string, input: unknown): string {
+  const command =
+    toolName === "Bash" && input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>).command
+      : undefined;
+  return typeof command === "string" ? `Bash\0${command}` : toolName;
+}
 
 /** 코드 포인트 경계에서 UTF-16 길이 max 안으로 — 스키마 길이는 UTF-16 이고 서로게이트 쌍을 가르지 않는다 */
 function clip(text: string, max: number): string {
@@ -132,9 +151,13 @@ export function createCanUseTool(deps: CanUseToolDeps): CanUseTool {
     const id = options.toolUseID;
     const signal = deps.signal ? AbortSignal.any([options.signal, deps.signal]) : options.signal;
     if (signal.aborted) return { behavior: "deny", message: APPROVAL_WITHDRAWN_MESSAGE };
+    const key = alwaysAllowKey(toolName, input);
+    if (deps.alwaysAllowed?.has(key)) return { behavior: "allow", updatedInput: input };
     const suggestions = options.suggestions ?? [];
     // suppressAlwaysAllowRule — 그 규칙이 이 요청보다 넓은 것을 허용한다고 CLI 가 알린 경우
-    const canAllowAlways = suggestions.length > 0 && options.suppressAlwaysAllowRule !== true;
+    const canAllowAlways =
+      (suggestions.length > 0 || deps.alwaysAllowed !== undefined) &&
+      options.suppressAlwaysAllowRule !== true;
     // 기다림을 먼저 건다 — 결정이 요청 프레임과 같은 틱에 돌아와도 잃지 않게
     const decision = deps.waitDecision(id, signal);
     deps.emit({
@@ -161,6 +184,8 @@ export function createCanUseTool(deps: CanUseToolDeps): CanUseTool {
       };
     }
     if (outcome.decision === "allow-always" && canAllowAlways) {
+      deps.alwaysAllowed?.add(key);
+      if (suggestions.length === 0) return { behavior: "allow", updatedInput: input };
       // 제안은 localSettings 로 온다(ADR 0007 4.2) — 러너 머신의 설정 파일에 쓰지 않고 이 세션에만
       return {
         behavior: "allow",

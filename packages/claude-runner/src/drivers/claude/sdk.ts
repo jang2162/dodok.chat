@@ -32,6 +32,8 @@ export type SdkQuery = AsyncIterable<SdkMessage> & {
   close(): void;
   /** 런 끝 컨텍스트 세부 — 러너는 summary 만 쓴다(full 은 항목마다 토큰 세기 API 를 부른다 — 작성기 칩 스펙 C6) */
   getContextUsage(opts?: { detail?: "summary" | "full" }): Promise<SdkContextUsage>;
+  /** 그 런의 CLI·cwd·플러그인에서 쓸 수 있는 명령 — 명령 런이 프롬프트를 내기 전에 스킬 별칭인지 본다(에이전트 명령 C4) */
+  supportedCommands(): Promise<SdkSlashCommand[]>;
 };
 
 export type SdkPort = {

@@ -58,6 +58,8 @@ export type FakeCall = {
   permissions: FakePermission[];
   /** getContextUsage 를 부른 인자 — 부를 때마다 하나 */
   contextUsageCalls: Array<{ detail?: "summary" | "full" } | undefined>;
+  /** 런의 query 에서 supportedCommands() 를 부른 수 — 답은 FakeSdk.commands */
+  supportedCommandsCalls: number;
 };
 
 export type FakeSdk = SdkPort & {
@@ -90,6 +92,7 @@ export const FAKE_COMMANDS = [
     builtin: true,
   },
   { name: "login", description: "Sign in", argumentHint: "", builtin: true },
+  { name: "insights", description: "Summarize your sessions", argumentHint: "", builtin: true },
   { name: "model", description: "Set the AI model", argumentHint: "[model]", builtin: true },
   { name: "user:user-cmd", description: "(user) SPIKE user command desc", argumentHint: "<topic>" },
   {
@@ -180,6 +183,7 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       toolResults: [],
       permissions: [],
       contextUsageCalls: [],
+      supportedCommandsCalls: 0,
     };
     calls.push(call);
     let inputEnded = false;
@@ -279,6 +283,10 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
         await new Promise((r) => setImmediate(r));
         if (inputEnded || closed) throw new Error("fake: getContextUsage after input closed");
         return fake.contextUsage(call);
+      },
+      supportedCommands: async () => {
+        call.supportedCommandsCalls += 1;
+        return fake.commands(args.options);
       },
     };
   }
