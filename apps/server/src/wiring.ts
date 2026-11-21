@@ -11,7 +11,7 @@ import { interact } from "./modules/components/service";
 import { createRunGate } from "./modules/ops/budget";
 import type { ControlService } from "./modules/control/service";
 import { createOpsService, type OpsService } from "./modules/ops/service";
-import { createRouter, type Router } from "./modules/router/service";
+import { createRouter, type Router, type RouterDeps } from "./modules/router/service";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
 import * as store from "./modules/runs/store";
 import type { ServerBus } from "./realtime/bus";
@@ -25,6 +25,8 @@ export type ServicesDeps = {
   /** 런·메시지의 채널이 이 워크스페이스에 있어야 wire 가 다룬다(REST 와 같은 경계) */
   workspaceId: string;
   timeouts?: Partial<RunTimeouts> | undefined;
+  /** 러너 에이전트의 사람 스킬 별칭 — 라우터가 명령을 막을지 본다(에이전트 명령 C4). 없으면 별칭을 보지 않는다 */
+  skillAliases?: RouterDeps["skillAliases"];
 };
 
 export type Services = {
@@ -93,6 +95,7 @@ export function createServices(deps: ServicesDeps): Services {
     logger,
     enqueue: gate.enqueue,
     supportsCommands: (agent) => orchestrator.supportsCommands(agent),
+    ...(deps.skillAliases === undefined ? {} : { skillAliases: deps.skillAliases }),
   });
   let control: ControlHooks | undefined;
   // 승인 서비스도 같은 방식으로 먼저 만든다 — 런 이벤트·신호를 오케스트레이터로 되돌려 보내고,

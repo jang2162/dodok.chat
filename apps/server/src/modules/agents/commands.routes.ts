@@ -15,7 +15,7 @@ import type { Logger } from "../../logger";
 import { listMembers, loadReadableChannel } from "../channels/service";
 import { sessionAgentIds } from "../conversations/invited-agents";
 import { getReadableConversation } from "../conversations/store";
-import { type AgentCommandsRunners, createAgentCommandsService } from "./commands";
+import { type AgentCommandsRunners, type AgentCommandsService, createAgentCommandsService } from "./commands";
 import { isAgentActive, rowToAgent } from "./service";
 
 export type AgentCommandsRouteContext = {
@@ -27,6 +27,8 @@ export type AgentCommandsRouteContext = {
   /** 러너 어댑터가 없으면(OpenClaw 만 붙인 테스트 앱) null — 러너 에이전트는 supported false */
   runners: AgentCommandsRunners | null;
   now?: () => number;
+  /** 앱이 만든 서비스(라우터와 캐시를 같이 쓴다) — 없으면 여기서 만든다 */
+  agentCommands?: AgentCommandsService;
 };
 
 const Params = z.object({ id: Id });
@@ -52,12 +54,14 @@ function activeAgents(db: DbOrTx, ids: string[]): Agent[] {
  * 작성기 자동완성의 에이전트 명령 목록(에이전트 명령 스펙 5.2) — 그 대화(채널)를 읽을 수 있는 사람에게. 남의 DM·다른 워크스페이스는 404
  */
 export function registerAgentCommandRoutes(fastify: FastifyInstance, ctx: AgentCommandsRouteContext): void {
-  const service = createAgentCommandsService({
-    registry: ctx.registry,
-    runners: ctx.runners,
-    logger: ctx.logger,
-    ...(ctx.now === undefined ? {} : { now: ctx.now }),
-  });
+  const service =
+    ctx.agentCommands ??
+    createAgentCommandsService({
+      registry: ctx.registry,
+      runners: ctx.runners,
+      logger: ctx.logger,
+      ...(ctx.now === undefined ? {} : { now: ctx.now }),
+    });
 
   /** 그 대화에서 부를 수 있는 에이전트 — 채널 멤버 + 그 대화의 초대 */
   fastify.get(

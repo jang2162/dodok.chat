@@ -33,6 +33,11 @@ export type RoutingInput = {
    * 막지 않는다(보낼 때 ADAPTER_UNAVAILABLE 로 닫힌다)
    */
   supportsCommands?: (agent: Agent) => boolean;
+  /**
+   * 명령을 받는 러너 에이전트의 사람 스킬 별칭(에이전트 명령 C4) — 라우터가 그 프로젝트의 명령 목록에서 미리 구해 넣는다. 없으면
+   * 모른다(러너가 그 런의 목록으로 다시 본다)
+   */
+  commandSkillAliases?: ReadonlySet<string>;
 };
 
 export type RunPlan = {
@@ -154,7 +159,12 @@ export function decideRuns(input: RoutingInput): {
     const commandAgent = parsed === null ? undefined : agentById.get(parsed.agentId);
     if (parsed !== null && commandAgent !== undefined && isActive(parsed.agentId)) {
       const { command } = parsed;
-      const verdict = checkCommand(commandProgramOf(commandAgent), command.name, command.args);
+      const verdict = checkCommand(
+        commandProgramOf(commandAgent),
+        command.name,
+        command.args,
+        input.commandSkillAliases === undefined ? {} : { skillAliases: input.commandSkillAliases },
+      );
       if (!verdict.ok)
         return { runs: [], blocked: [], notice: { agentId: parsed.agentId, text: verdict.message } };
       if (input.supportsCommands?.(commandAgent) === false) {

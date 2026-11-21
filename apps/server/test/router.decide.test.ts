@@ -535,6 +535,40 @@ describe("decideRuns — 에이전트 명령(에이전트 명령 스펙 C2·C4·
     expect(runner.notice).toEqual({ agentId: A, text: "모델은 작성기 칩에서 바꾸세요" });
   });
 
+  it("러너 내장은 허용 목록 — 막는 내장·목록 밖 이름은 막고, 사람 명령·스킬 별칭은 넘긴다", () => {
+    const agents = [runnerAgent(A, "a"), agent(B, "b")];
+    const aliases = new Set(["my-skill"]);
+    const decide = (name: string, commandSkillAliases?: ReadonlySet<string>) =>
+      decideRuns(
+        input({
+          message: userMsg([A], `<@a:${A}> /${name}`),
+          agents,
+          ...(commandSkillAliases === undefined ? {} : { commandSkillAliases }),
+        }),
+      );
+    for (const name of ["insights", "heapdump", "recap", "nope"]) {
+      expect(decide(name, aliases)).toEqual({
+        runs: [],
+        blocked: [],
+        notice: { agentId: A, text: "이 명령은 dodok 에서 쓸 수 없습니다" },
+      });
+    }
+    // 별칭 목록을 몰라도 막는 내장
+    expect(decide("insights").notice?.text).toBe("이 명령은 dodok 에서 쓸 수 없습니다");
+    for (const name of ["compact", "context", "user:x", "my-skill"]) {
+      expect(decide(name, aliases).runs.map((p) => p.command?.name)).toEqual([name]);
+    }
+  });
+
+  it("인자에 멘션이 있으면 명령이 아니다 — 멘션 모두가 런을 받는다", () => {
+    const r = decideRuns(input({ message: userMsg([A, B], `<@a:${A}> /compact <@a:${B}>`) }));
+    expect(r.runs.map((p) => [p.agentId, p.triggerKind])).toEqual([
+      [A, "mention"],
+      [B, "mention"],
+    ]);
+    expect(r.notice).toBeUndefined();
+  });
+
   it("old runner without commands capability → C7 line", () => {
     const r = decideRuns(
       input({

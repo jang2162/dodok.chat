@@ -18,7 +18,12 @@ import { ServerBus } from "../src/realtime/bus";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedConversation, seedWorkspace } from "./helpers/seed";
+import {
+  channelConversation,
+  createRunnerAgentForTest,
+  seedConversation,
+  seedWorkspace,
+} from "./helpers/seed";
 import { insertInvite } from "../src/modules/conversations/invited-agents";
 
 const CONTINUE_COMPONENTS = {
@@ -578,6 +583,55 @@ describe("router service — 에이전트 명령", () => {
     expect(t.enqueue).not.toHaveBeenCalled();
     expect(t.systemMessages().map((m) => m.bodyMd)).toEqual(["이 명령은 dodok 에서 쓸 수 없습니다"]);
     expect(created(t).some((m) => m.id === message.id)).toBe(true);
+  });
+
+  it("러너 명령 — 이름이 사람 명령·허용 내장이 아닐 때만 스킬 별칭을 묻고, 별칭이 아니면 막는다", async () => {
+    const t = setup();
+    const { agent: coder } = createRunnerAgentForTest(t.db, { workspaceId: t.workspaceId, handle: "coder" });
+    addMember(t.db, t.channel.id, { memberType: "agent", memberId: coder.id }, t.logger);
+    const skillAliases = vi.fn(async (_agent: Agent) => new Set(["my-skill"]) as ReadonlySet<string>);
+    const router = createRouter({ db: t.db, bus: t.bus, logger: t.logger, enqueue: t.enqueue, skillAliases });
+    await router.routeMessage(t.human("@coder /my-skill src"));
+    await router.routeMessage(t.human("@coder /nope"));
+    await router.routeMessage(t.human("@coder /compact"));
+    await router.routeMessage(t.human("@coder /user:x"));
+    await router.routeMessage(t.human("@dev /status"));
+    expect(t.enqueue.mock.calls.map((c) => [c[0].agentId, c[0].command?.name])).toEqual([
+      [coder.id, "my-skill"],
+      [coder.id, "compact"],
+      [coder.id, "user:x"],
+      [t.dev.id, "status"],
+    ]);
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual(["이 명령은 dodok 에서 쓸 수 없습니다"]);
+    // 묻는 것은 별칭 후보 둘뿐 — 사람 명령·허용 내장·OpenClaw 는 묻지 않는다
+    expect(skillAliases.mock.calls.map((c) => c[0].id)).toEqual([coder.id, coder.id]);
+  });
+
+  it("러너 명령 — 별칭 목록을 모르면(undefined·던짐) 넘기고 러너가 다시 본다", async () => {
+    const t = setup();
+    const { agent: coder } = createRunnerAgentForTest(t.db, { workspaceId: t.workspaceId, handle: "coder" });
+    addMember(t.db, t.channel.id, { memberType: "agent", memberId: coder.id }, t.logger);
+    const unknown = createRouter({
+      db: t.db,
+      bus: t.bus,
+      logger: t.logger,
+      enqueue: t.enqueue,
+      skillAliases: async () => undefined,
+    });
+    await unknown.routeMessage(t.human("@coder /my-skill"));
+    const failing = createRouter({
+      db: t.db,
+      bus: t.bus,
+      logger: t.logger,
+      enqueue: t.enqueue,
+      skillAliases: async () => {
+        throw new Error("boom");
+      },
+    });
+    await failing.routeMessage(t.human("@coder /my-skill"));
+    await failing.routeMessage(t.human("@coder /insights"));
+    expect(t.enqueue).toHaveBeenCalledTimes(2);
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual(["이 명령은 dodok 에서 쓸 수 없습니다"]);
   });
 
   it("옛 플러그인(supportsCommands false)이면 C7 줄", async () => {

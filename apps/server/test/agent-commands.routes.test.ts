@@ -109,6 +109,30 @@ describe("GET …/agent-commands [에이전트 명령 C8·C9]", () => {
     expect(fake.commandsRequests).toEqual([{ project: { rootId: "src", relPath: agent.handle } }]);
   });
 
+  it("러너가 다시 붙으면(hello 시각이 바뀌면) 캐시가 남아 있어도 새로 묻는다", async () => {
+    const issued = issueRunnerToken(app.db, app.workspaceId, `r${++n}`, null);
+    const hello = { capabilities: [...fakeRunnerHello().capabilities, "commands"] as never };
+    const first = await startFakeRunner({ url: app.url, token: issued.token, hello });
+    fakes.push(first);
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rn${++n}`,
+      runnerTokenId: issued.record.id,
+    });
+    const { conversationId } = channelWith([agent.id]);
+    const url = `/api/v1/conversations/${conversationId}/agent-commands`;
+    expect((await listOf(owner, url))[0]?.supported).toBe(true);
+    expect(first.commandsRequests).toHaveLength(1);
+    first.close();
+    await vi.waitFor(async () => expect((await listOf(owner, url))[0]?.supported).toBe(false));
+    // connectedAt 은 시각 글자라 같은 ms 에 다시 붙으면 구분되지 않는다
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await startFakeRunner({ url: app.url, token: issued.token, hello });
+    fakes.push(second);
+    await vi.waitFor(async () => expect((await listOf(owner, url))[0]?.supported).toBe(true));
+    expect(second.commandsRequests).toHaveLength(1);
+  });
+
   it("러너가 막는 이름을 실어 보내도 서버가 거른다", async () => {
     const { tokenId, fake } = await connect([...fakeRunnerHello().capabilities, "commands"]);
     fake.onCommandsList = () => ({
@@ -116,7 +140,10 @@ describe("GET …/agent-commands [에이전트 명령 C8·C9]", () => {
       commands: [
         { name: "login", description: "x" },
         { name: "model", description: "x" },
-        { name: "user:a", description: "x" },
+        { name: "insights", description: "x" },
+        { name: "nope", description: "x" },
+        { name: "compact", description: "x" },
+        { name: "user:a", description: "x", aliases: ["a"] },
       ],
     });
     const { agent } = createRunnerAgentForTest(app.db, {
@@ -126,7 +153,7 @@ describe("GET …/agent-commands [에이전트 명령 C8·C9]", () => {
     });
     const { conversationId } = channelWith([agent.id]);
     const [row] = await listOf(owner, `/api/v1/conversations/${conversationId}/agent-commands`);
-    expect(row?.commands.map((c) => c.name)).toEqual(["user:a"]);
+    expect(row?.commands.map((c) => c.name)).toEqual(["compact", "user:a"]);
   });
 
   it("끊김 → supported false, 옛 러너(commands 없음) → supported false", async () => {
