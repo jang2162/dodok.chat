@@ -1,9 +1,15 @@
 // channel.ts 는 SDK 를 import 한다 — 여기서는 핀 SDK(openclaw 2026.9.4)의 실제 route 빌더를 그대로 부른다
-import { CONVERSATION_ONLY_REASON, type OutboundMessage } from "@dodok/shared";
+import { CONVERSATION_ONLY_REASON, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
 import { registerBridge, releaseBridge } from "../src/bridge-registry";
-import { DODOK_BRIDGE_CAPABILITIES, dodokChannelPlugin } from "../src/channel";
+import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
+import {
+  DODOK_BRIDGE_CAPABILITIES,
+  DODOK_COMMAND_INGRESS,
+  dodokChannelPlugin,
+  inboundTurnParts,
+} from "../src/channel";
 import { THREAD_ONLY_REASON } from "../src/outbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
@@ -183,6 +189,111 @@ describe("sendText — 코어 일반 전송", () => {
 
 describe("hello capabilities", () => {
   it("스레드와 제어 도구를 안다고 알린다 — control 이 없으면 서버가 control.call 을 거절한다", () => {
-    expect(DODOK_BRIDGE_CAPABILITIES).toEqual(["run_id_in_outbound", "config.set", "threads", "control"]);
+    expect(DODOK_BRIDGE_CAPABILITIES).toEqual([
+      "run_id_in_outbound",
+      "config.set",
+      "threads",
+      "control",
+      "commands",
+    ]);
+  });
+
+  it("hello capabilities include commands", () => {
+    expect(DODOK_BRIDGE_CAPABILITIES).toContain("commands");
+  });
+});
+
+describe("명령 갈래(에이전트 명령 스펙 5.4·C12)", () => {
+  const delivery = (over: Partial<InboundDeliver> = {}): InboundDeliver =>
+    ({
+      deliveryId: "0192f000-0000-7000-8000-00000000d001",
+      kind: "message",
+      channelId: "0192f000-0000-7000-8000-00000000c001",
+      conversationId: "0192f000-0000-7000-8000-00000000c001",
+      conversationTitle: "대화",
+      agentId: "dev",
+      sessionKey: "agent:dev:dodok:channel:0192f000-0000-7000-8000-00000000c001",
+      runId: "0192f000-0000-7000-8000-00000000a001",
+      message: {
+        id: "0192f000-0000-7000-8000-00000000b001",
+        author: { type: "user", handle: "mia", displayName: "Mia" },
+        text: "@dev /status",
+        attachments: [],
+        ts: "2026-11-21T00:00:00.000Z",
+      },
+      context: { recentMessages: [], participants: [], relayRules: "" },
+      options: {},
+      ...over,
+    }) as InboundDeliver;
+  const opts = {
+    body: "[머리말]\n@dev /status",
+    rawBody: "@dev /status",
+    systemPrompt: "채널",
+    promptContext: ["대화"],
+  };
+
+  it("command delivery enables command interpretation with raw body", () => {
+    const parts = inboundTurnParts(delivery({ command: { name: "think", args: "high" } }), opts);
+    expect(parts.message).toEqual({
+      body: "/think high",
+      bodyForAgent: "/think high",
+      rawBody: "/think high",
+      commandBody: "/think high",
+    });
+    // 해석을 켠다 — 머리말·대화 동봉 없음
+    expect(parts.extra).toEqual({ GroupSystemPrompt: "채널" });
+    expect(parts.extra).not.toHaveProperty("CommandInterpretationSuppressed");
+    expect(parts.ingressCommand).toEqual(DODOK_COMMAND_INGRESS);
+  });
+
+  it("plain delivery keeps CommandInterpretationSuppressed", () => {
+    const parts = inboundTurnParts(delivery(), opts);
+    expect(parts.extra).toEqual({
+      CommandInterpretationSuppressed: true,
+      GroupSystemPrompt: "채널",
+      ChannelPromptContext: ["대화"],
+    });
+    expect(parts.message).toEqual({
+      body: opts.body,
+      bodyForAgent: opts.body,
+      rawBody: opts.rawBody,
+      commandBody: opts.rawBody,
+    });
+    expect(parts.ingressCommand).toBeUndefined();
+  });
+
+  it('plain text "/model x" stays suppressed', () => {
+    const plain = { body: "/model x", rawBody: "/model x" };
+    const parts = inboundTurnParts(delivery({ message: { ...delivery().message, text: "/model x" } }), plain);
+    expect(parts.extra.CommandInterpretationSuppressed).toBe(true);
+    expect(parts.ingressCommand).toBeUndefined();
+  });
+
+  it("blocked openclaw command rejected", () => {
+    expect(() => inboundTurnParts(delivery({ command: { name: "restart", args: "" } }), opts)).toThrow(
+      /blocked command/,
+    );
+    expect(() => inboundTurnParts(delivery({ command: { name: "model", args: "opus -g" } }), opts)).toThrow();
+    expect(() => inboundTurnParts(delivery({ command: { name: "new", args: "" } }), opts)).toThrow();
+  });
+
+  it("핀 SDK 의 ingress — 명령 게이트를 주면 허가, 안 주면 게이트가 없다", async () => {
+    const base = {
+      channelId: "dodok",
+      accountId: "default",
+      cfg: {},
+      identity: { key: "sender", entryIdPrefix: "dodok-entry" },
+      subject: { stableId: "user:mia" },
+      conversation: { kind: "channel" as const, id: "c1" },
+      dmPolicy: "open" as const,
+      groupPolicy: "open" as const,
+    };
+    const withCommand = await resolveStableChannelMessageIngress({
+      ...base,
+      command: { ...DODOK_COMMAND_INGRESS },
+    });
+    expect(withCommand.commandAccess).toMatchObject({ requested: true, authorized: true });
+    const plain = await resolveStableChannelMessageIngress(base);
+    expect(plain.commandAccess.authorized).toBe(false);
   });
 });

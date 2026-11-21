@@ -10,7 +10,9 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  checkCommand,
   dodokSessionKey,
+  formatCommandText,
   Id,
   type BridgeCapability,
   type InboundDeliver,
@@ -83,7 +85,57 @@ export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
   "config.set",
   "threads",
   "control",
+  "commands",
 ];
+
+/**
+ * 명령 갈래의 Gateway 명령 게이트(에이전트 명령 C12) — dodok 서버가 이미 멘션 권한·허용 목록(C10)으로 판정했으므로 접근 그룹 없이
+ * 허가한다. Gateway 의 commands.ownerAllowFrom 같은 주인 설정은 그대로 Gateway 가 본다(dodok 이 owner 를 사칭하지 않는다)
+ */
+export const DODOK_COMMAND_INGRESS = {
+  useAccessGroups: false,
+  allowTextCommands: true,
+  hasControlCommand: true,
+  modeWhenAccessGroupsOff: "allow",
+} as const;
+
+export type InboundTurnParts = {
+  message: { body: string; bodyForAgent: string; rawBody: string; commandBody: string };
+  extra: Record<string, unknown>;
+  /** 명령 갈래만 — ingress 의 command 게이트 입력 */
+  ingressCommand?: typeof DODOK_COMMAND_INGRESS;
+};
+
+/**
+ * 인바운드 한 턴의 본문·extra(에이전트 명령 스펙 5.4). 명령(delivery.command)이면 본문 넷을 모두 `/<name>[ <args>]` 로 — 채널
+ * 머리말·대화 동봉(ChannelPromptContext) 없이 — 두고 Gateway 명령 해석을 켠다. 허용 목록(C10)을 한 번 더 보고 밖이면 던진다(ack 오류).
+ * 명령이 아니면 지금처럼 해석을 끈다 — 평범한 글 속 `/model x` 가 지시어로 먹지 않게
+ */
+export function inboundTurnParts(
+  delivery: InboundDeliver,
+  opts: { body: string; rawBody: string; systemPrompt?: string; promptContext?: unknown },
+): InboundTurnParts {
+  const group = opts.systemPrompt ? { GroupSystemPrompt: opts.systemPrompt } : {};
+  const command = delivery.command;
+  if (command !== undefined) {
+    const verdict = checkCommand("openclaw", command.name, command.args);
+    if (!verdict.ok) throw new Error(`dodok: blocked command /${command.name} — ${verdict.message}`);
+    const text = formatCommandText(command);
+    return {
+      message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
+      extra: { ...group },
+      ingressCommand: DODOK_COMMAND_INGRESS,
+    };
+  }
+  return {
+    message: { body: opts.body, bodyForAgent: opts.body, rawBody: opts.rawBody, commandBody: opts.rawBody },
+    extra: {
+      CommandInterpretationSuppressed: true,
+      ...group,
+      ...(opts.promptContext ? { ChannelPromptContext: opts.promptContext } : {}),
+    },
+  };
+}
 
 type ChannelRuntime = PluginRuntime["channel"];
 
@@ -121,6 +173,8 @@ async function dispatchInbound(params: {
   const factsResult = toInboundFacts(delivery, { accountId: account.accountId });
   if (!factsResult.ok) throw new Error(factsResult.error);
   const facts = factsResult.facts;
+  // 막는 명령은 여기서 던진다 — ack 오류(런 없음). 본문은 첨부 알림 줄을 붙인 뒤 다시 만든다(아래)
+  inboundTurnParts(delivery, { body: facts.body, rawBody: facts.rawBody });
 
   const ingress = await resolveStableChannelMessageIngress({
     channelId: DODOK_CHANNEL_ID,
@@ -138,6 +192,8 @@ async function dispatchInbound(params: {
     // 인가는 브리지 토큰이 경계다 — 서버가 멘션 라우팅을 끝낸 인바운드만 온다
     dmPolicy: "open",
     groupPolicy: "open",
+    // 명령 갈래만 명령 게이트를 연다(C12) — 평범한 글은 게이트 없이(해석도 끈다)
+    ...(delivery.command === undefined ? {} : { command: { ...DODOK_COMMAND_INGRESS } }),
   });
   logger.info(
     logLine("ingress", {
@@ -164,6 +220,12 @@ async function dispatchInbound(params: {
   // fact 에 url 은 넣지 않는다(전사에 남는다). 옛 MediaPath* 필드는 쓰지 않는다
   const media = inboundMedia.facts.length > 0 ? toInboundMediaFacts(inboundMedia.facts) : undefined;
   const body = appendNotes(facts.body, inboundMedia.notes);
+  const turn = inboundTurnParts(delivery, {
+    body,
+    rawBody: facts.rawBody,
+    ...(entry.systemPrompt ? { systemPrompt: entry.systemPrompt } : {}),
+    ...(promptContext ? { promptContext } : {}),
+  });
   if (delivery.message.attachments.length > 0) {
     // 경로는 싣지 않는다 — 개수와 실패 단계·종류(download:http-404 등)만
     logger.info(
@@ -187,19 +249,14 @@ async function dispatchInbound(params: {
     conversation: facts.conversation,
     route: facts.route,
     reply: facts.reply,
-    message: {
-      body,
-      bodyForAgent: body,
-      rawBody: facts.rawBody,
-      commandBody: facts.rawBody,
-    },
+    message: turn.message,
     ...(media ? { media } : {}),
     channelIngress: ingress,
-    extra: {
-      CommandInterpretationSuppressed: true,
-      ...(entry.systemPrompt ? { GroupSystemPrompt: entry.systemPrompt } : {}),
-      ...(promptContext ? { ChannelPromptContext: promptContext } : {}),
-    },
+    // 명령 갈래는 ingress 명령 게이트의 판정을 그대로 넘긴다 — 평범한 글은 넘기지 않는다(해석을 끈다)
+    ...(turn.ingressCommand
+      ? { access: { commands: { authorized: ingress.commandAccess.authorized } } }
+      : {}),
+    extra: turn.extra,
   });
 
   const correlation: OutboundCorrelation = {
