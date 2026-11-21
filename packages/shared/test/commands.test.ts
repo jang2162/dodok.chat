@@ -3,6 +3,7 @@ import {
   AgentCommand,
   BridgeCapability,
   BridgeHello,
+  CLAUDE_BUILTIN_ALLOWED,
   checkCommand,
   InboundDeliver,
   OPENCLAW_COMMANDS,
@@ -11,6 +12,7 @@ import {
   RunnerCommandsList,
   RunnerCommandsListResult,
   RunTriggerKind,
+  skillAliasesOf,
 } from "../src";
 
 const A = "01a09fc9-d204-7551-89d6-38544d07a101";
@@ -48,9 +50,11 @@ describe("parseAgentCommand", () => {
     expect(parseAgentCommand(`${chip()} 이거 /compact 해 줘`, {})).toBeNull();
   });
 
-  it("멘션이 둘이면 명령이 아니다", () => {
+  it("멘션이 둘이면 명령이 아니다 — 인자 속 멘션도(평범한 글로 흘러 둘 다 부른다)", () => {
     expect(parseAgentCommand(`${chip()} ${chip(B)} /compact`, {})).toBeNull();
-    expect(parseAgentCommand(`${chip()} /compact ${chip(B)}`, {})?.args).toBe(`${chip(B)}`);
+    expect(parseAgentCommand(`${chip()} /compact ${chip(B)}`, {})).toBeNull();
+    expect(parseAgentCommand(`${chip()} /compact 요약 <@u:${U}> 에게`, {})).toBeNull();
+    expect(parseAgentCommand(`/compact ${chip(B)}`, { directAgentId: A })).toBeNull();
   });
 
   it("사람 멘션은 명령이 아니다", () => {
@@ -99,10 +103,52 @@ describe("parseAgentCommand", () => {
 });
 
 describe("checkCommand", () => {
-  it("claude 막는 명령·안내", () => {
-    expect(checkCommand("claude", "login", "")).toMatchObject({ ok: false, reason: "blocked" });
-    expect(checkCommand("claude", "logout", "")).toMatchObject({ ok: false, reason: "blocked" });
-    expect(checkCommand("claude", "config", "")).toMatchObject({ ok: false, reason: "blocked" });
+  const aliases = new Set(["my-skill"]);
+  it("claude 내장은 허용 목록 — 그 밖의 내장은 막는다", () => {
+    expect([...CLAUDE_BUILTIN_ALLOWED].sort()).toEqual(["compact", "context", "cost", "help"]);
+    for (const name of ["compact", "context", "cost", "help", "Compact"]) {
+      expect(checkCommand("claude", name, "", { skillAliases: aliases })).toEqual({ ok: true });
+    }
+    for (const name of ["login", "logout", "config", "insights", "heapdump", "recap", "nope"]) {
+      expect(checkCommand("claude", name, "", { skillAliases: aliases })).toEqual({
+        ok: false,
+        reason: "blocked",
+        message: "이 명령은 dodok 에서 쓸 수 없습니다",
+      });
+    }
+  });
+
+  it("claude 사람 명령(`:`)과 스킬 별칭은 넘긴다", () => {
+    expect(checkCommand("claude", "user:x", "", { skillAliases: new Set() })).toEqual({ ok: true });
+    expect(checkCommand("claude", "project:review", "a", { skillAliases: new Set() })).toEqual({ ok: true });
+    expect(checkCommand("claude", "my-skill", "", { skillAliases: aliases })).toEqual({ ok: true });
+    expect(checkCommand("claude", "My-Skill", "", { skillAliases: aliases })).toEqual({ ok: true });
+    expect(checkCommand("claude", "my-skill", "", { skillAliases: new Set() })).toMatchObject({
+      ok: false,
+      reason: "blocked",
+    });
+  });
+
+  it("claude 별칭 목록을 모르면 넘긴다 — 러너가 그 런의 목록으로 다시 본다", () => {
+    expect(checkCommand("claude", "my-skill", "")).toEqual({ ok: true });
+    expect(checkCommand("claude", "nope", "")).toEqual({ ok: true });
+    // 로그인·설정·다른 세션 기록·메모리를 건드리는 내장은 목록을 몰라도 막는다
+    for (const name of ["login", "logout", "config", "insights", "heapdump", "recap"]) {
+      expect(checkCommand("claude", name, "")).toMatchObject({ ok: false, reason: "blocked" });
+    }
+  });
+
+  it("skillAliasesOf 는 `:` 이 있는 줄의 별칭만", () => {
+    expect([
+      ...skillAliasesOf([
+        { name: "user:my-skill", description: "", aliases: ["my-skill"] },
+        { name: "help", description: "", aliases: ["h"] },
+        { name: "project:x", description: "" },
+      ]),
+    ]).toEqual(["my-skill"]);
+  });
+
+  it("claude 안내", () => {
     expect(checkCommand("claude", "model", "opus")).toEqual({
       ok: false,
       reason: "use_chips",
@@ -113,8 +159,9 @@ describe("checkCommand", () => {
       reason: "new_session",
       message: "새 세션을 여세요",
     });
-    expect(checkCommand("claude", "review", "")).toEqual({ ok: true });
-    expect(checkCommand("claude", "user:review", "x")).toEqual({ ok: true });
+    expect(checkCommand("claude", "model", "opus", { skillAliases: new Set(["model"]) })).toMatchObject({
+      reason: "use_chips",
+    });
   });
 
   it("openclaw 는 허용 목록", () => {
@@ -135,6 +182,21 @@ describe("checkCommand", () => {
     });
     expect(checkCommand("openclaw", "model", "opus")).toEqual({ ok: true });
     expect(checkCommand("openclaw", "model", "opus -s")).toEqual({ ok: true });
+  });
+
+  it("openclaw 인자 속 `/` 토큰·줄바꿈은 막는다 — Gateway 가 본문 어디서든 지시어를 뽑는다", () => {
+    const nested = { ok: false, reason: "blocked", message: "명령 인자에 다른 `/` 명령을 넣을 수 없습니다" };
+    expect(checkCommand("openclaw", "think", "high /elevated full")).toEqual(nested);
+    expect(checkCommand("openclaw", "verbose", "on /model x -g")).toEqual(nested);
+    expect(checkCommand("openclaw", "fast", "on /exec host=gateway")).toEqual(nested);
+    expect(checkCommand("openclaw", "skill", "x /usr/bin")).toEqual(nested);
+    expect(checkCommand("openclaw", "skill", "/x")).toEqual(nested);
+    expect(checkCommand("openclaw", "think", "high\tx\n")).toEqual(nested);
+    expect(checkCommand("openclaw", "skill", "x\ny")).toEqual(nested);
+    expect(checkCommand("openclaw", "compact", "a\r\nb")).toEqual(nested);
+    expect(checkCommand("openclaw", "skill", "review src/a.ts")).toEqual({ ok: true });
+    expect(checkCommand("openclaw", "skill", "review https://x.y/z")).toEqual({ ok: true });
+    expect(checkCommand("openclaw", "model", "opus")).toEqual({ ok: true });
   });
 
   it("양쪽 stop 은 use_stop", () => {
