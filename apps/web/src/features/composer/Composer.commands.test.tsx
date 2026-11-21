@@ -96,6 +96,22 @@ describe("commandBlock — 러너 내장 허용 목록·스킬 별칭", () => {
   it("인자에 멘션이 있으면 명령이 아니다", () => {
     expect(block(`/nope <@a:${AGENT}>`, listed)).toBeNull();
   });
+  it("목록 묻기가 실패한 줄(listFailed)이면 별칭을 모른다 — 막지 않는다(재리뷰 N3)", () => {
+    const failed: AgentCommandsResponse["agents"] = [
+      { agentId: AGENT, supported: true, listFailed: true, commands: [] },
+    ];
+    expect(block("/my-skill", failed)).toBeNull();
+    // 늘 막는 내장은 그래도 막는다
+    expect(block("/insights", failed)).toBe("이 명령은 dodok 에서 쓸 수 없습니다");
+  });
+
+  it("내장 usage 는 별칭 cost 로도 자동완성에 나온다(재리뷰 N6)", () => {
+    const usage = { name: "usage", description: "Show plan usage limits", aliases: ["cost"] };
+    expect(matchCommands([usage], "cost").map((c) => c.name)).toEqual(["usage"]);
+    expect(matchCommands([usage], "us").map((c) => c.name)).toEqual(["usage"]);
+    expect(block("/usage", [{ agentId: AGENT, supported: true, commands: [usage] }])).toBeNull();
+    expect(block("/cost", [{ agentId: AGENT, supported: true, commands: [usage] }])).toBeNull();
+  });
 });
 
 describe("commandTrigger·matchCommands", () => {

@@ -96,7 +96,7 @@ export const commandProgramOf = (agent: Pick<Agent, "provider">): "claude" | "op
 /**
  * 보내기 전 막기(에이전트 명령 C4·C10) — 글이 명령이고 그 에이전트를 알면 checkCommand. 명령이 아니거나(첨부가 있음 포함) 에이전트를
  * 모르면 null(보낸다 — 서버가 다시 본다). 그 에이전트의 명령 목록을 받아 두었으면 러너 스킬 별칭도 본다 — 못 받았으면 별칭을 모르는
- * 채 보내고 서버가 다시 본다
+ * 채 보내고 서버가 다시 본다(목록 묻기가 실패한 줄도 같다)
  */
 export function commandBlock(
   bodyMd: string,
@@ -120,7 +120,8 @@ export function commandBlock(
     commandProgramOf(agent),
     parsed.name,
     parsed.args,
-    row?.supported === true ? { skillAliases: skillAliasesOf(row.commands) } : {},
+    // 목록 묻기가 실패한 줄(listFailed)은 별칭을 모른다 — 「쓸 수 없다」로 막지 않고 서버·러너가 본다(재리뷰 N3)
+    row?.supported === true && row.listFailed !== true ? { skillAliases: skillAliasesOf(row.commands) } : {},
   );
   return verdict.ok ? null : verdict;
 }
