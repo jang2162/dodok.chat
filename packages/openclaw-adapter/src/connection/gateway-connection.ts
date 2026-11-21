@@ -153,7 +153,7 @@ export type GatewayConnection = {
     decision: ApprovalDecision,
   ): Promise<ProviderApproval>;
   syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;
-  supports(capability: "threads"): boolean;
+  supports(capability: "threads" | "commands"): boolean;
   forgetRun(runId: string): void;
   onPluginHello(session: BridgeSessionState, hello: BridgeHello): void;
   onPluginClose(session: BridgeSessionState): void;

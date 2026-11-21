@@ -1,4 +1,11 @@
-import { Id, RUNNER_EFFORTS, RunnerModelOption } from "@dodok/shared";
+import {
+  AGENT_COMMANDS_MAX,
+  type AgentCommand,
+  CLAUDE_BUILTIN_ALLOWED,
+  Id,
+  RUNNER_EFFORTS,
+  RunnerModelOption,
+} from "@dodok/shared";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +19,16 @@ import {
   readClaudeVersion,
   resolveClaudeExecutable,
 } from "./executable";
-import { CLAUDE_CODE_LABEL, type ClaudeRunSpec, cliEnv, runOnce } from "./run";
-import type { SdkModelInfo, SdkPort } from "./sdk";
+import { createCommandWrappers } from "./command-wrappers";
+import {
+  CLAUDE_CODE_LABEL,
+  type ClaudeRunSpec,
+  cliEnv,
+  COMMAND_SAFETY_SETTINGS,
+  commandsConfigDir,
+  runOnce,
+} from "./run";
+import type { SdkModelInfo, SdkPort, SdkSlashCommand } from "./sdk";
 
 // Claude Code 드라이버 — Claude Agent SDK 로 머신에 설치된 claude(없으면 SDK 번들 CLI)를 띄운다(런 하나 = query() 하나). 동작은 Claude 러너 스펙
 // 「구현과 맞춘 것」 장 그대로이고, 이 파일은 드라이버 계약에 맞춰 묶기만 한다
@@ -74,6 +89,30 @@ export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
     });
     return row.success ? [row.data] : [];
   });
+}
+
+/**
+ * SDK supportedCommands() 를 계약 모양으로(에이전트 명령 C8·C16) — 사람의 명령·스킬(builtin 아님, `user:`·`project:` 이름)은 그대로,
+ * 내장은 허용 목록(CLAUDE_BUILTIN_ALLOWED) 밖을 뺀다. 이름 64자·설명 200자·별칭 8개를 넘는 줄은 자르거나 뺀다. 200줄까지
+ */
+export function toAgentCommands(list: SdkSlashCommand[]): AgentCommand[] {
+  const out: AgentCommand[] = [];
+  for (const c of list) {
+    if (typeof c?.name !== "string" || c.name === "" || c.name.length > 64) continue;
+    if (c.builtin === true && !CLAUDE_BUILTIN_ALLOWED.has(c.name.toLowerCase())) continue;
+    const aliases = (c.aliases ?? [])
+      .filter((a) => typeof a === "string" && a !== "" && a.length <= 64)
+      .slice(0, 8);
+    const hint = typeof c.argumentHint === "string" ? c.argumentHint.slice(0, 200) : "";
+    out.push({
+      name: c.name,
+      description: typeof c.description === "string" ? c.description.slice(0, 200) : "",
+      ...(hint === "" ? {} : { argumentHint: hint }),
+      ...(aliases.length === 0 ? {} : { aliases }),
+    });
+    if (out.length >= AGENT_COMMANDS_MAX) break;
+  }
+  return out;
 }
 
 /** 로그용 — 3000 → 「3초」, 600000 → 「10분」, 1초 밑(시험)은 ms */
@@ -192,6 +231,38 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
             ? "로그인 디렉터리가 없습니다 — 러너 머신에서 그 디렉터리로 claude /login 하세요"
             : "Claude Code 로그인 디렉터리가 없습니다 — 러너 머신에서 claude 로 /login 하세요",
       };
+    },
+    // 명령 목록(에이전트 명령 C8) — 런과 같은 감싸개·막기 옵션으로 프롬프트 없는 query 를 연다(모델 호출 0 — 스파이크 2절)
+    async listCommands({ workdir, configDir, signal }) {
+      const env = opts.baseEnv ?? process.env;
+      const exe = chosen ?? resolveClaudeExecutable({}, env, isExecutable);
+      if (exe.cli === "unusable") throw new Error(exe.reason);
+      const wrappers = await createCommandWrappers({
+        configDir: commandsConfigDir(env, configDir),
+        cwd: workdir,
+      });
+      const abort = new AbortController();
+      const onAbort = () => abort.abort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        const raw = await opts.sdk.listCommands({
+          options: {
+            cwd: workdir,
+            env: cliEnv(env, configDir),
+            settingSources: [],
+            strictMcpConfig: true,
+            persistSession: false,
+            plugins: wrappers.plugins,
+            settings: { ...COMMAND_SAFETY_SETTINGS },
+            abortController: abort,
+            ...(exe.cli === "installed" ? { pathToClaudeCodeExecutable: exe.path } : {}),
+          },
+        });
+        return Array.isArray(raw) ? toAgentCommands(raw) : [];
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        await wrappers.dispose().catch(() => {});
+      }
     },
     async startRun(spec, sink, signal) {
       // 계약은 프로그램이 지은 세션 id(run.session)도 받으려고 글자 하나 이상만 본다 — Claude 는 서버가 정한 UUID 만 연다

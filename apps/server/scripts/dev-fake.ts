@@ -52,6 +52,7 @@ import {
   type ApprovalDecision,
   BridgeHello,
   type DmAccess,
+  formatCommandText,
   formatDmLine,
   formatGroupDmLine,
   formatSessionInviteLine,
@@ -344,7 +345,8 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
     hello: {
       // 워크트리 능력(워크트리 스펙 5.2) — 이름에 「dirty」가 든 브랜치의 워크트리는 보관(정리)이 dirty 로 409. 제한 러너는 옛 러너처럼
       // 능력이 없다(워크트리 만들기 단추가 「러너를 업데이트하세요」로 잠긴다)
-      capabilities: [...fakeRunnerHello().capabilities, "worktrees"],
+      // 명령(에이전트 명령 C8) — 제한 러너는 옛 러너처럼 모른다(`@에이전트 /…` 가 「업데이트하세요」 줄)
+      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands"],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장
@@ -394,6 +396,11 @@ const RUNNER_HOOK_TIMEOUT_MS = 5_000;
 const OLD_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   ...FAKE_PLUGIN_HELLO,
   capabilities: FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "threads"),
+});
+/** dev:fake 의 가짜 플러그인 hello — 명령(에이전트 명령 C7)을 안다. 옛 플러그인 흉내(OLD_PLUGIN_HELLO)는 명령도 모른다 */
+export const DEV_FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
+  ...FAKE_PLUGIN_HELLO,
+  capabilities: [...new Set([...FAKE_PLUGIN_HELLO.capabilities, "commands"])],
 });
 const DEV_FAKE_BODY_MAX = 16 * 1024;
 /** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
@@ -834,7 +841,18 @@ function receivedLine(d: InboundDeliver): string | undefined {
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
  * 핸들은 채널 참여자(`context.participants`)에서 읽는다 — 등록한 핸들이 providerAgentId 와 달라도 된다.
  */
+/**
+ * 가짜 Gateway 의 명령(에이전트 명령 스펙 5.4) — `/help` 는 실물 Gateway 처럼 런 없이 처리(admission handled — 서버가 「`/help` 완료」로
+ * 닫는다), 그 밖은 명령 이름을 담은 답 한 줄. 받은 글이 아니라 명령으로 고른다
+ */
+function fakeCommandScript(self: string, command: NonNullable<InboundDeliver["command"]>): ScenarioScript {
+  if (command.name === "help") return { drop: "handled", reply: "" };
+  const reply = `**${self}** 가 \`${formatCommandText(command)}\` 를 처리했습니다(가짜 Gateway).`;
+  return { reply, deltas: [reply], deltaDelayMs: 50 };
+}
+
 export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript {
+  if (d.command !== undefined) return fakeCommandScript(self, d.command);
   const { text, author } = d.message;
   if (text.includes("드롭")) return { drop: "bot-loop-protection", reply: "" };
   const others = new Set(
@@ -960,6 +978,19 @@ export async function fakeRunnerScript(
 ): Promise<void> {
   const d = run.start.deliver;
   const { text } = d.message;
+  // 명령 런(에이전트 명령 스펙 5.3) — 실제 Claude Code 꼴: `/compact` 는 빈 result(서버가 「`/compact` 완료」로 닫는다), `/context` 는
+  // 표 글, 그 밖(사용자 명령·스킬)은 모델 답 한 줄. 도구를 부르지 않는다
+  if (d.command !== undefined) {
+    const name = d.command.name;
+    if (name === "compact") return void run.final("");
+    const reply =
+      name === "context"
+        ? "## Context Usage\n\n**Tokens:** 2.9k / 1m (0%)\n\n| Category | Tokens |\n| --- | --- |\n| Messages | 1.2k |"
+        : `\`${formatCommandText(d.command)}\` 를 실행했습니다(가짜 러너).`;
+    run.text(reply);
+    run.final(reply);
+    return;
+  }
   const script = fakeAgentScript(DEV_FAKE_RUNNER_AGENT.handle, d);
   // 실제 러너는 천장에 걸리면 아무것도 돌리지 않고 항목 이름만 보낸다 — 도구보다 먼저
   if (text.includes("천장")) {
@@ -2073,7 +2104,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             async ({ gatewayId, threads }) => {
               const pair = pairOf(gatewayId);
               if (!pair) return invalid;
-              const hello = threads ? FAKE_PLUGIN_HELLO : OLD_PLUGIN_HELLO;
+              const hello = threads ? DEV_FAKE_PLUGIN_HELLO : OLD_PLUGIN_HELLO;
               const result = await reconnectPlugin(pair, { hello }, threads ? "threads hello" : "old hello");
               return result.ok ? { ok: true, capabilities: hello.capabilities } : result;
             },
@@ -2135,6 +2166,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         plugin = await startFakePlugin({
           bridgeUrl: app.url,
           token: spec.bridgeToken,
+          hello: DEV_FAKE_PLUGIN_HELLO,
           agents: spec.agents.map((a) => ({ agentId: a.id })),
         });
       } catch (error) {

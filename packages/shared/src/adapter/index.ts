@@ -174,7 +174,11 @@ export interface AgentAdapter {
   /** 스레드 루트를 주면 그 스레드의 하위 세션 키 */
   sessionKeyFor(providerAgentId: string, conversationId: string, threadRootId?: string): string;
   /** 그 에이전트를 맡은 쪽(OpenClaw 는 그 연결에 붙은 플러그인, 러너는 그 에이전트를 알린 러너)이 능력을 hello 로 알렸는가 — 없으면 false */
-  supports(providerAgentId: string, connectionId: ConnectionId | null, capability: "threads"): boolean;
+  supports(
+    providerAgentId: string,
+    connectionId: ConnectionId | null,
+    capability: "threads" | "commands",
+  ): boolean;
   /** ok:false 는 throw AdapterError(code) */
   send(input: InboundDeliver, opts: SendOptions): Promise<AdapterSendResult>;
   abort(runId: string, sessionKey: string, connectionId: ConnectionId | null): Promise<void>;

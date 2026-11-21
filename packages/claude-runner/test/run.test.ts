@@ -19,6 +19,8 @@ import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
 import { realSdk, type SdkContextUsage, type SdkMcpServer } from "../src/drivers/claude/sdk";
 import { toContextBreakdown } from "../src/drivers/claude/context-usage";
 import { createRunSink } from "../src/sink";
+import { alwaysAllowKey } from "../src/drivers/claude/approvals";
+import { toAgentCommands } from "../src/drivers/claude";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, FAKE_CONTEXT_USAGE, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runSpec, runStart, SESSION_ID } from "./helpers/fixtures";
@@ -786,6 +788,53 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
     ]);
   });
 
+  it("「항상 허용」 뒤 같은 Bash 는 카드 없이 허용 — 훅의 ask 로 CLI 가 제안 없이 물어도(R3 실측)", async () => {
+    const { fake, ctx, bridge } = harness();
+    const ask = (toolUseID: string, command: string) => ({
+      askPermission: { toolName: "Bash", input: { command }, toolUseID },
+    });
+    fake.script(
+      script.init(),
+      ask("toolu_01", "touch a"),
+      ask("toolu_02", "touch a"),
+      ask("toolu_03", "touch b"),
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    const done = runOnce(runSpec(), ctx);
+    await bridge.decide("toolu_01", { decision: "allow-always" });
+    while (bridge.requested.length < 2) await new Promise((r) => setTimeout(r, 2));
+    await bridge.decide("toolu_03", { decision: "allow-once" });
+    await done;
+    // 제안이 없어도 러너가 기억하므로 「항상 허용」을 낸다. 둘째(같은 명령)는 카드가 없다
+    expect(bridge.requested.map((r) => [r.toolCallId, r.canAllowAlways])).toEqual([
+      ["toolu_01", true],
+      ["toolu_03", true],
+    ]);
+    expect(fake.calls[0]!.permissions).toEqual([
+      { behavior: "allow", updatedInput: { command: "touch a" } },
+      { behavior: "allow", updatedInput: { command: "touch a" } },
+      { behavior: "allow", updatedInput: { command: "touch b" } },
+    ]);
+  });
+
+  it("「항상 허용」 기억은 그 런뿐 — 다음 런은 다시 묻는다", async () => {
+    const { fake, ctx, bridge } = harness();
+    const ask = { askPermission: { toolName: "Bash", input: { command: "touch a" }, toolUseID: "toolu_01" } };
+    fake.script(script.init(), ask, ...script.textTurn("msg_1", ["끝"]));
+    fake.script(
+      script.init(),
+      { ...ask, askPermission: { ...ask.askPermission, toolUseID: "toolu_02" } },
+      ...script.textTurn("msg_2", ["끝"]),
+    );
+    const first = runOnce(runSpec(), ctx);
+    await bridge.decide("toolu_01", { decision: "allow-always" });
+    await first;
+    const second = runOnce(runSpec(), ctx);
+    await bridge.decide("toolu_02", { decision: "allow-once" });
+    await second;
+    expect(bridge.requested.map((r) => r.toolCallId)).toEqual(["toolu_01", "toolu_02"]);
+  });
+
   it("기한 deny 를 받으면 도구를 거절로 돌려받고 런은 끝까지 간다(Review Focus 4)", async () => {
     const { fake, ctx, emitted, bridge } = harness();
     fake.script(
@@ -1042,5 +1091,285 @@ describe("runOnce — 런 끝 컨텍스트 세부(작성기 칩 스펙 C7)", () 
     await runOnce(runSpec(), ctx);
     expect(errors(emitted)).toHaveLength(1);
     expect(fake.calls[0]!.contextUsageCalls).toEqual([]);
+  });
+});
+
+describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", () => {
+  /** deliver.command 를 실은 런 */
+  const commandSpec = (
+    name: string,
+    args = "",
+    over: Partial<Omit<ReturnType<typeof runSpec>, "start">> = {},
+  ) => {
+    const spec = runSpec(over);
+    return { ...spec, start: { ...spec.start, deliver: { ...spec.start.deliver, command: { name, args } } } };
+  };
+
+  it("command run sends raw prompt without header", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(script.init(), ...script.textTurn("msg_1", ["리뷰 끝"]));
+    await runOnce(commandSpec("user:review", "src/a.ts  x"), ctx);
+    expect(fake.calls[0]!.prompt).toMatchObject({
+      message: { role: "user", content: "/user:review src/a.ts  x" },
+    });
+    // 턴 사실은 훅 문맥으로 그대로 붙는다
+    expect(fake.calls[0]!.options.hooks?.UserPromptSubmit).toHaveLength(1);
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "리뷰 끝" } });
+  });
+
+  it("인자가 없으면 `/이름` 만", async () => {
+    const { fake, ctx } = harness();
+    fake.script(script.init(), script.success("", { num_turns: 0, local_command: "context" }));
+    await runOnce(commandSpec("context"), ctx);
+    expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: "/context" } });
+  });
+
+  it("blocked claude command → VALIDATION error, no query", async () => {
+    for (const name of ["login", "config", "insights", "heapdump", "recap", "model", "clear", "stop"]) {
+      const { fake, ctx, emitted } = harness();
+      await runOnce(commandSpec(name), ctx);
+      expect(fake.calls).toHaveLength(0);
+      expect(errors(emitted)).toEqual([expect.objectContaining({ code: "VALIDATION" })]);
+    }
+  });
+
+  it("내장 허용 목록 밖·목록에 없는 이름 → 그 런의 명령 목록을 보고 프롬프트 없이 VALIDATION", async () => {
+    for (const name of ["nope", "mcp", "agents", "Nope"]) {
+      const { fake, ctx, emitted } = harness();
+      fake.script(script.init(), ...script.textTurn("msg_1", ["나가면 안 되는 답"]));
+      await runOnce(commandSpec(name), ctx);
+      expect(fake.calls[0]!.supportedCommandsCalls).toBe(1);
+      expect(fake.calls[0]!.prompt).toBeUndefined();
+      expect(errors(emitted)).toEqual([
+        expect.objectContaining({ code: "VALIDATION", message: "이 명령은 dodok 에서 쓸 수 없습니다" }),
+      ]);
+      expect(finals(emitted)).toEqual([]);
+    }
+  });
+
+  it("스킬 별칭은 목록을 보고 넘긴다 — 사람 명령·허용 내장은 목록을 묻지 않는다", async () => {
+    {
+      const { fake, ctx, emitted } = harness();
+      fake.script(script.init(), ...script.textTurn("msg_1", ["스킬 답"]));
+      await runOnce(commandSpec("user-skill", "x"), ctx);
+      expect(fake.calls[0]!.supportedCommandsCalls).toBe(1);
+      expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: "/user-skill x" } });
+      expect(finals(emitted)[0]).toMatchObject({ final: { text: "스킬 답" } });
+    }
+    for (const name of ["compact", "context", "user:user-cmd"]) {
+      const { fake, ctx } = harness();
+      fake.script(script.init(), script.success("", { num_turns: 0, local_command: name }));
+      await runOnce(commandSpec(name), ctx);
+      expect(fake.calls[0]!.supportedCommandsCalls).toBe(0);
+      expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: `/${name}` } });
+    }
+  });
+
+  it("SDK 가 query() 안에서 곧바로 입력을 당겨도 별칭 확인은 q 대입 뒤에 목록을 묻는다(N2)", async () => {
+    const { fake, ctx, emitted } = harness(createFakeSdk({ eagerInput: true }));
+    fake.script(script.init(), ...script.textTurn("msg_1", ["스킬 답"]));
+    await runOnce(commandSpec("user-skill", "x"), ctx);
+    expect(fake.calls[0]!.supportedCommandsCalls).toBe(1);
+    expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: "/user-skill x" } });
+    expect(errors(emitted)).toEqual([]);
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "스킬 답" } });
+  });
+
+  it("허용 내장은 compact·context·usage(별칭 cost) — 목록에 usage 가 나오고 /usage·/cost 는 목록을 묻지 않는다(N6)", async () => {
+    // 핀한 CLI 의 supportedCommands() 꼴 — usage 의 별칭은 cost·stats, help 는 이 판에 없다
+    const listed = toAgentCommands([
+      {
+        name: "usage",
+        description: "Show plan usage limits",
+        argumentHint: "",
+        aliases: ["cost", "stats"],
+        builtin: true,
+      },
+      { name: "help", description: "Show help", argumentHint: "", builtin: true },
+      { name: "doctor", description: "Diagnose", argumentHint: "", builtin: true },
+    ] as never);
+    expect(listed.map((c) => c.name)).toEqual(["usage"]);
+    for (const name of ["usage", "cost"]) {
+      const { fake, ctx } = harness();
+      fake.script(script.init(), script.success("", { num_turns: 0, local_command: name }));
+      await runOnce(commandSpec(name), ctx);
+      expect(fake.calls[0]!.supportedCommandsCalls).toBe(0);
+      expect(fake.calls[0]!.prompt).toMatchObject({ message: { content: `/${name}` } });
+    }
+  });
+
+  it("목록을 못 받으면 별칭도 막는다(fail-safe)", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.commands = async () => {
+      throw new Error("boom");
+    };
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(commandSpec("user-skill"), ctx);
+    expect(fake.calls[0]!.prompt).toBeUndefined();
+    expect(errors(emitted)).toEqual([expect.objectContaining({ code: "VALIDATION" })]);
+  });
+
+  it("내장 이름과 겹치는 별칭은 스킬 별칭으로 보지 않는다", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.commands = async () =>
+      [
+        { name: "mcp", description: "", argumentHint: "", builtin: true },
+        { name: "user:x", description: "", argumentHint: "", aliases: ["mcp"] },
+      ] as never;
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(commandSpec("mcp"), ctx);
+    expect(fake.calls[0]!.prompt).toBeUndefined();
+    expect(errors(emitted)).toEqual([expect.objectContaining({ code: "VALIDATION" })]);
+  });
+
+  it("local_command result replaces assistant text (compact replays previous answer)", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.sessions.add(SESSION_ID);
+    fake.script(
+      script.init(),
+      // 스파이크 4절 — /compact 는 앞 턴의 글을 assistant 로 다시 내고 result 는 빈 글이다
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "앞 턴의 답" }] },
+      } as never,
+      script.success("", { num_turns: 0, local_command: "compact" }),
+    );
+    await runOnce(commandSpec("compact"), ctx);
+    expect(finals(emitted)).toEqual([
+      expect.objectContaining({ final: expect.objectContaining({ text: "" }) }),
+    ]);
+    expect(JSON.stringify(emitted)).not.toContain("앞 턴의 답");
+  });
+
+  it("num_turns 0 result ends a command run", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(
+      script.init(),
+      script.success("## Context Usage", { num_turns: 0, local_command: "context" }),
+    );
+    await runOnce(commandSpec("context"), ctx);
+    expect(finals(emitted)).toEqual([
+      expect.objectContaining({ final: expect.objectContaining({ text: "## Context Usage" }) }),
+    ]);
+    expect(errors(emitted)).toEqual([]);
+  });
+
+  it("평범한 런의 num_turns 0 result 는 여전히 버린다(resume 직후 빈 result — ADR 0007 4.3)", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script(
+      script.init(),
+      script.success("", { num_turns: 0 }),
+      ...script.textTurn("msg_1", ["진짜 답"]),
+    );
+    await runOnce(runSpec(), ctx);
+    expect(finals(emitted)).toEqual([
+      expect.objectContaining({ final: expect.objectContaining({ text: "진짜 답" }) }),
+    ]);
+  });
+
+  it("query options carry plugins, disableAllHooks, disableSkillShellExecution", () => {
+    const plugins = [{ type: "local" as const, path: "/tmp/w/user", skipMcpDiscovery: true as const }];
+    const o = buildQueryOptions(runSpec(), { ...deps(false), plugins });
+    expect(o.plugins).toEqual(plugins);
+    expect(o.settings).toEqual({ disableAllHooks: true, disableSkillShellExecution: true });
+    // settingSources 는 그대로 — settings.json·CLAUDE.md 를 끌어오지 않는다
+    expect(o.settingSources).toEqual([]);
+    expect(buildQueryOptions(runSpec(), deps(false)).plugins).toEqual([]);
+  });
+
+  const preToolUse = async (permissionMode: string, toolName: string) => {
+    const o = buildQueryOptions(runSpec({ permissionMode: permissionMode as never }), deps(false));
+    const hook = o.hooks?.PreToolUse?.[0]?.hooks[0];
+    if (!hook) throw new Error("no PreToolUse hook");
+    return hook(
+      {
+        hook_event_name: "PreToolUse",
+        tool_name: toolName,
+        tool_input: {},
+        permission_mode: permissionMode,
+      } as never,
+      "toolu_1",
+      { signal: new AbortController().signal },
+    );
+  };
+  const ASK = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } };
+  const DENY = {
+    hookSpecificOutput: expect.objectContaining({ hookEventName: "PreToolUse", permissionDecision: "deny" }),
+  };
+
+  it("PreToolUse — Read 는 어느 모드에서도 손대지 않는다(카드 없음)", async () => {
+    for (const mode of ["default", "acceptEdits", "dontAsk", "plan"])
+      expect(await preToolUse(mode, "Read")).toEqual({});
+  });
+
+  it("PreToolUse asks for Bash in default mode — dontAsk 는 거절, plan 은 그대로", async () => {
+    expect(await preToolUse("default", "Bash")).toEqual(ASK);
+    expect(await preToolUse("dontAsk", "Bash")).toEqual(DENY);
+    expect(await preToolUse("plan", "Bash")).toEqual({});
+  });
+
+  it("PreToolUse does not ask for Edit in acceptEdits or for mcp__dodok__post", async () => {
+    expect(await preToolUse("acceptEdits", "Edit")).toEqual({});
+    expect(await preToolUse("acceptEdits", "Write")).toEqual({});
+    expect(await preToolUse("default", "mcp__dodok__post")).toEqual({});
+    expect(await preToolUse("dontAsk", "mcp__dodok__post")).toEqual({});
+    // acceptEdits 라도 편집이 아닌 도구는 묻는다. default 의 Edit 는 묻는다
+    expect(await preToolUse("acceptEdits", "Bash")).toEqual(ASK);
+    expect(await preToolUse("default", "Edit")).toEqual(ASK);
+  });
+
+  it("PreToolUse — 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다(Bash 는 같은 명령, 파일 도구는 같은 파일만)", async () => {
+    const spec = runSpec({ permissionMode: "default" });
+    const alwaysAllowed = new Set([
+      alwaysAllowKey("Bash", { command: "make" }, spec.workdir),
+      alwaysAllowKey("Write", { file_path: "a" }, spec.workdir),
+    ]);
+    const o = buildQueryOptions(spec, { ...deps(false), alwaysAllowed });
+    const hook = o.hooks?.PreToolUse?.[0]?.hooks[0];
+    if (!hook) throw new Error("no PreToolUse hook");
+    const call = (toolName: string, toolInput: unknown) =>
+      hook(
+        {
+          hook_event_name: "PreToolUse",
+          tool_name: toolName,
+          tool_input: toolInput,
+          permission_mode: "default",
+        } as never,
+        "toolu_1",
+        { signal: new AbortController().signal },
+      );
+    expect(await call("Bash", { command: "make" })).toEqual({});
+    expect(await call("Bash", { command: "make install" })).toEqual(ASK);
+    expect(await call("Write", { file_path: "a" })).toEqual({});
+    // 같은 파일을 절대 경로로 불러도 같은 키, 다른 파일·다른 도구는 다시 묻는다(N1)
+    expect(await call("Write", { file_path: `${spec.workdir}/a` })).toEqual({});
+    expect(await call("Write", { file_path: "b" })).toEqual(ASK);
+    expect(await call("Edit", { file_path: "a" })).toEqual(ASK);
+  });
+
+  it("목록에 없는 도구(FutureTool)는 default 에서 묻는다 — fail-safe", async () => {
+    expect(await preToolUse("default", "FutureTool")).toEqual(ASK);
+    expect(await preToolUse("default", "mcp__other__x")).toEqual(ASK);
+  });
+
+  it("런은 사람의 명령·스킬 감싸개를 싣고 끝나면 지운다 — 사람 폴더는 그대로", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "dodok-cmd-run-")));
+    try {
+      const cfg = join(home, "cfg");
+      mkdirSync(join(cfg, "commands"), { recursive: true });
+      writeFileSync(join(cfg, "commands", "user-cmd.md"), "x");
+      const { fake, ctx } = harness();
+      fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+      await runOnce(runSpec({ configDir: cfg }), ctx);
+      const plugins = fake.calls[0]!.options.plugins as Array<{ path: string }>;
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0]).toMatchObject({ type: "local", skipMcpDiscovery: true });
+      // 런이 끝나면 감싸개는 없다
+      expect(() => realpathSync(plugins[0]!.path)).toThrow();
+      expect(realpathSync(join(cfg, "commands", "user-cmd.md"))).toBe(join(cfg, "commands", "user-cmd.md"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

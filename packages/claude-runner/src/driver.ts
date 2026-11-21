@@ -1,4 +1,5 @@
 import type {
+  AgentCommand,
   RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
@@ -42,6 +43,11 @@ export interface ProgramDriver {
   /** 설치·판본·로그인 상태. 던지지 않는다 — 못 쓰면 available false 와 사유 */
   detect(ceiling: ProgramCeiling): Promise<ProgramDetection>;
   startRun(spec: RunSpec, sink: RunSink, signal: AbortSignal): Promise<void>;
+  /**
+   * 그 프로젝트(workdir)에서 쓸 수 있는 명령(commands.list — 에이전트 명령 C8). 없으면 그 프로그램은 명령 목록이 없다. 던질 수 있다 —
+   * 연결이 failed 로 답한다
+   */
+  listCommands?(args: { workdir: string; configDir?: string; signal: AbortSignal }): Promise<AgentCommand[]>;
 }
 
 /** hello 의 programs[].capabilities — 드라이버가 할 수 있는 것만 */

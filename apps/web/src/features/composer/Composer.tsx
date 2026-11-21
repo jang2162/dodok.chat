@@ -21,6 +21,8 @@ import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents"
 import { mentionedAgentIds, sameIds } from "./mentionedAgents";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
+import { AgentCommandSuggestion, type AgentCommandsLookup, commandSuggestion } from "./CommandList";
+import { commandBlock, useAgentCommands } from "./commands";
 import { PendingAttachments } from "./PendingAttachments";
 import { onMentionRequest } from "@/features/profile/openProfile";
 import { toBodyMd } from "./serialize";
@@ -150,7 +152,10 @@ export function Composer({
       ? `${channelId}:${conversationId}`
       : `${channelId}:${conversationId}:${threadRootId}`;
 
-  const dmKind = useDmView()?.kind;
+  const dmView = useDmView();
+  const dmKind = dmView?.kind;
+  // 1:1 에이전트 DM 이면 그 에이전트 — 맨 앞 `/이름` 이 그 에이전트의 명령이다(에이전트 명령 C2)
+  const directAgentId = dmKind === "dm" ? (dmView?.channel.dmAgentId ?? undefined) : undefined;
   // 그 세션에 초대한 에이전트(세션 에이전트 초대 스펙 5.4) — 일반 채널의 세션만. 다른 세션의 작성기에는 없다
   const invited = useSessionInvitedAgents(conversationId, { enabled: dmKind === undefined });
   const candidates = useMemo(() => {
@@ -164,6 +169,11 @@ export function Composer({
   }, [dmKind, members.data, agents.data, me.data, people.data, invited]);
   // 부를 에이전트가 없는 자리(에이전트 DM·한 줄기 사람 DM)는 「@로 에이전트 부르기」를 권하지 않는다
   const plain = dmKind !== undefined && (dmKind === "dm" || !candidates.some((c) => c.kind === "agent"));
+  // 에이전트별 명령 목록(에이전트 명령 스펙 5.5) — 처음 명령 모양으로 `/` 를 칠 때 받기 시작한다(그 전에는 묻지 않는다)
+  const [commandsWanted, setCommandsWanted] = useState(false);
+  const agentCommands = useAgentCommands(channelId, conversationId, { enabled: commandsWanted });
+  // 보내기 전에 막은 명령의 사유(C4) — 다음 입력에서 지운다
+  const [commandError, setCommandError] = useState<string | undefined>(undefined);
   // 편집기는 한 번만 만든다 — 바뀌는 값은 ref 로 읽는다
   const live = useRef({
     candidates,
@@ -171,8 +181,21 @@ export function Composer({
     submit: () => {},
     notifyTyping: () => {},
     addFiles: (_files: readonly File[]) => {},
+    commands: (() => undefined) as AgentCommandsLookup,
+    directAgentId: undefined as string | undefined,
+    clearCommandError: () => {},
+    wantCommands: () => {},
   });
   const menu = useRef({ open: false }).current;
+  const commandMenu = useRef({ open: false }).current;
+  const commandsUi = useRef(
+    commandSuggestion({
+      lookup: (agentId) => live.current.commands(agentId),
+      directAgentId: () => live.current.directAgentId,
+      onTrigger: () => live.current.wantCommands(),
+      menu: commandMenu,
+    }),
+  ).current;
   const drafts = useRef(new Map<string, JSONContent>()).current;
 
   const editor = useEditor(
@@ -186,7 +209,11 @@ export function Composer({
           renderText: ({ node }) => `@${String(node.attrs.label ?? "")}`,
           suggestion: mentionSuggestion(() => live.current.candidates, menu),
         }),
-        SubmitKeys.configure({ onSubmit: () => live.current.submit(), menuOpen: () => menu.open }),
+        AgentCommandSuggestion.configure({ suggestion: commandsUi.suggestion }),
+        SubmitKeys.configure({
+          onSubmit: () => live.current.submit(),
+          menuOpen: () => menu.open || commandMenu.open,
+        }),
       ],
       editorProps: {
         attributes: {
@@ -213,6 +240,7 @@ export function Composer({
       },
       onUpdate: ({ editor: ed }) => {
         if (!ed.isEmpty) live.current.notifyTyping();
+        live.current.clearCommandError();
       },
     },
     [],
@@ -254,6 +282,10 @@ export function Composer({
         .run();
     });
   }, [editor, threadRootId]);
+  // 명령 목록이 늦게 오면(처음 `/`) 열린 목록을 다시 그린다
+  useEffect(() => {
+    commandsUi.refresh();
+  }, [commandsUi, agentCommands.data]);
   // 자리표시는 문서가 바뀔 때만 다시 그려진다 — 빈 작성기 그대로 채널 ↔ DM 을 옮기면 옛 문구가 남으므로 빈 트랜잭션으로 다시 그리게 한다
   useEffect(() => {
     if (!editor.isDestroyed) editor.view.dispatch(editor.state.tr);
@@ -271,6 +303,14 @@ export function Composer({
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};
   live.current.addFiles = (files) => {
     if (files.length > 0) attachments.add(files);
+  };
+  live.current.commands = (agentId) => agentCommands.data?.find((a) => a.agentId === agentId);
+  live.current.directAgentId = directAgentId;
+  live.current.wantCommands = () => {
+    if (!commandsWanted) setCommandsWanted(true);
+  };
+  live.current.clearCommandError = () => {
+    if (commandError !== undefined) setCommandError(undefined);
   };
   const blocked = !connected
     ? BLOCKED.disconnected
@@ -293,6 +333,17 @@ export function Composer({
     if (blocked) return;
     const bodyMd = toBodyMd(doc);
     if (!bodyMd && attachments.ready.length === 0) return;
+    // 막는 명령(에이전트 명령 C4·C10)은 보내지 않고 작성기 아래에 사유 — 서버도 막는다. 입력은 그대로 둔다
+    const refused = commandBlock(bodyMd, {
+      attachments: attachments.ready.length,
+      ...(directAgentId === undefined ? {} : { directAgentId }),
+      agents: agents.data,
+      commands: agentCommands.data,
+    });
+    if (refused) {
+      setCommandError(refused.message);
+      return;
+    }
     const agentSettings = isNewWindow
       ? Object.entries(pendingSettings.byAgent).map(([agentId, patch]) => ({ agentId, ...patch }))
       : [];
@@ -385,6 +436,11 @@ export function Composer({
       {blocked && (
         <p id={hintId} className="mt-1 text-xs text-muted-foreground">
           {blocked}
+        </p>
+      )}
+      {!blocked && commandError && (
+        <p role="alert" className="mt-1 text-xs text-destructive">
+          {commandError}
         </p>
       )}
     </div>

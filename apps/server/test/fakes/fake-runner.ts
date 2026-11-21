@@ -18,7 +18,10 @@ import {
   type RunEventBody,
   type RunnerApprovalRequested,
   type RunnerApprovalResolve,
+  type AgentCommand,
   type RunnerCeilingItem,
+  RunnerCommandsList,
+  type RunnerCommandsListResult,
   type RunnerHello,
   RunnerHelloResult,
   type RunnerOutboundAck,
@@ -283,6 +286,13 @@ export type FakeRunner = {
   /** 받은 fs.list·project.check, 도착 순서 */
   readonly fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]>;
   /**
+   * commands.list(에이전트 명령 C8)에 무엇으로 답할지 — 기본은 사용자 명령·스킬 하나씩. undefined 면 ack 하지 않는다. hello 능력에
+   * commands 가 없으면 서버가 부르지 않는다
+   */
+  onCommandsList: (req: RunnerCommandsList) => RunnerCommandsListResult | undefined;
+  /** 스키마를 통과한 commands.list, 도착 순서 */
+  readonly commandsRequests: RunnerCommandsList[];
+  /**
    * worktree.create·worktree.remove 에 무엇으로 답할지 — 나무가 있으면 fakeWorktreeCreate·fakeWorktreeRemove, 없으면 언제나 ok.
    * undefined 면 ack 하지 않는다
    */
@@ -347,6 +357,20 @@ export const echoScript: FakeRunnerScript = (run) => {
   run.final(`받았습니다: ${line}`, { usage: { inputTokens: 10, outputTokens: 5 }, costUsd: 0.01 });
 };
 
+/** 가짜 러너의 기본 명령 목록 — 실제 러너의 commands.list 꼴(플러그인 감싸개 이름 user·project, 스킬은 접두사 없는 별칭) */
+export const FAKE_RUNNER_COMMANDS: ReadonlyArray<AgentCommand> = [
+  { name: "compact", description: "대화를 요약해 컨텍스트를 줄인다", argumentHint: "[지시]" },
+  { name: "context", description: "컨텍스트 사용량을 본다" },
+  { name: "user:review", description: "(user) 코드 리뷰", argumentHint: "<경로>" },
+  {
+    name: "user:user-skill",
+    description: "(user) 내 스킬",
+    argumentHint: "<thing>",
+    aliases: ["user-skill"],
+  },
+  { name: "project:deploy-check", description: "(project) 배포 전 점검" },
+];
+
 export function fakeRunnerHello(over: Partial<RunnerHello> = {}): RunnerHello {
   return {
     runnerProtocol: RUNNER_PROTOCOL,
@@ -377,6 +401,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const resolves: RunnerApprovalResolve[] = [];
   const disconnectReasons: string[] = [];
   const fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]> = [];
+  const commandsRequests: RunnerCommandsList[] = [];
   const worktreeRequests: FakeRunner["worktreeRequests"] = [];
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
@@ -390,6 +415,8 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     onProjectCheck: (ref) =>
       tree ? fakeProjectCheck(fakeRunnerHello(hello), tree, ref) : { ok: true, isGitRepo: false },
     fsRequests,
+    onCommandsList: () => ({ ok: true, commands: FAKE_RUNNER_COMMANDS.map((c) => ({ ...c })) }),
+    commandsRequests,
     onWorktreeCreate: (req) =>
       tree
         ? fakeWorktreeCreate(fakeRunnerHello(hello), tree, req)
@@ -595,6 +622,13 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         if (res !== undefined) ack(res);
       });
     }
+    s.on("commands.list", (raw: unknown, ack: (r: unknown) => void) => {
+      const parsed = RunnerCommandsList.safeParse(raw);
+      if (!parsed.success) return ack({ ok: false, reason: "failed" });
+      commandsRequests.push(parsed.data);
+      const res = runner.onCommandsList(parsed.data);
+      if (res !== undefined) ack(res);
+    });
     s.on("worktree.create", (raw: unknown, ack: (r: unknown) => void) => {
       const parsed = RunnerWorktreeCreate.safeParse(raw);
       if (!parsed.success) return ack({ ok: false, reason: "git_failed" });

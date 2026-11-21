@@ -389,7 +389,15 @@ export const RunStatus = z.enum([
   "aborted",
 ]);
 export type RunStatus = z.infer<typeof RunStatus>;
-export const RunTriggerKind = z.enum(["mention", "auto_respond", "relay", "interaction", "continue"]);
+// command — 에이전트 명령 런(에이전트 명령 스펙 5.1). 릴레이·자동 응답을 일으키지 않는다
+export const RunTriggerKind = z.enum([
+  "mention",
+  "auto_respond",
+  "relay",
+  "interaction",
+  "continue",
+  "command",
+]);
 export type RunTriggerKind = z.infer<typeof RunTriggerKind>;
 /** 런 끝 컨텍스트 세부의 한 줄(작성기 칩 스펙 5.1) — SDK getContextUsage 의 categories 를 줄였다. deferred 는 창 밖(불러올 때만) */
 export const RunnerContextCategory = z.object({

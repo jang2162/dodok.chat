@@ -13,6 +13,7 @@ import {
   RunnerProgram,
   RunnerToolNames,
 } from "../domain";
+import { AGENT_COMMANDS_MAX, AgentCommand } from "../commands";
 import { RunEvent } from "../events";
 
 // `/runner` 계약(러너 스펙 3장, 계획 판정 P1) — Socket.IO 네임스페이스, 프레임은 이벤트 이름 + ack. 경계에서 이 Zod 로 파싱한다.
@@ -27,7 +28,15 @@ export const RUNNER_ATTACHMENTS_PATH = "/runner/attachments";
 /** 2 — 러너는 천장만 쥐고 서버가 run.start 에 에이전트 정의를 싣는다(러너 일반화 스펙 3장). 옛 러너(1)는 PROTOCOL_MISMATCH */
 export const RUNNER_PROTOCOL = 2;
 
-export const RunnerCapability = z.enum(["threads", "interrupt", "approvals", "attachments", "worktrees"]);
+// commands — run.start 의 deliver.command 를 그대로 프롬프트로 보내고 commands.list 에 답한다(에이전트 명령 C7·C8)
+export const RunnerCapability = z.enum([
+  "threads",
+  "interrupt",
+  "approvals",
+  "attachments",
+  "worktrees",
+  "commands",
+]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
@@ -157,6 +166,7 @@ export interface RunnerServerToClientEvents {
   "project.check": (p: RunnerProjectRef, ack: (r: RunnerProjectCheckResult) => void) => void;
   "worktree.create": (p: RunnerWorktreeCreate, ack: (r: RunnerWorktreeCreateResult) => void) => void;
   "worktree.remove": (p: RunnerWorktreeRemove, ack: (r: RunnerWorktreeRemoveResult) => void) => void;
+  "commands.list": (p: RunnerCommandsList, ack: (r: RunnerCommandsListResult) => void) => void;
 }
 
 // ── 천장·프로젝트(러너 일반화 스펙 2·3장) — 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를
@@ -374,3 +384,17 @@ export type RunnerWorktreeRemoveResult = z.infer<typeof RunnerWorktreeRemoveResu
 /** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
 export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools"]);
 export type RunnerCeilingItem = z.infer<typeof RunnerCeilingItem>;
+
+// ── 명령 목록(에이전트 명령 스펙 C8) — 서버 → 러너 ack 요청. 프로젝트마다 묻는다(프로젝트 명령이 cwd 마다 다르다)
+
+/** 러너 명령 목록 ack 상한 — 프롬프트 없는 query 를 열고 supportedCommands() 를 받는 시간 */
+export const RUNNER_COMMANDS_LIST_TIMEOUT_MS = 30_000;
+
+export const RunnerCommandsList = z.object({ project: RunnerProjectRef });
+export type RunnerCommandsList = z.infer<typeof RunnerCommandsList>;
+
+export const RunnerCommandsListResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), commands: z.array(AgentCommand).max(AGENT_COMMANDS_MAX) }),
+  z.object({ ok: z.literal(false), reason: z.enum(["root_missing", "not_found", "failed"]) }),
+]);
+export type RunnerCommandsListResult = z.infer<typeof RunnerCommandsListResult>;

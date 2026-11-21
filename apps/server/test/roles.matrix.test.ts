@@ -643,6 +643,25 @@ describe("역할 매트릭스(스펙 2장)", () => {
         url: `/api/v1/channels/${newChannel().id}/agent-ceilings`,
       }),
     },
+    // 에이전트 명령 목록(에이전트 명령 스펙 5.2) — 그 대화(채널)를 읽을 수 있는 누구나
+    {
+      name: "GET /conversations/:id/agent-commands",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/conversations/${runnerConversation().conversationId}/agent-commands`,
+      }),
+    },
+    {
+      name: "GET /channels/:id/agent-commands",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/channels/${newChannel().id}/agent-commands`,
+      }),
+    },
     {
       name: "PATCH /conversations/:id/agent-settings/:agentId {model,effort,permissionMode default}",
       min: "member",
@@ -1569,6 +1588,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
         name: "GET /channels/:id/agent-ceilings",
         owner: 200,
         request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/agent-ceilings` }),
+      },
+      {
+        name: "GET /conversations/:id/agent-commands",
+        owner: 200,
+        request: (fx) => ({
+          method: "GET",
+          url: `/api/v1/conversations/${fx.conversationId}/agent-commands`,
+        }),
+      },
+      {
+        name: "GET /channels/:id/agent-commands",
+        owner: 200,
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/agent-commands` }),
       },
       {
         name: "GET /conversations/:id/messages?around",

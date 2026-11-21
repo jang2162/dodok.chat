@@ -6,6 +6,8 @@ import {
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalResolve,
+  RunnerCommandsList,
+  type RunnerCommandsListResult,
   RunnerHelloResult,
   RunnerOutboundAck,
   RunnerProjectRef,
@@ -22,7 +24,7 @@ import {
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
 import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
-import { checkCeiling } from "./ceiling";
+import { checkCeiling, resolveProject } from "./ceiling";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "./config";
 import { capabilityList, type ProgramDriver, type RunSpec } from "./driver";
 import { checkProject, listDirectory } from "./fs-browse";
@@ -37,7 +39,16 @@ export type RunnerVersions = Pick<RunnerHello, "runnerVersion" | "sdkVersion" | 
 /** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다 */
 export const NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
 
-const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt", "approvals", "attachments", "worktrees"];
+const CAPABILITIES: RunnerCapability[] = [
+  "threads",
+  "interrupt",
+  "approvals",
+  "attachments",
+  "worktrees",
+  "commands",
+];
+/** commands.list 를 끊는 시간 — 서버 ack 상한(RUNNER_COMMANDS_LIST_TIMEOUT_MS 30초)보다 앞서 failed 로 답한다 */
+export const COMMANDS_LIST_TIMEOUT_MS = 25_000;
 const HELLO_TIMEOUT_MS = 15_000;
 /** outbound.post ack — 서버가 메시지를 저장하고 답한다. 넘으면 도구 결과로 실패를 돌려준다 */
 const POST_ACK_TIMEOUT_MS = 30_000;
@@ -67,6 +78,8 @@ export type RunnerConnectionOptions = {
   /** 없으면 serverUrl·토큰으로 러너 첨부 HTTP 를 만든다 */
   attachmentsHttp?: AttachmentsHttp;
   postAckTimeoutMs?: number;
+  /** 시험이 줄인다 — 기본 COMMANDS_LIST_TIMEOUT_MS */
+  commandsListTimeoutMs?: number;
 };
 
 type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
@@ -177,6 +190,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const scheduler = createScheduler(config.maxConcurrentRuns);
   // 마지막 hello 때 detect 한 프로그램 상태 — 천장 검사의 「프로그램을 쓸 수 있나」
   const available = new Map<RunnerProgram, boolean>();
+  const commandsListTimeoutMs = opts.commandsListTimeoutMs ?? COMMANDS_LIST_TIMEOUT_MS;
   let stopped = false;
   let attempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -456,6 +470,37 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   });
 
   // 둘러보기·프로젝트 확인 — 형식이 틀린 요청은 없는 자리로 답한다(서버가 같은 스키마로 거른 뒤 보낸다)
+  async function listCommands(req: RunnerCommandsList): Promise<RunnerCommandsListResult> {
+    const project = resolveProject(config.roots, req.project);
+    if (!project.ok)
+      return { ok: false, reason: project.reason === "root_missing" ? "root_missing" : "not_found" };
+    const driver = drivers.get("claude");
+    if (!driver?.listCommands || available.get("claude") !== true) return { ok: false, reason: "failed" };
+    const configDir = config.programs.claude?.configDir;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), commandsListTimeoutMs);
+    try {
+      const commands = await Promise.race([
+        driver.listCommands({
+          workdir: project.path,
+          ...(configDir === undefined ? {} : { configDir }),
+          signal: abort.signal,
+        }),
+        new Promise<never>((_, reject) =>
+          abort.signal.addEventListener("abort", () => reject(new Error("timeout")), { once: true }),
+        ),
+      ]);
+      return { ok: true, commands };
+    } catch (error) {
+      logger.warn(
+        `dodok-runner: 명령 목록을 받지 못했습니다 — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { ok: false, reason: "failed" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   socket.on("fs.list", (payload, ack) => {
     const parsed = RunnerProjectRef.safeParse(payload);
     ack(parsed.success ? listDirectory(config, parsed.data) : { ok: false, code: "NOT_FOUND" });
@@ -465,6 +510,13 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const parsed = RunnerProjectRef.safeParse(payload);
     if (!parsed.success) return ack({ ok: false, reason: "not_found" });
     void checkProject(config, parsed.data).then(ack);
+  });
+
+  // 명령 목록(에이전트 명령 C8) — 그 프로젝트 cwd 의 사람 명령·스킬까지. Claude 드라이버만 목록이 있다
+  socket.on("commands.list", (payload, ack) => {
+    const parsed = RunnerCommandsList.safeParse(payload);
+    if (!parsed.success) return ack({ ok: false, reason: "not_found" });
+    void listCommands(parsed.data).then(ack);
   });
 
   // git 워크트리(워크트리 스펙 5.3) — 형식이 틀린 요청은 git 을 부르지 않고 git_failed

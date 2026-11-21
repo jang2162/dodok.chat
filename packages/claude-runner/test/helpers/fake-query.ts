@@ -8,6 +8,7 @@ import type {
   SdkOptions,
   SdkPort,
   SdkQuery,
+  SdkSlashCommand,
   SdkUserMessage,
 } from "../../src/drivers/claude/sdk";
 
@@ -57,6 +58,8 @@ export type FakeCall = {
   permissions: FakePermission[];
   /** getContextUsage 를 부른 인자 — 부를 때마다 하나 */
   contextUsageCalls: Array<{ detail?: "summary" | "full" } | undefined>;
+  /** 런의 query 에서 supportedCommands() 를 부른 수 — 답은 FakeSdk.commands */
+  supportedCommandsCalls: number;
 };
 
 export type FakeSdk = SdkPort & {
@@ -74,7 +77,32 @@ export type FakeSdk = SdkPort & {
   models: (options: SdkOptions) => Promise<SdkModelInfo[]>;
   /** listModels 를 부른 options — 부를 때마다 하나(CLI 를 몇 번 띄웠나) */
   listModelsCalls: SdkOptions[];
+  /** listCommands 의 답 — 시험이 바꿔 끼운다. 기본은 FAKE_COMMANDS */
+  commands: (options: SdkOptions) => Promise<SdkSlashCommand[]>;
+  /** listCommands 를 부른 options */
+  listCommandsCalls: SdkOptions[];
 };
+
+/** 가짜 supportedCommands() 의 기본 답 — 스파이크 2절의 꼴(내장은 builtin, 사람 것은 플러그인 접두사·설명 앞 `(이름) `) */
+export const FAKE_COMMANDS = [
+  {
+    name: "compact",
+    description: "Clear conversation history but keep a summary",
+    argumentHint: "<instructions>",
+    builtin: true,
+  },
+  { name: "login", description: "Sign in", argumentHint: "", builtin: true },
+  { name: "insights", description: "Summarize your sessions", argumentHint: "", builtin: true },
+  { name: "model", description: "Set the AI model", argumentHint: "[model]", builtin: true },
+  { name: "user:user-cmd", description: "(user) SPIKE user command desc", argumentHint: "<topic>" },
+  {
+    name: "user:user-skill",
+    description: "(user) SPIKE user skill desc",
+    argumentHint: "<thing>",
+    aliases: ["user-skill"],
+  },
+  { name: "project:proj-cmd", description: "(project) SPIKE project command desc", argumentHint: "" },
+] as SdkSlashCommand[];
 
 /** 가짜 supportedModels() 의 기본 답 — 실제 응답처럼 description 등 계약에 없는 필드도 싣는다 */
 export const FAKE_MODELS = [
@@ -129,7 +157,12 @@ export const FAKE_CONTEXT_USAGE = {
 /** 테스트용 SDK 메시지 — 쓰는 필드만 채우고 SDK 타입으로 본다 */
 export const sdkMsg = (m: Record<string, unknown>): SdkMessage => m as unknown as SdkMessage;
 
-export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
+/**
+ * - `lateCancel` 권한 콜백 signal 을 close 에만 끊는다(CLI 가 취소를 늦게 보내는 경우)
+ * - `eagerInput` query() 안에서 곧바로 입력의 첫 `next()` 를 부른다 — 실제 SDK 가 옵션이 단순한 query 에서 그렇게 한다(재리뷰
+ *   N2 실측). 기본은 결과를 돌 때에야 입력을 당긴다
+ */
+export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean } = {}): FakeSdk {
   const scripts: ScriptStep[][] = [];
   const calls: FakeCall[] = [];
   const sessions = new Set<string>();
@@ -138,6 +171,8 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
     contextUsage: async (_call: FakeCall): Promise<SdkContextUsage> => FAKE_CONTEXT_USAGE,
     models: async (_options: SdkOptions): Promise<SdkModelInfo[]> => FAKE_MODELS,
     listModelsCalls: [] as SdkOptions[],
+    commands: async (_options: SdkOptions): Promise<SdkSlashCommand[]> => FAKE_COMMANDS,
+    listCommandsCalls: [] as SdkOptions[],
   };
 
   function query(args: { prompt: AsyncIterable<SdkUserMessage>; options: SdkOptions }): SdkQuery {
@@ -153,6 +188,7 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       toolResults: [],
       permissions: [],
       contextUsageCalls: [],
+      supportedCommandsCalls: 0,
     };
     calls.push(call);
     let inputEnded = false;
@@ -167,9 +203,10 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
     let closed = false;
     const closedSignal = new Promise<void>((resolve) => (onClose = resolve));
 
+    const input = args.prompt[Symbol.asyncIterator]();
+    const eagerFirst = opts.eagerInput ? input.next() : undefined;
     async function* run(): AsyncGenerator<SdkMessage> {
-      const input = args.prompt[Symbol.asyncIterator]();
-      const first = await input.next();
+      const first = await (eagerFirst ?? input.next());
       if (!first.done) call.prompt = first.value;
       const rest = input.next().then(() => void (inputEnded = true));
       try {
@@ -253,6 +290,10 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
         if (inputEnded || closed) throw new Error("fake: getContextUsage after input closed");
         return fake.contextUsage(call);
       },
+      supportedCommands: async () => {
+        call.supportedCommandsCalls += 1;
+        return fake.commands(args.options);
+      },
     };
   }
 
@@ -272,7 +313,14 @@ export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
       fake.listModelsCalls.push(options);
       return fake.models(options);
     },
-  } satisfies Omit<FakeSdk, "contextUsage" | "models" | "listModelsCalls">) as FakeSdk;
+    listCommands: async ({ options }) => {
+      fake.listCommandsCalls.push(options);
+      return fake.commands(options);
+    },
+  } satisfies Omit<
+    FakeSdk,
+    "contextUsage" | "models" | "listModelsCalls" | "commands" | "listCommandsCalls"
+  >) as FakeSdk;
 }
 
 /** 대본 조각 — ADR 0007 4.1 의 턴 하나 모양 */

@@ -303,6 +303,17 @@ describe("createStreamMapper — resume 직후 빈 result", () => {
   it("num_turns 0 인 success 는 런의 끝이 아니다 — 아무것도 내지 않는다", () => {
     expect(mapper().map(script.success("", { num_turns: 0 }))).toEqual([]);
   });
+
+  it("명령 런에서는 num_turns 0 result 가 끝이다 — 답은 result 글(빈 글 그대로)", () => {
+    const m = createStreamMapper(() => 1000, { runId: RUN, command: true });
+    expect(m.map(script.success("", { num_turns: 0, local_command: "compact" }))).toEqual([
+      { final: expect.objectContaining({ text: "", stopReason: "end_turn" }) },
+    ]);
+    const ctx = createStreamMapper(() => 1000, { runId: RUN, command: true });
+    expect(ctx.map(script.success("## Context Usage", { num_turns: 0, local_command: "context" }))).toEqual([
+      { final: expect.objectContaining({ text: "## Context Usage" }) },
+    ]);
+  });
 });
 
 describe("createStreamMapper — 답 글의 호스트 경로 가림(리뷰 I4)", () => {

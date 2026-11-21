@@ -113,6 +113,7 @@ describe("/runner 상수(P1)", () => {
       "approvals",
       "attachments",
       "worktrees",
+      "commands",
     ]);
   });
 });

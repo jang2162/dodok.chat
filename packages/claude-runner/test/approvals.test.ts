@@ -7,6 +7,8 @@ import {
   APPROVAL_DENIED_MESSAGE,
   APPROVAL_EXPIRED_MESSAGE,
   APPROVAL_WITHDRAWN_MESSAGE,
+  type AlwaysAllowed,
+  alwaysAllowKey,
   createCanUseTool,
   type ApprovalOutcome,
   elide,
@@ -28,7 +30,7 @@ const SUGGESTION: Suggestion = {
   destination: "localSettings",
 };
 
-function harness(opts: { runSignal?: AbortSignal; workdir?: string } = {}) {
+function harness(opts: { runSignal?: AbortSignal; workdir?: string; alwaysAllowed?: AlwaysAllowed } = {}) {
   const requested: RunnerApprovalRequested[] = [];
   const withdrawn: string[] = [];
   const waiting = new Map<string, { resolve: (o: ApprovalOutcome) => void; signal: AbortSignal }>();
@@ -50,6 +52,7 @@ function harness(opts: { runSignal?: AbortSignal; workdir?: string } = {}) {
       });
     },
     ...(opts.runSignal ? { signal: opts.runSignal } : {}),
+    ...(opts.alwaysAllowed ? { alwaysAllowed: opts.alwaysAllowed } : {}),
   });
   const ask = (
     toolName: string,
@@ -136,6 +139,83 @@ describe("createCanUseTool", () => {
     await h.decide({ decision: "deny" }, "toolu_02");
     await b.result;
     expect(h.requested.map((r) => r.canAllowAlways)).toEqual([false, false]);
+  });
+
+  describe("「항상 허용」 기억(N1) — CLI 제안이 없을 때만, 입력까지 좁혀", () => {
+    it("CLI 제안이 있는 Read 를 「항상 허용」해도 기억하지 않는다 — 다른 파일 Read 는 카드", async () => {
+      const alwaysAllowed: AlwaysAllowed = new Set();
+      const h = harness({ alwaysAllowed });
+      const dirs: Suggestion = { type: "addDirectories", directories: ["/etc"], destination: "session" };
+      const a = h.ask("Read", { file_path: "/etc/hosts" }, { suggestions: [dirs] });
+      await h.decide({ decision: "allow-always" });
+      expect(await a.result).toEqual({
+        behavior: "allow",
+        updatedInput: { file_path: "/etc/hosts" },
+        updatedPermissions: [dirs],
+      });
+      expect(alwaysAllowed.size).toBe(0);
+      const b = h.ask("Read", { file_path: "/Users/x/.ssh/id_rsa" }, { toolUseID: "toolu_02" });
+      await h.decide({ decision: "deny" }, "toolu_02");
+      await b.result;
+      expect(h.requested.map((r) => r.toolCallId)).toEqual(["toolu_01", "toolu_02"]);
+    });
+
+    it("제안 없는 Edit /a 를 「항상 허용」하면 Edit /a 는 카드 없이, Edit /b 는 카드", async () => {
+      const alwaysAllowed: AlwaysAllowed = new Set();
+      const h = harness({ alwaysAllowed });
+      const a = h.ask("Edit", { file_path: "/a", old_string: "x", new_string: "y" });
+      await h.decide({ decision: "allow-always" });
+      await a.result;
+      const again = h.ask(
+        "Edit",
+        { file_path: "/a", old_string: "p", new_string: "q" },
+        { toolUseID: "toolu_02" },
+      );
+      expect(await again.result).toMatchObject({ behavior: "allow" });
+      const b = h.ask(
+        "Edit",
+        { file_path: "/b", old_string: "x", new_string: "y" },
+        { toolUseID: "toolu_03" },
+      );
+      await h.decide({ decision: "allow-once" }, "toolu_03");
+      await b.result;
+      expect(h.requested.map((r) => [r.toolCallId, r.canAllowAlways])).toEqual([
+        ["toolu_01", true],
+        ["toolu_03", true],
+      ]);
+    });
+  });
+
+  describe("alwaysAllowKey", () => {
+    const k = (tool: string, input: unknown) => alwaysAllowKey(tool, input, WORKDIR);
+    it("Bash 는 명령 글자 그대로", () => {
+      expect(k("Bash", { command: "make" })).toBe(k("Bash", { command: "make", timeout: 5 }));
+      expect(k("Bash", { command: "make" })).not.toBe(k("Bash", { command: "make install" }));
+    });
+    it("파일 도구는 작업 디렉터리에 붙여 정규화한 절대 경로 — 도구마다 따로", () => {
+      expect(k("Edit", { file_path: "a.txt" })).toBe(k("Edit", { file_path: `${WORKDIR}/sub/../a.txt` }));
+      expect(k("Edit", { file_path: "a.txt" })).not.toBe(k("Edit", { file_path: "b.txt" }));
+      expect(k("Edit", { file_path: "a.txt" })).not.toBe(k("Write", { file_path: "a.txt" }));
+      expect(k("NotebookEdit", { notebook_path: "n.ipynb" })).not.toBe(
+        k("NotebookEdit", { notebook_path: "m.ipynb" }),
+      );
+      for (const tool of ["Read", "Write", "MultiEdit"]) {
+        expect(k(tool, { file_path: "/a" })).not.toBe(k(tool, { file_path: "/b" }));
+      }
+    });
+    it("WebFetch 는 URL 의 호스트 — 경로·프롬프트가 달라도 같은 키, 호스트가 다르면 다른 키", () => {
+      expect(k("WebFetch", { url: "https://example.com/a", prompt: "x" })).toBe(
+        k("WebFetch", { url: "https://example.com/b?q=1", prompt: "y" }),
+      );
+      expect(k("WebFetch", { url: "https://example.com/a" })).not.toBe(
+        k("WebFetch", { url: "https://evil.example/a" }),
+      );
+    });
+    it("그 밖은 입력 JSON 전체 — 도구 이름만으로 넓히지 않는다", () => {
+      expect(k("Glob", { pattern: "*.ts" })).not.toBe(k("Glob", { pattern: "**/*" }));
+      expect(k("WebFetch", { url: "not a url" })).not.toBe(k("WebFetch", { url: "also not" }));
+      expect(k("Edit", null)).not.toBe(k("Write", null));
+    });
   });
 
   it("deny → 「사람이 거절했습니다」", async () => {

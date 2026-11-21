@@ -25,6 +25,8 @@ import { allowedOrigins } from "./http/origins";
 import { registerWebStatic } from "./http/web-static";
 import { createLogger, type Logger, RedactingLogController, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
+import { createAgentCommandsService } from "./modules/agents/commands";
+import { registerAgentCommandRoutes } from "./modules/agents/commands.routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
@@ -423,7 +425,17 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger.error({ err, gatewayId }, "gateway config rejected by the adapter"),
     );
     if (gatewayCount === 0) logger.info("no OpenClaw gateway configured — add one in the connection page");
-    const services = createServices({ db, bus, logger, registry, workspaceId, timeouts: deps.timeouts });
+    // 명령 목록 캐시는 하나 — 작성기 목록(라우트)과 라우터의 스킬 별칭 판정(에이전트 명령 C4)이 같이 쓴다
+    const agentCommands = createAgentCommandsService({ registry, runners: runnerAdapter ?? null, logger });
+    const services = createServices({
+      db,
+      bus,
+      logger,
+      registry,
+      workspaceId,
+      timeouts: deps.timeouts,
+      skillAliases: (agent) => agentCommands.skillAliases(db, agent),
+    });
     orchestrator = services.orchestrator;
     ops = services.ops;
     // requireSession·업로드가 request.server.restLimits 로 찾는다(http-limits.ts)
@@ -539,9 +551,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       registry,
       orchestrator: services.orchestrator,
       runners: runnerAdapter ?? null,
+      agentCommands,
     };
     registerChannelRoutes(fastify, routeContext);
     registerAgentRoutes(fastify, routeContext);
+    registerAgentCommandRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
     registerAgentSettingsRoutes(fastify, routeContext);

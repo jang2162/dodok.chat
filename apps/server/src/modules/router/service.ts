@@ -1,4 +1,4 @@
-import type { Agent, Message, Run, SystemKind } from "@dodok/shared";
+import { type Agent, CLAUDE_BUILTIN_ALLOWED, type Message, type Run, type SystemKind } from "@dodok/shared";
 import { inArray } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agents } from "../../db/schema.sqlite";
@@ -13,7 +13,7 @@ import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { requesterOf } from "../runs/context";
 import * as store from "../runs/store";
-import { type Blocked, type BlockedReason, decideRuns } from "./decide";
+import { type Blocked, type BlockedReason, commandOfMessage, decideRuns } from "./decide";
 
 export type RouterLogger = Pick<Logger, "warn" | "error">;
 
@@ -24,6 +24,13 @@ export type RouterDeps = {
   /** 런 관문(ops/budget) — 한도에 막히면 null 이고 알림은 관문이 남긴다 */
   enqueue: RunGate["enqueue"];
   now?: () => Date;
+  /** 그 에이전트를 맡은 쪽이 명령을 받나(에이전트 명령 C7) — 없으면 받는다고 본다 */
+  supportsCommands?: (agent: Agent) => boolean;
+  /**
+   * 러너 에이전트의 사람 스킬 별칭(에이전트 명령 C4) — 명령 목록 캐시에 답이 와 있을 때만. 동기다 — 라우터는 목록을 기다리지
+   * 않는다(재리뷰 N5, 기다리면 뒤에 보낸 글이 먼저 런이 된다). undefined 면 모른다 — 넘기고 러너가 그 런의 목록으로 다시 본다
+   */
+  skillAliases?: (agent: Agent) => ReadonlySet<string> | undefined;
 };
 
 export type Router = {
@@ -66,6 +73,30 @@ export function createRouter(deps: RouterDeps): Router {
   function channelAgents(agentIds: string[]): Agent[] {
     if (agentIds.length === 0) return [];
     return db.select().from(agents).where(inArray(agents.id, agentIds)).all().map(rowToAgent);
+  }
+
+  /**
+   * 사람 글이 러너 에이전트의 명령인데 이름이 사람 명령(`:`)·허용 내장이 아니면 그 에이전트 — 그 프로젝트의 스킬 별칭일 때만
+   * 넘긴다(C4). 그 밖은 목록을 묻지 않는다(묻지 않는 글은 기다림 없이 그대로 라우팅한다)
+   */
+  function aliasCheckAgent(message: Message, channel: ChannelRecord, agentList: Agent[]): Agent | undefined {
+    if (deps.skillAliases === undefined || message.authorType !== "user") return undefined;
+    const parsed = commandOfMessage(channel, message);
+    if (parsed === null) return undefined;
+    const agent = agentList.find((a) => a.id === parsed.agentId);
+    const key = parsed.command.name.toLowerCase();
+    if (agent?.provider !== "runner" || key.includes(":") || CLAUDE_BUILTIN_ALLOWED.has(key))
+      return undefined;
+    return agent;
+  }
+
+  function skillAliasesOf(agent: Agent): ReadonlySet<string> | undefined {
+    try {
+      return deps.skillAliases?.(agent);
+    } catch (err) {
+      logger.warn({ err, agentId: agent.id }, "route: command skill aliases failed");
+      return undefined;
+    }
   }
 
   function handleOf(byId: Map<string, Agent>, agentId: string): string {
@@ -153,6 +184,8 @@ export function createRouter(deps: RouterDeps): Router {
       const members = listMembers(db, channel.id);
       const sessionKey = { channelId: channel.id, conversationId: message.conversationId };
       const agentList = channelAgents(sessionAgentIds(db, sessionKey));
+      const aliasAgent = aliasCheckAgent(message, channel, agentList);
+      const skillAliases = aliasAgent === undefined ? undefined : skillAliasesOf(aliasAgent);
       const at = now();
       const decision = decideRuns({
         message,
@@ -164,7 +197,20 @@ export function createRouter(deps: RouterDeps): Router {
         ...(threadRoot ? { threadRoot } : {}),
         chainHashes: sourceRun ? store.chainHashes(db, sourceRun.rootMessageId) : new Set(),
         now: at,
+        ...(deps.supportsCommands === undefined ? {} : { supportsCommands: deps.supportsCommands }),
+        ...(skillAliases === undefined ? {} : { commandSkillAliases: skillAliases }),
       });
+
+      // 막은 명령·옛 판(에이전트 명령 C4·C7) — 런 없이 그 자리에 시스템 줄 하나. 사람 글은 남는다
+      if (decision.notice !== undefined) {
+        createSystemMessage(db, bus, {
+          conversationId: message.conversationId,
+          ...(message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId }),
+          kind: "info",
+          bodyMd: decision.notice.text,
+          systemMeta: { kind: "info" },
+        });
+      }
 
       // 그룹 DM 은 런마다 시킨 사람이 그 에이전트의 dmAccess 를 지금 통과하는지 본다(사람 간 DM 스펙 6.3) — 막히면 런을 만들지 않고 그
       // 자리(스레드면 그 스레드)에 시스템 메시지 하나. 대화는 계속 쓴다. 시킨 사람은 오케스트레이터가 저장할 값과 같게 넘긴다

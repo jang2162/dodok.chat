@@ -12,6 +12,7 @@ import {
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   RunnerControlCall,
+  RunnerCommandsListResult,
   RunnerFsListResult,
   RunnerHello,
   RunnerOutboundPost,
@@ -255,7 +256,7 @@ describe("startRunnerConnection", () => {
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
       bundleSha256: null,
-      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees"],
+      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees", "commands"],
       roots: [{ id: "src", label: "내 저장소들" }],
       browse: true,
       programs: [
@@ -770,6 +771,73 @@ describe("startRunnerConnection", () => {
     await waitFor(() => server.errors.length === 1);
     expect(server.errors[0]).toEqual({ runId: RUN_ID, code: "RUNNER_CEILING", message: "program" });
     expect(fake.calls).toEqual([]);
+  });
+
+  it("hello capabilities include commands", async () => {
+    const { server } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.capabilities).toContain("commands");
+  });
+
+  it("commands.list returns non-builtin commands with aliases", async () => {
+    const { server, fake, dirs } = await setup({ baseEnv: { PATH: "/usr/bin", HOME: "/nonexistent-home" } });
+    // 그 프로젝트의 명령 폴더 — 감싸개가 링크한다
+    mkdirSync(join(dirs.workdir, ".claude", "commands"), { recursive: true });
+    await waitFor(() => server.hellos.length === 1);
+    const socket = server.sockets[0]!;
+    const result = RunnerCommandsListResult.parse(
+      await socket
+        .timeout(2000)
+        .emitWithAck("commands.list", { project: { rootId: "src", relPath: "my-repo" } }),
+    );
+    // 내장 중 막는 것(login·model)은 빠지고, 사람 것은 이름·별칭 그대로. 빈 argumentHint 는 싣지 않는다
+    expect(result).toEqual({
+      ok: true,
+      commands: [
+        {
+          name: "compact",
+          description: "Clear conversation history but keep a summary",
+          argumentHint: "<instructions>",
+        },
+        { name: "user:user-cmd", description: "(user) SPIKE user command desc", argumentHint: "<topic>" },
+        {
+          name: "user:user-skill",
+          description: "(user) SPIKE user skill desc",
+          argumentHint: "<thing>",
+          aliases: ["user-skill"],
+        },
+        { name: "project:proj-cmd", description: "(project) SPIKE project command desc" },
+      ],
+    });
+    // 런과 같은 막기 옵션·감싸개·cwd 로 물었다
+    const options = fake.listCommandsCalls[0]!;
+    expect(options).toMatchObject({
+      cwd: dirs.workdir,
+      settingSources: [],
+      strictMcpConfig: true,
+      persistSession: false,
+      settings: { disableAllHooks: true, disableSkillShellExecution: true },
+    });
+    expect(options.plugins).toEqual([expect.objectContaining({ type: "local", skipMcpDiscovery: true })]);
+  });
+
+  it("commands.list — 루트·자리가 없으면 root_missing·not_found, 목록이 실패하면 failed", async () => {
+    const { server, fake } = await setup({
+      sdk: (f) => {
+        f.commands = async () => {
+          throw new Error("boom");
+        };
+      },
+    });
+    void fake;
+    await waitFor(() => server.hellos.length === 1);
+    const socket = server.sockets[0]!;
+    const ask = (project: { rootId: string; relPath: string }) =>
+      socket.timeout(2000).emitWithAck("commands.list", { project });
+    expect(await ask({ rootId: "nope", relPath: "" })).toEqual({ ok: false, reason: "root_missing" });
+    expect(await ask({ rootId: "src", relPath: "missing" })).toEqual({ ok: false, reason: "not_found" });
+    expect(await ask({ rootId: "src", relPath: "../x" })).toEqual({ ok: false, reason: "not_found" });
+    expect(await ask({ rootId: "src", relPath: "my-repo" })).toEqual({ ok: false, reason: "failed" });
   });
 
   it("fs.list·project.check 왕복 — browse 를 끄면 둘러보기만 FORBIDDEN", async () => {

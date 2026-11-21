@@ -139,7 +139,12 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   private gatewaySetupDetail = new Map<string, AdapterSetupDetail>();
 
   // 붙은 플러그인의 hello capabilities. 기본은 스레드를 아는 플러그인 — 옛 플러그인은 setPluginCapabilities([])
-  private pluginCapabilities = new Set<BridgeCapability>(["run_id_in_outbound", "config.set", "threads"]);
+  private pluginCapabilities = new Set<BridgeCapability>([
+    "run_id_in_outbound",
+    "config.set",
+    "threads",
+    "commands",
+  ]);
 
   /** 연결 id 없이 emit 한 이벤트·send 결과에 싣는 연결 */
   private eventConnection: ConnectionId;
@@ -359,7 +364,11 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   }
 
   /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false. 러너 흉내는 늘 안다 */
-  supports(_providerAgentId: string, connectionId: ConnectionId | null, capability: "threads"): boolean {
+  supports(
+    _providerAgentId: string,
+    connectionId: ConnectionId | null,
+    capability: "threads" | "commands",
+  ): boolean {
     this.calls.connections.supports.push(connectionId);
     const detail: AdapterSetupDetail = this.currentSetupDetail;
     if (detail.provider !== "openclaw") return true;

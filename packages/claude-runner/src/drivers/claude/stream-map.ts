@@ -137,7 +137,8 @@ function finalOf(r: Loose, text: string, stopReason: string, last: LastCall = {}
 
 export function createStreamMapper(
   now: () => number,
-  opts: { runId: string; mask?: PathMasker },
+  /** command — 명령 런(에이전트 명령 C13·C17). 모델 없이 끝난 result(num_turns 0)도 런의 끝이다 */
+  opts: { runId: string; mask?: PathMasker; command?: boolean },
 ): { map(m: SdkMessage): MapItem[]; markInterrupted(stopReason?: string): void } {
   const { runId } = opts;
   const mask = opts.mask ?? NO_MASK;
@@ -276,8 +277,9 @@ export function createStreamMapper(
 
   function mapResult(r: Loose): MapItem[] {
     // resume 직후 앞 프로세스의 백그라운드 셸 알림과 함께 프롬프트와 무관한 빈 result 가 먼저 온다(ADR 0007 4.3) —
-    // 런의 끝으로 읽으면 답이 비고 진짜 턴이 버려진다
-    if (r.subtype === "success" && r.num_turns === 0) return [];
+    // 런의 끝으로 읽으면 답이 비고 진짜 턴이 버려진다. 명령 런은 다르다 — CLI 가 모델 없이 처리한 명령(`/context`·`/compact`)은
+    // num_turns 0 result 하나로 끝난다(스파이크 4절). 그 result 를 버리면 런이 「응답 중」으로 남는다
+    if (r.subtype === "success" && r.num_turns === 0 && !opts.command) return [];
     if (r.subtype === "success") {
       // API 오류로 끝난 턴도 success 로 온다 — result 가 오류 글이다
       if (r.is_error) {
@@ -286,6 +288,8 @@ export function createStreamMapper(
           errorItem(authFailed || isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL", text || "error"),
         ];
       }
+      // 답은 result 글이다 — assistant 메시지 글은 모으지 않는다. `/compact` 는 앞 턴 글을 assistant 로 다시 내고 result 는 빈 글이다
+      // (local_command — 스파이크 4절). 빈 글이면 서버가 「`/이름` 완료」 한 줄로 닫는다
       return [{ final: finalOf(r, mask(r.result ?? ""), r.stop_reason ?? "end_turn", lastCall) }];
     }
     if (interrupted && r.subtype === "error_during_execution") {
