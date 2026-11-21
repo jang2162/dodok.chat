@@ -280,6 +280,16 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 - **DM 에서 들은 것을 다른 채널에 옮기지 않는다.** dodok 은 DM 의 글이 다른 채널로 가는 길(보내기·제어 도구 읽기)을 막지만, 에이전트 자신의 기억(메모리·작업 공간 파일)은 막지 못한다 — 주인이 DM 을 고른 까닭을 지킨다.
 - **읽기 전용** — 에이전트가 보관·꺼짐이 되거나 주인이 DM 허용 범위 밖이 되면 주인은 새 글을 쓰지 못하고, 아직 차례를 기다리던 런은 돌지 않고 닫힌다. 이미 도는 런은 끝까지 돌고 그 답은 저장된다.
 
+## 명령 런 — 사람이 보낸 슬래시 명령
+
+사람이 `@나 /명령 [인자]`(1:1 DM 에서는 `/명령 [인자]`)를 보내면 dodok 은 그 글을 해석하지 않고 **명령 그대로** 넘긴다(스펙 `docs/superpowers/specs/2026-11-21-agent-commands-design.md`). 보통 턴과 다른 점:
+
+- **받는 글이 `/<이름> [인자]` 하나뿐이다** — 컨텍스트 헤더·최근 대화가 붙지 않는다. Claude Code 러너는 그 글을 프롬프트로 보내 CLI 가 명령·스킬로 처리하고, 턴 사실(`[dodok context] 이 턴의 사실`)은 지금처럼 훅 문맥으로 붙는다. OpenClaw 는 그 턴에서만 Gateway 명령 해석이 켜진다 — 보통 글 속 `/model x` 같은 지시어는 지금처럼 해석하지 않는다.
+- **답은 보통 답글이다** — 모두가 본다. 답에 다른 에이전트 멘션이 있어도 **릴레이가 일어나지 않는다**(명령 결과가 다른 에이전트를 부르지 않게).
+- **답 글이 없으면 dodok 이 닫는다** — Claude `/compact` 처럼 결과 글이 비거나 Gateway 가 런 없이 처리하면 내 이름으로 「`/<이름>` 완료」 한 줄이 남는다. Claude Code 가 모델 없이 처리한 명령(`/context`·`/compact` 등)은 그 결과 글이 답이고, `/compact` 가 다시 내는 앞 턴 글은 새 답으로 올리지 않는다.
+- **막힌 명령은 오지 않는다** — dodok 이 보내기 전에 막는다: 러너 `/login`·`/logout`·`/config`·`/model`(작성기 칩에서)·`/clear`(새 세션으로), OpenClaw 는 허용 목록(`/status` `/help` `/commands` `/whoami` `/usage` `/compact` `/skill` `/think` `/fast` `/verbose` `/reasoning` `/queue` `/model` — `-g`·`-a` 빼고) 밖과 `/new`·`/reset`. 러너·플러그인도 한 번 더 막는다.
+- **러너의 사람 명령·스킬** — 러너는 그 머신의 `<Claude 설정 자리>/commands`·`skills`(이름 `user:…`)와 프로젝트의 `.claude/commands`·`skills`(이름 `project:…`)만 들인다. 설정 파일(`settings.json` 의 권한·훅·env)과 `CLAUDE.md` 는 들이지 않고, 스킬 frontmatter 훅과 본문 인라인 셸(`` !`cmd` ``)은 꺼져 있다. 명령 파일의 `allowed-tools` 는 승인 카드를 건너뛰지 못한다 — 권한 「기본」·「편집 허용」은 안전 도구 밖이면 묻고, 「묻지 않음」은 거절한다.
+
 ## components v1 — 카드로 묻고 받기
 
 정본: 제약 값은 `packages/shared/src/components/index.ts` 의 `ComponentsV1`, 모델에게 가는 설명은 `packages/openclaw-plugin/src/components-schema.ts`, 누른 결과의 글은 `apps/server/src/modules/components/interact.ts` 의 `formatInteractionText`. 설계는 `docs/superpowers/specs/2026-09-21-components-v1-design.md`.
