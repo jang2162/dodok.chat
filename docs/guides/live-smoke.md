@@ -953,6 +953,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - 러너를 `SIGTERM`(또는 `Ctrl+C`)으로 끄면 도는 런을 멈추고 끝난다 — 그 런은 `ADAPTER_UNAVAILABLE` 카드와 「다시 실행」으로 닫힌다(`docs/guides/docker-deploy.md` 「러너 설치」 절의 「끄기」).
 - hello 의 프로그램 `auth` 는 로그인 디렉터리(`configDir`)가 있는지만 본다(자격 증명을 읽지 않는다) — 스크래치 `cfg/` 면 「로그인 모름」(`unknown`)이 정상이다.
 - 런의 세션이 어느 길로 열렸는지는 러너 로그 `dodok-runner: 런 <runId> 세션 resume`·`… 세션 새로 열기`(전사 확인이 실패했으면 `… 세션 새로 열기(전사 확인 실패)`)로 본다. CLI 가 「이미 있는 세션」으로 거절해 다시 열었으면 `… 이미 있는 세션이라 resume 으로 다시 엽니다` 가 함께 남는다. 이 줄을 러너 로거로 잇는 연결(`packages/claude-runner/src/main.ts` 의 `logger`)은 시험이 잡지 않으니 하네스·실연 때 그 줄이 나오는지 눈으로 본다.
+- **「항상 허용」 재기(에이전트 명령 리뷰 R3, 2026-11-21)** — 가짜 API 의 스크래치 사본에 대본 하나를 더한다: 키(예 `HX-TWOBASH` — `HX-BASH` 가 앞서 찾히지 않게 그 낱말을 품지 않는 이름)로 쓰기 Bash 를 내고, 그 도구 결과가 오면 **같은 명령의 Bash 를 한 번 더** 낸 뒤 둘째 결과에 글로 끝낸다. 권한 모드 「묻기(default)」에서 첫 카드에 「항상 허용」을 누르고 둘째에 카드가 다시 뜨는지 본다. 그날 SDK 0.3.283 번들 CLI 로 잰 것: PreToolUse 훅이 `ask` 를 돌리면 CLI 는 `canUseTool` 에 제안(`suggestions`)을 싣지 않고 세션 규칙도 보지 않아 같은 명령에 카드가 다시 뜬다(훅 없이는 1장) — 그래서 러너가 그 런에서 「항상 허용」한 것을 기억한다(`approvals.ts` `alwaysAllowKey`). 고친 뒤 기대는 카드 1장.
 - 러너 전용 로그인(`~/.dodok-runner/claude`)·사람의 `~/.claude` 는 읽지도 쓰지도 않는다 — `HOME` 도 `configDir` 도 스크래치다. 가짜 키라 CLI 의 `apiKeySource` 는 `ANTHROPIC_API_KEY` 이고 런 비용은 `costKind: "api"` 로 온다.
 - **정리** — 러너(SIGTERM)·가짜 API·서버를 자기 PID 로 내리고 포트 LISTEN 0, 남은 CLI(감싸개가 띄운 `claude`)·`dodok-runner`·`fake-messages-api` 프로세스 0 을 본다. 스크래치(러너 설치본·감싸개·`HOME`(토큰)·`cfg/`(세션 전사)·루트·요청 본문·로그)와 워크트리 `data/`(드라이버·세션)·`packages/claude-runner/dist` 를 지운다.
 
