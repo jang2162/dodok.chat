@@ -66,6 +66,7 @@ import {
   DEV_FAKE_SESSION_TITLE,
   type DevFake,
   devFakeCliOptions,
+  DEV_FAKE_PLUGIN_HELLO,
   fakeAgentScript,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
@@ -171,6 +172,15 @@ describe("devFakeCliOptions", () => {
 });
 
 describe("fakeAgentScript", () => {
+  it("명령 런(에이전트 명령) — /help 는 런 없이 handled, 그 밖은 명령 이름을 담은 답", () => {
+    const owner = { type: "user" as const, handle: "owner", displayName: "Owner" };
+    const help = { ...delivery("@dev /help", owner), command: { name: "help", args: "" } };
+    expect(fakeAgentScript("dev", help)).toEqual({ drop: "handled", reply: "" });
+    const status = { ...delivery("@dev /status", owner), command: { name: "status", args: "" } };
+    expect(fakeAgentScript("dev", status).reply).toContain("`/status`");
+    expect(DEV_FAKE_PLUGIN_HELLO.capabilities).toContain("commands");
+  });
+
   const owner: Author = { type: "user", handle: "owner" };
 
   it("받은 글을 @ 없이 인용해 답하고, 델타를 이어 붙이면 답이 된다", () => {
