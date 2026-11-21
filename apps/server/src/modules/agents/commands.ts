@@ -34,17 +34,27 @@ export type AgentCommandsDeps = {
   now?: () => number;
 };
 
-/** commands 가 null 이면 묻기가 실패했다(목록은 빈 것으로 보이고, 별칭은 모른다) */
-type CacheEntry = { connectedAt: string; expiresAt: number; commands: Promise<AgentCommand[] | null> };
+/**
+ * commands 가 null 이면 묻기가 실패했다(목록은 빈 것으로 보이고 listFailed, 별칭은 모른다). settled 는 답이 온 뒤의 값 — 라우터가
+ * 기다리지 않고 들여다본다(skillAliases)
+ */
+type CacheEntry = {
+  connectedAt: string;
+  expiresAt: number;
+  commands: Promise<AgentCommand[] | null>;
+  settled?: { commands: AgentCommand[] | null };
+};
 
 export type AgentCommandsService = {
   /** 에이전트마다 목록 — 차례는 받은 차례 그대로 */
   list(db: DbOrTx, agentList: Agent[]): Promise<AgentCommandsResponse>;
   /**
-   * 러너 에이전트의 사람 스킬 별칭(checkCommand 의 skillAliases — 에이전트 명령 C4). 같은 캐시를 쓰고 없으면 그 자리에서 묻는다.
-   * 러너가 끊겼거나 옛 판이거나 묻기가 실패하면 undefined(모른다 — 러너가 그 런의 목록으로 다시 본다). OpenClaw 는 undefined
+   * 러너 에이전트의 사람 스킬 별칭(checkCommand 의 skillAliases — 에이전트 명령 C4). 같은 캐시에 답이 와 있을 때만 그것으로 —
+   * 비었거나 아직 묻는 중이면 기다리지 않고 undefined(모른다 — 러너가 그 런의 목록으로 다시 본다)이고, 다음을 위해 묻기만 걸어 둔다
+   * (재리뷰 N5 — 기다리면 그 명령 글의 라우팅이 늦어 뒤에 보낸 글이 먼저 런이 된다). 러너가 끊겼거나 옛 판이거나 묻기가 실패해도
+   * undefined. OpenClaw 는 undefined
    */
-  skillAliases(db: DbOrTx, agent: Agent): Promise<ReadonlySet<string> | undefined>;
+  skillAliases(db: DbOrTx, agent: Agent): ReadonlySet<string> | undefined;
 };
 
 export function createAgentCommandsService(deps: AgentCommandsDeps): AgentCommandsService {
@@ -58,28 +68,30 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     return commands.filter((c) => checkCommand(program, c.name, "", { skillAliases }).ok);
   }
 
-  async function runnerCommands(
+  function runnerCommands(
     tokenId: string,
     projectId: string,
     project: RunnerProjectRef,
-  ): Promise<AgentCommand[] | null | undefined> {
+  ): CacheEntry | undefined {
     const runners = deps.runners;
     const live = runners?.runnerInfo(tokenId) ?? null;
     if (!runners || !live || !runners.hasCapability(tokenId, "commands")) return undefined;
     const at = now();
     const hit = cache.get(projectId);
-    if (hit && hit.connectedAt === live.connectedAt && hit.expiresAt > at) return hit.commands;
+    if (hit && hit.connectedAt === live.connectedAt && hit.expiresAt > at) return hit;
     // 실패하면 지운다 — 루트가 없다 등이 고쳐지면 바로 다시 묻게. 그사이(재접속 뒤) 새로 넣은 항목은 남긴다
     const forget = () => {
       if (cache.get(projectId) === entry) cache.delete(projectId);
     };
     const commands = runners.commandsList(tokenId, project).then(
       (result: RunnerCommandsListResult) => {
+        entry.settled = { commands: result.ok ? result.commands : null };
         if (result.ok) return result.commands;
         forget();
         return null;
       },
       (err: unknown) => {
+        entry.settled = { commands: null };
         forget();
         deps.logger.warn({ err, tokenId, projectId }, "runner commands.list failed");
         return null;
@@ -92,11 +104,11 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
       commands,
     };
     cache.set(projectId, entry);
-    return commands;
+    return entry;
   }
 
-  /** 러너 에이전트의 목록 — undefined 면 맡은 쪽이 없다(끊김·옛 판·프로젝트 없음), null 이면 묻기가 실패했다 */
-  async function runnerAgentCommands(db: DbOrTx, agent: Agent): Promise<AgentCommand[] | null | undefined> {
+  /** 러너 에이전트의 캐시 항목(없으면 묻기를 건다) — undefined 면 맡은 쪽이 없다(끊김·옛 판·프로젝트 없음) */
+  function runnerAgentEntry(db: DbOrTx, agent: Agent): CacheEntry | undefined {
     const row = db
       .select({
         tokenId: agents.runnerTokenId,
@@ -112,13 +124,20 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     return runnerCommands(row.tokenId, row.projectId, { rootId: row.rootId, relPath: row.relPath });
   }
 
+  /** 러너 에이전트의 목록 — undefined 면 맡은 쪽이 없다(끊김·옛 판·프로젝트 없음), null 이면 묻기가 실패했다 */
+  async function runnerAgentCommands(db: DbOrTx, agent: Agent): Promise<AgentCommand[] | null | undefined> {
+    return runnerAgentEntry(db, agent)?.commands;
+  }
+
   async function forAgent(db: DbOrTx, agent: Agent) {
     const none = { agentId: agent.id, commands: [] as AgentCommand[], supported: false };
     if (agent.provider === "runner") {
       const commands = await runnerAgentCommands(db, agent);
-      return commands === undefined
-        ? none
-        : { agentId: agent.id, commands: allowed(agent, commands ?? []), supported: true };
+      if (commands === undefined) return none;
+      // 묻기 실패(일시 실패·루트 없음)는 「쓸 수 있는 별칭이 없다」가 아니다 — 웹은 별칭을 모른다고 보고 막지 않는다(재리뷰 N3)
+      return commands === null
+        ? { agentId: agent.id, commands: [] as AgentCommand[], supported: true, listFailed: true }
+        : { agentId: agent.id, commands: allowed(agent, commands), supported: true };
     }
     // OpenClaw — 그 Gateway 에 지금 붙은 플러그인이 commands 를 알렸을 때만(끊겼으면 어댑터가 false)
     let supported = false;
@@ -136,9 +155,9 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     async list(db, agentList) {
       return { agents: await Promise.all(agentList.map((agent) => forAgent(db, agent))) };
     },
-    async skillAliases(db, agent) {
+    skillAliases(db, agent) {
       if (agent.provider !== "runner") return undefined;
-      const commands = await runnerAgentCommands(db, agent);
+      const commands = runnerAgentEntry(db, agent)?.settled?.commands;
       return commands === undefined || commands === null ? undefined : skillAliasesOf(commands);
     },
   };

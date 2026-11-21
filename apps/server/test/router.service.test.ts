@@ -589,7 +589,7 @@ describe("router service — 에이전트 명령", () => {
     const t = setup();
     const { agent: coder } = createRunnerAgentForTest(t.db, { workspaceId: t.workspaceId, handle: "coder" });
     addMember(t.db, t.channel.id, { memberType: "agent", memberId: coder.id }, t.logger);
-    const skillAliases = vi.fn(async (_agent: Agent) => new Set(["my-skill"]) as ReadonlySet<string>);
+    const skillAliases = vi.fn((_agent: Agent) => new Set(["my-skill"]) as ReadonlySet<string>);
     const router = createRouter({ db: t.db, bus: t.bus, logger: t.logger, enqueue: t.enqueue, skillAliases });
     await router.routeMessage(t.human("@coder /my-skill src"));
     await router.routeMessage(t.human("@coder /nope"));
@@ -616,7 +616,7 @@ describe("router service — 에이전트 명령", () => {
       bus: t.bus,
       logger: t.logger,
       enqueue: t.enqueue,
-      skillAliases: async () => undefined,
+      skillAliases: () => undefined,
     });
     await unknown.routeMessage(t.human("@coder /my-skill"));
     const failing = createRouter({
@@ -624,7 +624,7 @@ describe("router service — 에이전트 명령", () => {
       bus: t.bus,
       logger: t.logger,
       enqueue: t.enqueue,
-      skillAliases: async () => {
+      skillAliases: () => {
         throw new Error("boom");
       },
     });

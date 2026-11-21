@@ -520,6 +520,19 @@ describe("components service — interact", () => {
     });
   });
 
+  it("다시 푼 명령이 막히는 것이면 VALIDATION — checkCommand 를 한 번 더 부른다(재리뷰 N7)", async () => {
+    const t = setup();
+    const { notice } = failedRun(t, {
+      agent: t.dev,
+      triggerKind: "command",
+      body: `@${t.dev.handle} /think high /elevated full`,
+    });
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "VALIDATION", message: "명령 인자에 다른 `/` 명령을 넣을 수 없습니다" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+  });
+
   it("명령 런의 트리거 글이 명령으로 풀리지 않으면 VALIDATION — 런 없음", async () => {
     const t = setup();
     const { notice } = failedRun(t, { agent: t.dev, triggerKind: "command", body: `@${t.dev.handle} 해줘` });

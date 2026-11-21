@@ -6,6 +6,7 @@ import { type AgentCommandsResponse, OPENCLAW_COMMANDS, RUNNER_PROTOCOL } from "
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
+import { createAgentCommandsService } from "../src/modules/agents/commands";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { issueRunnerToken } from "../src/modules/runners/tokens";
@@ -195,6 +196,56 @@ describe("GET …/agent-commands [에이전트 명령 C8·C9]", () => {
     );
     expect((await get(noah.token, `/api/v1/channels/${dm.id}/agent-commands`)).statusCode).toBe(404);
     expect(await listOf(mia.token, `/api/v1/conversations/${conversationId}/agent-commands`)).toHaveLength(1);
+  });
+
+  it("러너 목록 묻기가 실패하면 listFailed — 지원은 하고 목록은 비어 있다(재리뷰 N3)", async () => {
+    const { tokenId, fake } = await connect([...fakeRunnerHello().capabilities, "commands"]);
+    fake.onCommandsList = () => ({ ok: false, reason: "root_missing" });
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rn${++n}`,
+      runnerTokenId: tokenId,
+    });
+    const { conversationId } = channelWith([agent.id]);
+    expect(await listOf(owner, `/api/v1/conversations/${conversationId}/agent-commands`)).toEqual([
+      { agentId: agent.id, supported: true, listFailed: true, commands: [] },
+    ]);
+  });
+
+  it("skillAliases 는 기다리지 않는다 — 캐시가 비었으면 undefined 를 돌려주고 묻기만 걸어 둔다(재리뷰 N5)", async () => {
+    const issued = issueRunnerToken(app.db, app.workspaceId, `r${++n}`, null);
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rn${++n}`,
+      runnerTokenId: issued.record.id,
+    });
+    let answer!: (r: {
+      ok: true;
+      commands: { name: string; description: string; aliases?: string[] }[];
+    }) => void;
+    const commandsList = vi.fn(
+      () =>
+        new Promise<{ ok: true; commands: { name: string; description: string; aliases?: string[] }[] }>(
+          (resolve) => (answer = resolve),
+        ),
+    );
+    const service = createAgentCommandsService({
+      registry: { forAgent: () => undefined as never },
+      runners: {
+        runnerInfo: () => ({ connectedAt: "t0" }) as never,
+        hasCapability: () => true,
+        commandsList,
+      },
+      logger: { warn: () => {} },
+    });
+    // 동기 — 약속이 아니다. 비었으면 모른다, 묻기는 한 번 걸린다
+    expect(service.skillAliases(app.db, agent)).toBeUndefined();
+    expect(service.skillAliases(app.db, agent)).toBeUndefined();
+    expect(commandsList).toHaveBeenCalledTimes(1);
+    answer({ ok: true, commands: [{ name: "user:my-skill", description: "", aliases: ["my-skill"] }] });
+    await new Promise((r) => setImmediate(r));
+    expect([...(service.skillAliases(app.db, agent) ?? [])]).toEqual(["my-skill"]);
+    expect(commandsList).toHaveBeenCalledTimes(1);
   });
 
   it("RUNNER_PROTOCOL 은 그대로다(명령은 선택 능력)", () => {

@@ -49,7 +49,7 @@ import {
 import type { ApprovalsService } from "../approvals/service";
 import { advanceReactionCursor, type PendingReactions, pendingReactionsFor } from "../reactions/service";
 import type { UploadedBy } from "../attachments/service";
-import { commandOfMessage, type RunPlan } from "../router/decide";
+import { blockedCommandReason, commandOfMessage, type RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
 import {
   ensureProviderSessionId,
@@ -928,6 +928,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           code: "VALIDATION",
           message: "command run without a command",
         });
+        return;
+      }
+      // 라우터를 거치지 않은 길(다시 띄운 서버가 이어 받은 런)도 있으므로 한 번 더 막는다(재리뷰 N7)
+      const commandAgent = command === undefined ? undefined : getAgent(db, run.agentId);
+      const blocked =
+        command === undefined || commandAgent === undefined
+          ? undefined
+          : blockedCommandReason(commandAgent, command);
+      if (blocked !== undefined) {
+        applySignal(runId, { kind: "gateway_error", code: "VALIDATION", message: blocked });
         return;
       }
       const inbound = command === undefined ? withReactions : { ...withReactions, command };

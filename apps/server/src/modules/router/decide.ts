@@ -123,6 +123,18 @@ export function commandOfMessage(
     : { agentId: parsed.agentId, command: { name: parsed.name, args: parsed.args } };
 }
 
+/**
+ * 라우터를 거치지 않고 트리거 글을 다시 푼 명령(「다시 실행」·다시 띄운 서버가 이어 받은 런)을 한 번 더 막는다(재리뷰 N7). 별칭
+ * 목록은 보지 않는다 — 모르면 넘기고 러너가 그 런의 목록으로 다시 본다. 막히면 그 사유 글
+ */
+export function blockedCommandReason(
+  agent: Pick<Agent, "provider">,
+  command: DeliverCommand,
+): string | undefined {
+  const verdict = checkCommand(commandProgramOf(agent), command.name, command.args);
+  return verdict.ok ? undefined : verdict.message;
+}
+
 export function decideRuns(input: RoutingInput): {
   runs: RunPlan[];
   blocked: Blocked[];

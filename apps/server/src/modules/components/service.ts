@@ -14,7 +14,7 @@ import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
-import { commandOfMessage, isPairAllowed } from "../router/decide";
+import { blockedCommandReason, commandOfMessage, isPairAllowed } from "../router/decide";
 import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
 import { getRun, getRunRequestedBy } from "../runs/store";
 import { formatInteractionText, validateInteraction } from "./interact";
@@ -233,11 +233,17 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
   return { agentId: run.agentId, triggerKind: "retry", run, triggerMessage };
 }
 
-/** 명령 런의 트리거 글을 다시 푼 명령 — 그 에이전트의 명령으로 풀리지 않으면(글이 바뀌었다) 다시 실행할 수 없다 */
+/**
+ * 명령 런의 트리거 글을 다시 푼 명령 — 그 에이전트의 명령으로 풀리지 않으면(글이 바뀌었다) 다시 실행할 수 없다. 라우터를 거치지
+ * 않는 길이라 checkCommand 를 한 번 더 부른다(재리뷰 N7) — 막히면 VALIDATION
+ */
 function retryCommand(tx: DbOrTx, run: Run, triggerMessage: Message) {
   const channel = getChannel(tx, run.channelId);
   const parsed = channel ? commandOfMessage(channel, triggerMessage) : null;
   if (parsed === null || parsed.agentId !== run.agentId) throw apiError("VALIDATION", "run is not retryable");
+  const agent = getAgent(tx, run.agentId);
+  const blocked = agent ? blockedCommandReason(agent, parsed.command) : undefined;
+  if (blocked !== undefined) throw apiError("VALIDATION", blocked);
   return parsed.command;
 }
 

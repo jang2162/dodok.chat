@@ -2691,6 +2691,18 @@ describe("에이전트 명령 런(에이전트 명령 스펙 5.1·C13)", () => {
     t.orch.stop();
   });
 
+  it("다시 푼 명령이 막히는 것이면 보내지 않고 VALIDATION 으로 닫는다(재리뷰 N7)", async () => {
+    const t = setup();
+    const run = await t.enqueue(t.say("@dev /think high /elevated full"), { triggerKind: "command" });
+    await t.flush();
+    expect(t.adapter.calls.send).toHaveLength(0);
+    expect(t.runOf(run.id)).toMatchObject({
+      status: "error",
+      error: { code: "VALIDATION", message: "명령 인자에 다른 `/` 명령을 넣을 수 없습니다" },
+    });
+    t.orch.stop();
+  });
+
   it("맡을 때 명령이 없으면 트리거 글을 다시 푼다", async () => {
     const t = setup();
     await t.enqueue(t.say("@dev /help"), { triggerKind: "command" });

@@ -27,10 +27,10 @@ export type RouterDeps = {
   /** 그 에이전트를 맡은 쪽이 명령을 받나(에이전트 명령 C7) — 없으면 받는다고 본다 */
   supportsCommands?: (agent: Agent) => boolean;
   /**
-   * 러너 에이전트의 사람 스킬 별칭(에이전트 명령 C4) — 명령 목록 캐시(없으면 그 자리에서 묻는다). undefined 면 모른다. 없으면
-   * 별칭을 보지 않는다(러너가 그 런의 목록으로 다시 본다)
+   * 러너 에이전트의 사람 스킬 별칭(에이전트 명령 C4) — 명령 목록 캐시에 답이 와 있을 때만. 동기다 — 라우터는 목록을 기다리지
+   * 않는다(재리뷰 N5, 기다리면 뒤에 보낸 글이 먼저 런이 된다). undefined 면 모른다 — 넘기고 러너가 그 런의 목록으로 다시 본다
    */
-  skillAliases?: (agent: Agent) => Promise<ReadonlySet<string> | undefined>;
+  skillAliases?: (agent: Agent) => ReadonlySet<string> | undefined;
 };
 
 export type Router = {
@@ -90,9 +90,9 @@ export function createRouter(deps: RouterDeps): Router {
     return agent;
   }
 
-  async function skillAliasesOf(agent: Agent): Promise<ReadonlySet<string> | undefined> {
+  function skillAliasesOf(agent: Agent): ReadonlySet<string> | undefined {
     try {
-      return await deps.skillAliases?.(agent);
+      return deps.skillAliases?.(agent);
     } catch (err) {
       logger.warn({ err, agentId: agent.id }, "route: command skill aliases failed");
       return undefined;
@@ -185,7 +185,7 @@ export function createRouter(deps: RouterDeps): Router {
       const sessionKey = { channelId: channel.id, conversationId: message.conversationId };
       const agentList = channelAgents(sessionAgentIds(db, sessionKey));
       const aliasAgent = aliasCheckAgent(message, channel, agentList);
-      const skillAliases = aliasAgent === undefined ? undefined : await skillAliasesOf(aliasAgent);
+      const skillAliases = aliasAgent === undefined ? undefined : skillAliasesOf(aliasAgent);
       const at = now();
       const decision = decideRuns({
         message,
