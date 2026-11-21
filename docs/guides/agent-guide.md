@@ -287,7 +287,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 - **받는 글이 `/<이름> [인자]` 하나뿐이다** — 컨텍스트 헤더·최근 대화가 붙지 않는다. Claude Code 러너는 그 글을 프롬프트로 보내 CLI 가 명령·스킬로 처리하고, 턴 사실(`[dodok context] 이 턴의 사실`)은 지금처럼 훅 문맥으로 붙는다. OpenClaw 는 그 턴에서만 Gateway 명령 해석이 켜진다 — 보통 글 속 `/model x` 같은 지시어는 지금처럼 해석하지 않는다.
 - **답은 보통 답글이다** — 모두가 본다. 답에 다른 에이전트 멘션이 있어도 **릴레이가 일어나지 않는다**(명령 결과가 다른 에이전트를 부르지 않게).
 - **답 글이 없으면 dodok 이 닫는다** — Claude `/compact` 처럼 결과 글이 비거나 Gateway 가 런 없이 처리하면 내 이름으로 「`/<이름>` 완료」 한 줄이 남는다. Claude Code 가 모델 없이 처리한 명령(`/context`·`/compact` 등)은 그 결과 글이 답이고, `/compact` 가 다시 내는 앞 턴 글은 새 답으로 올리지 않는다.
-- **막힌 명령은 오지 않는다** — dodok 이 보내기 전에 막는다: 러너 `/login`·`/logout`·`/config`·`/model`(작성기 칩에서)·`/clear`(새 세션으로), OpenClaw 는 허용 목록(`/status` `/help` `/commands` `/whoami` `/usage` `/compact` `/skill` `/think` `/fast` `/verbose` `/reasoning` `/queue` `/model` — `-g`·`-a` 빼고) 밖과 `/new`·`/reset`. 러너·플러그인도 한 번 더 막는다.
+- **막힌 명령은 오지 않는다** — dodok 이 보내기 전에 막는다: 러너 내장 명령은 `/compact`·`/context`·`/usage`(`/cost`) 밖 모두(`/model` 은 작성기 칩, `/clear` 는 새 세션으로 안내), 사람 명령(`user:…`·`project:…`)과 스킬 별칭은 넘긴다. OpenClaw 는 허용 목록(`/status` `/help` `/commands` `/whoami` `/usage` `/compact` `/skill` `/think` `/fast` `/verbose` `/reasoning` `/queue` `/model` — `-g`·`-a` 빼고) 밖과 `/new`·`/reset`, 그리고 인자에 줄바꿈이나 `/` 로 시작하는 토큰이 든 명령. 인자에 멘션이 있으면 명령이 아니라 보통 글이다. 러너·플러그인도 한 번 더 막는다.
 - **러너의 사람 명령·스킬** — 러너는 그 머신의 `<Claude 설정 자리>/commands`·`skills`(이름 `user:…`)와 프로젝트의 `.claude/commands`·`skills`(이름 `project:…`)만 들인다. 설정 파일(`settings.json` 의 권한·훅·env)과 `CLAUDE.md` 는 들이지 않고, 스킬 frontmatter 훅과 본문 인라인 셸(`` !`cmd` ``)은 꺼져 있다. 명령 파일의 `allowed-tools` 는 승인 카드를 건너뛰지 못한다 — 권한 「기본」·「편집 허용」은 안전 도구 밖이면 묻고, 「묻지 않음」은 거절한다.
 
 ## components v1 — 카드로 묻고 받기

@@ -974,11 +974,12 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **에이전트 명령(2026-11-21)** — 스펙 `docs/superpowers/specs/2026-11-21-agent-commands-design.md`. 출처: 실행 원장 `.superpowers/sdd/2026-11-21-agent-commands/`(스파이크·구현 보고).
 
-- **스펙 C15 와 구현이 다르다** — 스펙은 「지금 권한 모드가 자동 허용하지 않는 도구에 ask」인데, 실측(설치본 2.1.330·번들 2.1.283)에서 `ask` 는 CLI 가 원래 묻지 않던 Read 도 승인 카드로 보내고 plan·dontAsk 에서 거절되던 Bash 를 카드로 열었다. 그래서 안전 도구 목록(Read·Glob·Grep·LS·NotebookRead·TodoWrite·Task·ListAgents·EnterPlanMode·ExitPlanMode·Skill, `mcp__dodok__*`) 밖을 default·acceptEdits 는 묻고(acceptEdits 의 편집 도구는 제외), dontAsk 는 거절하고, plan 은 손대지 않는다(조율자 판정). 새 CLI 도구는 카드로 간다 — 번거로우면 목록에 더한다(`packages/claude-runner/src/drivers/claude/run.ts` `SAFE_TOOLS`). 스펙 C15 문장은 조율자가 고친다.
+- **PreToolUse 판정은 스펙 C15(조율자 판정 2026-11-21 로 고침)대로다** — 안전 도구 목록 밖만 default·acceptEdits 는 묻고 dontAsk 는 거절, plan 은 CLI 그대로. 그래서 default 모드에서 읽기 전용 Bash(`ls`·`git status`)도 승인 카드가 된다(fail-safe 의 대가).
 - **답 글 없는 명령은 「완료」 줄까지 빈 버블이 약 10초 남는다** — 러너 빈 final·플러그인 drop 모두 finalizing 상한(`finalizingMs` 10초)이 지나야 닫힌다. 명령 런만 상한을 줄일지는 쓰면서 정한다.
 - **명령 목록은 처음 `/` 를 칠 때 받는다** — 첫 글자에서는 목록이 비어 있다가 도착하면 그린다. 서버 캐시 10분 안에 더한 스킬은 자동완성에 늦게 보인다(목록에 없어도 넘긴다 — C5).
 - **실물 dev Gateway 의 `/status`·`/help`·`/whoami` 는 admission `dispatch`(런 시작 없이 답 글)로 왔다** — `handled` drop 길(「`/이름` 완료」)은 가짜 Gateway 로만 봤다. `commands.ownerAllowFrom` 을 둔 Gateway(owner 전용 명령을 조용히 무시)는 보지 않았다.
-- **러너 명령 목록의 내장 줄은 CLI 판마다 다르다** — 막는 이름(C4)만 빼고 나머지 내장 명령(`/usage`·`/rename` 등)은 넘긴다. 세션을 바꾸는 내장 명령이 새로 생기면 C4 목록에 더한다.
+- **러너 내장 명령은 허용 목록(`/compact`·`/context`·`/usage`(`/cost`))이다** — CLI 판이 바뀌면 이름이 바뀌거나 사라질 수 있다(2.1.283 에는 `/help` 가 없었다). 판을 올릴 때 이 셋이 남았는지 본다. 자동완성의 `usage` 줄에는 막히는 별칭 `stats` 도 실린다(고르면 `/usage` 가 들어가 해는 없다 — `packages/claude-runner/src/drivers/claude/index.ts` `toAgentCommands`).
+- **재리뷰가 남긴 사소한 것 넷** — ① 「항상 허용」 파일 키가 심볼릭 링크·Bash `cd` 뒤 상대 경로를 풀지 않는다(둘 다 사람이 승인한 Bash 가 먼저 있어야 함, 미실측) ② 오케스트레이터의 명령 재검사가 세션 갱신 뒤에 있어 막힐 명령 런도 새 세션을 열 수 있다 ③ 러너 목록 묻기가 계속 실패하면 별칭 후보 글마다 다시 묻는다(뒤로 물림 없음) ④ 웹 명령 목록은 `listFailed` 를 빈 목록으로만 보인다. 출처: `.superpowers/sdd/2026-11-21-agent-commands/rereview2-report.md` M1~M4.
 - **명령 런 resume 직후 앞 프로세스의 빈 result(ADR 0007 4.3)를 명령의 끝으로 읽을 수 있다** — 명령 런은 `num_turns: 0` result 를 끝으로 보기 때문이다. 백그라운드 셸이 남은 세션에서만 생긴다.
 
 **실물 확인**
