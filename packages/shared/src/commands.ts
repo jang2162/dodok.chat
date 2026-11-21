@@ -61,9 +61,10 @@ const NESTED: CommandVerdict = {
 /**
  * 러너(Claude Code)에서 넘기는 내장 명령(C4) — 허용 목록이다. 내장은 판마다 늘고(`/insights`·`/heapdump` 처럼 그 머신의 다른 세션
  * 기록·프로세스 메모리를 건드리는 것도 있다) 목록 밖은 막는다. model·clear 는 안내로 막는다. 사람 명령·스킬(이름에 `:`)과 그 별칭은
- * 넘긴다(C5)
+ * 넘긴다(C5). 이름은 핀한 CLI 판의 supportedCommands() 실측 — `cost` 는 내장 `usage` 의 별칭이고(`stats` 별칭은 넘기지 않는다),
+ * `help` 는 이 판에 없다(재리뷰 N6)
  */
-export const CLAUDE_BUILTIN_ALLOWED: ReadonlySet<string> = new Set(["compact", "context", "cost", "help"]);
+export const CLAUDE_BUILTIN_ALLOWED: ReadonlySet<string> = new Set(["compact", "context", "usage", "cost"]);
 
 /**
  * 별칭 목록을 몰라도 늘 막는 내장 — 로그인·설정과, 그 머신의 다른 세션 기록·프로세스 메모리를 건드리는 것. 허용 목록 밖은 어차피
@@ -185,13 +186,17 @@ export function formatCommandText(command: DeliverCommand): string {
   return command.args ? `/${command.name} ${command.args}` : `/${command.name}`;
 }
 
-/** 대화의 에이전트별 명령 목록(GET …/agent-commands). supported false 면 옛 판이거나 끊겼다 — 목록은 비어 있다 */
+/**
+ * 대화의 에이전트별 명령 목록(GET …/agent-commands). supported false 면 옛 판이거나 끊겼다 — 목록은 비어 있다. listFailed 면 지원은
+ * 하는데 이번에 목록을 받지 못했다(일시 실패·루트 없음) — 목록은 비어 있고, 부르는 쪽은 스킬 별칭을 「모른다」로 본다(재리뷰 N3)
+ */
 export const AgentCommandsResponse = z.object({
   agents: z.array(
     z.object({
       agentId: z.string(),
       commands: z.array(AgentCommand).max(AGENT_COMMANDS_MAX),
       supported: z.boolean(),
+      listFailed: z.boolean().optional(),
     }),
   ),
 });

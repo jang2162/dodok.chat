@@ -105,11 +105,22 @@ describe("parseAgentCommand", () => {
 describe("checkCommand", () => {
   const aliases = new Set(["my-skill"]);
   it("claude 내장은 허용 목록 — 그 밖의 내장은 막는다", () => {
-    expect([...CLAUDE_BUILTIN_ALLOWED].sort()).toEqual(["compact", "context", "cost", "help"]);
-    for (const name of ["compact", "context", "cost", "help", "Compact"]) {
+    expect([...CLAUDE_BUILTIN_ALLOWED].sort()).toEqual(["compact", "context", "cost", "usage"]);
+    for (const name of ["compact", "context", "usage", "cost", "Compact"]) {
       expect(checkCommand("claude", name, "", { skillAliases: aliases })).toEqual({ ok: true });
     }
-    for (const name of ["login", "logout", "config", "insights", "heapdump", "recap", "nope"]) {
+    // help 는 핀한 CLI 판에 없다, stats 는 usage 의 별칭이지만 넘기지 않는다(재리뷰 N6)
+    for (const name of [
+      "login",
+      "logout",
+      "config",
+      "insights",
+      "heapdump",
+      "recap",
+      "nope",
+      "help",
+      "stats",
+    ]) {
       expect(checkCommand("claude", name, "", { skillAliases: aliases })).toEqual({
         ok: false,
         reason: "blocked",
@@ -194,6 +205,13 @@ describe("checkCommand", () => {
     expect(checkCommand("openclaw", "think", "high\tx\n")).toEqual(nested);
     expect(checkCommand("openclaw", "skill", "x\ny")).toEqual(nested);
     expect(checkCommand("openclaw", "compact", "a\r\nb")).toEqual(nested);
+    // JS \s 의 공백 부류 뒤 `/` 도 지시어다 — 탭·nbsp·U+3000·U+2028(재리뷰 N4)
+    for (const space of ["\t", "\u00A0", "\u3000", "\u2028"]) {
+      expect(checkCommand("openclaw", "think", `high${space}/elevated full`)).toEqual(nested);
+    }
+    // OpenClaw 도 지시어로 읽지 않는 것 — 넘긴다
+    expect(checkCommand("openclaw", "think", "high\u200B/elevated")).toEqual({ ok: true });
+    expect(checkCommand("openclaw", "skill", "review x/elevated")).toEqual({ ok: true });
     expect(checkCommand("openclaw", "skill", "review src/a.ts")).toEqual({ ok: true });
     expect(checkCommand("openclaw", "skill", "review https://x.y/z")).toEqual({ ok: true });
     expect(checkCommand("openclaw", "model", "opus")).toEqual({ ok: true });
