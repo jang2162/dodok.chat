@@ -7,6 +7,7 @@ import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connec
 import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
+import { selfUpdate } from "./self-update";
 import {
   createTerminalPrompter,
   detectClaudeForSetup,
@@ -28,6 +29,7 @@ const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 
 const USAGE = [
   `사용법: dodok-runner [--config <경로>]  (기본 ${DEFAULT_CONFIG_PATH})`,
+  "        dodok-runner --check-config [--config <경로>]  설정만 읽고 끝난다(이상 없으면 0)",
   "        dodok-runner setup [--config <경로>]  설정을 터미널에서 다시 만든다(지금 값이 기본값)",
   "        dodok-runner token [--config <경로>]  토큰만 바꾼다(다시 발급했을 때)",
   "설정 파일이 없으면 터미널에서 실행할 때 설정을 묻는다.",
@@ -50,6 +52,8 @@ async function main(): Promise<void> {
         config: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
+        // 원격 업데이트의 새 판 검사(self-update.ts CHECK_CONFIG_FLAG) — 설정만 읽고 0/1 로 끝난다
+        "check-config": { type: "boolean" },
       },
     }));
   } catch {
@@ -58,6 +62,18 @@ async function main(): Promise<void> {
   }
   const home = process.env.HOME || homedir();
   const configPath = resolveConfigPath(args.config, home);
+  if (args["check-config"]) {
+    try {
+      loadRunnerConfig(configPath, process.env);
+    } catch (error) {
+      console.error(
+        `dodok-runner: ${error instanceof RunnerConfigError ? error.message : "설정을 읽지 못했습니다"}`,
+      );
+      process.exit(1);
+    }
+    console.log(`dodok-runner ${RUNNER_VERSION}: 설정 확인 — 이상 없음`);
+    return;
+  }
   const plan = planCli({
     positionals,
     help: args.help,
@@ -170,6 +186,16 @@ async function main(): Promise<void> {
     },
     logger,
     onFatal: (code) => process.exit(code),
+    // 원격 업데이트(U3) — 이 프로세스의 판·argv·env 그대로. 새 판은 같은 인자로 다시 뜬다
+    selfUpdate: (request) =>
+      selfUpdate({
+        ...request,
+        currentVersion: RUNNER_VERSION,
+        argv: process.argv,
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        env: process.env,
+      }),
   });
 
   let stopping = false;

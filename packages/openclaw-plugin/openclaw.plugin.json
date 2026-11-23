@@ -149,6 +149,9 @@
               }
             },
             "additionalProperties": false
+          },
+          "remoteUpdate": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

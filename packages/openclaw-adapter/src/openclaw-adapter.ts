@@ -7,6 +7,8 @@
  * 훅으로 받아 플러그인에 ack 한다.
  */
 import type {
+  PluginUpdateResult,
+  Result,
   BridgeControlCall,
   ConfigSet,
   ConfigSetResult,
@@ -108,6 +110,8 @@ export interface OpenClawAdapter extends AgentAdapter {
   gatewayStatuses(): GatewayStatusEntry[];
   /** Gateway 별 설정 상세(더한 차례) — 공유 토큰은 없다 */
   gatewaySetupDetails(): GatewaySetupEntry[];
+  /** 그 Gateway 의 플러그인에 원격 업데이트를 보낸다(원격 업데이트 스펙 U5, plugin.update). 플러그인이 붙어 있지 않으면 ADAPTER_UNAVAILABLE */
+  updatePlugin(gatewayId: string, sha256: string): Promise<Result<PluginUpdateResult>>;
 }
 
 export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAdapter {
@@ -277,6 +281,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     status,
     capabilities: () => ({ ...capabilities }),
     setupDetail,
+
+    updatePlugin: (gatewayId, sha256) => bridge.forGateway(gatewayId).updatePlugin({ sha256 }),
 
     revokeTokenSessions(tokenId) {
       const sessions = bridge.revokeSessions(tokenId);

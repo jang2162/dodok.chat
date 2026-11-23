@@ -90,6 +90,8 @@ import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunnerAdminRoutes } from "./modules/runners/projects.routes";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
+import { createLatestRunnerVersion, type LatestRunnerVersion } from "./modules/runners/latest";
+import { createRemoteUpdates } from "./modules/connections/remote-updates";
 import { runnerAgentDefinition } from "./modules/runners/definition";
 import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
@@ -165,6 +167,10 @@ export type AppDeps = {
   pushTransports?: PushTransports;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
   pluginDirs?: string[];
+  /** npm @dodok/runner latest(원격 업데이트 스펙 U2) — 기본은 레지스트리에 묻는다. 테스트·dev:fake 는 고정 값을 준다 */
+  latestRunner?: LatestRunnerVersion;
+  /** 원격 업데이트 진행의 벽시계 — hello 의 connectedAt(ISO)과 견준다. 기본 Date.now */
+  remoteUpdateClock?: () => number;
   /**
    * 앱이 실제 러너 어댑터(`/runner`, createRunnerAdapter)를 만들어 레지스트리에 올린다. 기본은 adapters 를 주지 않았을 때만 —
    * 테스트는 FakeAdapter 곁에 켠다. adapters 에 이미 runner 가 있으면 만들지 않는다
@@ -710,6 +716,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     if (!runnerFile)
       logger.info("runner file not found — build it with pnpm -F @dodok/runner run pack:runner");
     const publicUrl = bridgePublicUrl(config);
+    // 원격 업데이트(원격 업데이트 스펙 U2·U9) — npm latest 캐시와 연결마다의 진행(메모리)
+    const latestRunner = deps.latestRunner ?? createLatestRunnerVersion({});
+    // 부팅 때 한 번 미리 — 첫 러너 목록부터 「최신」이 있게(리뷰 L2). 실패는 null 로 쥔다
+    void latestRunner.get();
+    const remoteUpdates = createRemoteUpdates({ now: deps.remoteUpdateClock ?? Date.now });
     const runnerDetail = () => {
       const detail = registry.forProvider("runner")?.setupDetail();
       return detail?.provider === "runner" ? detail.runners : [];
@@ -723,6 +734,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         runnerFile,
         serverVersion: packageJson.version,
         publicUrl,
+        remoteUpdates,
       });
     // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤 — 러너 붙음·끊김 포함)·Gateway 저장·승인·토큰 발급·폐기 때 다시 읽은 상태를 보내고
     // (팬아웃이 사람마다 거른다) 연결 목록이 바뀌었다고 알린다(연결 탭 통합 스펙 5.3)
@@ -775,6 +787,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       publicUrl,
       changed: emitSetupStatus,
       agentsChanged: () => bus.emit("agents.changed", {}),
+      pluginFile,
+      remoteUpdates,
     });
     registerRunnerRoutes(fastify, {
       auth,
@@ -809,6 +823,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       limits,
       ops,
       now: limitClock,
+      latest: latestRunner,
+      remoteUpdates,
     });
     // 자동화(자동화 스펙): 예약 틱·웹훅·「지금 실행」이 같은 게시(라우터로 멘션 런)와 같은 워크스페이스 시간대를 쓴다
     const automationPost: PostDeps = {

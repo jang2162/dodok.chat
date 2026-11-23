@@ -15,7 +15,13 @@ import { apiError } from "../../http/errors";
 /** 서버가 쓰는 러너 어댑터의 몫 — 러너 어댑터가 없으면(OpenClaw 만 붙인 테스트 앱) null */
 export type RunnerLiveApi = Pick<
   RunnerAdapter,
-  "runnerInfo" | "fsList" | "projectCheck" | "worktreeCreate" | "worktreeRemove" | "hasCapability"
+  | "runnerInfo"
+  | "fsList"
+  | "projectCheck"
+  | "worktreeCreate"
+  | "worktreeRemove"
+  | "hasCapability"
+  | "runnerUpdate"
 >;
 
 /**

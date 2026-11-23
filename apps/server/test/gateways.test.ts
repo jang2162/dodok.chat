@@ -11,7 +11,9 @@ import {
   SetupStatus,
 } from "@dodok/shared";
 import { eq } from "drizzle-orm";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -23,6 +25,7 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { agents, bridgeTokens, gateways } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { createLatestRunnerVersion } from "../src/modules/runners/latest";
 import {
   approveGateway,
   createGateway,
@@ -37,7 +40,9 @@ import { bootTestApp, login, noExternalPush, plentyOfDisk } from "./helpers/app"
 import { newTestDb } from "./helpers/db";
 import { testEnv } from "./helpers/env";
 import { openclawOf, openclawStatus } from "./helpers/openclaw";
-import { seedWorkspace } from "./helpers/seed";
+import { seedChannelWithAgent, seedWorkspace } from "./helpers/seed";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { insertRun, updateRun } from "../src/modules/runs/store";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -89,7 +94,13 @@ async function bootReal(): Promise<Live> {
   const { logger, lines } = captureLogger();
   const app = await createApp(
     loadConfig({ ...testEnv, DATA_DIR: dir, ATTACHMENTS_DIR: join(dir, "attachments") }),
-    { logger, pushSend: noExternalPush, statfs: plentyOfDisk, gatewayBackoff: { initialMs: 50, maxMs: 200 } },
+    {
+      logger,
+      pushSend: noExternalPush,
+      statfs: plentyOfDisk,
+      gatewayBackoff: { initialMs: 50, maxMs: 200 },
+      latestRunner: createLatestRunnerVersion({ fixed: null }),
+    },
   );
   cleanups.push(() => app.close());
   await app.fastify.listen({ host: "127.0.0.1", port: 0 });
@@ -615,5 +626,197 @@ describe("Gateway 주인·승인 — 서비스(연결의 주인 스펙 5.1·5.4)
       T,
     );
     expect(again.approved).toBe(false);
+  });
+});
+
+describe("플러그인 원격 업데이트 /gateways/:id/update(원격 업데이트 스펙 U4·U5·U6·U9)", () => {
+  const BUNDLE = Buffer.from("export const dodok = 2;\n");
+  /** package/dist/index.js 하나만 든 tgz — setup.routes.test 와 같은 꼴 */
+  const tinyPluginTgz = (bundle: Buffer) => {
+    const header = Buffer.alloc(512);
+    header.write("package/dist/index.js", 0);
+    header.write(`${bundle.length.toString(8).padStart(11, "0")}\0`, 124);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    const body = Buffer.alloc(Math.ceil(bundle.length / 512) * 512);
+    bundle.copy(body);
+    return gzipSync(Buffer.concat([header, body, Buffer.alloc(1024)]));
+  };
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  const tgz = tinyPluginTgz(BUNDLE);
+  const OLD_BUNDLE = "1".repeat(64);
+  let clockOffset = 0;
+
+  async function setup() {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-plugin-update-"));
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), tgz);
+    const adapter = new FakeAdapter();
+    const app = await bootTestApp(
+      {},
+      { adapters: [adapter], pluginDirs: [dir], remoteUpdateClock: () => Date.now() + clockOffset },
+    );
+    const owner = (await login(app)).headers;
+    const plugin = (over: Record<string, unknown> = {}) =>
+      adapter.setSetupDetail(
+        {
+          provider: "openclaw",
+          gateway: { state: "connected", host: "gw:443", version: null, pairing: null },
+          bridge: {
+            state: "connected",
+            plugin: {
+              version: "0.0.0",
+              sdkVersion: "2026.9.4",
+              gatewayVersion: null,
+              bundleSha256: OLD_BUNDLE,
+              tokenId: null,
+              connectedAt: new Date(Date.now() - 60_000).toISOString(),
+              remoteUpdate: "on",
+              lastUpdate: null,
+              ...over,
+            },
+          },
+        },
+        FAKE_GATEWAY_ID,
+      );
+    plugin();
+    const update = () =>
+      app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/gateways/${FAKE_GATEWAY_ID}/update`,
+        headers: owner,
+      });
+    const status = async () => {
+      const res = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers: owner });
+      return SetupStatus.parse(res.json()).gateways.find((g) => g.id === FAKE_GATEWAY_ID)!;
+    };
+    return {
+      app,
+      adapter,
+      owner,
+      plugin,
+      update,
+      status,
+      close: async () => {
+        await app.close();
+        rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+  afterEach(() => {
+    clockOffset = 0;
+  });
+
+  it("받아들여지면 202 — 품은 파일의 sha256 을 보내고, 같은 빌드로 다시 붙으면 진행이 사라진다", async () => {
+    const t = await setup();
+    try {
+      expect(await t.status()).toMatchObject({
+        pluginMatches: false,
+        update: null,
+        bridge: { plugin: { remoteUpdate: "on" } },
+      });
+      const res = await t.update();
+      expect(res.statusCode, res.body).toBe(202);
+      expect(t.adapter.calls.updatePlugin).toEqual([{ gatewayId: FAKE_GATEWAY_ID, sha256: sha(tgz) }]);
+      expect(await t.status()).toMatchObject({ update: { state: "updating", targetVersion: null } });
+      // 연타 — Review Focus 4
+      expect((await t.update()).statusCode).toBe(409);
+      expect(t.adapter.calls.updatePlugin).toHaveLength(1);
+      t.plugin({ bundleSha256: sha(BUNDLE), connectedAt: new Date(Date.now() + 1000).toISOString() });
+      expect(await t.status()).toMatchObject({ pluginMatches: true, update: null });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("다시 붙은 플러그인의 lastUpdate 가 실패면 그 사유 — 요청 전부터 있던 결과는 이번 것이 아니다", async () => {
+    const t = await setup();
+    try {
+      const before = { ok: false, message: "지난번 실패", at: "2026-11-01T00:00:00.000Z" };
+      t.plugin({ lastUpdate: before });
+      expect((await t.update()).statusCode).toBe(202);
+      // 업데이트와 상관없이 다시 붙음(같은 옛 결과) — 그대로 updating
+      t.plugin({ lastUpdate: before, connectedAt: new Date(Date.now() + 1000).toISOString() });
+      expect(await t.status()).toMatchObject({ update: { state: "updating" } });
+      t.plugin({
+        lastUpdate: {
+          ok: false,
+          message: "플러그인 설치에 실패했습니다(openclaw plugins install)",
+          at: "2026-11-23T00:00:00.000Z",
+        },
+        connectedAt: new Date(Date.now() + 2000).toISOString(),
+      });
+      expect(await t.status()).toMatchObject({
+        update: { state: "failed", message: "플러그인 설치에 실패했습니다(openclaw plugins install)" },
+      });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("상한(5분) 안에 다시 붙지 않으면 timeout", async () => {
+    const t = await setup();
+    try {
+      expect((await t.update()).statusCode).toBe(202);
+      clockOffset = 5 * 60_000 + 1000;
+      expect(await t.status()).toMatchObject({ update: { state: "timeout" } });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("플러그인이 거절하면 409 와 사유, 끈 Gateway·옛 플러그인·같은 빌드는 보내지 않고 409", async () => {
+    const t = await setup();
+    try {
+      t.adapter.updatePluginScript = async () => ({
+        ok: true,
+        data: { ok: false, reason: "busy", message: "이미 업데이트하는 중입니다" },
+      });
+      const busy = await t.update();
+      expect(busy.statusCode).toBe(409);
+      expect(busy.json()).toMatchObject({ details: { reason: "busy" } });
+      expect(await t.status()).toMatchObject({ update: null });
+      const sent = t.adapter.calls.updatePlugin.length;
+      t.plugin({ remoteUpdate: "off" });
+      expect((await t.update()).json()).toMatchObject({ code: "CONFLICT", details: { reason: "disabled" } });
+      t.plugin({ remoteUpdate: "unsupported" });
+      expect((await t.update()).json()).toMatchObject({ details: { reason: "unsupported" } });
+      t.plugin({ bundleSha256: sha(BUNDLE) });
+      expect((await t.update()).json()).toMatchObject({ message: "이미 서버와 같은 빌드입니다" });
+      expect(t.adapter.calls.updatePlugin).toHaveLength(sent);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("GET /gateways/:id/update — 그 Gateway 의 끝나지 않은 런 수(확인 대화상자)", async () => {
+    const t = await setup();
+    try {
+      const preview = () =>
+        t.app.fastify.inject({
+          method: "GET",
+          url: `/api/v1/gateways/${FAKE_GATEWAY_ID}/update`,
+          headers: t.owner,
+        });
+      expect((await preview()).json()).toEqual({ activeRuns: 0 });
+      const seeded = seedChannelWithAgent(t.app.db, { agentHandle: "upd" });
+      const runOf = () =>
+        insertRun(t.app.db, {
+          channelId: seeded.channelId,
+          conversationId: seeded.conversationId,
+          agentId: seeded.agentId,
+          triggerKind: "mention",
+          rootMessageId: uuid(),
+          relayDepth: 0,
+          sessionKey: `agent:upd:dodok:channel:${seeded.conversationId}`,
+          connectionId: FAKE_GATEWAY_ID,
+          createdAt: new Date(),
+        });
+      runOf();
+      const done = runOf();
+      updateRun(t.app.db, done.id, { status: "done", endedAt: new Date() });
+      expect((await preview()).json()).toEqual({ activeRuns: 1 });
+    } finally {
+      await t.close();
+    }
   });
 });

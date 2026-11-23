@@ -119,6 +119,7 @@ describe("runSetupWizard", () => {
         { id: "other-dir", path: other, label: "Other Dir!" },
       ],
       browse: true,
+      remoteUpdate: true,
       programs: {
         claude: { maxPermissionMode: "acceptEdits", disallowedTools: [], allowedToolsCeiling: null },
       },
@@ -218,6 +219,8 @@ describe("runSetupWizard — 설정이 이미 있을 때(setup)", () => {
         { id: "proj-b", path: other },
       ],
       browse: false,
+      // 묻지 않는 키 — 꺼 둔 원격 업데이트가 마법사를 다시 돌려도 켜지지 않는다
+      remoteUpdate: false,
       programs: {
         claude: {
           configDir: "~/.claude-alt",

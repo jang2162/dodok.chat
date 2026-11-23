@@ -6,7 +6,7 @@ import type { BridgeControlCall, ControlResult } from "../control";
 import { DeliverCommand } from "../commands";
 import { ATTACHMENT_LIMITS, Attachment, ConversationTitle, ReactionEmoji } from "../domain";
 import { parseDodokSessionKey } from "../session-key";
-import { Sha256Hex } from "../setup";
+import { RemoteUpdateAck, RemoteUpdateOutcome, Sha256Hex } from "../setup";
 
 export const BridgeCapability = z.enum([
   "agents.list",
@@ -16,6 +16,7 @@ export const BridgeCapability = z.enum([
   "threads",
   "control", // 제어 도구를 등록하고 control.call 을 보낸다 — 없는 플러그인에는 서버가 아무것도 바꾸지 않는다
   "commands", // InboundDeliver.command 를 Gateway 명령으로 넘긴다 — 없는 플러그인에는 서버가 명령을 보내지 않는다(에이전트 명령 C7)
+  "remoteUpdate", // plugin.update 에 답한다 — 없는 플러그인에는 단추 대신 설치 한 줄(원격 업데이트 스펙 U8)
 ]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 
@@ -31,6 +32,10 @@ export const BridgeHello = z.object({
     .transform((caps) =>
       caps.filter((cap): cap is BridgeCapability => BridgeCapability.safeParse(cap).success),
     ),
+  /** Gateway 의 dodok 채널 설정 remoteUpdate(기본 true, U1) — 옛 플러그인은 싣지 않는다 */
+  remoteUpdate: z.boolean().optional(),
+  /** 지난 원격 업데이트의 결과(U5). 꼴이 틀리면 hello 를 거절하지 않고 버린다 */
+  lastUpdate: RemoteUpdateOutcome.optional().catch(undefined),
 });
 export type BridgeHello = z.infer<typeof BridgeHello>;
 export const BridgeHelloResult = z.object({
@@ -222,6 +227,12 @@ function foldHeaderText(text: string): string {
     .trim();
 }
 
+/** 서버 → 플러그인 원격 업데이트(U5) — sha256 은 서버가 품은 플러그인 tgz 파일의 해시. 받은 파일이 이것과 같을 때만 설치한다 */
+export const PluginUpdate = z.object({ sha256: Sha256Hex });
+export type PluginUpdate = z.infer<typeof PluginUpdate>;
+export const PluginUpdateResult = RemoteUpdateAck;
+export type PluginUpdateResult = RemoteUpdateAck;
+
 export const BridgeStatus = z.object({
   gateway: z.enum(["connected", "reconnecting", "down"]),
   queueDepth: z.int().min(0),
@@ -245,6 +256,7 @@ export interface BridgeServerToClientEvents {
     ack: Ack<{ agents: Array<{ agentId: string; name?: string }> }>,
   ) => void;
   "system.notice": (p: { reason: "replaced" | "shutdown"; message: string }) => void;
+  "plugin.update": (p: PluginUpdate, ack: Ack<PluginUpdateResult>) => void;
 }
 
 /** 브리지 HTTP 첨부 경로와 헤더(스펙 3장 5). 인증은 `Authorization: Bearer <브리지 토큰>` */

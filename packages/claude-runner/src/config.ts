@@ -45,6 +45,8 @@ export const RunnerConfig = z.strictObject({
   // 봇 폴더 자리 — 없으면 DEFAULT_BOTS_DIR. 봇마다 그 아래 `<봇 id>` 폴더를 러너가 만든다
   botsDir: z.string().min(1).optional(),
   browse: z.boolean().default(true),
+  // 서버(웹의 「업데이트」)가 이 러너를 npm 의 새 판으로 올리는 것을 받는가 — 기본 허용, false 면 거절한다(원격 업데이트 스펙 U1)
+  remoteUpdate: z.boolean().default(true),
   // 적지 않은 프로그램은 꺼진 것이다
   programs: z.strictObject(
     Object.fromEntries(RunnerProgram.options.map((p) => [p, ProgramCeiling.optional()])) as Record<

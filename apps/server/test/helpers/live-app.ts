@@ -11,6 +11,7 @@ import {
   listGatewayRows,
   updateGateway,
 } from "../../src/modules/gateways/service";
+import { createLatestRunnerVersion } from "../../src/modules/runners/latest";
 import { issueBridgeToken } from "../../src/modules/setup/tokens";
 import type { RunTimeouts } from "../../src/modules/runs/orchestrator";
 import {
@@ -129,6 +130,7 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
       }),
       {
         ...opts.deps,
+        latestRunner: opts.deps?.latestRunner ?? createLatestRunnerVersion({ fixed: null }),
         pushSend: opts.deps?.pushSend ?? noExternalPush,
         ...(opts.timeouts === undefined ? {} : { timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } }),
       },

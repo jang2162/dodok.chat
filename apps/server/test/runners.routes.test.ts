@@ -23,6 +23,7 @@ import type { App } from "../src/app";
 import { opsEvents } from "../src/db/schema.sqlite";
 import { markBound } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
+import { createLatestRunnerVersion } from "../src/modules/runners/latest";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { RUNNER_TOKEN_FILE } from "../src/modules/runners/routes";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
@@ -524,6 +525,224 @@ describe("러너 파일이 없으면", () => {
         (await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers })).json(),
       );
       expect(s.runners).toEqual({ list: [], runnerFile: { available: false } });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("러너 원격 업데이트 POST /runners/:id/update(원격 업데이트 스펙 U2·U3·U7·U9)", () => {
+  let app: App;
+  let owner: { authorization: string };
+  let latest: string | null = "0.9.0";
+  let clockOffset = 0;
+  const fakes: FakeRunner[] = [];
+  const UPDATE_CAPS = ["threads", "interrupt", "approvals", "attachments", "remoteUpdate"];
+
+  beforeAll(async () => {
+    app = await bootTestApp(
+      {},
+      {
+        adapters: [new FakeAdapter()],
+        runnerAdapter: true,
+        latestRunner: { get: async () => latest, peek: () => ({ value: latest, fresh: true }) },
+        remoteUpdateClock: () => Date.now() + clockOffset,
+      },
+    );
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    owner = (await login(app)).headers;
+  });
+  afterEach(() => {
+    for (const f of fakes.splice(0)) f.close();
+    latest = "0.9.0";
+    clockOffset = 0;
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const connected = async (hello: Record<string, unknown> = {}) => {
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/setup/runner-tokens",
+      headers: owner,
+      payload: { label: `upd-${uuid().slice(0, 8)}` },
+    });
+    const issued = res.json() as { token: string; record: { id: string } };
+    const runner = await startFakeRunner({
+      url: app.url,
+      token: issued.token,
+      hello: { runnerVersion: "0.8.0", capabilities: UPDATE_CAPS, ...hello },
+    });
+    fakes.push(runner);
+    return { id: issued.record.id, runner };
+  };
+  const update = (id: string, headers = owner) =>
+    app.fastify.inject({ method: "POST", url: `/api/v1/runners/${id}/update`, headers });
+  const summary = async (id: string) => {
+    const res = await app.fastify.inject({ method: "GET", url: "/api/v1/runners", headers: owner });
+    return (res.json() as { runners: Array<Record<string, unknown>> }).runners.find((r) => r.id === id)!;
+  };
+
+  it("받아들여지면 202 updating — 러너에 npm latest 정확한 판을 보내고, 목록에 최신·켜짐·진행이 보인다", async () => {
+    const { id, runner } = await connected();
+    expect(await summary(id)).toMatchObject({ latestVersion: "0.9.0", remoteUpdate: "on", update: null });
+    const res = await update(id);
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json()).toMatchObject({ update: { state: "updating", targetVersion: "0.9.0" } });
+    expect(runner.updateRequests).toEqual([{ version: "0.9.0" }]);
+    expect(await summary(id)).toMatchObject({ update: { state: "updating" } });
+  });
+
+  // Review Focus 4
+  it("진행 중에 다시 누르면 409 — 러너에는 한 번만 간다", async () => {
+    const { id, runner } = await connected();
+    expect((await update(id)).statusCode).toBe(202);
+    const again = await update(id);
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toMatchObject({ code: "CONFLICT", message: "이미 업데이트하는 중입니다" });
+    expect(runner.updateRequests).toHaveLength(1);
+  });
+
+  it("새 판으로 다시 붙으면 진행이 사라지고, 옛 판 그대로 붙으면 실패 한 줄", async () => {
+    const ok = await connected();
+    expect((await update(ok.id)).statusCode).toBe(202);
+    ok.runner.disconnect();
+    await ok.runner.reconnect({ hello: { runnerVersion: "0.9.0", capabilities: UPDATE_CAPS } });
+    expect(await summary(ok.id)).toMatchObject({ runnerVersion: "0.9.0", update: null });
+
+    const same = await connected();
+    expect((await update(same.id)).statusCode).toBe(202);
+    same.runner.disconnect();
+    await same.runner.reconnect();
+    expect(await summary(same.id)).toMatchObject({
+      update: { state: "failed", message: "다시 붙었지만 판이 그대로입니다(0.8.0)" },
+    });
+  });
+
+  it("상한(3분) 안에 다시 붙지 않으면 timeout", async () => {
+    const { id, runner } = await connected();
+    expect((await update(id)).statusCode).toBe(202);
+    runner.disconnect();
+    clockOffset = 3 * 60_000 + 1000;
+    expect(await summary(id)).toMatchObject({ connected: false, update: { state: "timeout" } });
+  });
+
+  it("러너가 곧바로 거절하면(런 중) 409 와 그 사유 — 진행은 남지 않아 다시 누를 수 있다", async () => {
+    const { id, runner } = await connected();
+    runner.onRunnerUpdate = () => ({ ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" });
+    const res = await update(id);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      message: "런이 끝난 뒤 다시 시도하세요",
+      details: { reason: "busy" },
+    });
+    expect(await summary(id)).toMatchObject({ update: null });
+    runner.onRunnerUpdate = () => ({ ok: true });
+    expect((await update(id)).statusCode).toBe(202);
+  });
+
+  it("늦게 온 거절은 진행을 실패로 바꾼다(npm 설치 실패) — 답이 없으면 상한까지 updating", async () => {
+    const { id, runner } = await connected();
+    runner.onRunnerUpdate = () =>
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ ok: false, reason: "failed", message: "npm 설치에 실패했습니다(E404)" }),
+          3_500,
+        ),
+      );
+    const res = await update(id);
+    expect(res.statusCode).toBe(202);
+    expect(await summary(id)).toMatchObject({ update: { state: "updating" } });
+    await new Promise((r) => setTimeout(r, 800));
+    expect(await summary(id)).toMatchObject({
+      update: { state: "failed", message: "npm 설치에 실패했습니다(E404)" },
+    });
+  });
+
+  // Review Focus 5
+  it("npm 레지스트리에 닿지 않으면 최신을 모르고(null) 503 — 러너에 보내지 않는다", async () => {
+    latest = null;
+    const { id, runner } = await connected();
+    expect(await summary(id)).toMatchObject({ latestVersion: null });
+    const res = await update(id);
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ message: expect.stringContaining("최신 판을 알 수 없습니다") });
+    expect(runner.updateRequests).toEqual([]);
+  });
+
+  it("끈 머신(remoteUpdateOff)·옛 판(능력 없음)·이미 최신은 409 — 러너에 보내지 않는다", async () => {
+    const off = await connected({ capabilities: [...UPDATE_CAPS, "remoteUpdateOff"] });
+    expect(await summary(off.id)).toMatchObject({ remoteUpdate: "off" });
+    expect((await update(off.id)).json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "disabled" },
+    });
+    const old = await connected({ capabilities: ["threads"] });
+    expect(await summary(old.id)).toMatchObject({ remoteUpdate: "unsupported" });
+    const oldRes = await update(old.id);
+    expect(oldRes.statusCode).toBe(409);
+    expect(oldRes.json()).toMatchObject({
+      message: expect.stringContaining("npm i -g @dodok/runner@latest"),
+    });
+    const current = await connected({ runnerVersion: "0.9.0" });
+    expect((await update(current.id)).json()).toMatchObject({ message: "이미 최신 판입니다" });
+    for (const r of [off, old, current]) expect(r.runner.updateRequests).toEqual([]);
+  });
+
+  it("끊긴 러너는 503", async () => {
+    const { id, runner } = await connected();
+    runner.disconnect();
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await update(id)).statusCode).toBe(503);
+  });
+});
+
+// 리뷰 L2 — 러너 목록은 npm 레지스트리를 기다리지 않는다
+describe("GET /api/v1/runners 와 npm latest", () => {
+  it("레지스트리가 답하기 전에는 latestVersion 없이 곧바로 답하고, 답이 오면 connections.changed 뒤 목록에 실린다 — 부팅 때 미리 한 번 묻는다", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked: string[] = [];
+    const fetch = (async (url: string) => {
+      asked.push(String(url));
+      await gate;
+      return new Response(JSON.stringify({ version: "0.9.0" }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    const app = await bootTestApp(
+      {},
+      {
+        adapters: [new FakeAdapter()],
+        runnerAdapter: true,
+        latestRunner: createLatestRunnerVersion({ fetch }),
+      },
+    );
+    try {
+      // 부팅 때 미리 묻는다
+      expect(asked).toHaveLength(1);
+      const owner = (await login(app)).headers;
+      await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/setup/runner-tokens",
+        headers: owner,
+        payload: { label: "latest" },
+      });
+      let changed = 0;
+      const off = app.bus.on("connections.changed", () => void changed++);
+      const first = await app.fastify.inject({ method: "GET", url: "/api/v1/runners", headers: owner });
+      expect(first.statusCode).toBe(200);
+      const [runner] = (first.json() as { runners: Array<Record<string, unknown>> }).runners;
+      expect(runner).toBeDefined();
+      expect(runner).not.toHaveProperty("latestVersion");
+      release();
+      await vi.waitFor(() => expect(changed).toBeGreaterThan(0));
+      off();
+      const second = await app.fastify.inject({ method: "GET", url: "/api/v1/runners", headers: owner });
+      expect((second.json() as { runners: Array<Record<string, unknown>> }).runners[0]).toMatchObject({
+        latestVersion: "0.9.0",
+      });
+      // 같은 질문은 한 번 — 부팅 때의 것을 목록이 함께 기다렸다
+      expect(asked).toHaveLength(1);
     } finally {
       await app.close();
     }

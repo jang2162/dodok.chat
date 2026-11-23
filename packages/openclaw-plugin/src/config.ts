@@ -53,6 +53,8 @@ export const DodokChannelSection = z
     accounts: z.record(z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/), DodokAccountConfig).optional(),
     channels: z.record(Id, DodokChannelEntryConfig).optional(),
     botLoopProtection: BotLoopProtectionConfig.optional(),
+    /** dodok 웹의 「업데이트」로 서버가 이 Gateway 의 플러그인을 다시 설치하는 것을 받는가 — 없으면 허용, false 면 거절(원격 업데이트 스펙 U1) */
+    remoteUpdate: z.boolean().optional(),
   })
   .strict();
 export type DodokChannelSection = z.infer<typeof DodokChannelSection>;
@@ -108,6 +110,12 @@ export function resolveDodokAccount(
     mediaMaxBytes: mediaMaxBytesOf(account.mediaMaxMb),
     issues: [],
   };
+}
+
+/** 원격 업데이트를 받는가 — 기본 허용(U1). 설정이 틀렸으면(검증 실패) 받지 않는다 */
+export function resolveRemoteUpdate(section: unknown): boolean {
+  const { data } = parseSection(section);
+  return data ? data.remoteUpdate !== false : false;
 }
 
 export type ResolvedDodokChannelEntry = {

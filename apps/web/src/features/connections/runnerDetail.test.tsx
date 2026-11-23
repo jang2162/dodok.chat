@@ -1,5 +1,5 @@
-import type { ConnectionsResponse } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import type { ConnectionsResponse, RunnerSummary } from "@dodok/shared";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeAgent } from "../../../test/agentsPage";
@@ -309,5 +309,119 @@ describe("러너 상세의 「봇」 묶음(러너 봇 스펙 B11)", () => {
     expect(unbound).toHaveTextContent("옛 에이전트");
     expect(unbound).not.toHaveTextContent("리뷰 봇");
     expect(within(detail).getByRole("button", { name: "봇 만들기" })).toBeEnabled();
+  });
+});
+
+describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
+  const PAST = "2026-11-23T00:00:00.000Z";
+  const FUTURE = "2999-01-01T00:00:00.000Z";
+  function stubRunner(over: Partial<RunnerSummary>, extra: Parameters<typeof stubSetupServer>[0] = {}) {
+    return stubSetupServer({
+      status: statusOf({ runners: { list: [connectionOf(1, { label: "맥북" })] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", connected: true })],
+      runnerSummary: (s) => ({
+        ...s,
+        runnerVersion: "0.8.0",
+        latestVersion: "0.9.0",
+        remoteUpdate: "on",
+        update: null,
+        ...over,
+      }),
+      ...extra,
+    });
+  }
+  const group = async () => within(await detail()).findByRole("group", { name: "러너 업데이트" });
+
+  it("판 · 최신과 업데이트 — 확인하면 POST 하고 「업데이트 중…」", async () => {
+    let update: RunnerSummary["update"] = null;
+    const server = stubSetupServer({
+      status: statusOf({ runners: { list: [connectionOf(1, { label: "맥북" })] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", connected: true })],
+      runnerSummary: (s) => ({
+        ...s,
+        runnerVersion: "0.8.0",
+        latestVersion: "0.9.0",
+        remoteUpdate: "on",
+        update,
+      }),
+      runnerUpdate: () => {
+        update = { state: "updating", targetVersion: "0.9.0", startedAt: PAST, deadline: FUTURE };
+        return json(202, { update });
+      },
+    });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const box = await group();
+    expect(box).toHaveTextContent("판 0.8.0 · 최신 0.9.0");
+    await userEvent.click(within(box).getByRole("button", { name: "업데이트" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("러너를 0.9.0 로 업데이트할까요?");
+    await userEvent.click(within(dialog).getByRole("button", { name: "업데이트" }));
+    expect(await within(box).findByText("업데이트 중…")).toBeInTheDocument();
+    expect(server.count("POST", `/api/v1/runners/${tokenId(1)}/update`)).toBe(1);
+    expect(within(box).getByRole("button", { name: "업데이트" })).toBeDisabled();
+  });
+
+  // Review Focus 5
+  it("최신을 알 수 없으면(레지스트리에 닿지 않음) 단추가 없다", async () => {
+    stubRunner({ latestVersion: null });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const box = await group();
+    expect(box).toHaveTextContent("판 0.8.0 · 최신 알 수 없음");
+    expect(box).toHaveTextContent("최신 판을 알 수 없습니다");
+    expect(within(box).queryByRole("button", { name: "업데이트" })).toBeNull();
+  });
+
+  it("끈 머신은 안내만, 옛 판은 명령 한 줄, 이미 최신이면 단추가 없다", async () => {
+    stubRunner({ remoteUpdate: "off" });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    expect(await group()).toHaveTextContent("이 머신에서 원격 업데이트를 껐습니다");
+    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+    cleanup();
+    vi.unstubAllGlobals();
+    stubRunner({ remoteUpdate: "unsupported" });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    const box = await group();
+    expect(box).toHaveTextContent("이 러너 판은 원격 업데이트를 지원하지 않습니다");
+    expect(box).toHaveTextContent("npm i -g @dodok/runner@latest");
+    cleanup();
+    vi.unstubAllGlobals();
+    stubRunner({ runnerVersion: "0.9.0" });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    expect(await group()).toHaveTextContent("판 0.9.0 · 최신 0.9.0");
+    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+  });
+
+  it("서버가 409 로 거절하면 대화상자에 그 문구(런 중)", async () => {
+    stubRunner(
+      {},
+      {
+        runnerUpdate: () =>
+          json(409, {
+            code: "CONFLICT",
+            message: "런이 끝난 뒤 다시 시도하세요",
+            details: { reason: "busy" },
+          }),
+      },
+    );
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    await userEvent.click(within(await group()).getByRole("button", { name: "업데이트" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "업데이트" }));
+    expect(await within(dialog).findByText("런이 끝난 뒤 다시 시도하세요")).toBeInTheDocument();
+  });
+
+  it("실패면 사유 한 줄, 상한이 지났으면 「응답이 없습니다 — 그 머신에서 확인하세요」", async () => {
+    stubRunner({ update: { state: "failed", message: "npm 설치에 실패했습니다(E404)", at: PAST } });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    expect(await within(await group()).findByRole("alert")).toHaveTextContent(
+      "npm 설치에 실패했습니다(E404)",
+    );
+    cleanup();
+    vi.unstubAllGlobals();
+    stubRunner({ update: { state: "updating", targetVersion: "0.9.0", startedAt: PAST, deadline: PAST } });
+    renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+    expect(await within(await group()).findByRole("alert")).toHaveTextContent(
+      "응답이 없습니다 — 그 머신에서 확인하세요",
+    );
   });
 });

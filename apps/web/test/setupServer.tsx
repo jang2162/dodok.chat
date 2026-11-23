@@ -62,7 +62,7 @@ type StatusOver = {
   /** 참이면 Gateway 가 하나도 없다 */
   noGateway?: boolean;
   /** 첫 Gateway 의 머리 칸(승인 대기 등) */
-  first?: Partial<Pick<GatewaySetup, "name" | "url" | "enabled" | "approved">>;
+  first?: Partial<Pick<GatewaySetup, "name" | "url" | "enabled" | "approved" | "update">>;
   /** 첫 Gateway 뒤에 이어 붙일 Gateway(`gatewayOf`) */
   moreGateways?: GatewaySetup[];
   runners?: Partial<SetupStatus["runners"]>;
@@ -189,6 +189,14 @@ export function stubSetupServer(
     runner?: () => Reply;
     /** GET /connections — 없으면 404(옛 서버 — 트리·상세는 역할만으로 가른다) */
     connections?: ConnectionsResponse | (() => ConnectionsResponse);
+    /** GET /runners 의 러너 줄을 고친다(원격 업데이트의 latestVersion·remoteUpdate·update) */
+    runnerSummary?: (summary: RunnerSummary) => RunnerSummary;
+    /** POST /runners/:id/update — 기본은 202 updating */
+    runnerUpdate?: (id: string) => Reply;
+    /** POST /gateways/:id/update — 기본은 202 updating */
+    gatewayUpdate?: (id: string) => Reply;
+    /** GET /gateways/:id/update — 기본은 { activeRuns: 0 } */
+    gatewayUpdatePreview?: (id: string) => Reply;
   } = {},
 ) {
   const tokens = [...(opts.tokens ?? [])];
@@ -222,6 +230,22 @@ export function stubSetupServer(
       const status = typeof opts.status === "function" ? opts.status() : opts.status;
       return status instanceof Promise ? status : json(200, status ?? statusOf());
     }
+    // 원격 업데이트(원격 업데이트 스펙) — 러너·Gateway
+    const updating = () =>
+      json(202, {
+        update: {
+          state: "updating",
+          targetVersion: null,
+          startedAt: "2026-11-23T00:00:00.000Z",
+          deadline: "2999-01-01T00:00:00.000Z",
+        },
+      });
+    const runnerUpdate = /^\/api\/v1\/runners\/([^/]+)\/update$/.exec(url);
+    if (method === "POST" && runnerUpdate) return (opts.runnerUpdate ?? updating)(runnerUpdate[1] ?? "");
+    const gatewayUpdate = /^\/api\/v1\/gateways\/([^/]+)\/update$/.exec(url);
+    if (method === "POST" && gatewayUpdate) return (opts.gatewayUpdate ?? updating)(gatewayUpdate[1] ?? "");
+    if (method === "GET" && gatewayUpdate)
+      return (opts.gatewayUpdatePreview ?? (() => json(200, { activeRuns: 0 })))(gatewayUpdate[1] ?? "");
     const bridge = /^\/api\/v1\/gateways\/([^/]+)\/bridge-tokens(?:\/([^/]+))?$/.exec(url);
     if (bridge) {
       const list = tokensOf.get(bridge[1] ?? "") ?? [];
@@ -342,7 +366,7 @@ export function stubSetupServer(
           projectCount: 0,
         };
       });
-      return json(200, { runners });
+      return json(200, { runners: opts.runnerSummary ? runners.map(opts.runnerSummary) : runners });
     }
     if (method === "GET" && /^\/api\/v1\/runners\/[^/]+\/projects$/.test(url))
       return json(200, { projects: [] });

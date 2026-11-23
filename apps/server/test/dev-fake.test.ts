@@ -54,6 +54,8 @@ import {
   DEV_FAKE_OPS_EVENT_PATH,
   DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
+  DEV_FAKE_REMOTE_UPDATE_PATH,
+  DEV_FAKE_RUNNER_LATEST,
   DEV_FAKE_LIMITED_RUNNER_ID,
   DEV_FAKE_LIMITED_RUNNER_LABEL,
   DEV_FAKE_LIMITED_RUNNER_TOKEN,
@@ -1536,6 +1538,8 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
     [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: true }],
     // 이미 붙어 있으면 그대로 — 가드를 지난 호출이 가짜 러너를 끊지 않게
     [DEV_FAKE_RUNNER_PATH, { connected: true }],
+    // 기본값 그대로 — 가드를 지난 호출이 흉내를 바꿔 두지 않게
+    [DEV_FAKE_REMOTE_UPDATE_PATH, { latest: DEV_FAKE_RUNNER_LATEST, runner: "ok", plugin: "ok" }],
   ] as const)("%s 공통 가드", (path, body) => {
     it("세션 없음 401 · member 403 — 앱의 requireOwner 응답 그대로", async () => {
       const anon = await post(path, body, { "content-type": "application/json" });
@@ -3099,5 +3103,76 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
     const hash = createHash("sha256").update(DEV_FAKE_RUNNER_TOKEN).digest("hex");
     expect(app.db.select().from(runnerTokens).where(eq(runnerTokens.hash, hash)).get()).toBeUndefined();
     expect(app.db.select().from(agents).where(eq(agents.providerAgentId, "coder")).get()).toBeUndefined();
+  });
+});
+
+describe("startDevFake 원격 업데이트 — 가짜 러너·플러그인이 업데이트에 답한다(원격 업데이트 스펙)", () => {
+  let dir: string;
+  let dev: DevFake;
+  let owner: { sessionToken: string; cookie: string };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-update-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    owner = await loginOwner(dev.url);
+  });
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const hook = (body: unknown) =>
+    fetch(`${dev.url}${DEV_FAKE_REMOTE_UPDATE_PATH}`, {
+      method: "POST",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const runners = async () =>
+    (await restAs<{ runners: Array<Record<string, unknown>> }>(dev.url, owner.cookie, "GET", "/runners"))
+      .runners;
+  const update = (id: string) =>
+    fetch(`${dev.url}/api/v1/runners/${id}/update`, { method: "POST", headers: { cookie: owner.cookie } });
+
+  it("러너 — 최신 0.9.0·켜짐(제한 러너는 꺼짐), 업데이트하면 새 판으로 다시 붙고 진행이 사라진다", async () => {
+    const before = await runners();
+    expect(before.find((r) => r.id === DEV_FAKE_RUNNER_ID)).toMatchObject({
+      latestVersion: DEV_FAKE_RUNNER_LATEST,
+      remoteUpdate: "on",
+      update: null,
+    });
+    expect(before.find((r) => r.id === DEV_FAKE_LIMITED_RUNNER_ID)).toMatchObject({ remoteUpdate: "off" });
+    const res = await update(DEV_FAKE_RUNNER_ID);
+    expect(res.status, await res.clone().text()).toBe(202);
+    const until = Date.now() + 8_000;
+    let main: Record<string, unknown> | undefined;
+    while (Date.now() < until) {
+      main = (await runners()).find((r) => r.id === DEV_FAKE_RUNNER_ID);
+      if (main?.runnerVersion === DEV_FAKE_RUNNER_LATEST) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(main).toMatchObject({ connected: true, runnerVersion: DEV_FAKE_RUNNER_LATEST, update: null });
+    // 이미 최신
+    expect((await update(DEV_FAKE_RUNNER_ID)).status).toBe(409);
+  });
+
+  it("훅 — latest null 이면 「최신을 알 수 없음」 503, busy 면 409, 플러그인은 사무실 켜짐·집 꺼짐", async () => {
+    expect((await hook({ latest: null })).status).toBe(200);
+    expect((await runners()).find((r) => r.id === DEV_FAKE_RUNNER_ID)).toMatchObject({ latestVersion: null });
+    expect((await update(DEV_FAKE_RUNNER_ID)).status).toBe(503);
+    expect((await hook({ latest: "9.9.9", runner: "busy" })).status).toBe(200);
+    const busy = await update(DEV_FAKE_RUNNER_ID);
+    expect(busy.status).toBe(409);
+    await expect(busy.json()).resolves.toMatchObject({ message: "런이 끝난 뒤 다시 시도하세요" });
+    expect((await hook({ latest: "nope" })).status).toBe(400);
+    await hook({ latest: DEV_FAKE_RUNNER_LATEST, runner: "ok" });
+    const status = await restAs<{
+      gateways: Array<{ id: string; bridge: { plugin: { remoteUpdate?: string } | null } }>;
+    }>(dev.url, owner.cookie, "GET", "/setup/status");
+    expect(
+      status.gateways.find((g) => g.id === DEV_FAKE_OFFICE_GATEWAY_ID)?.bridge.plugin?.remoteUpdate,
+    ).toBe("on");
+    expect(status.gateways.find((g) => g.id === DEV_FAKE_HOME_GATEWAY_ID)?.bridge.plugin?.remoteUpdate).toBe(
+      "off",
+    );
   });
 });

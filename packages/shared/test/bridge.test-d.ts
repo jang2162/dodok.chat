@@ -13,7 +13,7 @@ describe("bridge event maps", () => {
       "hello" | "outbound.message" | "outbound.typing" | "status" | "control.call"
     >();
     expectTypeOf<keyof BridgeServerToClientEvents>().toEqualTypeOf<
-      "inbound.deliver" | "config.set" | "agents.list" | "system.notice"
+      "inbound.deliver" | "config.set" | "agents.list" | "system.notice" | "plugin.update"
     >();
   });
   it("inbound.deliver 페이로드와 ack", () => {

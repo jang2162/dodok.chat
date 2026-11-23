@@ -195,6 +195,7 @@ describe("hello capabilities", () => {
       "threads",
       "control",
       "commands",
+      "remoteUpdate",
     ]);
   });
 

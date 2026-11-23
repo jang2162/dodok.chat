@@ -63,7 +63,9 @@ import {
   OpsEvent,
   OpsEventKind,
   OpsSeverity,
+  type PluginUpdateResult,
   type RunnerHello,
+  type RunnerUpdateResult,
   RunnerPermissionMode,
   type RunnerContextBreakdown,
   type RunnerModelOption,
@@ -73,6 +75,7 @@ import {
   type TeamRole,
 } from "@dodok/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { pluginDirCandidates, readPluginFile } from "../src/modules/setup/plugin-file";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
@@ -241,6 +244,12 @@ export const DEV_FAKE_PLUGIN_CAPABILITIES_PATH = "/__devfake/plugin-capabilities
 /** 개발 전용 — 가짜 러너를 끊고(connected false) 붙인다(true — token 을 주면 그 러너 토큰으로 바꿔 붙는다) */
 export const DEV_FAKE_RUNNER_PATH = "/__devfake/runner";
 /**
+ * 개발 전용 — 원격 업데이트(원격 업데이트 스펙) 흉내를 바꾼다. latest 는 알리는 npm latest(null 이면 모름), runner·plugin 은 가짜가
+ * 업데이트에 답하는 법: ok(받고 다시 붙음 — 러너는 새 판, 플러그인은 서버와 같은 빌드·lastUpdate ok), busy(곧바로 거절), failed(러너는
+ * 늦게 npm 실패, 플러그인은 다시 붙으며 lastUpdate 실패), silent(받기만 하고 다시 붙지 않음 — 상한 뒤 「응답이 없습니다」)
+ */
+export const DEV_FAKE_REMOTE_UPDATE_PATH = "/__devfake/remote-update";
+/**
  * 개발 전용 고정 러너 토큰(시크릿이 아니다 — 로그에 찍는다). 실제 토큰(`drn_` + 43자)과 모양이 달라도 핸드셰이크는 해시만 본다 —
  * 연결 페이지 목록에는 앞 6자(`dev-fa`)가 보인다
  */
@@ -347,7 +356,8 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       // 능력이 없다(워크트리 만들기 단추가 「러너를 업데이트하세요」로 잠긴다)
       // 명령(에이전트 명령 C8) — 제한 러너는 옛 러너처럼 모른다(`@에이전트 /…` 가 「업데이트하세요」 줄)
       // 봇(러너 봇 스펙 B7) — 제한 러너는 옛 러너처럼 모른다(「봇」 선택지가 「러너를 업데이트하세요(봇은 0.9.0 부터)」로 잠긴다)
-      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands", "bots"],
+      // 원격 업데이트(원격 업데이트 스펙 U8) — 제한 러너는 그 머신에서 끈 흉내(remoteUpdateOff)
+      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands", "bots", "remoteUpdate"],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장
@@ -370,6 +380,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
     token: DEV_FAKE_LIMITED_RUNNER_TOKEN,
     label: DEV_FAKE_LIMITED_RUNNER_LABEL,
     hello: {
+      capabilities: [...fakeRunnerHello().capabilities, "remoteUpdate", "remoteUpdateOff"],
       roots: [
         { id: "sandbox", label: "샌드박스" },
         { id: "src", label: "내 저장소들" },
@@ -401,8 +412,18 @@ const OLD_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
 /** dev:fake 의 가짜 플러그인 hello — 명령(에이전트 명령 C7)을 안다. 옛 플러그인 흉내(OLD_PLUGIN_HELLO)는 명령도 모른다 */
 export const DEV_FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   ...FAKE_PLUGIN_HELLO,
-  capabilities: [...new Set([...FAKE_PLUGIN_HELLO.capabilities, "commands"])],
+  capabilities: [...new Set([...FAKE_PLUGIN_HELLO.capabilities, "commands", "remoteUpdate"])],
+  remoteUpdate: true,
 });
+/** 집 Gateway 의 플러그인 hello — 그 Gateway 에서 원격 업데이트를 끈 흉내(channels.dodok.remoteUpdate: false) */
+export const DEV_FAKE_HOME_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
+  ...DEV_FAKE_PLUGIN_HELLO,
+  remoteUpdate: false,
+});
+/** dev:fake 가 알리는 npm @dodok/runner latest — 훅 remote-update 의 latest 로 바꾼다(null 이면 「최신을 알 수 없음」) */
+export const DEV_FAKE_RUNNER_LATEST = "0.9.0";
+/** 가짜 러너·플러그인이 업데이트를 받아들인 뒤 다시 붙기까지 */
+const DEV_FAKE_UPDATE_RESTART_MS = 1_500;
 const DEV_FAKE_BODY_MAX = 16 * 1024;
 /** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
 export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
@@ -1160,6 +1181,17 @@ const RunnerInput = z.strictObject({
 });
 type RunnerInput = z.infer<typeof RunnerInput>;
 const Bytes = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
+const UpdateMode = z.enum(["ok", "busy", "failed", "silent"]);
+type UpdateMode = z.infer<typeof UpdateMode>;
+const RemoteUpdateInput = z.strictObject({
+  latest: z
+    .string()
+    .regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
+    .nullable()
+    .optional(),
+  runner: UpdateMode.optional(),
+  plugin: UpdateMode.optional(),
+});
 const DiskInput = z.union([
   z.strictObject({ reset: z.literal(true) }),
   z
@@ -1908,6 +1940,12 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     hello: Partial<RunnerHello>;
     swapping: Promise<unknown>;
   };
+  /** 원격 업데이트 흉내(훅 remote-update) */
+  const remoteUpdate: { latest: string | null; runner: UpdateMode; plugin: UpdateMode } = {
+    latest: DEV_FAKE_RUNNER_LATEST,
+    runner: "ok",
+    plugin: "ok",
+  };
   const runnerSlots: RunnerSlot[] = DEV_FAKE_RUNNERS.map((spec) => ({
     spec,
     hello: spec.hello,
@@ -1961,6 +1999,11 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       statfs,
       disconnectEventMs: opts.disconnectEventMs ?? DISCONNECT_EVENT_MS,
       gatewayBackoff: DEV_FAKE_GATEWAY_BACKOFF,
+      // npm 레지스트리에 묻지 않는다 — 훅 remote-update 가 바꾼다
+      latestRunner: {
+        get: async () => remoteUpdate.latest,
+        peek: () => ({ value: remoteUpdate.latest, fresh: true }),
+      },
     });
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
@@ -1998,6 +2041,49 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       pair.swapping = run;
       return run;
     };
+    /**
+     * 가짜 러너의 runner.update — 받으면 실제 러너처럼 끊고 새 판의 hello 로 다시 붙는다(그 러너의 다시 붙이기 줄에 선다). 그 판은 이
+     * 시작 동안의 러너 hello 에 남는다(--keep 재시작은 고정 판으로 되돌린다)
+     */
+    const answerRunnerUpdate = (
+      slot: RunnerSlot,
+      version: string,
+    ): RunnerUpdateResult | Promise<RunnerUpdateResult> => {
+      live.logger.info(
+        { runner: slot.spec.key, version, mode: remoteUpdate.runner },
+        "dev:fake runner update",
+      );
+      if (remoteUpdate.runner === "busy")
+        return { ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" };
+      if (remoteUpdate.runner === "failed")
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: false,
+                reason: "failed",
+                message: `npm 설치에 실패했습니다(E404) — 그 머신에서 npm i -g @dodok/runner@${version} 을 돌려 보세요`,
+              }),
+            4_000,
+          ),
+        );
+      const silent = remoteUpdate.runner === "silent";
+      setTimeout(() => {
+        slot.swapping = slot.swapping.then(async () => {
+          if (!slot.runner) return;
+          slot.runner.disconnect();
+          if (silent) return;
+          slot.hello = { ...slot.hello, runnerVersion: version };
+          await slot.runner.reconnect({ hello: slot.hello }).catch((error: unknown) => {
+            live.logger.warn(
+              { error: String(error), runner: slot.spec.key },
+              "dev:fake runner update reconnect failed",
+            );
+          });
+        });
+      }, DEV_FAKE_UPDATE_RESTART_MS);
+      return { ok: true };
+    };
     const connectRunner = (spec: DevFakeRunnerSpec, hello: Partial<RunnerHello>, token: string) =>
       startFakeRunner({
         url: live.url,
@@ -2014,6 +2100,10 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
           );
           return fakeRunnerScript(run, { breakdown: spec.key !== "limited" });
         },
+      }).then((runner) => {
+        const slot = runnerSlots.find((s) => s.spec.key === spec.key);
+        if (slot) runner.onRunnerUpdate = ({ version }) => answerRunnerUpdate(slot, version);
+        return runner;
       });
     /** 훅의 roots·maxPermissionMode 를 그 러너의 기본 hello 위에 — 루트는 고정 목록 안의 id 만, 상한은 Claude Code 줄에 */
     const helloFor = (slot: RunnerSlot, input: RunnerInput): Partial<RunnerHello> | Rejected => {
@@ -2086,6 +2176,46 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       });
       slot.swapping = run;
       return run;
+    };
+    /** 서버가 품은 플러그인 빌드 — 가짜 플러그인이 「업데이트한 뒤」 알리는 bundleSha256 */
+    const servedPlugin = readPluginFile(pluginDirCandidates(config));
+    /**
+     * 가짜 플러그인의 plugin.update — 실제 플러그인처럼 곧바로 답하고, 조금 뒤 끊었다가 결과(lastUpdate)를 실은 hello 로 다시 붙는다. ok 면
+     * 서버와 같은 빌드(bundleSha256)로 붙는다
+     */
+    const answerPluginUpdate = (pair: Pair): PluginUpdateResult => {
+      const mode = remoteUpdate.plugin;
+      live.logger.info({ gatewayId: pair.spec.id, mode }, "dev:fake plugin update");
+      if (mode === "busy") return { ok: false, reason: "busy", message: "이미 업데이트하는 중입니다" };
+      setTimeout(() => {
+        const plugin = pair.plugin;
+        if (!plugin) return;
+        if (mode === "silent") {
+          plugin.disconnect();
+          return;
+        }
+        const base =
+          pair.spec.id === DEV_FAKE_HOME_GATEWAY_ID ? DEV_FAKE_HOME_PLUGIN_HELLO : DEV_FAKE_PLUGIN_HELLO;
+        const at = new Date().toISOString();
+        const hello: BridgeHello =
+          mode === "ok"
+            ? {
+                ...base,
+                ...(servedPlugin ? { bundleSha256: servedPlugin.bundleSha256 } : {}),
+                lastUpdate: { ok: true, at },
+              }
+            : {
+                ...base,
+                lastUpdate: {
+                  ok: false,
+                  message:
+                    "플러그인 설치에 실패했습니다(openclaw plugins install) — 옛 플러그인으로 Gateway 를 다시 올렸습니다",
+                  at,
+                },
+              };
+        void reconnectPlugin(pair, { hello }, `update ${mode} hello`);
+      }, DEV_FAKE_UPDATE_RESTART_MS);
+      return { ok: true };
     };
     interceptDevFakeRoutes(
       live,
@@ -2162,6 +2292,20 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
           ),
         ],
         [
+          DEV_FAKE_REMOTE_UPDATE_PATH,
+          route(
+            RemoteUpdateInput,
+            '{ latest?: string | null, runner?: "ok"|"busy"|"failed"|"silent", plugin?: "ok"|"busy"|"failed"|"silent" }',
+            async (input) => {
+              if (input.latest !== undefined) remoteUpdate.latest = input.latest;
+              if (input.runner) remoteUpdate.runner = input.runner;
+              if (input.plugin) remoteUpdate.plugin = input.plugin;
+              live.logger.info(remoteUpdate, "dev:fake remote update");
+              return { ok: true, remoteUpdate: { ...remoteUpdate } };
+            },
+          ),
+        ],
+        [
           DEV_FAKE_DISK_PATH,
           route(DiskInput, "{ freeBytes, totalBytes } | { reset: true }", async (input) => {
             fakeDisk = "reset" in input ? undefined : input;
@@ -2179,7 +2323,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         plugin = await startFakePlugin({
           bridgeUrl: app.url,
           token: spec.bridgeToken,
-          hello: DEV_FAKE_PLUGIN_HELLO,
+          hello: spec.id === DEV_FAKE_HOME_GATEWAY_ID ? DEV_FAKE_HOME_PLUGIN_HELLO : DEV_FAKE_PLUGIN_HELLO,
           agents: spec.agents.map((a) => ({ agentId: a.id })),
         });
       } catch (error) {
@@ -2195,6 +2339,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         continue;
       }
       pair.plugin = plugin;
+      plugin.onPluginUpdate = () => answerPluginUpdate(pair);
       // 대본의 이름표는 시작 때 등록한 핸들(집 dev 는 dev-home) — 답만 보고 어느 Gateway 가 답했는지 안다
       const scenarioAgents: Record<string, ScenarioAgent> = {};
       for (const { id, handle } of spec.agents)

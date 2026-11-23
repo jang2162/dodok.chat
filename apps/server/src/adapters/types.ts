@@ -21,7 +21,7 @@ export type { GatewayConnectionConfig, GatewaySetupEntry } from "@dodok/openclaw
  */
 export type OpenClawGateways = Pick<
   OpenClawAdapter,
-  "upsertGateway" | "removeGateway" | "gatewaySetupDetails" | "revokeTokenSessions"
+  "upsertGateway" | "removeGateway" | "gatewaySetupDetails" | "revokeTokenSessions" | "updatePlugin"
 >;
 
 /** 레지스트리의 OpenClaw 어댑터가 Gateway 를 다룰 줄 아는가 */

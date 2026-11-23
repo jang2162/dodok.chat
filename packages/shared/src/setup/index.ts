@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
+import { RemoteUpdateOutcome, RemoteUpdateProgress, RemoteUpdateSupport } from "./remote-update";
+
+export * from "./remote-update";
 
 // 설정 마법사 계약(스펙 2026-09-24-setup-wizard-design.md 2.6·3장). 브리지 토큰 원문은 IssueBridgeTokenResult.token 에만 있다
 
@@ -118,10 +121,16 @@ export const GatewaySetup = z.object({
         bundleSha256: Sha256Hex.nullable(), // 옛 플러그인은 보내지 않는다
         tokenId: Id.nullable(),
         connectedAt: IsoDateTime,
+        // 원격 업데이트(원격 업데이트 스펙 U1·U8) — 옛 서버는 싣지 않는다
+        remoteUpdate: RemoteUpdateSupport.optional(),
+        /** 다시 붙은 플러그인이 hello 로 알린 마지막 업데이트 결과(U5) */
+        lastUpdate: RemoteUpdateOutcome.nullable().optional(),
       })
       .nullable(),
   }),
   pluginMatches: z.boolean().nullable(), // 접속 플러그인과 서버가 품은 파일이 같은 빌드인가, 모르면 null
+  /** 서버가 쥔 이 Gateway 플러그인 업데이트 진행(U9). 없으면 null */
+  update: RemoteUpdateProgress.nullable().optional(),
 });
 export type GatewaySetup = z.infer<typeof GatewaySetup>;
 

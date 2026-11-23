@@ -17,6 +17,7 @@ import {
   ControlResult,
   InboundDeliver,
   OutboundMessage,
+  PluginUpdate,
   type ApiError,
   type BridgeClientToServerEvents,
   type BridgeControlCall,
@@ -25,6 +26,7 @@ import {
   type ConfigSetResult,
   type ControlUnknownResult,
   type InboundDeliverResult,
+  type PluginUpdateResult,
   type Result,
 } from "@dodok/shared";
 import { io, type ManagerOptions, type Socket, type SocketOptions } from "socket.io-client";
@@ -42,6 +44,8 @@ export type BridgeClientHandlers = {
   onAgentsList?: () => Promise<{ agents: Array<{ agentId: string; name?: string }> }>;
   onNotice?: (notice: { reason: "replaced" | "shutdown"; message: string }) => void;
   onReady?: (result: BridgeHelloResult) => void;
+  /** 원격 업데이트(원격 업데이트 스펙 U5) — 없으면 ADAPTER_UNAVAILABLE */
+  onPluginUpdate?: (payload: PluginUpdate) => Promise<PluginUpdateResult>;
 };
 
 export type BridgeClientOptions = {
@@ -207,6 +211,23 @@ export function createBridgeClient(opts: BridgeClientOptions) {
     opts.handlers.onAgentsList().then(
       (data) => ack({ ok: true, data }),
       (error) => ack({ ok: false, error: { code: "INTERNAL", message: errorMessage(error) } }),
+    );
+  });
+
+  socket.on("plugin.update", (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const parsed = PluginUpdate.safeParse(payload);
+    if (!parsed.success) {
+      reply(validationError(parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")));
+      return;
+    }
+    if (!opts.handlers.onPluginUpdate) {
+      reply({ ok: false, error: { code: "ADAPTER_UNAVAILABLE", message: "plugin.update 미지원" } });
+      return;
+    }
+    opts.handlers.onPluginUpdate(parsed.data).then(
+      (data) => reply({ ok: true, data }),
+      (error) => reply({ ok: false, error: { code: "INTERNAL", message: errorMessage(error) } }),
     );
   });
 

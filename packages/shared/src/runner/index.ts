@@ -15,6 +15,7 @@ import {
 } from "../domain";
 import { AGENT_COMMANDS_MAX, AgentCommand } from "../commands";
 import { RunEvent } from "../events";
+import { RemoteUpdateAck, RemoteUpdateVersion } from "../setup";
 
 // `/runner` 계약(러너 스펙 3장, 계획 판정 P1) — Socket.IO 네임스페이스, 프레임은 이벤트 이름 + ack. 경계에서 이 Zod 로 파싱한다.
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
@@ -30,6 +31,8 @@ export const RUNNER_ATTACHMENTS_PATH = "/runner/attachments";
 export const RUNNER_PROTOCOL = 2;
 
 // commands — run.start 의 deliver.command 를 그대로 프롬프트로 보내고 commands.list 에 답한다(에이전트 명령 C7·C8)
+// remoteUpdate — runner.update 에 답한다. remoteUpdateOff — 그 머신의 설정이 원격 업데이트를 껐다(원격 업데이트 스펙 U1·U8). hello 가
+// strict 라 최상위에 새 키를 두면 옛 서버가 새 러너를 거절한다 — 켜짐·꺼짐은 능력 문자열로 싣는다(옛 서버는 모르는 능력을 버린다)
 export const RunnerCapability = z.enum([
   "threads",
   "interrupt",
@@ -39,6 +42,8 @@ export const RunnerCapability = z.enum([
   "commands",
   // 봇(러너 봇 스펙 B7) — run.start.agent.bot·commands.list 의 bot 갈래를 받는다. 없는 러너에는 봇 런을 보내지 않는다
   "bots",
+  "remoteUpdate",
+  "remoteUpdateOff",
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
@@ -173,7 +178,20 @@ export interface RunnerServerToClientEvents {
   "worktree.create": (p: RunnerWorktreeCreate, ack: (r: RunnerWorktreeCreateResult) => void) => void;
   "worktree.remove": (p: RunnerWorktreeRemove, ack: (r: RunnerWorktreeRemoveResult) => void) => void;
   "commands.list": (p: RunnerCommandsList, ack: (r: RunnerCommandsListResult) => void) => void;
+  "runner.update": (p: RunnerUpdate, ack: (r: RunnerUpdateResult) => void) => void;
 }
+
+// ── 원격 업데이트(원격 업데이트 스펙 U3) — 서버 → 러너 ack 요청. 러너는 npm 의 그 판(지금보다 높은 정확한 semver)을 자기 전역 자리에
+// 설치하고 ok 로 답한 뒤 같은 인자로 스스로 다시 띄운다
+
+export const RunnerUpdate = z.object({ version: RemoteUpdateVersion });
+export type RunnerUpdate = z.infer<typeof RunnerUpdate>;
+export const RunnerUpdateResult = RemoteUpdateAck;
+export type RunnerUpdateResult = RemoteUpdateAck;
+/** runner.update ack 상한 — 러너는 npm 설치(상한 RUNNER_NPM_INSTALL_TIMEOUT_MS)를 끝내고 답한다 */
+export const RUNNER_UPDATE_ACK_TIMEOUT_MS = 170_000;
+/** 러너가 npm 설치를 끊는 시간 — ack 상한보다 앞선다 */
+export const RUNNER_NPM_INSTALL_TIMEOUT_MS = 150_000;
 
 // ── 천장·프로젝트(러너 일반화 스펙 2·3장) — 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를
 // 통째로 싣는다

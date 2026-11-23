@@ -15,7 +15,7 @@ import type {
   ApprovalStatus,
 } from "../domain";
 import type { RunEvent, RunSignal } from "../events";
-import type { RunnerConnection } from "../setup";
+import type { RunnerConnection, RemoteUpdateOutcome, RemoteUpdateSupport } from "../setup";
 import type { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
 // 어댑터 계약(서버 코어 스펙 6.1, 러너 스펙 2장). 두 어댑터 패키지와 서버가 여기서 가져간다 — 순수 타입과 AdapterError 만
@@ -99,6 +99,10 @@ export type AdapterSetupDetail =
           bundleSha256: string | null;
           tokenId: string | null;
           connectedAt: string;
+          /** 원격 업데이트(원격 업데이트 스펙 U1·U8) — hello 의 능력·remoteUpdate 에서 */
+          remoteUpdate?: RemoteUpdateSupport;
+          /** hello 의 lastUpdate(U5) */
+          lastUpdate?: RemoteUpdateOutcome | null;
         } | null;
       };
     }

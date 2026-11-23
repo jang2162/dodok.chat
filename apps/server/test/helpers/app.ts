@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hasGateways } from "../../src/adapters/types";
 import { type App, type AppDeps, createApp } from "../../src/app";
+import { createLatestRunnerVersion } from "../../src/modules/runners/latest";
 import { loadConfig } from "../../src/config";
 import { memberships, users } from "../../src/db/schema.sqlite";
 import type { PushTransport, TransportKind } from "../../src/modules/push/transports/types";
@@ -80,6 +81,8 @@ export async function bootTestApp(
       adapters: deps.adapters ?? [new FakeAdapter()],
       pushSend: deps.pushSend ?? noExternalPush,
       statfs: deps.statfs ?? plentyOfDisk,
+      // npm 레지스트리에 묻지 않는다 — 원격 업데이트 시험이 판을 준다
+      latestRunner: deps.latestRunner ?? createLatestRunnerVersion({ fixed: null }),
     });
   } catch (err) {
     remove();

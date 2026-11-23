@@ -16,7 +16,11 @@ import { createRunnerAdapter, type RunnerAdapter } from "@dodok/runner-adapter";
 import { Server } from "socket.io";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AttachmentsHttp } from "../src/attachments-http";
-import { startRunnerConnection, type RunnerConnection } from "../src/connection";
+import {
+  startRunnerConnection,
+  type RunnerConnection,
+  type RunnerConnectionOptions,
+} from "../src/connection";
 import { createClaudeDriver } from "../src/drivers/claude";
 import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
@@ -140,7 +144,15 @@ afterEach(async () => {
   rmSync(workdir, { recursive: true, force: true });
 });
 
-function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?: Promise<void> } = {}) {
+function startRunner(
+  server: { url: string },
+  fake: FakeSdk,
+  opts: {
+    uploadGate?: Promise<void>;
+    selfUpdate?: RunnerConnectionOptions["selfUpdate"];
+    remoteUpdate?: boolean;
+  } = {},
+) {
   const fatal: number[] = [];
   const logs: string[] = [];
   const uploads: string[] = [];
@@ -169,6 +181,7 @@ function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?
       roots: [{ id: "src", path: realpathSync(workdir), label: "my-repo" }],
       botsDir: join(realpathSync(workdir), ".bots-unused"),
       browse: true,
+      remoteUpdate: opts.remoteUpdate ?? true,
       programs: {
         claude: {
           configDir: AGENT.configDir,
@@ -192,6 +205,7 @@ function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?
     onFatal: (code) => fatal.push(code),
     backoff: { minMs: 20, maxMs: 50 },
     attachmentsHttp,
+    ...(opts.selfUpdate ? { selfUpdate: opts.selfUpdate } : {}),
   });
   cleanups.push(() => conn.stop());
   return { conn, fatal, logs, uploads };
@@ -235,6 +249,33 @@ async function ready(server: ServerSide) {
 }
 
 describe("러너 ↔ 실제 러너 어댑터", () => {
+  it("원격 업데이트 — 능력 remoteUpdate·remoteUpdateOff 가 어댑터에 닿고, runner.update 의 판·답이 그대로 오간다", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const asked: Array<[string, boolean]> = [];
+    startRunner(server, createFakeSdk(), {
+      remoteUpdate: false,
+      selfUpdate: async (r) => {
+        asked.push([r.version, r.enabled]);
+        return { ok: false, reason: "disabled", message: "꺼짐" };
+      },
+    });
+    await ready(server);
+    expect(server.adapter.hasCapability(TOKEN_ID, "remoteUpdate")).toBe(true);
+    expect(server.adapter.hasCapability(TOKEN_ID, "remoteUpdateOff")).toBe(true);
+    expect(await server.adapter.runnerUpdate(TOKEN_ID, "0.9.0")).toEqual({
+      ok: false,
+      reason: "disabled",
+      message: "꺼짐",
+    });
+    expect(asked).toEqual([["0.9.0", false]]);
+    // 서버 쪽 계약이 먼저 거른다 — 정확한 semver 가 아니면 러너에 가지 않는다
+    await expect(server.adapter.runnerUpdate(TOKEN_ID, "latest")).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    expect(asked).toHaveLength(1);
+  });
+
   it("hello — 루트·프로그램·능력을 알리고, 에이전트는 알리지 않으며, 어디에도 작업 디렉터리 경로가 없다", async () => {
     const server = await startServer();
     cleanups.push(() => server.close());
