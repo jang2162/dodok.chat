@@ -26,6 +26,8 @@ import {
   type InboundDeliver,
   InboundDeliverResult,
   type OutboundMessage,
+  type PluginUpdate,
+  PluginUpdateResult,
   type Result,
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
@@ -108,6 +110,8 @@ export type GatewayBridge = {
   abandonDelivery(deliveryId: string): void;
   setConfig(payload: ConfigSet, timeoutMs?: number): Promise<Result<ConfigSetResult>>;
   listAgents(timeoutMs?: number): Promise<Result<{ agents: Array<{ agentId: string; name?: string }> }>>;
+  /** 원격 업데이트(원격 업데이트 스펙 U5) — 플러그인은 스크립트를 띄우고 곧바로 답한다 */
+  updatePlugin(payload: PluginUpdate, timeoutMs?: number): Promise<Result<PluginUpdateResult>>;
 };
 
 export type BridgeHandle = {
@@ -442,6 +446,13 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
           slot,
           ConfigSetResult,
           (socket, ms) => socket.timeout(ms).emitWithAck("config.set", payload),
+          timeoutMs,
+        ),
+      updatePlugin: (payload, timeoutMs = ackTimeoutMs) =>
+        request(
+          slot,
+          PluginUpdateResult,
+          (socket, ms) => socket.timeout(ms).emitWithAck("plugin.update", payload),
           timeoutMs,
         ),
       listAgents: (timeoutMs = ackTimeoutMs) =>

@@ -414,6 +414,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: `/api/v1/runners/${runnerA()}/fs?rootId=src` }),
     },
+    // 원격 업데이트(원격 업데이트 스펙 U7) — 그 러너의 주인·admin 이상. 매트릭스 러너는 능력 remoteUpdate 가 없어 판정을 지나면 409
+    {
+      name: "POST /runners/:id/update",
+      min: "admin",
+      ok: 409,
+      request: () => ({ method: "POST", url: `/api/v1/runners/${runnerA()}/update` }),
+    },
     {
       name: "GET /runners/:id/projects",
       min: "admin",
@@ -875,6 +882,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "DELETE", url: `/api/v1/gateways/${newGateway()}` }),
+    },
+    // 플러그인 원격 업데이트(U6·U7) — 그 Gateway 의 주인·admin 이상. 새 Gateway 에는 플러그인이 없어 판정을 지나면 503
+    {
+      name: "GET /gateways/:id/update",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/gateways/${newGateway()}/update` }),
+    },
+    {
+      name: "POST /gateways/:id/update",
+      min: "admin",
+      ok: 503,
+      request: () => ({ method: "POST", url: `/api/v1/gateways/${newGateway()}/update` }),
     },
     {
       name: "GET /gateways/:id/bridge-tokens",

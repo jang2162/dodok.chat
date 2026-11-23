@@ -18,6 +18,8 @@ import {
   InboundDeliver,
   type InboundDeliverResult,
   type OutboundMessage,
+  PluginUpdate,
+  type PluginUpdateResult,
   type Result,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
@@ -50,6 +52,12 @@ export type FakePlugin = {
   /** 스키마를 통과한 `inbound.deliver`, 도착 순서 */
   readonly received: InboundDeliver[];
   readonly configSets: ConfigSet[];
+  /**
+   * plugin.update(원격 업데이트 스펙 U5)에 무엇으로 답할지 — 기본은 undefined: 옛 플러그인처럼 ADAPTER_UNAVAILABLE. 바꿔 끼울 수 있다
+   */
+  onPluginUpdate: ((req: PluginUpdate) => PluginUpdateResult) | undefined;
+  /** 스키마를 통과한 plugin.update, 도착 순서 */
+  readonly updates: PluginUpdate[];
   readonly notices: BridgeNotice[];
   /** 마지막 hello ack */
   readonly helloResult: BridgeHelloResult | undefined;
@@ -117,6 +125,7 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
   });
   const received: InboundDeliver[] = [];
   const configSets: ConfigSet[] = [];
+  const updates: PluginUpdate[] = [];
   const notices: BridgeNotice[] = [];
   let helloResult: BridgeHelloResult | undefined;
   let closed = false;
@@ -171,6 +180,21 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
     ack({ ok: true, data: { applied: "live" } });
   });
 
+  socket.on("plugin.update", (payload, ack) => {
+    const parsed = PluginUpdate.safeParse(payload);
+    if (!parsed.success) {
+      ack({ ok: false, error: { code: "VALIDATION", message: issuesText(parsed.error) } });
+      return;
+    }
+    updates.push(parsed.data);
+    const answer = plugin.onPluginUpdate;
+    if (!answer) {
+      ack({ ok: false, error: { code: "ADAPTER_UNAVAILABLE", message: "plugin.update 미지원" } });
+      return;
+    }
+    ack({ ok: true, data: answer(parsed.data) });
+  });
+
   socket.on("agents.list", (_payload, ack) => {
     ack({ ok: true, data: { agents: opts.agents ?? FAKE_PLUGIN_AGENTS } });
   });
@@ -183,6 +207,8 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
     onInbound: opts.onInbound ?? ((delivery) => ({ admission: "dispatch", providerRunId: delivery.runId })),
     received,
     configSets,
+    onPluginUpdate: undefined,
+    updates,
     notices,
     get helloResult() {
       return helloResult;

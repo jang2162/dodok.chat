@@ -338,6 +338,19 @@ describe("createOpenClawAdapter — 설정 상세(setupDetail)", () => {
     for (const secret of ["operator", "pw", "gw-token", "/gw", "t=1"]) expect(text).not.toContain(secret);
   });
 
+  it("플러그인 hello 의 원격 업데이트 — 능력이 있으면 remoteUpdate(없으면 켜짐) on·off, lastUpdate 를 그대로(원격 업데이트 스펙 U1·U5)", async () => {
+    const lastUpdate = { ok: false, message: "설치 실패", at: "2026-11-23T00:00:00.000Z" };
+    const socket = await plugin(
+      {},
+      { ...hello, capabilities: [...hello.capabilities, "remoteUpdate"], remoteUpdate: false, lastUpdate },
+    );
+    expect(adapter.setupDetail().bridge.plugin).toMatchObject({ remoteUpdate: "off", lastUpdate });
+    socket.disconnect();
+    await until(() => adapter.setupDetail().bridge.plugin === null, "plugin gone");
+    await plugin({}, { ...hello, capabilities: [...hello.capabilities, "remoteUpdate"] });
+    expect(adapter.setupDetail().bridge.plugin).toMatchObject({ remoteUpdate: "on", lastUpdate: null });
+  });
+
   it("플러그인 hello → plugin 요약(토큰 id·bundleSha256·gatewayVersion), 끊기면 null — 변화마다 setup 이벤트 1회", async () => {
     const socket = await plugin({}, { ...hello, gatewayVersion: "2026.9.5", bundleSha256: BUNDLE_SHA });
     expect(adapter.setupDetail().bridge).toEqual({
@@ -349,6 +362,9 @@ describe("createOpenClawAdapter — 설정 상세(setupDetail)", () => {
         bundleSha256: BUNDLE_SHA,
         tokenId: "t1",
         connectedAt: expect.stringMatching(ISO),
+        // 원격 업데이트 능력이 없는 옛 플러그인 hello
+        remoteUpdate: "unsupported",
+        lastUpdate: null,
       },
     });
     expect(ofKind("setup")).toHaveLength(1);

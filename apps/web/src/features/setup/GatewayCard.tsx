@@ -1,6 +1,7 @@
 import type { GatewaySetup, SetupStatus } from "@dodok/shared";
 import { useRef } from "react";
 import { useNowTick } from "@/hooks/useNowTick";
+import { PluginUpdate } from "@/features/connections/RemoteUpdate";
 import { cn } from "@/lib/utils";
 import { IssueTokenDialog } from "./IssueTokenDialog";
 import { publicOriginOf } from "./llms";
@@ -132,6 +133,7 @@ export function PluginStatus({ gateway, status }: { gateway: GatewaySetup; statu
         )}
       </p>
       <BuildMatch gateway={gateway} />
+      <PluginUpdate gateway={gateway} pluginFileAvailable={status.pluginFile.available} />
       <PluginInstall status={status} open={plugin === null} />
     </Section>
   );

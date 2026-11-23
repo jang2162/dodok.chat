@@ -6,6 +6,8 @@ import {
   type ConfigSet,
   type ConfigSetResult,
   type InboundDeliver,
+  type PluginUpdateResult,
+  type Result,
 } from "@dodok/shared";
 import {
   AdapterError,
@@ -87,6 +89,8 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     forget: string[];
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
     revokeTokenSessions: string[];
+    /** 원격 업데이트(updatePlugin) — Gateway id·sha256 */
+    updatePlugin: Array<{ gatewayId: string; sha256: string }>;
     /**
      * 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 「연결 관리자」 절) — 기록하고 Gateway 목록(gatewaySetupDetails·gatewayStatuses)만
      * 바꾼 뒤 status 이벤트를 낸다. 연결·런은 건드리지 않는다
@@ -110,6 +114,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     forget: [],
     resolveApproval: [],
     revokeTokenSessions: [],
+    updatePlugin: [],
     upsertGateway: [],
     removeGateway: [],
     connections: {
@@ -338,6 +343,17 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
 
   setupDetail(): SetupDetailOf<P> {
     return this.currentSetupDetail;
+  }
+
+  /** updatePlugin 의 답 — 시험이 바꾼다. 기본은 ok */
+  updatePluginScript: (gatewayId: string) => Promise<Result<PluginUpdateResult>> = async () => ({
+    ok: true,
+    data: { ok: true },
+  });
+
+  updatePlugin(gatewayId: string, sha256: string): Promise<Result<PluginUpdateResult>> {
+    this.calls.updatePlugin.push({ gatewayId, sha256 });
+    return this.updatePluginScript(gatewayId);
   }
 
   /** 붙은 플러그인이 그 토큰이면 끊은 것으로 두고(bridge down) setup 을 한 번 낸다 */

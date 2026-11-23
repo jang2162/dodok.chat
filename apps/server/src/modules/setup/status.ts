@@ -1,6 +1,7 @@
 /** 설정 마법사의 연결 상태 조립(스펙 3장 SetupStatus) — Gateway 행·어댑터 상세·플러그인 파일·서버 버전을 모은다. 입출력 없음 */
 import type { GatewaySetup, RunnerConnection, SetupStatus } from "@dodok/shared";
 import type { GatewaySetupEntry } from "../../adapters/types";
+import type { RemoteUpdates } from "../connections/remote-updates";
 import { gatewayPin } from "../ops/health";
 import type { PluginFile } from "./plugin-file";
 
@@ -29,6 +30,8 @@ export function buildSetupStatus(input: {
   runnerFile: PluginFile | null;
   serverVersion: string;
   publicUrl: string;
+  /** 원격 업데이트 진행(원격 업데이트 스펙 U9) — 없으면 Gateway 마다 null */
+  remoteUpdates?: RemoteUpdates;
 }): SetupStatus {
   const { pluginFile } = input;
   const details = new Map(input.details.map((entry) => [entry.id, entry]));
@@ -59,6 +62,9 @@ export function buildSetupStatus(input: {
         // 같은 빌드인가는 tgz 안의 번들 sha256 끼리 — 한쪽이라도 모르면 null(옛 플러그인은 bundleSha256 을 보내지 않는다)
         pluginMatches:
           pluginFile && plugin?.bundleSha256 ? plugin.bundleSha256 === pluginFile.bundleSha256 : null,
+        ...(input.remoteUpdates
+          ? { update: input.remoteUpdates.gatewayView(row.id, plugin, pluginFile?.bundleSha256 ?? null) }
+          : {}),
       };
     }),
     runners: { list: input.runners, runnerFile: packedFile(input.runnerFile) },

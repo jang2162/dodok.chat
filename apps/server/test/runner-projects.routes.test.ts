@@ -146,6 +146,10 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       // 기본 가짜 hello 의 능력 — 워크트리 능력이 없는 옛 러너 흉내(워크트리 스펙 5.2)
       capabilities: ["threads", "interrupt", "approvals", "attachments"],
       projectCount: 1,
+      // 원격 업데이트 — 시험 앱은 npm 에 묻지 않는다(최신을 모름), 능력이 없는 옛 러너 흉내
+      latestVersion: null,
+      remoteUpdate: "unsupported",
+      update: null,
     });
     expect(list.find((r) => r.id === quiet.record.id)).toEqual({
       id: quiet.record.id,
@@ -158,6 +162,9 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       programs: [],
       capabilities: [],
       projectCount: 0,
+      latestVersion: null,
+      remoteUpdate: null,
+      update: null,
     });
     expect(list.find((r) => r.id === revoked.record.id)).toMatchObject({ connected: false, revoked: true });
   });

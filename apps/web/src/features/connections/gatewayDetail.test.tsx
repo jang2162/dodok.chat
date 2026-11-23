@@ -1,5 +1,5 @@
 import type { ConnectionsResponse } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentOf } from "../../../test/settingsServer";
@@ -195,5 +195,73 @@ describe("owner 가 아니면", () => {
     stubSetupServer();
     renderConnection({ ...ME, role: "member" }, undefined, gatewayDetailPath(GATEWAY_ID));
     expect(await screen.findByText("이 연결을 찾을 수 없습니다")).toBeInTheDocument();
+  });
+});
+
+describe("플러그인 원격 업데이트(원격 업데이트 스펙 U4·U6·U9)", () => {
+  const PAST = "2026-11-23T00:00:00.000Z";
+  const group = async () => within(await detail()).findByRole("group", { name: "플러그인 업데이트" });
+
+  it("다른 빌드·켜짐이면 업데이트 — 확인 대화상자가 진행 중인 런 수를 보이고, 확인하면 POST", async () => {
+    const server = stubSetupServer({
+      status: statusOf({ plugin: { remoteUpdate: "on", lastUpdate: null }, pluginMatches: false }),
+      gatewayUpdatePreview: () => json(200, { activeRuns: 2 }),
+    });
+    renderConnection();
+    const box = await group();
+    await userEvent.click(within(box).getByRole("button", { name: "업데이트" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/진행 중인 런 2개가 끊깁니다/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "업데이트" }));
+    await waitFor(() => expect(server.count("POST", `/api/v1/gateways/${GATEWAY_ID}/update`)).toBe(1));
+    expect(server.count("GET", `/api/v1/gateways/${GATEWAY_ID}/update`)).toBe(1);
+  });
+
+  it("같은 빌드면 단추가 없다, 끈 Gateway·옛 플러그인은 안내만", async () => {
+    stubSetupServer({ status: statusOf({ plugin: { remoteUpdate: "on" }, pluginMatches: true }) });
+    renderConnection();
+    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+    cleanup();
+    vi.unstubAllGlobals();
+    stubSetupServer({ status: statusOf({ plugin: { remoteUpdate: "off" }, pluginMatches: false }) });
+    renderConnection();
+    expect(await group()).toHaveTextContent("이 Gateway 에서 원격 업데이트를 껐습니다");
+    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+    cleanup();
+    vi.unstubAllGlobals();
+    stubSetupServer({ status: statusOf({ plugin: { remoteUpdate: "unsupported" }, pluginMatches: false }) });
+    renderConnection();
+    expect(await group()).toHaveTextContent("이 플러그인 판은 원격 업데이트를 지원하지 않습니다");
+  });
+
+  it("다시 붙은 플러그인이 실패를 알리면 그 사유, 상한이 지나면 「응답이 없습니다」", async () => {
+    stubSetupServer({
+      status: statusOf({
+        plugin: { remoteUpdate: "on" },
+        pluginMatches: false,
+        first: {
+          update: {
+            state: "failed",
+            message: "플러그인 설치에 실패했습니다(openclaw plugins install)",
+            at: PAST,
+          },
+        },
+      }),
+    });
+    renderConnection();
+    expect(await within(await group()).findByRole("alert")).toHaveTextContent("플러그인 설치에 실패했습니다");
+    cleanup();
+    vi.unstubAllGlobals();
+    stubSetupServer({
+      status: statusOf({
+        plugin: { remoteUpdate: "on" },
+        pluginMatches: false,
+        first: { update: { state: "updating", targetVersion: null, startedAt: PAST, deadline: PAST } },
+      }),
+    });
+    renderConnection();
+    expect(await within(await group()).findByRole("alert")).toHaveTextContent(
+      "응답이 없습니다 — 그 머신에서 확인하세요",
+    );
   });
 });

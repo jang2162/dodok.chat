@@ -578,6 +578,13 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
                 bundleSha256: hello.bundleSha256 ?? null,
                 tokenId: session.tokenId,
                 connectedAt: session.connectedAt.toISOString(),
+                // 원격 업데이트(원격 업데이트 스펙 U1·U8) — 능력이 없으면 옛 판, 있으면 hello 의 remoteUpdate(없으면 켜짐)
+                remoteUpdate: !hello.capabilities.includes("remoteUpdate")
+                  ? "unsupported"
+                  : hello.remoteUpdate === false
+                    ? "off"
+                    : "on",
+                lastUpdate: hello.lastUpdate ?? null,
               }
             : null,
       },

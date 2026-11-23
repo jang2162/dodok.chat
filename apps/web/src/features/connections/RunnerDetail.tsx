@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AgentLinks } from "./ConnectionTreeList";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
+import { RunnerUpdate } from "./RemoteUpdate";
 import { canManageConnection, useViewer } from "./permissions";
 import { useConnectionList } from "./queries";
 import { runnerStateLabel } from "./useConnectionTree";
@@ -74,6 +75,7 @@ function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefi
       />
       {runner.revoked && <p className="text-sm text-muted-foreground">토큰이 폐기된 러너입니다.</p>}
       {live && <RunnerFacts runner={runner} />}
+      {live && <RunnerUpdate runner={runner} />}
       <Section title={`프로젝트 ${runner.projectCount}`} bare>
         <div>
           <AddProjectDialog runner={runner} triggerRef={addButton} />

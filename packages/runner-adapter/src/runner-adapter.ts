@@ -36,6 +36,9 @@ import {
   RunnerCommandsList,
   RunnerCommandsListResult,
   RUNNER_COMMANDS_LIST_TIMEOUT_MS,
+  RUNNER_UPDATE_ACK_TIMEOUT_MS,
+  RunnerUpdate,
+  RunnerUpdateResult,
   RunnerFsListResult,
   RunnerHello,
   type RunnerHelloResult,
@@ -195,6 +198,11 @@ export interface RunnerAdapter extends AgentAdapter {
    * 오류는 fsList 와 같다. 능력 commands 가 없는 러너에는 부르지 않는다(부르는 쪽이 hasCapability 로 본다)
    */
   commandsList(tokenId: string, req: RunnerCommandsList): Promise<RunnerCommandsListResult>;
+  /**
+   * 원격 업데이트(원격 업데이트 스펙 U3, runner.update) — 러너가 npm 설치를 끝내고 답한다(ack 상한 RUNNER_UPDATE_ACK_TIMEOUT_MS). 오류는
+   * fsList 와 같다. 능력 remoteUpdate 가 없는 러너에는 부르지 않는다
+   */
+  runnerUpdate(tokenId: string, version: string): Promise<RunnerUpdateResult>;
   /** 그 토큰으로 지금 붙은 러너가 hello 로 그 능력을 알렸나. 붙어 있지 않으면 false */
   hasCapability(tokenId: string, capability: RunnerCapability): boolean;
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
@@ -959,7 +967,13 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   /** 서버 → 러너 ack 요청(fs.list·project.check·worktree.*) — 요청·답 모두 계약 스키마로 거른다 */
   async function askRunner<Q, R>(
     tokenId: string,
-    event: "fs.list" | "project.check" | "worktree.create" | "worktree.remove" | "commands.list",
+    event:
+      | "fs.list"
+      | "project.check"
+      | "worktree.create"
+      | "worktree.remove"
+      | "commands.list"
+      | "runner.update",
     payload: Q,
     requestSchema: z.ZodType<Q>,
     schema: z.ZodType<R>,
@@ -1145,6 +1159,15 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         RunnerCommandsList,
         RunnerCommandsListResult,
         RUNNER_COMMANDS_LIST_TIMEOUT_MS,
+      ),
+    runnerUpdate: (tokenId, version) =>
+      askRunner(
+        tokenId,
+        "runner.update",
+        { version },
+        RunnerUpdate,
+        RunnerUpdateResult,
+        RUNNER_UPDATE_ACK_TIMEOUT_MS,
       ),
     hasCapability: (tokenId, capability) =>
       !closed && (registry.byToken(tokenId)?.capabilities.includes(capability) ?? false),

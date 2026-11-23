@@ -39,6 +39,8 @@ import {
   type RunnerWorktreeCreateResult,
   RunnerWorktreeRemove,
   type RunnerWorktreeRemoveResult,
+  RunnerUpdate,
+  type RunnerUpdateResult,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { io, type Socket } from "socket.io-client";
@@ -308,6 +310,10 @@ export type FakeRunner = {
   readonly worktreeRequests: Array<
     ["worktree.create", RunnerWorktreeCreate] | ["worktree.remove", RunnerWorktreeRemove]
   >;
+  /** runner.update(원격 업데이트 스펙 U3)에 무엇으로 답할지 — 기본은 ok. undefined 면 ack 하지 않는다(설치가 오래 걸리는 흉내) */
+  onRunnerUpdate: (req: RunnerUpdate) => RunnerUpdateResult | Promise<RunnerUpdateResult> | undefined;
+  /** 스키마를 통과한 runner.update, 도착 순서 */
+  readonly updateRequests: RunnerUpdate[];
   /** 스키마를 통과한 run.start, 도착 순서 */
   readonly runStarts: RunnerRunStart[];
   readonly aborts: RunnerRunAbort[];
@@ -409,6 +415,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]> = [];
   const commandsRequests: RunnerCommandsList[] = [];
   const worktreeRequests: FakeRunner["worktreeRequests"] = [];
+  const updateRequests: RunnerUpdate[] = [];
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
 
@@ -421,6 +428,8 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     onProjectCheck: (ref) =>
       tree ? fakeProjectCheck(fakeRunnerHello(hello), tree, ref) : { ok: true, isGitRepo: false },
     fsRequests,
+    onRunnerUpdate: () => ({ ok: true }),
+    updateRequests,
     onCommandsList: () => ({ ok: true, commands: FAKE_RUNNER_COMMANDS.map((c) => ({ ...c })) }),
     commandsRequests,
     onWorktreeCreate: (req) =>
@@ -634,6 +643,14 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
       commandsRequests.push(parsed.data);
       const res = runner.onCommandsList(parsed.data);
       if (res !== undefined) ack(res);
+    });
+    s.on("runner.update", (raw: unknown, ack: (r: unknown) => void) => {
+      const parsed = RunnerUpdate.safeParse(raw);
+      if (!parsed.success) return ack({ ok: false, reason: "invalid_version" });
+      updateRequests.push(parsed.data);
+      const res = runner.onRunnerUpdate(parsed.data);
+      if (res instanceof Promise) void res.then(ack);
+      else if (res !== undefined) ack(res);
     });
     s.on("worktree.create", (raw: unknown, ack: (r: unknown) => void) => {
       const parsed = RunnerWorktreeCreate.safeParse(raw);

@@ -9,10 +9,14 @@ import {
   CreateGatewayBody,
   type DeleteGatewayResult,
   Id,
+  type GatewayUpdatePreview,
   IssueBridgeTokenInput,
   type IssueBridgeTokenResult,
+  PLUGIN_UPDATE_DEADLINE_MS,
+  type RemoteUpdateStarted,
   UpdateGatewayBody,
 } from "@dodok/shared";
+import { and, eq, notInArray, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { OpenClawGateways } from "../../adapters/types";
@@ -29,6 +33,9 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
+import { runs } from "../../db/schema.sqlite";
+import { gatewayUpdateKey, type RemoteUpdates, sendUpdate } from "../connections/remote-updates";
+import type { PluginFile } from "../setup/plugin-file";
 import { issueBridgeToken, listBridgeTokens, revokeBridgeToken } from "../setup/tokens";
 import { canReadConnection, isOwner } from "../connections/owner";
 import {
@@ -55,7 +62,22 @@ export type GatewayRouteContext = {
   changed(): void;
   /** 삭제가 에이전트의 Gateway 를 비웠을 때 — wire agents.changed */
   agentsChanged(): void;
+  /** 서버가 품은 플러그인 tgz(원격 업데이트가 설치시킬 것) — 없으면 업데이트할 것이 없다 */
+  pluginFile: PluginFile | null;
+  /** 원격 업데이트 진행(원격 업데이트 스펙 U9) — 러너 라우트와 같은 것 */
+  remoteUpdates: RemoteUpdates;
 };
+
+/** 그 Gateway(연결)의 끝나지 않은 런 수 — 플러그인 업데이트가 Gateway 를 내리면 끊긴다(U6) */
+function openRunCount(db: Db, gatewayId: string): number {
+  return (
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(runs)
+      .where(and(eq(runs.connectionId, gatewayId), notInArray(runs.status, ["done", "error", "aborted"])))
+      .get()?.n ?? 0
+  );
+}
 
 const GatewayParams = z.object({ id: Id });
 const TokenParams = z.object({ id: Id, tokenId: Id });
@@ -169,6 +191,65 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
     if (result.unboundAgents > 0) ctx.agentsChanged();
     return result;
   });
+
+  /** 업데이트 확인 대화상자의 「진행 중인 런 N개가 끊깁니다」(원격 업데이트 스펙 U6) — 그 Gateway 의 주인·admin 이상 */
+  fastify.get("/api/v1/gateways/:id/update", session, async (request): Promise<GatewayUpdatePreview> => {
+    const { id } = parseParams(GatewayParams, request.params);
+    manageable(request, id);
+    return { activeRuns: openRunCount(ctx.db, id) };
+  });
+
+  /**
+   * 플러그인 원격 업데이트(U5·U7·U9) — 그 Gateway 의 주인·admin 이상. 플러그인이 붙어 있고(503) 능력이 있고 켜져 있고(409), 서버가 품은
+   * 파일이 있고 그것과 다른 빌드일 때만(409). 진행 중이면 409. 플러그인의 거절은 409 와 그 사유, 받아들여지면 202 — 상한 5분
+   */
+  fastify.post(
+    "/api/v1/gateways/:id/update",
+    session,
+    async (request, reply): Promise<RemoteUpdateStarted> => {
+      const { id } = parseParams(GatewayParams, request.params);
+      const { row } = manageable(request, id);
+      if (!row.enabled || row.approvedAt === null)
+        throw apiError("CONFLICT", "꺼 두었거나 승인 전인 Gateway 입니다");
+      const plugin = ctx.gateways.gatewaySetupDetails().find((d) => d.id === id)?.bridge.plugin ?? null;
+      if (!plugin) throw apiError("ADAPTER_UNAVAILABLE", "플러그인이 붙어 있지 않습니다");
+      if (plugin.remoteUpdate !== "on")
+        throw apiError(
+          "CONFLICT",
+          plugin.remoteUpdate === "off"
+            ? "이 Gateway 에서 원격 업데이트를 껐습니다"
+            : "이 플러그인 판은 원격 업데이트를 지원하지 않습니다 — 설치 한 줄을 그 호스트에서 돌리세요",
+          { reason: plugin.remoteUpdate === "off" ? "disabled" : "unsupported" },
+        );
+      const file = ctx.pluginFile;
+      if (!file) throw apiError("NOT_FOUND", "PLUGIN_FILE_MISSING");
+      if (plugin.bundleSha256 === file.bundleSha256)
+        throw apiError("CONFLICT", "이미 서버와 같은 빌드입니다", { reason: "invalid_version" });
+      const key = gatewayUpdateKey(id);
+      const { view, startedAt } = ctx.remoteUpdates.begin(key, {
+        targetVersion: null,
+        deadlineMs: PLUGIN_UPDATE_DEADLINE_MS,
+        prevLastUpdateAt: plugin.lastUpdate?.at ?? null,
+      });
+      ctx.logger.info(
+        { userId: sessionUser(request).id, gatewayId: id, activeRuns: openRunCount(ctx.db, id) },
+        "plugin remote update requested",
+      );
+      await sendUpdate({
+        updates: ctx.remoteUpdates,
+        key,
+        startedAt,
+        send: async () => {
+          const result = await ctx.gateways.updatePlugin(id, file.sha256);
+          if (!result.ok) throw apiError(result.error.code, result.error.message);
+          return result.data;
+        },
+        onLate: ctx.changed,
+      });
+      ctx.changed();
+      return reply.status(202).send({ update: view });
+    },
+  );
 
   fastify.get("/api/v1/gateways/:id/bridge-tokens", session, async (request) => {
     const { id } = parseParams(GatewayParams, request.params);

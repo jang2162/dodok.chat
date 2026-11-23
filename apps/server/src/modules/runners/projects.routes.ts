@@ -5,6 +5,7 @@
  */
 import {
   ArchiveRunnerProjectBody,
+  compareVersions,
   CreateRunnerProjectBody,
   CreateWorktreeBody,
   Id,
@@ -16,6 +17,8 @@ import {
   type RunnerProject,
   type RunnerProjectCheck,
   type RunnerSummary,
+  RUNNER_UPDATE_DEADLINE_MS,
+  type RemoteUpdateStarted,
 } from "@dodok/shared";
 import type { RunnerLive } from "@dodok/runner-adapter";
 import { and, eq } from "drizzle-orm";
@@ -32,10 +35,17 @@ import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { canReadConnection, isOwner } from "../connections/owner";
+import {
+  type RemoteUpdates,
+  runnerSupport,
+  runnerUpdateKey,
+  sendUpdate,
+} from "../connections/remote-updates";
 import { recordRateLimit } from "../ops/http-limits";
 import type { Limits } from "../ops/limits";
 import { KeyedLimiter } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
+import type { LatestRunnerVersion } from "./latest";
 import { askRunner, ceilingMiss, liveRunner, type RunnerLiveApi } from "./live";
 import {
   activeAgentCounts,
@@ -66,6 +76,10 @@ export type RunnerAdminRouteContext = {
   ops: Pick<OpsService, "record">;
   /** 레이트리밋 시계 — app.ts 의 limitClock(테스트가 주입) */
   now: () => number;
+  /** npm @dodok/runner latest(원격 업데이트 스펙 U2) */
+  latest: LatestRunnerVersion;
+  /** 원격 업데이트 진행(U9) — Gateway 라우트와 같은 것 */
+  remoteUpdates: RemoteUpdates;
 };
 
 const RunnerParams = z.object({ id: Id });
@@ -172,6 +186,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     async (request): Promise<{ runners: RunnerSummary[] }> => {
       const user = sessionUser(request);
       const projectCounts = activeProjectCounts(ctx.db, ctx.workspaceId);
+      const latestVersion = await ctx.latest.get();
       return {
         runners: listRunnerTokens(ctx.db, ctx.workspaceId, new Set())
           .filter((token) => canReadConnection(user, token.ownerUserId))
@@ -190,9 +205,62 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
                 ? RunnerCapability.options.filter((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
                 : [],
               projectCount: projectCounts.get(token.id) ?? 0,
+              latestVersion,
+              remoteUpdate: hello
+                ? runnerSupport((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
+                : null,
+              update: ctx.remoteUpdates.runnerView(token.id, hello),
             };
           }),
       };
+    },
+  );
+
+  /**
+   * 원격 업데이트(원격 업데이트 스펙 U3·U7·U9) — 그 러너의 주인·admin 이상. 붙어 있고(503), 능력이 있고 켜져 있고(409), npm latest 를 알고
+   * (503 「최신을 알 수 없음」), 지금보다 높을 때만. 진행 중이면 409(Review Focus 4). 러너의 곧바른 거절(런 중·꺼짐 등)은 409 와 그 사유,
+   * 받아들여지면 202 — 다시 붙으면 끝, 상한 3분
+   */
+  fastify.post(
+    "/api/v1/runners/:id/update",
+    { preHandler: session },
+    async (request, reply): Promise<RemoteUpdateStarted> => {
+      const { id } = parseParams(RunnerParams, request.params);
+      const row = manageRunner(request, id);
+      if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
+      const hello = liveRunner(ctx.runners, id);
+      const support = runnerSupport((c) => ctx.runners?.hasCapability(id, c) ?? false);
+      if (support === "unsupported")
+        throw apiError(
+          "CONFLICT",
+          "이 러너 판은 원격 업데이트를 지원하지 않습니다 — 그 머신에서 npm i -g @dodok/runner@latest",
+          { reason: "unsupported" },
+        );
+      if (support === "off")
+        throw apiError("CONFLICT", "이 머신에서 원격 업데이트를 껐습니다", { reason: "disabled" });
+      const latest = await ctx.latest.get();
+      if (latest === null)
+        throw apiError("ADAPTER_UNAVAILABLE", "최신 판을 알 수 없습니다 — npm 레지스트리에 닿지 않습니다");
+      if (!(compareVersions(latest, hello.runnerVersion) > 0))
+        throw apiError("CONFLICT", "이미 최신 판입니다", { reason: "invalid_version" });
+      const key = runnerUpdateKey(id);
+      const { view, startedAt } = ctx.remoteUpdates.begin(key, {
+        targetVersion: latest,
+        deadlineMs: RUNNER_UPDATE_DEADLINE_MS,
+      });
+      ctx.logger.info(
+        { userId: sessionUser(request).id, runnerId: id, from: hello.runnerVersion, to: latest },
+        "runner remote update requested",
+      );
+      await sendUpdate({
+        updates: ctx.remoteUpdates,
+        key,
+        startedAt,
+        send: () => askRunner(ctx.runners, (api) => api.runnerUpdate(id, latest)),
+        onLate: connectionsChanged,
+      });
+      connectionsChanged();
+      return reply.status(202).send({ update: view });
     },
   );
 
