@@ -174,8 +174,14 @@ describe("loadRunnerConfig", () => {
     });
   });
 
-  it("roots 가 비면 거절한다", () => {
-    expect(errorOf(() => load({ ...baseConfig, roots: [] })).message).toContain("roots");
+  it("roots 가 비어도 받는다 — 봇만 쓰는 러너(러너 봇 스펙 B1)", () => {
+    expect(load({ ...baseConfig, roots: [] }).config.roots).toEqual([]);
+  });
+
+  it("botsDir — 없으면 ~/.dodok-runner/bots, 적으면 ~ 를 푼다, 빈 문자열은 거절", () => {
+    expect(load(baseConfig).config.botsDir).toBe("/home/u/.dodok-runner/bots");
+    expect(load({ ...baseConfig, botsDir: "~/my-bots" }).config.botsDir).toBe("/home/u/my-bots");
+    expect(errorOf(() => load({ ...baseConfig, botsDir: "" })).message).toContain("botsDir");
   });
 
   it("tokenFile 이 있으면 그 파일에서 읽고 끝 줄바꿈을 걷는다", () => {

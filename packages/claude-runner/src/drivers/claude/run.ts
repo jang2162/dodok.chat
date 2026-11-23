@@ -5,11 +5,13 @@ import {
   type DeliverCommand,
   formatCommandText,
   renderRunnerPrompt,
+  RUNNER_BOT_SOUL_HEADER,
   RUNNER_PROGRAM_NAME,
   type ErrorCode,
   type RunnerPermissionMode,
   type RunnerRunFinal,
 } from "@dodok/shared";
+import { rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONTROL_TOOL_FULL_NAMES, createControlTools } from "../../control-tools";
@@ -293,6 +295,21 @@ export type RunContext = {
 };
 
 /**
+ * `<봇 폴더>/SOUL.md` = 머리 줄 + 서버 정의. 새 파일(`wx` — 이미 있는 것·링크를 따라가지 않는다)에 쓰고 rename 으로 바꾼다 —
+ * SOUL.md 가 링크여도 링크 자체가 바뀌고 링크가 가리키는 곳에는 쓰지 않는다
+ */
+export async function writeSoul(dir: string, soul: string, runId: string): Promise<void> {
+  const tmp = join(dir, `.SOUL.md.${runId}.tmp`);
+  try {
+    await writeFile(tmp, `${RUNNER_BOT_SOUL_HEADER}\n\n${soul}`, { flag: "wx", mode: 0o600 });
+    await rename(tmp, join(dir, "SOUL.md"));
+  } catch (error) {
+    await rm(tmp, { force: true });
+    throw error;
+  }
+}
+
+/**
  * 런 하나 = query() 하나 = CLI 프로세스 하나, 프롬프트도 하나(ADR 0007 6의 1). 턴 사실은 훅 문맥에만 있으므로
  * 훅 문맥이 요청에서 빠지는 두 경우(앞 턴 처리 중 보낸 프롬프트·interrupt 직후 프롬프트 — 4.5)를 만들지 않도록
  * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.sink 로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
@@ -309,6 +326,15 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   if (command !== undefined) {
     const verdict = checkCommand("claude", command.name, command.args);
     if (!verdict.ok) return void ctx.sink.error("VALIDATION", verdict.message);
+  }
+  // 봇 런 — 봇 폴더(workdir)의 SOUL.md 를 서버 정의로 다시 쓴다(러너 봇 스펙 B4). 못 써도 런은 돈다(지시는 서버가 이미 넣었다)
+  const bot = start.agent.bot;
+  if (bot !== undefined) {
+    try {
+      await writeSoul(spec.workdir, bot.soul, runId);
+    } catch (error) {
+      ctx.log?.(`dodok-runner: 런 ${runId} SOUL.md 를 쓰지 못했습니다 — ${String(error)}`);
+    }
   }
   let resume = false;
   let lookup = "";

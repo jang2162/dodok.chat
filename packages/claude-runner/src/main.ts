@@ -147,7 +147,7 @@ async function main(): Promise<void> {
   // 루트는 라벨만 찍는다 — 로그를 남에게 보여 줄 수 있다
   logger.info(
     `dodok-runner ${RUNNER_VERSION} · Claude Agent SDK ${SDK_VERSION} · 내장 Claude Code ${CLAUDE_CODE_VERSION} · ` +
-      `루트 ${config.roots.map((r) => `${r.id}(${r.label})`).join(", ")} · ` +
+      `루트 ${config.roots.map((r) => `${r.id}(${r.label})`).join(", ") || "없음"} · ` +
       `프로그램 ${Object.keys(config.programs).join(", ") || "없음"} · 동시 ${config.maxConcurrentRuns}`,
   );
 
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
         sdk: realSdk,
         claudeCodeVersion: CLAUDE_CODE_VERSION,
         logger,
-        // 모델 목록을 받는 query 의 cwd — 첫 루트(작성기 칩 스펙 C10). 루트는 설정이 하나 이상을 강제한다
+        // 모델 목록을 받는 query 의 cwd — 첫 루트(작성기 칩 스펙 C10). 봇만 쓰는 러너는 루트가 없다 — 그때는 cwd 없이 묻는다
         ...(config.roots[0] ? { modelsCwd: config.roots[0].path } : {}),
       }),
     ],

@@ -167,6 +167,7 @@ function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?
       serverUrl: server.url,
       maxConcurrentRuns: 3,
       roots: [{ id: "src", path: realpathSync(workdir), label: "my-repo" }],
+      botsDir: join(realpathSync(workdir), ".bots-unused"),
       browse: true,
       programs: {
         claude: {
@@ -247,6 +248,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       "attachments",
       "worktrees",
       "commands",
+      "bots",
     ]);
     const info = server.adapter.runnerInfo(TOKEN_ID);
     expect(info).toMatchObject({ roots: [{ id: "src", label: "my-repo" }], browse: true });

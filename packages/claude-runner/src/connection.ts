@@ -24,7 +24,7 @@ import {
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
 import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
-import { checkCeiling, resolveProject } from "./ceiling";
+import { checkCeiling, resolveBot, resolveProject } from "./ceiling";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "./config";
 import { capabilityList, type ProgramDriver, type RunSpec } from "./driver";
 import { checkProject, listDirectory } from "./fs-browse";
@@ -46,6 +46,7 @@ const CAPABILITIES: RunnerCapability[] = [
   "attachments",
   "worktrees",
   "commands",
+  "bots",
 ];
 /** commands.list 를 끊는 시간 — 서버 ack 상한(RUNNER_COMMANDS_LIST_TIMEOUT_MS 30초)보다 앞서 failed 로 답한다 */
 export const COMMANDS_LIST_TIMEOUT_MS = 25_000;
@@ -471,9 +472,18 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
 
   // 둘러보기·프로젝트 확인 — 형식이 틀린 요청은 없는 자리로 답한다(서버가 같은 스키마로 거른 뒤 보낸다)
   async function listCommands(req: RunnerCommandsList): Promise<RunnerCommandsListResult> {
-    const project = resolveProject(config.roots, req.project);
-    if (!project.ok)
-      return { ok: false, reason: project.reason === "root_missing" ? "root_missing" : "not_found" };
+    let workdir: string;
+    if ("bot" in req) {
+      // 봇 폴더(러너 봇 스펙 B13) — 런과 같은 자리 판정
+      const bot = resolveBot(config.botsDir, req.bot.id);
+      if (!bot.ok) return { ok: false, reason: "not_found" };
+      workdir = bot.path;
+    } else {
+      const project = resolveProject(config.roots, req.project);
+      if (!project.ok)
+        return { ok: false, reason: project.reason === "root_missing" ? "root_missing" : "not_found" };
+      workdir = project.path;
+    }
     const driver = drivers.get("claude");
     if (!driver?.listCommands || available.get("claude") !== true) return { ok: false, reason: "failed" };
     const configDir = config.programs.claude?.configDir;
@@ -482,7 +492,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     try {
       const commands = await Promise.race([
         driver.listCommands({
-          workdir: project.path,
+          workdir,
           ...(configDir === undefined ? {} : { configDir }),
           signal: abort.signal,
         }),

@@ -1,9 +1,11 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -11,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunnerRunStart, type RunnerProgram, type RunnerRunAgent } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkCeiling } from "../src/ceiling";
+import { checkCeiling, resolveBot } from "../src/ceiling";
 import { loadRunnerConfig, type ResolvedRunnerConfig } from "../src/config";
 import { runStart } from "./helpers/fixtures";
 
@@ -36,6 +38,7 @@ afterEach(() => rmSync(base, { recursive: true, force: true }));
 function cfg(over: Partial<NonNullable<ResolvedRunnerConfig["programs"]["claude"]>> = {}) {
   return {
     roots: [{ id: "src", path: root, label: "src" }],
+    botsDir: join(base, "bots"),
     programs: {
       claude: {
         configDir: "/c",
@@ -45,7 +48,7 @@ function cfg(over: Partial<NonNullable<ResolvedRunnerConfig["programs"]["claude"
         ...over,
       },
     },
-  } satisfies Pick<ResolvedRunnerConfig, "roots" | "programs">;
+  } satisfies Pick<ResolvedRunnerConfig, "roots" | "programs" | "botsDir">;
 }
 
 const agent = (over: Partial<RunnerRunAgent> = {}): RunnerRunAgent => ({
@@ -210,5 +213,87 @@ describe("checkCeiling", () => {
       ok: false,
       item: "root",
     });
+  });
+});
+
+describe("resolveBot — 봇 폴더(러너 봇 스펙 B1) [Review Focus 1]", () => {
+  const BOT = "r-0123456789";
+
+  it("없으면 botsDir·봇 폴더를 0700 으로 만들고 그 realpath 를 돌려준다", () => {
+    const botsDir = join(base, "nested", "bots");
+    expect(resolveBot(botsDir, BOT)).toEqual({ ok: true, path: join(botsDir, BOT) });
+    expect(statSync(join(botsDir, BOT)).mode & 0o777).toBe(0o700);
+    // 이미 있으면 그대로
+    expect(resolveBot(botsDir, BOT)).toEqual({ ok: true, path: join(botsDir, BOT) });
+  });
+
+  it.each([
+    "../x",
+    "r-0123456789/../..",
+    "r-../../etc",
+    "R-0123456789",
+    "r-ABCDEF0123",
+    "r-012345678",
+    "",
+    ".",
+    "..",
+  ])("id 가 r-hex10 이 아니면 거절하고 아무것도 만들지 않는다 — %j", (id) => {
+    const botsDir = join(base, "bots");
+    expect(resolveBot(botsDir, id)).toEqual({ ok: false });
+    expect(existsSync(botsDir)).toBe(false);
+  });
+
+  it("봇 폴더가 심볼릭 링크면 거절 — 봇 자리 밖을 가리켜도 거기서 돌지 않는다", () => {
+    const botsDir = join(base, "bots");
+    mkdirSync(botsDir);
+    symlinkSync(outside, join(botsDir, BOT));
+    expect(resolveBot(botsDir, BOT)).toEqual({ ok: false });
+    // 링크 안쪽(봇 자리 안을 가리켜도) 역시 거절
+    const inner = join(botsDir, "r-aaaaaaaaaa");
+    mkdirSync(inner);
+    symlinkSync(inner, join(botsDir, "r-bbbbbbbbbb"));
+    expect(resolveBot(botsDir, "r-bbbbbbbbbb")).toEqual({ ok: false });
+    expect(lstatSync(join(botsDir, BOT)).isSymbolicLink()).toBe(true);
+  });
+
+  it("봇 자리에 파일이 있으면 거절", () => {
+    const botsDir = join(base, "bots");
+    mkdirSync(botsDir);
+    writeFileSync(join(botsDir, BOT), "x");
+    expect(resolveBot(botsDir, BOT)).toEqual({ ok: false });
+  });
+
+  it("botsDir 자체가 링크면 링크를 푼 자리 아래에 둔다", () => {
+    const real = join(base, "real-bots");
+    mkdirSync(real);
+    symlinkSync(real, join(base, "bots"));
+    expect(resolveBot(join(base, "bots"), BOT)).toEqual({ ok: true, path: join(real, BOT) });
+  });
+});
+
+describe("checkCeiling — 봇 런", () => {
+  const { project: _, ...noProject } = agent();
+  const bot = (id = "r-0123456789"): RunnerRunAgent => ({ ...noProject, bot: { id, soul: "# 봇\n" } });
+
+  it("루트가 없어도(roots: []) 봇 런은 통과 — 작업 디렉터리는 봇 폴더", () => {
+    expect(checkCeiling({ ...cfg(), roots: [] }, bot(), always)).toEqual({
+      ok: true,
+      workdir: join(base, "bots", "r-0123456789"),
+    });
+  });
+
+  it("봇 자리가 링크·잘못된 id 면 천장 항목 bot", () => {
+    mkdirSync(join(base, "bots"));
+    symlinkSync(outside, join(base, "bots", "r-0123456789"));
+    expect(checkCeiling(cfg(), bot(), always)).toEqual({ ok: false, item: "bot" });
+    expect(checkCeiling(cfg(), bot("../escape"), always)).toEqual({ ok: false, item: "bot" });
+  });
+
+  it("봇 런도 프로그램·권한 상한은 그대로 본다", () => {
+    expect(checkCeiling(cfg({ maxPermissionMode: "plan" }), bot(), always)).toEqual({
+      ok: false,
+      item: "permissionMode",
+    });
+    expect(checkCeiling(cfg(), bot(), () => false)).toEqual({ ok: false, item: "program" });
   });
 });
