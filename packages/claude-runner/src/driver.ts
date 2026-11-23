@@ -1,5 +1,6 @@
 import type {
   AgentCommand,
+  AppMcpCeiling,
   RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
@@ -28,6 +29,8 @@ export type RunSpec = {
   allowedTools: string[] | null;
   /** 설정의 disallowedTools 와 에이전트의 것을 합친 것 — 드라이버가 늘 막는 도구는 드라이버가 더한다 */
   disallowedTools: string[];
+  /** 앱 MCP 천장(러너 로컬 appMcp·appMcpCommands·allowedToolsCeiling — 러너 봇 2부 스펙 T2). 없으면 앱 MCP 를 모두 막는다 */
+  appMcp?: AppMcpCeiling;
 };
 
 export type ProgramDetection = Pick<

@@ -2,11 +2,17 @@ import {
   CONTROL_CALL_TIMEOUT_MS,
   CONTROL_RESULT_UNKNOWN_MESSAGE,
   CONTROL_TOOLS,
+  RUNNER_CONTROL_TOOLS,
   type RunnerControlCall,
 } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { createRunBridge } from "../src/connection";
-import { CONTROL_TOOL_FULL_NAMES, type ControlCallOutcome, createControlTools } from "../src/control-tools";
+import {
+  CONTROL_TOOL_FULL_NAMES,
+  type ControlCallOutcome,
+  createControlTools,
+  RUNNER_CONTROL_TOOL_FULL_NAMES,
+} from "../src/control-tools";
 import { createDodokMcpServer } from "../src/post-tool";
 import {
   buildQueryOptions,
@@ -196,5 +202,35 @@ describe("createRunBridge.control — 끊김·시간 초과는 「결과를 모�
     const f = fakeSocket(async () => ({ ok: "yes" }));
     const bridge = createRunBridge({ socket: f.socket, live: () => true, http, decisions: new Map() });
     expect(await bridge.control(controlCall)).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  });
+});
+
+describe("러너 제어 도구(러너 봇 2부 스펙 T7) — runnerControl 일 때만, 같은 control.call 길", () => {
+  it("runnerControl 이면 CONTROL_TOOLS 뒤에 RUNNER_CONTROL_TOOLS, 아니면 CONTROL_TOOLS 만", () => {
+    const off = createControlTools({ runId: RUN_ID, call: async () => ({ ok: true, data: null }) });
+    expect(off.map((t) => t.name)).toEqual(CONTROL_TOOLS.map((t) => t.name));
+    const on = createControlTools({
+      runId: RUN_ID,
+      call: async () => ({ ok: true, data: null }),
+      runnerControl: true,
+    });
+    expect(on.map((t) => t.name)).toEqual([...CONTROL_TOOLS, ...RUNNER_CONTROL_TOOLS].map((t) => t.name));
+    expect(RUNNER_CONTROL_TOOL_FULL_NAMES).toEqual(RUNNER_CONTROL_TOOLS.map((t) => `mcp__dodok__${t.name}`));
+  });
+
+  it("러너 제어 도구도 control.call 로 서버에 묻고 ack 를 결과로 — 대상 러너 id 를 싣지 않는다", async () => {
+    const calls: RunnerControlCall[] = [];
+    const tools = createControlTools({
+      runId: RUN_ID,
+      call: async (c) => {
+        calls.push(c);
+        return { ok: true, data: { message: "예약됨" } };
+      },
+      newId: () => "call-9",
+      runnerControl: true,
+    });
+    const update = tools.find((t) => t.name === "request_runner_update")!;
+    expect(await call(update, {})).toEqual({ content: [{ type: "text", text: '{"message":"예약됨"}' }] });
+    expect(calls).toEqual([{ callId: "call-9", runId: RUN_ID, tool: "request_runner_update", args: {} }]);
   });
 });

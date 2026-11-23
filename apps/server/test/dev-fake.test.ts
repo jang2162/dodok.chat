@@ -208,6 +208,9 @@ describe("fakeAgentScript", () => {
     const caps = (key: string) => DEV_FAKE_RUNNERS.find((r) => r.key === key)?.hello.capabilities ?? [];
     expect(caps("main")).toContain("bots");
     expect(caps("limited")).not.toContain("bots");
+    // 봇 도구(러너 봇 2부 스펙 T5·T7) — 주 러너는 둘 다, 제한 러너는 없다
+    expect(caps("main")).toEqual(expect.arrayContaining(["botMcp", "runnerControl"]));
+    expect(caps("limited")).not.toContain("botMcp");
   });
 
   const owner: Author = { type: "user", handle: "owner" };
@@ -2740,9 +2743,16 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
       expect.objectContaining({
         program: "claude",
         available: true,
-        ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: ["Read", "Grep", "Glob"] },
+        ceiling: {
+          maxPermissionMode: "plan",
+          allowedToolsCeiling: ["Read", "Grep", "Glob"],
+          appMcp: "off",
+          appMcpCommands: null,
+        },
       }),
     ]);
+    // 봇 도구 천장(러너 봇 2부 스펙 T3) — 러너 상세 응답에 hello 의 appMcp 가 그대로
+    expect(main?.programs[0]?.ceiling).toMatchObject({ appMcp: "http", appMcpCommands: null });
   });
 
   it("main fake runner advertises worktrees, limited does not [워크트리 스펙 5.2]", async () => {

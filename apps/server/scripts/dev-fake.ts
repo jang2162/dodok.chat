@@ -357,7 +357,17 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       // 명령(에이전트 명령 C8) — 제한 러너는 옛 러너처럼 모른다(`@에이전트 /…` 가 「업데이트하세요」 줄)
       // 봇(러너 봇 스펙 B7) — 제한 러너는 옛 러너처럼 모른다(「봇」 선택지가 「러너를 업데이트하세요(봇은 0.9.0 부터)」로 잠긴다)
       // 원격 업데이트(원격 업데이트 스펙 U8) — 제한 러너는 그 머신에서 끈 흉내(remoteUpdateOff)
-      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands", "bots", "remoteUpdate"],
+      // 봇 도구(러너 봇 2부 스펙 T5·T7) — dev-fake 는 appMcp "http"(stdio 서버는 「이 러너는 stdio 서버를 받지 않음」), 제한 러너는
+      // 능력도 천장도 "off"(봇이 없어 MCP 표시는 「앱 MCP 꺼짐」을 세 번째 Gateway 없이는 보지 않는다)
+      capabilities: [
+        ...fakeRunnerHello().capabilities,
+        "worktrees",
+        "commands",
+        "bots",
+        "botMcp",
+        "runnerControl",
+        "remoteUpdate",
+      ],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장
@@ -368,6 +378,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
           login: "default",
           cli: "installed",
           models: DEV_FAKE_MODELS,
+          ceiling: { ...FAKE_CLAUDE_PROGRAM.ceiling, appMcp: "http", appMcpCommands: null },
         },
         DEV_FAKE_CODEX_MISSING,
       ],
@@ -391,7 +402,12 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
           ...FAKE_CLAUDE_PROGRAM,
           login: "dedicated",
           cli: "bundled",
-          ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: ["Read", "Grep", "Glob"] },
+          ceiling: {
+            maxPermissionMode: "plan",
+            allowedToolsCeiling: ["Read", "Grep", "Glob"],
+            appMcp: "off",
+            appMcpCommands: null,
+          },
         },
       ],
     },

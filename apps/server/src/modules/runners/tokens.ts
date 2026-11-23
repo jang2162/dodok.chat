@@ -70,6 +70,8 @@ export function issueRunnerToken(
     createdAt: now,
     lastUsedAt: null,
     revokedAt: null,
+    updateQueuedAt: null,
+    updateQueuedBy: null,
   };
   db.insert(runnerTokens).values(row).run();
   return { token, record: toRecord(row, false) };

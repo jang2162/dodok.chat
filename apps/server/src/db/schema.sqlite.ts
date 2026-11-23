@@ -677,6 +677,12 @@ export const runnerTokens = sqliteTable(
     createdAt: ts("created_at").notNull(),
     lastUsedAt: ts("last_used_at"),
     revokedAt: ts("revoked_at"),
+    /**
+     * 「업데이트 대기」(러너 봇 2부 스펙 T16) — 봇의 request_runner_update 가 둔 시각·시킨 사람. 그 러너의 열린 런이 모두 끝나면(러너가
+     * 붙어 있을 때) 서버가 웹 「업데이트」와 같은 요청을 보내고 비운다. 서버 재시작을 넘어 남는다
+     */
+    updateQueuedAt: ts("update_queued_at"),
+    updateQueuedBy: text("update_queued_by").references(() => users.id),
   },
   (t) => [
     uniqueIndex("runner_tokens_hash").on(t.hash),

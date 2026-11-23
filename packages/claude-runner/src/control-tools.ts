@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   CONTROL_TOOLS,
+  RUNNER_CONTROL_TOOLS,
   type ControlResult,
   type ControlUnknownResult,
   controlResultText,
@@ -14,6 +15,11 @@ import { defineSdkTool, type SdkMcpTool } from "./drivers/claude/sdk";
 /** 모델이 보는 이름 — allowedTools 에 늘 싣는다. 쓰기는 서버가 확인 카드를 띄우므로 러너 승인 카드까지 뜨면 두 번 묻는다 */
 export const CONTROL_TOOL_FULL_NAMES: readonly string[] = CONTROL_TOOLS.map((t) => `mcp__dodok__${t.name}`);
 
+/** 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T7) — runnerControl 을 켠 봇의 런에만 싣고 allowedTools 에 더한다 */
+export const RUNNER_CONTROL_TOOL_FULL_NAMES: readonly string[] = RUNNER_CONTROL_TOOLS.map(
+  (t) => `mcp__dodok__${t.name}`,
+);
+
 /** 서버에 닿지 못했거나(ControlResult 의 ADAPTER_UNAVAILABLE) 답을 못 받은(unknown) 것까지 담는다 */
 export type ControlCallOutcome = ControlResult | ControlUnknownResult;
 
@@ -24,8 +30,11 @@ export function createControlTools(deps: {
   runId: string;
   call: (call: RunnerControlCall) => Promise<ControlCallOutcome>;
   newId?: () => string;
+  /** 참이면 러너 제어 도구도 — 봇 정의의 builtinTools 에 runnerControl 이 있는 런만(T7). 서버도 그 봇인지 다시 본다 */
+  runnerControl?: boolean;
 }): SdkMcpTool[] {
-  return CONTROL_TOOLS.map((tool) =>
+  const tools = deps.runnerControl ? [...CONTROL_TOOLS, ...RUNNER_CONTROL_TOOLS] : CONTROL_TOOLS;
+  return tools.map((tool) =>
     // SDK MCP 층은 모양(shape)만 본다 — refine·strict 는 서버의 입력 검사(VALIDATION)가 본다
     defineSdkTool(tool.name, tool.description, tool.input.shape, async (args): Promise<ToolResult> => {
       const outcome = await deps.call({

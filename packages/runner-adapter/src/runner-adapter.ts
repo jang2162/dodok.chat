@@ -25,6 +25,7 @@ import {
   permissionModeRank,
   type RunEventBody,
   type RunEventType,
+  RUNNER_BOT_MCP_UPDATE_MESSAGE,
   RUNNER_BOTS_UPDATE_MESSAGE,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
@@ -55,6 +56,7 @@ import {
   RunnerRunAck,
   type RunnerPermissionMode,
   type RunnerRunAgent,
+  type RunnerRunBot,
   RunnerRunError,
   RunnerRunEvent,
   RunnerRunFinal,
@@ -314,6 +316,25 @@ function clip(text: string, max: number): string {
 function fitFinalText(text: string): string {
   if (text.length <= FINAL_TEXT_MAX) return text;
   return clip(text, FINAL_TEXT_MAX - FINAL_TRUNCATED_TAIL.length) + FINAL_TRUNCATED_TAIL;
+}
+
+/**
+ * 그 러너의 능력에 맞춘 봇 런 자리(러너 봇 2부 스펙 T5·T7) — MCP 가 있는 봇인데 botMcp 가 없는 러너면 run_error(VALIDATION, 「러너를
+ * 업데이트하세요」), MCP 가 없으면 옛 러너에도 그대로 간다. runnerControl 이 없는 러너에는 내장 도구를 빼고 보낸다(대화는 되게)
+ */
+function botForRunner(bot: RunnerRunBot, runner: { capabilities: readonly string[] }): RunnerRunBot {
+  const { mcpServers, mcpAutoAllow, builtinTools, ...rest } = bot;
+  const hasMcp = mcpServers !== undefined && Object.keys(mcpServers).length > 0;
+  if (hasMcp && !runner.capabilities.includes("botMcp"))
+    throw new AdapterError("VALIDATION", RUNNER_BOT_MCP_UPDATE_MESSAGE);
+  return {
+    ...rest,
+    ...(hasMcp ? { mcpServers } : {}),
+    ...(hasMcp && mcpAutoAllow !== undefined ? { mcpAutoAllow } : {}),
+    ...(builtinTools !== undefined && builtinTools.length > 0 && runner.capabilities.includes("runnerControl")
+      ? { builtinTools }
+      : {}),
+  };
 }
 
 function issues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
@@ -1209,9 +1230,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       // 옛 러너는 project 를 요구한다 — 봇 런을 보내면 형식 오류로 버린다(러너 봇 스펙 B7)
       if (definition.agent.bot !== undefined && !runner.capabilities.includes("bots"))
         throw new AdapterError("VALIDATION", RUNNER_BOTS_UPDATE_MESSAGE);
+      const bot = definition.agent.bot === undefined ? undefined : botForRunner(definition.agent.bot, runner);
       const ceiling = runner.programs.find((p) => p.program === definition.agent.program)?.ceiling;
       const agent = {
         ...definition.agent,
+        ...(bot === undefined ? {} : { bot }),
         permissionMode: resolvePermissionMode(definition.agent.permissionMode, ceiling?.maxPermissionMode),
       };
       const serverSessionIds = capabilitiesFor(input.agentId, runner.tokenId).serverSessionIds;

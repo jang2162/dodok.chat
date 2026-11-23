@@ -2,8 +2,11 @@ import {
   Agent,
   AvatarUrl,
   type DmAccess,
+  maskMcpSecrets,
+  mergeMcpSecrets,
   RUNNER_AGENT_FIELDS,
   RunnerBotDefinition,
+  stableJson,
   type RunnerProgram,
   RunnerRunAgent,
   SessionDefaults,
@@ -194,7 +197,8 @@ function toApiAgent(
           runnerAgent: {
             projectId: row.runnerProjectId,
             disallowedTools: row.disallowedToolsJson,
-            ...(row.runnerBot === null ? {} : { bot: row.runnerBot }),
+            // MCP 헤더·env 값은 쓰기 전용(러너 봇 2부 스펙 T4) — 응답에는 키 이름과 가림 글자만
+            ...(row.runnerBot === null ? {} : { bot: maskedBot(row.runnerBot) }),
           },
         }
       : {}),
@@ -394,12 +398,69 @@ const RunnerAgentFields = z.object({
 /** 봇인가(러너 봇 스펙 B11) — runner_bot 이 있으면. runner_project_id null 만으로는 「옛 것」이다 */
 export const isBotRow = (row: Pick<AgentRow, "runnerBot">): boolean => row.runnerBot !== null;
 
+/**
+ * 저장할 봇 정의(러너 봇 2부 스펙 T1·T7·T15) — 빈 MCP·자동 허용·내장 도구는 키째 뺀다(옛 정의와 같은 글이 되게). 자동 허용은 있는
+ * 서버만, 「없음」은 뺀다. 내장 도구는 겹침을 걷는다
+ */
+export function normalizeBot(def: RunnerBotDefinition): RunnerBotDefinition {
+  const { purpose, watches, does, reports } = def;
+  const servers = def.mcpServers ?? {};
+  const names = new Set(Object.keys(servers));
+  const autoAllow = Object.fromEntries(
+    Object.entries(def.mcpAutoAllow ?? {}).filter(([name, a]) => names.has(name) && a.mode !== "none"),
+  );
+  const builtinTools = [...new Set(def.builtinTools ?? [])];
+  return {
+    purpose,
+    watches,
+    does,
+    reports,
+    ...(names.size === 0 ? {} : { mcpServers: servers }),
+    ...(Object.keys(autoAllow).length === 0 ? {} : { mcpAutoAllow: autoAllow }),
+    ...(builtinTools.length === 0 ? {} : { builtinTools }),
+  };
+}
+
+/** REST 응답의 봇 정의 — 헤더·env 값은 MCP_SECRET_MASK(T4) */
+function maskedBot(stored: RunnerBotDefinition): RunnerBotDefinition {
+  const def = normalizeBot(stored);
+  return def.mcpServers === undefined ? def : { ...def, mcpServers: maskMcpSecrets(def.mcpServers) };
+}
+
+/**
+ * 받은 봇 정의를 저장할 꼴로(T4·T11) — 빠진 MCP·자동 허용·내장 도구는 저장된 것 그대로(옛 클라이언트의 네 칸 저장), 가림 글자 자리는
+ * 저장된 값으로 채운다. 저장 값이 없는 가림 글자는 VALIDATION(가림 글자를 값으로 저장하지 않는다)
+ */
+function botToStore(incoming: RunnerBotDefinition, stored: RunnerBotDefinition | null): RunnerBotDefinition {
+  const mcpServers = incoming.mcpServers ?? stored?.mcpServers;
+  let servers = mcpServers;
+  if (incoming.mcpServers !== undefined) {
+    const merged = mergeMcpSecrets(incoming.mcpServers, stored?.mcpServers);
+    if (!merged.ok)
+      throw apiError(
+        "VALIDATION",
+        merged.reason === "moved"
+          ? `MCP 서버 ${merged.server} — 주소나 명령을 바꾸면 비밀값을 다시 적으세요(${merged.key})`
+          : `MCP 서버 ${merged.server} 의 ${merged.key} 값을 다시 적으세요`,
+        { field: "bot" },
+      );
+    servers = merged.servers;
+  }
+  return normalizeBot({
+    ...incoming,
+    ...(servers === undefined ? {} : { mcpServers: servers }),
+    ...(incoming.mcpAutoAllow === undefined && stored?.mcpAutoAllow !== undefined
+      ? { mcpAutoAllow: stored.mcpAutoAllow }
+      : {}),
+    ...(incoming.builtinTools === undefined && stored?.builtinTools !== undefined
+      ? { builtinTools: stored.builtinTools }
+      : {}),
+  });
+}
+
+/** 네 칸·MCP·자동 허용·내장 도구가 값으로 같은가 — 키 순서와 상관없이(리비전은 실제로 바뀔 때만 — B10·T11) */
 const sameBot = (a: RunnerBotDefinition | null, b: RunnerBotDefinition): boolean =>
-  a !== null &&
-  a.purpose === b.purpose &&
-  a.watches === b.watches &&
-  a.does === b.does &&
-  a.reports === b.reports;
+  a !== null && stableJson(normalizeBot(a)) === stableJson(normalizeBot(b));
 
 function invalidRunnerField(error: { issues: Array<{ path: PropertyKey[] }> }) {
   const field = String(error.issues[0]?.path[0] ?? "agent");
@@ -491,7 +552,7 @@ function createRunnerBot(
         program: input.program,
         runnerTokenId: input.runnerTokenId,
         runnerProjectId: null,
-        runnerBot: fields.data.bot,
+        runnerBot: botToStore(fields.data.bot, null),
         disallowedToolsJson: fields.data.disallowedTools,
       })
       .returning()
@@ -581,9 +642,11 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
       if (bot !== undefined) {
         if (!isBotRow(current))
           throw apiError("VALIDATION", "only bots have a bot definition", { field: "bot" });
-        // 정의가 실제로 바뀔 때만 — 그 봇의 세션이 새 정의로 새로 열린다(B10)
-        if (!sameBot(current.runnerBot, bot)) {
-          set.runnerBot = bot;
+        // 정의가 실제로 바뀔 때만 — 그 봇의 세션이 새 정의로 새로 열린다(B10). MCP·자동 허용·내장 도구도 같다 — 도구 목록은
+        // 세션 중에 바뀌지 않는다(T11)
+        const next = botToStore(bot, current.runnerBot);
+        if (!sameBot(current.runnerBot, next)) {
+          set.runnerBot = next;
           set.instructionsRevision = (set.instructionsRevision ?? current.instructionsRevision) + 1;
         }
       }

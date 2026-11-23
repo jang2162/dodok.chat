@@ -34,6 +34,11 @@ export const RunnerSummary = z.object({
   remoteUpdate: RemoteUpdateSupport.nullable().optional(),
   /** 서버가 쥔 업데이트 진행(U9). 없으면 null */
   update: RemoteUpdateProgress.nullable().optional(),
+  /**
+   * 「업데이트 대기 — 런이 끝나면 올립니다」(러너 봇 2부 스펙 T16) — 봇의 request_runner_update 가 둔 것. 그 러너의 열린 런이 모두 끝나면
+   * 서버가 웹 「업데이트」와 같은 요청을 보낸다. 없으면 null
+   */
+  updateQueued: z.object({ requestedAt: IsoDateTime }).nullable().optional(),
 });
 export type RunnerSummary = z.infer<typeof RunnerSummary>;
 

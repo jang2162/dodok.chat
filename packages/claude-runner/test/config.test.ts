@@ -75,6 +75,19 @@ describe("loadRunnerConfig", () => {
     });
   });
 
+  it("appMcp — 기본 http, off·all 을 받고 다른 값은 거절, appMcpCommands 는 basename 만(러너 봇 2부 스펙 T2)", () => {
+    expect(load(baseConfig).config.appMcp).toBe("http");
+    expect(load(baseConfig).config.appMcpCommands).toBeUndefined();
+    expect(load({ ...baseConfig, appMcp: "off" }).config.appMcp).toBe("off");
+    const all = load({ ...baseConfig, appMcp: "all", appMcpCommands: ["npx", "uvx"] }).config;
+    expect([all.appMcp, all.appMcpCommands]).toEqual(["all", ["npx", "uvx"]]);
+    expect(errorOf(() => load({ ...baseConfig, appMcp: "stdio" })).message).toContain("appMcp");
+    expect(errorOf(() => load({ ...baseConfig, appMcp: true })).message).toContain("appMcp");
+    expect(errorOf(() => load({ ...baseConfig, appMcpCommands: ["/usr/bin/npx"] })).message).toContain(
+      "appMcpCommands",
+    );
+  });
+
   it("remoteUpdate: false 로 원격 업데이트를 끈다 — 불리언이 아니면 거절", () => {
     expect(load({ ...baseConfig, remoteUpdate: false }).config.remoteUpdate).toBe(false);
     expect(errorOf(() => load({ ...baseConfig, remoteUpdate: "no" })).message).toContain("remoteUpdate");

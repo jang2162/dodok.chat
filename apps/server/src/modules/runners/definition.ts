@@ -8,7 +8,7 @@ import { renderBotSoul } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../db/client";
 import { agents, runnerProjects } from "../../db/schema.sqlite";
-import { providerAgentIdIs } from "../agents/service";
+import { normalizeBot, providerAgentIdIs } from "../agents/service";
 import { getEffectiveSettings, sessionDefaultsOf } from "../conversations/agent-settings";
 
 /**
@@ -44,7 +44,17 @@ export function runnerAgentDefinition(
   let place: Pick<RunnerAgentDefinition["agent"], "project" | "bot">;
   if (bot !== null) {
     // 봇 폴더 id 는 providerAgentId 그대로 — 서버가 짓는 `r-` + 소문자 hex 10(B1)
-    place = { bot: { id: row.agent.providerAgentId.toLowerCase(), soul: renderBotSoul(bot) } };
+    // MCP 는 원문 그대로 — 러너가 헤더·env 로 서버에 붙는다(T4·T5). 능력(botMcp·runnerControl)에 따른 거르기는 어댑터 send 가 한다
+    const def = normalizeBot(bot);
+    place = {
+      bot: {
+        id: row.agent.providerAgentId.toLowerCase(),
+        soul: renderBotSoul(def),
+        ...(def.mcpServers === undefined ? {} : { mcpServers: def.mcpServers }),
+        ...(def.mcpAutoAllow === undefined ? {} : { mcpAutoAllow: def.mcpAutoAllow }),
+        ...(def.builtinTools === undefined ? {} : { builtinTools: def.builtinTools }),
+      },
+    };
   } else {
     // 프로젝트도 그 토큰의 것이어야 한다(태스크 3 리뷰 D1). 프로젝트 없는 옛 에이전트는 정의가 없다
     if (row.project === null || row.project.runnerTokenId !== runnerTokenId) return null;
@@ -57,7 +67,12 @@ export function runnerAgentDefinition(
   return {
     name: row.agent.name,
     instructions: bot === null ? row.agent.basePrompt : null,
-    ...(bot === null ? {} : { botDefinition: bot }),
+    // 지시 틀에는 네 칸만 — MCP 값을 프롬프트 조립 자리로 가져가지 않는다
+    ...(bot === null
+      ? {}
+      : {
+          botDefinition: { purpose: bot.purpose, watches: bot.watches, does: bot.does, reports: bot.reports },
+        }),
     agent: {
       program: row.agent.program,
       ...place,

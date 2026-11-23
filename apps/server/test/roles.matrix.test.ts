@@ -421,6 +421,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 409,
       request: () => ({ method: "POST", url: `/api/v1/runners/${runnerA()}/update` }),
     },
+    // 업데이트 대기 취소(러너 봇 2부 스펙 T16) — 같은 정책. 대기가 없으면 판정을 지나 404
+    {
+      name: "DELETE /runners/:id/update-queue",
+      min: "admin",
+      ok: 404,
+      request: () => ({ method: "DELETE", url: `/api/v1/runners/${runnerA()}/update-queue` }),
+    },
     {
       name: "GET /runners/:id/projects",
       min: "admin",

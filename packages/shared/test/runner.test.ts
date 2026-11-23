@@ -117,6 +117,8 @@ describe("/runner 상수(P1)", () => {
       "worktrees",
       "commands",
       "bots",
+      "botMcp",
+      "runnerControl",
       "remoteUpdate",
       "remoteUpdateOff",
     ]);

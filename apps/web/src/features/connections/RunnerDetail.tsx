@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
 import { type RefObject, useMemo, useRef, useState } from "react";
 import { useAgents } from "@/api/queries";
+import { useCancelRunnerUpdateQueue } from "@/features/agents/mutations";
 import { RunnerAgentForm } from "@/features/agents/RunnerAgentForm";
 import { AddProjectDialog } from "@/features/runners/AddProjectDialog";
 import { ProjectList } from "@/features/runners/ProjectList";
@@ -76,6 +77,7 @@ function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefi
       {runner.revoked && <p className="text-sm text-muted-foreground">토큰이 폐기된 러너입니다.</p>}
       {live && <RunnerFacts runner={runner} />}
       {live && <RunnerUpdate runner={runner} />}
+      <UpdateQueued runner={runner} />
       <Section title={`프로젝트 ${runner.projectCount}`} bare>
         <div>
           <AddProjectDialog runner={runner} triggerRef={addButton} />
@@ -86,6 +88,28 @@ function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefi
       <UnboundAgents runnerId={runner.id} />
       <OwnerSections runner={runner} heading={heading} />
     </article>
+  );
+}
+
+/** 「업데이트 대기」 문구(러너 봇 2부 스펙 T16) */
+export const UPDATE_QUEUED_TEXT = "업데이트 대기 — 런이 끝나면 올립니다";
+
+/**
+ * 봇이 request_runner_update 로 둔 대기(T16) — 그 러너의 런이 모두 끝나면 서버가 「업데이트」와 같은 요청을 보낸다. 「취소」로 지운다.
+ * 웹 「업데이트」 단추는 대기와 상관없이 지금처럼 바로 보낸다(바쁘면 러너가 거절)
+ */
+function UpdateQueued({ runner }: { runner: RunnerSummary }) {
+  const cancel = useCancelRunnerUpdateQueue(runner.id);
+  if (!runner.updateQueued) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="update-queued">
+      <p role="status" className="text-sm text-muted-foreground">
+        {UPDATE_QUEUED_TEXT}
+      </p>
+      <Button variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+        취소
+      </Button>
+    </div>
   );
 }
 

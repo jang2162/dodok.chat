@@ -88,10 +88,14 @@ import type { PushTransports } from "./modules/push/transports/types";
 import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
-import { registerRunnerAdminRoutes } from "./modules/runners/projects.routes";
+import {
+  registerRunnerAdminRoutes,
+  type RunnerOpsContext,
+  startRunnerUpdate,
+} from "./modules/runners/projects.routes";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
 import { createLatestRunnerVersion, type LatestRunnerVersion } from "./modules/runners/latest";
-import { createRemoteUpdates } from "./modules/connections/remote-updates";
+import { createRemoteUpdates, createRunnerUpdateQueue } from "./modules/connections/remote-updates";
 import { runnerAgentDefinition } from "./modules/runners/definition";
 import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
@@ -721,6 +725,25 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 부팅 때 한 번 미리 — 첫 러너 목록부터 「최신」이 있게(리뷰 L2). 실패는 null 로 쥔다
     void latestRunner.get();
     const remoteUpdates = createRemoteUpdates({ now: deps.remoteUpdateClock ?? Date.now });
+    // 「업데이트 대기」(러너 봇 2부 스펙 T16) — 런이 끝나거나 러너가 다시 붙을 때 판정해 웹 「업데이트」와 같은 요청을 보낸다
+    const updateQueue = createRunnerUpdateQueue({
+      db,
+      workspaceId,
+      logger,
+      connected: (tokenId) => runnerAdapter?.runnerInfo(tokenId) != null,
+      start: (tokenId, userId) => startRunnerUpdate(runnerOps, tokenId, userId),
+      onChanged: () => bus.emit("connections.changed", {}),
+    });
+    const runnerOps: RunnerOpsContext = {
+      db,
+      logger,
+      workspaceId,
+      bus,
+      runners: runnerAdapter ?? null,
+      latest: latestRunner,
+      remoteUpdates,
+      updateQueue,
+    };
     const runnerDetail = () => {
       const detail = registry.forProvider("runner")?.setupDetail();
       return detail?.provider === "runner" ? detail.runners : [];
@@ -747,9 +770,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       bus.emit("connections.changed", {});
     };
     const offSetup = registry.onEvent((event) => {
-      if (event.kind === "setup") emitSetupStatus();
+      if (event.kind !== "setup") return;
+      emitSetupStatus();
+      // 러너가 붙거나 끊겼다 — 대기가 있는 러너를 판정한다(끊긴 사이 런이 끝났으면 다시 붙을 때 나간다)
+      updateQueue.onRunnersChanged();
     });
     undo.push({ step: "setup-events", run: () => offSetup() });
+    undo.push({ step: "update-queue", run: () => updateQueue.close() });
     const offPromptResync = watchPluginHellos({ db, bus, logger, registry });
     undo.push({ step: "prompt-resync", run: () => offPromptResync() });
     const serverUrl = runnerServerUrl(publicUrl);
@@ -825,6 +852,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       now: limitClock,
       latest: latestRunner,
       remoteUpdates,
+      updateQueue,
     });
     // 자동화(자동화 스펙): 예약 틱·웹훅·「지금 실행」이 같은 게시(라우터로 멘션 런)와 같은 워크스페이스 시간대를 쓴다
     const automationPost: PostDeps = {
@@ -891,6 +919,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       channels: routeContext,
       agents: routeContext,
       opsStatus: () => buildOpsStatus(opsStatusContext),
+      // 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T8) — 러너 REST 와 같은 함수·같은 대기열
+      runner: runnerOps,
       ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
     });
     services.bindControl(control);
@@ -1064,6 +1094,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("run-failures", () => runFailures.close());
       await step("disk", () => disk.close());
       await step("setup-events", () => offSetup());
+      // 업데이트 대기의 미룬 판정 — DB 를 닫기 전에 거둔다
+      await step("update-queue", () => updateQueue.close());
       await step("prompt-resync", () => offPromptResync());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       // 진행 중인 틱이 게시·사건 기록을 끝낸 뒤 ops·orchestrator 를 닫는다

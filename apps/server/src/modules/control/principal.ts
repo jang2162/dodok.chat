@@ -15,6 +15,8 @@ export type Principal = {
   runId?: string;
   /** via agent — OpenClaw 플러그인(브리지) 경로. 확인 카드 기한이 더 짧다(CONTROL_CONFIRM_TTL_BRIDGE_MS) */
   bridge?: true;
+  /** via agent — 러너 경로의 러너 토큰. 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T8)의 대상 러너이고, 이것이 있을 때만 그 도구를 받는다 */
+  runnerTokenId?: string;
 };
 
 /**
@@ -36,7 +38,8 @@ function principalForOpenRun(
 
 /** Claude 러너 — runId 는 그 러너 토큰이 맡은 열린 런이어야 한다 */
 export function principalForRunner(db: DbOrTx, runnerTokenId: string, runId: string): Principal | undefined {
-  return principalForOpenRun(db, runnerTokenId, runId);
+  const principal = principalForOpenRun(db, runnerTokenId, runId);
+  return principal && { ...principal, runnerTokenId };
 }
 
 /**

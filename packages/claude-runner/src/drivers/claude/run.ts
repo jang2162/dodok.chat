@@ -1,5 +1,8 @@
 import {
+  appMcpVerdict,
   checkCommand,
+  isPrivateAddress,
+  isStdioServer,
   CLAUDE_BUILTIN_ALLOWED,
   COMMAND_BLOCKED_MESSAGE,
   type DeliverCommand,
@@ -14,7 +17,11 @@ import {
 import { rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CONTROL_TOOL_FULL_NAMES, createControlTools } from "../../control-tools";
+import {
+  CONTROL_TOOL_FULL_NAMES,
+  createControlTools,
+  RUNNER_CONTROL_TOOL_FULL_NAMES,
+} from "../../control-tools";
 import type { RunSpec } from "../../driver";
 import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../images";
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
@@ -131,6 +138,88 @@ const isSafeTool = (toolName: string): boolean =>
   SAFE_TOOLS.has(toolName) || toolName.startsWith("mcp__dodok__");
 
 /**
+ * 봇 MCP 의 자동 허용 이름(러너 봇 2부 스펙 T15)에 드는가 — `mcp__<서버>`(서버 전부)는 그 서버의 도구 모두, `mcp__<서버>__<도구>` 는 그
+ * 이름만. allowedTools 와 같은 뜻이다(PreToolUse 훅의 ask 가 allowedTools 를 덮지 않게)
+ */
+export function isAutoAllowedTool(toolName: string, autoAllowed: readonly string[]): boolean {
+  // 서버 전부(`mcp__a`)는 `mcp__a__<도구>` 만 — 도구 이름 첫 글자가 `_` 면(`mcp__a___x`) 서버 `a_` 의 도구일 수 있어 넣지 않는다
+  return autoAllowed.some((name) =>
+    name.split("__").length === 2
+      ? toolName.startsWith(`${name}__`) && !toolName.startsWith(`${name}___`)
+      : toolName === name,
+  );
+}
+
+/**
+ * 주소 판정을 WHATWG 호스트로 한 번 더(T17) — shared isPrivateAddress 는 주소 글자를 읽고, CLI 는 WHATWG(fetch)로 연결한다. 스키마가
+ * authority 의 `\`·ASCII 밖 글자를 거절하지만, 둘이 같은 호스트를 보는지 여기서 Node 의 URL 로 다시 본다. 못 읽으면 막는다
+ */
+function privateByWhatwg(url: string): boolean {
+  try {
+    return isPrivateAddress(`http://${new URL(url).hostname}/`);
+  } catch {
+    return true;
+  }
+}
+
+/** SDK mcpServers 에 넣을 봇 MCP 서버 — 받은 꼴(shared McpServerConfig) 그대로의 필드만 */
+type SdkExternalMcpServer =
+  | { type: "http" | "sse"; url: string; headers?: Record<string, string> }
+  | { type: "stdio"; command: string; args?: string[]; env?: Record<string, string> };
+
+export type BotMcp = { servers: Record<string, SdkExternalMcpServer>; allowedTools: string[] };
+
+/**
+ * 봇 런의 앱 MCP(러너 봇 2부 스펙 T3·T6·T12) — 서버가 판정했어도 러너가 이 머신의 천장(spec.appMcp)으로 다시 판정해 통과한 서버만
+ * 붙인다(서버를 믿지 않는다 — Review Focus 1). 막힌 서버는 로그 한 줄(이름·사유만 — 헤더·env 값은 싣지 않는다). 프로젝트 에이전트
+ * 런에는 외부 MCP 가 없다(T12). 천장이 없으면 모두 막는다
+ */
+export function assembleBotMcp(spec: RunSpec, log?: (line: string) => void): BotMcp {
+  const bot = spec.start.agent.bot;
+  const out: BotMcp = { servers: {}, allowedTools: [] };
+  if (bot?.mcpServers === undefined) return out;
+  const ceiling = spec.appMcp ?? { appMcp: "off", appMcpCommands: null, allowedToolsCeiling: null };
+  const runId = spec.start.deliver.runId;
+  for (const [name, server] of Object.entries(bot.mcpServers)) {
+    const verdict = appMcpVerdict(ceiling, name, server, bot.mcpAutoAllow?.[name]);
+    if (!verdict.ok) {
+      log?.(
+        `dodok-runner: 런 ${runId} bot mcp blocked ${name} ${verdict.reason}${verdict.detail === undefined ? "" : `(${verdict.detail})`}`,
+      );
+      continue;
+    }
+    if (!isStdioServer(server) && ceiling.appMcp === "http" && privateByWhatwg(server.url)) {
+      log?.(`dodok-runner: 런 ${runId} bot mcp blocked ${name} privateAddress`);
+      continue;
+    }
+    if (verdict.outsideCeiling.length > 0)
+      log?.(
+        `dodok-runner: 런 ${runId} bot mcp ${name} auto-allow outside ceiling(${verdict.outsideCeiling.join(", ")})`,
+      );
+    out.servers[name] = isStdioServer(server)
+      ? {
+          type: "stdio",
+          command: server.command,
+          ...(server.args === undefined ? {} : { args: server.args }),
+          ...(server.env === undefined ? {} : { env: server.env }),
+        }
+      : {
+          type: server.type,
+          url: server.url,
+          ...(server.headers === undefined ? {} : { headers: server.headers }),
+        };
+    out.allowedTools.push(...verdict.allowedTools);
+  }
+  const attached = Object.keys(out.servers);
+  if (attached.length > 0) log?.(`dodok-runner: 런 ${runId} bot mcp ${attached.join(", ")}`);
+  return out;
+}
+
+/** 「이 러너 설정 제어」(T7) — 봇 정의의 내장 도구에 runnerControl 이 있는 봇 런만 */
+export const hasRunnerControl = (spec: RunSpec): boolean =>
+  spec.start.agent.bot?.builtinTools?.includes("runnerControl") === true;
+
+/**
  * 명령·스킬 파일의 frontmatter `allowed-tools` 가 권한 모드를 뚫지 않게(에이전트 명령 C15) PreToolUse 훅이 내릴 판정. 실측(보고서):
  * `ask` 는 CLI 가 원래 묻지 않던 도구도 canUseTool(승인 카드)로 보내고, plan·dontAsk 에서는 거절되던 도구를 카드로 연다. 그래서
  * default → 안전 도구 밖이면 ask, acceptEdits → 안전·편집 도구 밖이면 ask, dontAsk → 안전 도구 밖이면 deny(묻지 않고 거절 — 모드
@@ -139,8 +228,9 @@ const isSafeTool = (toolName: string): boolean =>
 export function preToolDecision(
   toolName: string,
   permissionMode: RunnerPermissionMode | string | undefined,
+  autoAllowed: readonly string[] = [],
 ): "ask" | "deny" | null {
-  if (isSafeTool(toolName)) return null;
+  if (isSafeTool(toolName) || isAutoAllowedTool(toolName, autoAllowed)) return null;
   switch (permissionMode) {
     case "default":
       return "ask";
@@ -180,8 +270,12 @@ export function buildQueryOptions(
     plugins?: CommandWrapperPlugin[];
     /** 그 런에서 「항상 허용」한 것 — PreToolUse 훅이 끼어들지 않는다(canUseTool 이 카드 없이 허용한다) */
     alwaysAllowed?: AlwaysAllowed;
+    /** 봇 런의 앱 MCP(assembleBotMcp) — 러너가 다시 판정해 통과한 것만 */
+    botMcp?: BotMcp;
   },
 ): SdkOptions {
+  const botMcp = deps.botMcp ?? { servers: {}, allowedTools: [] };
+  const runnerControl = hasRunnerControl(spec);
   const env = cliEnv(deps.baseEnv, spec.configDir);
   const { start } = spec;
   return {
@@ -194,7 +288,14 @@ export function buildQueryOptions(
     // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2). 제어 도구의 쓰기는
     // 서버의 확인 카드가 묻는다(CONTROL_TOOL_FULL_NAMES)
     allowedTools: [
-      ...new Set([...(spec.allowedTools ?? []), POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]),
+      ...new Set([
+        ...(spec.allowedTools ?? []),
+        POST_TOOL_FULL_NAME,
+        ...CONTROL_TOOL_FULL_NAMES,
+        ...(runnerControl ? RUNNER_CONTROL_TOOL_FULL_NAMES : []),
+        // 앱에서 「묻지 않음」으로 고른 봇 MCP 도구(T15) — 나머지는 권한 모드·승인 카드를 지난다
+        ...botMcp.allowedTools,
+      ]),
     ],
     disallowedTools: [...new Set([...RUNNER_DISALLOWED_TOOLS, ...spec.disallowedTools])],
     // sessionId 와 resume 은 함께 못 쓴다. title 을 주면 새 세션 제목을 짓는 보조 모델 호출이 없어진다(ADR 0007 4.8)
@@ -225,7 +326,9 @@ export function buildQueryOptions(
                 permission_mode?: string;
               };
               const decision =
-                toolName === undefined ? null : preToolDecision(toolName, mode ?? spec.permissionMode);
+                toolName === undefined
+                  ? null
+                  : preToolDecision(toolName, mode ?? spec.permissionMode, botMcp.allowedTools);
               if (decision === null) return {};
               // 사람이 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다 — `ask` 는 CLI 세션 규칙을 덮어 카드가 다시 뜬다
               if (
@@ -260,7 +363,8 @@ export function buildQueryOptions(
       ],
     },
     // alwaysLoad 는 서버 설정이 아니라 도구마다 _meta 로 실린다 — sdk.ts createMcpServer 가 붙인다
-    mcpServers: { dodok: deps.mcpServer as SdkMcpServer },
+    // 봇 MCP 는 dodok 과 나란히(T6) — 이름 dodok 은 계약이 거절해 여기 오지 않는다. dodok 을 뒤에 두어 덮이지 않게 한다
+    mcpServers: { ...botMcp.servers, dodok: deps.mcpServer as SdkMcpServer },
     // strictMcpConfig 이 없으면 로그인한 계정의 claude.ai 커넥터가 MCP 로 붙는다(5.6).
     // settingSources [] — 사람 저장소의 .claude/settings.json·CLAUDE.md 를 끌어오지 않는다(6의 2)
     strictMcpConfig: true,
@@ -365,12 +469,13 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   }
   const plugins = wrappers?.plugins ?? [];
   const alwaysAllowed: AlwaysAllowed = new Set();
+  const botMcp = assembleBotMcp(spec, ctx.log);
   try {
-    const outcome = await attempt(spec, ctx, resume, images, plugins, alwaysAllowed);
+    const outcome = await attempt(spec, ctx, resume, images, plugins, alwaysAllowed, botMcp);
     if (outcome !== "session-in-use") return;
     if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
     ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
-    await attempt(spec, ctx, true, images, plugins, alwaysAllowed);
+    await attempt(spec, ctx, true, images, plugins, alwaysAllowed, botMcp);
   } finally {
     await wrappers?.dispose().catch(() => {});
   }
@@ -414,6 +519,7 @@ async function attempt(
   images: { blocks: SdkImageBlock[]; failed: number },
   plugins: CommandWrapperPlugin[],
   alwaysAllowed: AlwaysAllowed,
+  botMcp: BotMcp,
 ): Promise<"done" | "session-in-use"> {
   const { start } = spec;
   const sessionId = start.providerSessionId;
@@ -490,6 +596,7 @@ async function attempt(
           tools: createControlTools({
             runId: start.deliver.runId,
             call: (call) => ctx.sink.control(call),
+            runnerControl: hasRunnerControl(spec),
           }),
         }),
         canUseTool: createCanUseTool({
@@ -505,6 +612,7 @@ async function attempt(
         resume,
         plugins,
         alwaysAllowed,
+        botMcp,
       }),
     });
     queryAssigned();

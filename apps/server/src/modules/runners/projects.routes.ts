@@ -18,6 +18,7 @@ import {
   type RunnerProjectCheck,
   type RunnerSummary,
   RUNNER_UPDATE_DEADLINE_MS,
+  type RemoteUpdateProgress,
   type RemoteUpdateStarted,
 } from "@dodok/shared";
 import type { RunnerLive } from "@dodok/runner-adapter";
@@ -37,6 +38,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { canReadConnection, isOwner } from "../connections/owner";
 import {
   type RemoteUpdates,
+  type RunnerUpdateQueue,
   runnerSupport,
   runnerUpdateKey,
   sendUpdate,
@@ -80,7 +82,249 @@ export type RunnerAdminRouteContext = {
   latest: LatestRunnerVersion;
   /** 원격 업데이트 진행(U9) — Gateway 라우트와 같은 것 */
   remoteUpdates: RemoteUpdates;
+  /** 「업데이트 대기」(러너 봇 2부 스펙 T16) — 봇의 request_runner_update 가 둔 것 */
+  updateQueue: RunnerUpdateQueue;
 };
+
+/**
+ * 러너 REST 의 「검사 + 저장 + 알림」 — 라우트와 「이 러너 설정 제어」 도구(control/handlers.ts)가 같은 함수를 부른다(러너 봇 2부 스펙
+ * T9). 역할 검사는 부르는 쪽이 먼저 한다
+ */
+export type RunnerOpsContext = Pick<
+  RunnerAdminRouteContext,
+  "db" | "logger" | "workspaceId" | "bus" | "runners" | "latest" | "remoteUpdates" | "updateQueue"
+>;
+
+const liveOf = (ctx: Pick<RunnerOpsContext, "runners">, tokenId: string): RunnerLive | null =>
+  ctx.runners?.runnerInfo(tokenId) ?? null;
+
+/** 트리의 프로젝트 줄이 바뀌었다 — 열린 「연결」 탭이 GET /connections 를 다시 받게(연결 탭 통합 스펙 5.3) */
+const connectionsChangedOf = (ctx: Pick<RunnerOpsContext, "bus">) => () =>
+  ctx.bus.emit("connections.changed", {});
+
+/** 이 워크스페이스의 러너(토큰 행) — 없으면 404. 폐기한 러너도 돌려준다(목록·프로젝트 보기는 된다) */
+export function runnerRowOf(ctx: Pick<RunnerOpsContext, "db" | "workspaceId">, id: string) {
+  const row = ctx.db
+    .select({
+      id: runnerTokens.id,
+      revokedAt: runnerTokens.revokedAt,
+      ownerUserId: runnerTokens.ownerUserId,
+    })
+    .from(runnerTokens)
+    .where(and(eq(runnerTokens.id, id), eq(runnerTokens.workspaceId, ctx.workspaceId)))
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "runner not found");
+  return row;
+}
+
+/** 폐기한 러너에는 더하거나 옮기지 않는다 — 다시 붙을 수 없다 */
+function activeRunnerOf(ctx: Pick<RunnerOpsContext, "db" | "workspaceId">, id: string) {
+  const row = runnerRowOf(ctx, id);
+  if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
+  return row;
+}
+
+export function apiProjectOf(
+  ctx: Pick<RunnerOpsContext, "db" | "runners">,
+  row: RunnerProjectRow,
+): RunnerProject {
+  return toApiProject(row, liveOf(ctx, row.runnerTokenId), activeAgentCounts(ctx.db, [row.id]));
+}
+
+/** 그 러너의 프로젝트 — 보관한 것까지 */
+export function runnerProjectsOf(
+  ctx: Pick<RunnerOpsContext, "db" | "runners">,
+  tokenId: string,
+): RunnerProject[] {
+  const rows = listProjects(ctx.db, tokenId);
+  const counts = activeAgentCounts(
+    ctx.db,
+    rows.map((r) => r.id),
+  );
+  const hello = liveOf(ctx, tokenId);
+  return rows.map((row) => toApiProject(row, hello, counts));
+}
+
+/** GET /runners 의 러너 하나 */
+export function runnerSummaryOf(
+  ctx: Pick<RunnerOpsContext, "runners" | "remoteUpdates" | "updateQueue">,
+  token: { id: string; label: string; revokedAt: Date | string | null },
+  projectCount: number,
+  latestVersion: string | null | undefined,
+): RunnerSummary {
+  const hello = liveOf(ctx, token.id);
+  return {
+    id: token.id,
+    label: token.label,
+    connected: hello !== null,
+    revoked: token.revokedAt !== null,
+    runnerVersion: hello?.runnerVersion ?? null,
+    browse: hello?.browse ?? null,
+    roots: hello?.roots ?? [],
+    programs: hello?.programs ?? [],
+    capabilities: hello
+      ? RunnerCapability.options.filter((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
+      : [],
+    projectCount,
+    ...(latestVersion === undefined ? {} : { latestVersion }),
+    remoteUpdate: hello ? runnerSupport((c) => ctx.runners?.hasCapability(token.id, c) ?? false) : null,
+    update: ctx.remoteUpdates.runnerView(token.id, hello),
+    updateQueued: ctx.updateQueue.view(token.id),
+  };
+}
+
+/** 러너의 project.check — 쓸 수 없는 자리면 400 VALIDATION(details.reason 은 러너의 사유) */
+async function checkPlaceOf(
+  ctx: Pick<RunnerOpsContext, "runners">,
+  tokenId: string,
+  place: { rootId: string; relPath: string },
+) {
+  const check = await askRunner(ctx.runners, (api) => api.projectCheck(tokenId, place));
+  if (!check.ok)
+    throw apiError("VALIDATION", `project check failed: ${check.reason}`, {
+      field: "relPath",
+      reason: check.reason,
+    });
+  return check;
+}
+
+/** 프로젝트 더하기 — 러너에 project.check 를 먼저 묻는다(붙어 있지 않으면 503) */
+export async function addRunnerProject(
+  ctx: RunnerOpsContext,
+  tokenId: string,
+  body: CreateRunnerProjectBody,
+  userId: string,
+): Promise<RunnerProject> {
+  activeRunnerOf(ctx, tokenId);
+  const check = await checkPlaceOf(ctx, tokenId, body);
+  const rootLabel = liveOf(ctx, tokenId)?.roots.find((r) => r.id === body.rootId)?.label;
+  const row = createProject(ctx.db, {
+    workspaceId: ctx.workspaceId,
+    runnerTokenId: tokenId,
+    rootId: body.rootId,
+    relPath: body.relPath,
+    ...(body.label === undefined ? {} : { label: body.label }),
+    ...(rootLabel === undefined ? {} : { rootLabel }),
+    createdBy: userId,
+    isGit: check.isGitTop ?? false,
+  });
+  ctx.logger.info({ runnerId: tokenId, projectId: row.id, rootId: row.rootId }, "runner project added");
+  connectionsChangedOf(ctx)();
+  return apiProjectOf(ctx, row);
+}
+
+export function renameRunnerProject(ctx: RunnerOpsContext, id: string, label: string): RunnerProject {
+  const renamed = renameProject(ctx.db, { workspaceId: ctx.workspaceId, id, label });
+  connectionsChangedOf(ctx)();
+  return apiProjectOf(ctx, renamed);
+}
+
+/** 러너에 묻는 서비스 호출 — 어댑터 오류를 API 오류로(askRunner 와 같은 규칙) */
+const viaRunnerOf =
+  (ctx: Pick<RunnerOpsContext, "runners">) =>
+  <T>(fn: () => Promise<T>): Promise<T> =>
+    askRunner(ctx.runners, () => fn());
+
+export async function addRunnerWorktree(
+  ctx: RunnerOpsContext,
+  parent: RunnerProjectRow,
+  body: CreateWorktreeBody,
+  userId: string,
+): Promise<RunnerProject> {
+  activeRunnerOf(ctx, parent.runnerTokenId);
+  const row = await createWorktreeProject(
+    ctx.db,
+    ctx.runners,
+    {
+      workspaceId: ctx.workspaceId,
+      parentId: parent.id,
+      label: body.label,
+      ...(body.branch === undefined ? {} : { branch: body.branch }),
+      ...(body.location === undefined ? {} : { location: body.location }),
+      createdBy: userId,
+    },
+    viaRunnerOf(ctx),
+  );
+  ctx.logger.info({ projectId: row.id, parentId: parent.id, rootId: row.rootId }, "runner worktree created");
+  connectionsChangedOf(ctx)();
+  return apiProjectOf(ctx, row);
+}
+
+export async function archiveRunnerProjectAndNotify(
+  ctx: RunnerOpsContext,
+  id: string,
+  keepFolder: boolean,
+): Promise<RunnerProject> {
+  try {
+    const archived = await archiveRunnerProject(
+      ctx.db,
+      ctx.runners,
+      { workspaceId: ctx.workspaceId, id, ...(keepFolder ? { keepFolder: true } : {}) },
+      viaRunnerOf(ctx),
+    );
+    connectionsChangedOf(ctx)();
+    return apiProjectOf(ctx, archived);
+  } catch (err) {
+    // 정리 실패 사유가 그 줄에 남았다 — 열린 「연결」 탭이 다시 받게
+    connectionsChangedOf(ctx)();
+    throw err;
+  }
+}
+
+/**
+ * 원격 업데이트 시작(원격 업데이트 스펙 U3·U7·U9) — 웹 「업데이트」와 업데이트 대기(T16)가 같은 함수. 붙어 있고(503), 능력이 있고 켜져
+ * 있고(409), npm latest 를 알고(503), 지금보다 높을 때만. 진행 중이면 409. 러너의 곧바른 거절(런 중·꺼짐 등)은 409 와 그 사유
+ */
+export async function startRunnerUpdate(
+  ctx: RunnerOpsContext,
+  id: string,
+  userId: string | null,
+): Promise<RemoteUpdateProgress> {
+  const row = runnerRowOf(ctx, id);
+  if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
+  const target = await updateTarget(ctx, id);
+  const key = runnerUpdateKey(id);
+  const { view, startedAt } = ctx.remoteUpdates.begin(key, {
+    targetVersion: target.latest,
+    deadlineMs: RUNNER_UPDATE_DEADLINE_MS,
+  });
+  ctx.logger.info(
+    { userId, runnerId: id, from: target.from, to: target.latest },
+    "runner remote update requested",
+  );
+  await sendUpdate({
+    updates: ctx.remoteUpdates,
+    key,
+    startedAt,
+    send: () => askRunner(ctx.runners, (api) => api.runnerUpdate(id, target.latest)),
+    onLate: connectionsChangedOf(ctx),
+  });
+  connectionsChangedOf(ctx)();
+  return view;
+}
+
+/** 올릴 판 — 붙어 있고 지원하고 켜져 있고 latest 가 지금보다 높을 때만(아니면 그 사유의 오류) */
+export async function updateTarget(
+  ctx: Pick<RunnerOpsContext, "runners" | "latest">,
+  id: string,
+): Promise<{ from: string; latest: string }> {
+  const hello = liveRunner(ctx.runners, id);
+  const support = runnerSupport((c) => ctx.runners?.hasCapability(id, c) ?? false);
+  if (support === "unsupported")
+    throw apiError(
+      "CONFLICT",
+      "이 러너 판은 원격 업데이트를 지원하지 않습니다 — 그 머신에서 npm i -g @dodok/runner@latest",
+      { reason: "unsupported" },
+    );
+  if (support === "off")
+    throw apiError("CONFLICT", "이 머신에서 원격 업데이트를 껐습니다", { reason: "disabled" });
+  const latest = await ctx.latest.get();
+  if (latest === null)
+    throw apiError("ADAPTER_UNAVAILABLE", "최신 판을 알 수 없습니다 — npm 레지스트리에 닿지 않습니다");
+  if (!(compareVersions(latest, hello.runnerVersion) > 0))
+    throw apiError("CONFLICT", "이미 최신 판입니다", { reason: "invalid_version" });
+  return { from: hello.runnerVersion, latest };
+}
 
 const RunnerParams = z.object({ id: Id });
 const ProjectParams = z.object({ id: Id });
@@ -116,29 +360,10 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     throw apiError("RATE_LIMITED", "둘러보기 요청이 너무 많습니다");
   };
 
-  // 트리의 프로젝트 줄이 바뀌었다 — 열린 「연결」 탭이 GET /connections 를 다시 받게(연결 탭 통합 스펙 5.3)
-  const connectionsChanged = () => ctx.bus.emit("connections.changed", {});
-  const live = (tokenId: string): RunnerLive | null => ctx.runners?.runnerInfo(tokenId) ?? null;
-  /** 이 워크스페이스의 러너(토큰 행) — 없으면 404. 폐기한 러너도 돌려준다(목록·프로젝트 보기는 된다) */
-  const runnerRow = (id: string) => {
-    const row = ctx.db
-      .select({
-        id: runnerTokens.id,
-        revokedAt: runnerTokens.revokedAt,
-        ownerUserId: runnerTokens.ownerUserId,
-      })
-      .from(runnerTokens)
-      .where(and(eq(runnerTokens.id, id), eq(runnerTokens.workspaceId, ctx.workspaceId)))
-      .get();
-    if (!row) throw apiError("NOT_FOUND", "runner not found");
-    return row;
-  };
-  /** 폐기한 러너에는 더하거나 옮기지 않는다 — 다시 붙을 수 없다 */
-  const activeRunner = (id: string) => {
-    const row = runnerRow(id);
-    if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
-    return row;
-  };
+  const connectionsChanged = connectionsChangedOf(ctx);
+  const live = (tokenId: string): RunnerLive | null => liveOf(ctx, tokenId);
+  const runnerRow = (id: string) => runnerRowOf(ctx, id);
+  const activeRunner = (id: string) => activeRunnerOf(ctx, id);
   const projectOr404 = (id: string): RunnerProjectRow => {
     const row = getProject(ctx.db, ctx.workspaceId, id);
     if (!row) throw apiError("NOT_FOUND", "runner project not found");
@@ -164,20 +389,9 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
   const browseGuard = async (request: FastifyRequest): Promise<void> => {
     manageRunner(request, parseParams(RunnerParams, request.params).id);
   };
-  const apiProject = (row: RunnerProjectRow): RunnerProject =>
-    toApiProject(row, live(row.runnerTokenId), activeAgentCounts(ctx.db, [row.id]));
-  /** 러너의 project.check — 쓸 수 없는 자리면 400 VALIDATION(details.reason 은 러너의 사유) */
-  const checkPlace = async (tokenId: string, place: { rootId: string; relPath: string }) => {
-    const check = await askRunner(ctx.runners, (api) => api.projectCheck(tokenId, place));
-    if (!check.ok)
-      throw apiError("VALIDATION", `project check failed: ${check.reason}`, {
-        field: "relPath",
-        reason: check.reason,
-      });
-    return check;
-  };
-  /** 러너에 묻는 서비스 호출 — 어댑터 오류를 API 오류로(askRunner 와 같은 규칙) */
-  const viaRunner = <T>(fn: () => Promise<T>): Promise<T> => askRunner(ctx.runners, () => fn());
+  const apiProject = (row: RunnerProjectRow): RunnerProject => apiProjectOf(ctx, row);
+  const checkPlace = (tokenId: string, place: { rootId: string; relPath: string }) =>
+    checkPlaceOf(ctx, tokenId, place);
 
   /** member 는 자기 러너만(루트·프로그램은 그 머신의 사정이다), admin 이상은 모두 */
   fastify.get(
@@ -197,28 +411,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
       return {
         runners: listRunnerTokens(ctx.db, ctx.workspaceId, new Set())
           .filter((token) => canReadConnection(user, token.ownerUserId))
-          .map((token) => {
-            const hello = live(token.id);
-            return {
-              id: token.id,
-              label: token.label,
-              connected: hello !== null,
-              revoked: token.revokedAt !== null,
-              runnerVersion: hello?.runnerVersion ?? null,
-              browse: hello?.browse ?? null,
-              roots: hello?.roots ?? [],
-              programs: hello?.programs ?? [],
-              capabilities: hello
-                ? RunnerCapability.options.filter((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
-                : [],
-              projectCount: projectCounts.get(token.id) ?? 0,
-              ...(latestVersion === undefined ? {} : { latestVersion }),
-              remoteUpdate: hello
-                ? runnerSupport((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
-                : null,
-              update: ctx.remoteUpdates.runnerView(token.id, hello),
-            };
-          }),
+          .map((token) => runnerSummaryOf(ctx, token, projectCounts.get(token.id) ?? 0, latestVersion)),
       };
     },
   );
@@ -233,43 +426,20 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     { preHandler: session },
     async (request, reply): Promise<RemoteUpdateStarted> => {
       const { id } = parseParams(RunnerParams, request.params);
-      const row = manageRunner(request, id);
-      if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
-      const hello = liveRunner(ctx.runners, id);
-      const support = runnerSupport((c) => ctx.runners?.hasCapability(id, c) ?? false);
-      if (support === "unsupported")
-        throw apiError(
-          "CONFLICT",
-          "이 러너 판은 원격 업데이트를 지원하지 않습니다 — 그 머신에서 npm i -g @dodok/runner@latest",
-          { reason: "unsupported" },
-        );
-      if (support === "off")
-        throw apiError("CONFLICT", "이 머신에서 원격 업데이트를 껐습니다", { reason: "disabled" });
-      const latest = await ctx.latest.get();
-      if (latest === null)
-        throw apiError("ADAPTER_UNAVAILABLE", "최신 판을 알 수 없습니다 — npm 레지스트리에 닿지 않습니다");
-      if (!(compareVersions(latest, hello.runnerVersion) > 0))
-        throw apiError("CONFLICT", "이미 최신 판입니다", { reason: "invalid_version" });
-      const key = runnerUpdateKey(id);
-      const { view, startedAt } = ctx.remoteUpdates.begin(key, {
-        targetVersion: latest,
-        deadlineMs: RUNNER_UPDATE_DEADLINE_MS,
-      });
-      ctx.logger.info(
-        { userId: sessionUser(request).id, runnerId: id, from: hello.runnerVersion, to: latest },
-        "runner remote update requested",
-      );
-      await sendUpdate({
-        updates: ctx.remoteUpdates,
-        key,
-        startedAt,
-        send: () => askRunner(ctx.runners, (api) => api.runnerUpdate(id, latest)),
-        onLate: connectionsChanged,
-      });
-      connectionsChanged();
+      manageRunner(request, id);
+      const view = await startRunnerUpdate(ctx, id, sessionUser(request).id);
       return reply.status(202).send({ update: view });
     },
   );
+
+  /** 「업데이트 대기」 취소(러너 봇 2부 스펙 T16) — 그 러너의 주인·admin 이상. 대기가 없으면 404 */
+  fastify.delete("/api/v1/runners/:id/update-queue", { preHandler: session }, async (request, reply) => {
+    const { id } = parseParams(RunnerParams, request.params);
+    manageRunner(request, id);
+    if (!ctx.updateQueue.cancel(id)) throw apiError("NOT_FOUND", "no queued update");
+    ctx.logger.info({ userId: sessionUser(request).id, runnerId: id }, "queued runner update cancelled");
+    return reply.status(204).send();
+  });
 
   /**
    * 디렉터리 둘러보기 — 러너 fs.list 그대로. 운영 로그 한 줄은 누가·어느 러너·루트 id 만 남긴다 — relPath 는 머신의 디렉터리 구조라
@@ -310,31 +480,15 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     const { id } = parseParams(RunnerParams, request.params);
     manageRunner(request, id);
     const body = parseBody(CreateRunnerProjectBody, request.body);
-    activeRunner(id);
-    const check = await checkPlace(id, body);
-    const rootLabel = live(id)?.roots.find((r) => r.id === body.rootId)?.label;
-    const row = createProject(ctx.db, {
-      workspaceId: ctx.workspaceId,
-      runnerTokenId: id,
-      rootId: body.rootId,
-      relPath: body.relPath,
-      ...(body.label === undefined ? {} : { label: body.label }),
-      ...(rootLabel === undefined ? {} : { rootLabel }),
-      createdBy: sessionUser(request).id,
-      isGit: check.isGitTop ?? false,
-    });
-    ctx.logger.info({ runnerId: id, projectId: row.id, rootId: row.rootId }, "runner project added");
-    connectionsChanged();
-    return reply.code(201).send({ project: apiProject(row) });
+    const project = await addRunnerProject(ctx, id, body, sessionUser(request).id);
+    return reply.code(201).send({ project });
   });
 
   fastify.patch("/api/v1/runner-projects/:id", { preHandler: session }, async (request) => {
     const { id } = parseParams(ProjectParams, request.params);
     manageProject(request, id);
     const { label } = parseBody(RenameRunnerProjectBody, request.body);
-    const renamed = renameProject(ctx.db, { workspaceId: ctx.workspaceId, id, label });
-    connectionsChanged();
-    return { project: apiProject(renamed) };
+    return { project: renameRunnerProject(ctx, id, label) };
   });
 
   /**
@@ -345,23 +499,8 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     const { id } = parseParams(ProjectParams, request.params);
     const parent = manageProject(request, id);
     const body = parseBody(CreateWorktreeBody, request.body);
-    activeRunner(parent.runnerTokenId);
-    const row = await createWorktreeProject(
-      ctx.db,
-      ctx.runners,
-      {
-        workspaceId: ctx.workspaceId,
-        parentId: id,
-        label: body.label,
-        ...(body.branch === undefined ? {} : { branch: body.branch }),
-        ...(body.location === undefined ? {} : { location: body.location }),
-        createdBy: sessionUser(request).id,
-      },
-      viaRunner,
-    );
-    ctx.logger.info({ projectId: row.id, parentId: id, rootId: row.rootId }, "runner worktree created");
-    connectionsChanged();
-    return reply.code(201).send({ project: apiProject(row) });
+    const project = await addRunnerWorktree(ctx, parent, body, sessionUser(request).id);
+    return reply.code(201).send({ project });
   });
 
   /**
@@ -372,20 +511,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     const { id } = parseParams(ProjectParams, request.params);
     manageProject(request, id);
     const body = parseBody(ArchiveRunnerProjectBody, request.body ?? {});
-    try {
-      const archived = await archiveRunnerProject(
-        ctx.db,
-        ctx.runners,
-        { workspaceId: ctx.workspaceId, id, ...(body.keepFolder ? { keepFolder: true } : {}) },
-        viaRunner,
-      );
-      connectionsChanged();
-      return { project: apiProject(archived) };
-    } catch (err) {
-      // 정리 실패 사유가 그 줄에 남았다 — 열린 「연결」 탭이 다시 받게
-      connectionsChanged();
-      throw err;
-    }
+    return { project: await archiveRunnerProjectAndNotify(ctx, id, body.keepFolder === true) };
   });
 
   /** 확인 — 그 러너의 project.check 결과 그대로(쓸 수 없는 자리도 200 — ok:false 와 사유) */

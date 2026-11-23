@@ -387,6 +387,8 @@ export async function runSetupWizard(opts: SetupOptions): Promise<SetupResult> {
       roots,
       browse: prev?.browse ?? true,
       remoteUpdate: prev?.remoteUpdate ?? true,
+      appMcp: prev?.appMcp ?? "http",
+      ...(prev?.appMcpCommands === undefined ? {} : { appMcpCommands: prev.appMcpCommands }),
       programs: {
         ...prev?.programs,
         claude: {

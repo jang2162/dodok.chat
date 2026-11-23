@@ -2,7 +2,7 @@ import { Agent } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
-import { renderBotSoul } from "@dodok/shared";
+import { MCP_SECRET_MASK, renderBotSoul } from "@dodok/shared";
 import { agents, runnerTokens } from "../src/db/schema.sqlite";
 import {
   agentForRole,
@@ -307,6 +307,142 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B10·B11)", () => {
     expect(
       runnerAgentDefinition(db, workspaceId, agent.providerAgentId, insertRunnerToken(db, workspaceId)),
     ).toBeNull();
+  });
+
+  describe("봇 도구(러너 봇 2부 스펙 T1·T4·T7·T11·T15)", () => {
+    const GH = {
+      type: "http" as const,
+      url: "https://api.example.com/mcp",
+      headers: { Authorization: "Bearer RAW_GH" },
+    };
+    const LIN = { command: "npx", args: ["-y", "lin"], env: { LINEAR_TOKEN: "RAW_LIN" } };
+    const TOOLS = {
+      ...DEF,
+      mcpServers: { gh: GH, lin: LIN },
+      mcpAutoAllow: { gh: { mode: "tools" as const, tools: ["search"] } },
+      builtinTools: ["runnerControl" as const],
+    };
+    const stored = (db: ReturnType<typeof setup>["db"], id: string) =>
+      db.select({ bot: agents.runnerBot }).from(agents).where(eq(agents.id, id)).get()?.bot;
+
+    it("응답에는 키 이름과 가림 글자만 — DB 에는 원문, admin·주인 응답·member 응답 어디에도 원문이 없다 [Review Focus 2]", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      expect(agent.runnerAgent?.bot?.mcpServers).toEqual({
+        gh: { ...GH, headers: { Authorization: MCP_SECRET_MASK } },
+        lin: { ...LIN, env: { LINEAR_TOKEN: MCP_SECRET_MASK } },
+      });
+      expect(agent.runnerAgent?.bot?.mcpAutoAllow).toEqual(TOOLS.mcpAutoAllow);
+      expect(agent.runnerAgent?.bot?.builtinTools).toEqual(["runnerControl"]);
+      for (const shown of [
+        agent,
+        agentForRole(agent, "admin"),
+        agentForRole(agent, "member", true),
+        agentForRole(agent, "member"),
+      ])
+        expect(JSON.stringify(shown)).not.toMatch(/RAW_GH|RAW_LIN/);
+      expect(agentForRole(agent, "member").runnerAgent).toBeUndefined();
+      expect(JSON.stringify(listAgents(db, workspaceId))).not.toMatch(/RAW_GH|RAW_LIN/);
+      expect(stored(db, agent.id)?.mcpServers).toEqual({ gh: GH, lin: LIN });
+    });
+
+    it("받은 응답(가림 글자) 그대로 다시 저장하면 원문 유지·리비전 그대로, 헤더 값을 바꾸면 +1 [Review Focus 5]", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      const echoed = agent.runnerAgent!.bot!;
+      updateAgent(db, agent.id, { bot: echoed });
+      // 네 칸만 보낸 옛 클라이언트 저장 — MCP·자동 허용·내장 도구는 저장된 것 그대로
+      updateAgent(db, agent.id, { bot: { ...DEF } });
+      expect(stored(db, agent.id)).toEqual({ ...DEF, ...TOOLS });
+      expect(revision(db, agent.id)).toBe(0);
+      updateAgent(db, agent.id, {
+        bot: {
+          ...echoed,
+          mcpServers: { ...echoed.mcpServers, gh: { ...GH, headers: { Authorization: "Bearer NEW" } } },
+        },
+      });
+      expect(revision(db, agent.id)).toBe(1);
+      expect(stored(db, agent.id)?.mcpServers?.gh).toEqual({
+        ...GH,
+        headers: { Authorization: "Bearer NEW" },
+      });
+      expect(stored(db, agent.id)?.mcpServers?.lin).toEqual(LIN);
+    });
+
+    it("자동 허용·내장 도구·서버 이름만 바꿔도 +1, 서버 이름만 바꾼 편집은 원래 값을 지킨다", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      const echoed = agent.runnerAgent!.bot!;
+      updateAgent(db, agent.id, { bot: { ...echoed, mcpAutoAllow: { gh: { mode: "all" } } } });
+      expect(revision(db, agent.id)).toBe(1);
+      updateAgent(db, agent.id, { bot: { ...echoed, builtinTools: [] } });
+      expect(revision(db, agent.id)).toBe(2);
+      const { gh, lin } = echoed.mcpServers!;
+      updateAgent(db, agent.id, {
+        bot: { ...echoed, mcpServers: { github: gh!, lin: lin! }, mcpAutoAllow: {} },
+      });
+      expect(revision(db, agent.id)).toBe(3);
+      expect(stored(db, agent.id)?.mcpServers).toEqual({ github: GH, lin: LIN });
+    });
+
+    it("저장 값이 없는 가림 글자는 VALIDATION — 가림 글자를 값으로 저장하지 않는다", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      const e = errorOf(() =>
+        updateAgent(db, agent.id, {
+          bot: { ...DEF, mcpServers: { gh: { ...GH, headers: { Other: MCP_SECRET_MASK } } } },
+        }),
+      );
+      expect(e.body).toMatchObject({ code: "VALIDATION", details: { field: "bot" } });
+      expect(stored(db, agent.id)?.mcpServers?.gh).toEqual(GH);
+    });
+
+    it("같은 이름이라도 주소·명령을 바꾸고 가림 글자를 두면 VALIDATION — 비밀값이 새 곳으로 따라가지 않는다", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      const { gh, lin } = agent.runnerAgent!.bot!.mcpServers!;
+      for (const moved of [
+        { gh: { ...gh!, url: "https://attacker.example/x" }, lin: lin! },
+        { gh: gh!, lin: { ...lin!, command: "bash" } },
+      ]) {
+        const e = errorOf(() => updateAgent(db, agent.id, { bot: { ...DEF, mcpServers: moved } }));
+        expect(e.body).toMatchObject({ code: "VALIDATION", details: { field: "bot" } });
+        expect(String((e.body as { message?: unknown }).message)).toContain(
+          "주소나 명령을 바꾸면 비밀값을 다시 적으세요",
+        );
+      }
+      expect(stored(db, agent.id)?.mcpServers).toEqual({ gh: GH, lin: LIN });
+      expect(revision(db, agent.id)).toBe(0);
+    });
+
+    it("런 정의에는 원문 MCP(러너로는 원문이 가야 한다)·자동 허용·내장 도구, 지시 틀 자리에는 네 칸만", () => {
+      const { db, workspaceId } = setup();
+      const { agent, runnerTokenId } = createRunnerAgentForTest(db, {
+        workspaceId,
+        handle: "rev",
+        bot: TOOLS,
+      });
+      const def = runnerAgentDefinition(db, workspaceId, agent.providerAgentId, runnerTokenId);
+      expect(def?.agent.bot).toEqual({
+        id: agent.providerAgentId,
+        soul: renderBotSoul(DEF),
+        mcpServers: { gh: GH, lin: LIN },
+        mcpAutoAllow: TOOLS.mcpAutoAllow,
+        builtinTools: ["runnerControl"],
+      });
+      expect(def?.botDefinition).toEqual(DEF);
+    });
+
+    it("옛 봇(네 칸만 저장된 행)의 런 정의에는 MCP 키가 없다", () => {
+      const { db, workspaceId } = setup();
+      const { agent, runnerTokenId } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: DEF });
+      expect(runnerAgentDefinition(db, workspaceId, agent.providerAgentId, runnerTokenId)?.agent.bot).toEqual(
+        {
+          id: agent.providerAgentId,
+          soul: renderBotSoul(DEF),
+        },
+      );
+    });
   });
 
   it("봇은 되살린다 — 프로젝트 없는 옛 러너 에이전트는 그대로 거절 [Review Focus 2]", async () => {

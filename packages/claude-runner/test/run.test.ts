@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import {
+  type AppMcpCeiling,
   CONTROL_TOOLS,
+  RUNNER_CONTROL_TOOLS,
+  type RunnerRunBot,
   renderRunnerPrompt,
   RUNNER_BOT_SOUL_HEADER,
   type ErrorCode,
@@ -22,7 +25,10 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ABORT_CLOSE_MS,
+  assembleBotMcp,
   buildQueryOptions,
+  isAutoAllowedTool,
+  preToolDecision,
   ENV_ALLOWLIST,
   isSessionInUseText,
   runOnce,
@@ -30,7 +36,7 @@ import {
   type RunContext,
   writeSoul,
 } from "../src/drivers/claude/run";
-import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
+import { CONTROL_TOOL_FULL_NAMES, RUNNER_CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
 import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
 import { realSdk, type SdkContextUsage, type SdkMcpServer } from "../src/drivers/claude/sdk";
 import { toContextBreakdown } from "../src/drivers/claude/context-usage";
@@ -1437,3 +1443,168 @@ describe("봇 런 — SOUL.md(러너 봇 스펙 B4)", () => {
     }
   });
 });
+
+describe("봇 MCP — 러너가 다시 판정해 붙인다(러너 봇 2부 스펙 T3·T6·T7·T12·T15)", () => {
+  const SECRET = "Bearer ghp_TOPSECRET";
+  const ENV_SECRET = "lin_TOPSECRET";
+  const HTTP: AppMcpCeiling = { appMcp: "http", appMcpCommands: null, allowedToolsCeiling: null };
+  const BOT: RunnerRunBot = {
+    id: "r-0123456789",
+    soul: "# 봇\n",
+    mcpServers: {
+      gh: { type: "http", url: "https://api.example.com/mcp", headers: { Authorization: SECRET } },
+      linear: { command: "npx", args: ["-y", "linear-mcp"], env: { LINEAR_TOKEN: ENV_SECRET } },
+      local: { type: "http", url: "http://127.0.0.1:3000/mcp" },
+    },
+    mcpAutoAllow: { gh: { mode: "tools", tools: ["search"] }, linear: { mode: "all" } },
+    builtinTools: ["runnerControl"],
+  };
+  /** appMcp null 이면 천장 없는 spec. 런(runOnce)은 SOUL.md 를 쓰므로 임시 디렉터리를 쓴다 — 부른 쪽이 지운다 */
+  const botSpec = (bot: RunnerRunBot, appMcp: AppMcpCeiling | null = HTTP, opts: { tmp?: boolean } = {}) => {
+    const base = runSpec();
+    const { project: _, ...agent } = base.start.agent;
+    return {
+      ...base,
+      workdir: opts.tmp ? mkdtempSync(join(tmpdir(), "dodok-bot-")) : base.workdir,
+      start: { ...base.start, agent: { ...agent, bot } },
+      ...(appMcp === null ? {} : { appMcp }),
+    };
+  };
+
+  it("http 러너 — 서버가 stdio·사설 주소를 보내도 dodok + 허용된 것만, 자동 허용 이름이 allowedTools 에", async () => {
+    const lines: string[] = [];
+    const { fake, ctx } = harness(createFakeSdk(), { log: (l) => lines.push(l) });
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    const spec = botSpec(BOT, HTTP, { tmp: true });
+    try {
+      await runOnce(spec, ctx);
+    } finally {
+      rmSync(spec.workdir, { recursive: true, force: true });
+    }
+    const options = fake.calls[0]!.options;
+    expect(Object.keys(options.mcpServers ?? {}).sort()).toEqual(["dodok", "gh"]);
+    expect(options.mcpServers?.gh).toEqual(BOT.mcpServers!.gh);
+    expect(options.allowedTools).toContain("mcp__gh__search");
+    expect(options.allowedTools).not.toContain("mcp__linear");
+    // 로그 — 막힌 서버는 이름·사유만, 비밀값은 어디에도 없다
+    expect(lines).toContain(`dodok-runner: 런 ${RUN_ID_OF(spec)} bot mcp blocked linear stdioNotAllowed`);
+    expect(lines).toContain(`dodok-runner: 런 ${RUN_ID_OF(spec)} bot mcp blocked local privateAddress`);
+    expect(lines).toContain(`dodok-runner: 런 ${RUN_ID_OF(spec)} bot mcp gh`);
+    expect(lines.join("\n")).not.toMatch(/TOPSECRET/);
+  });
+
+  it("all + 명령 목록 — basename 이 든 stdio 만, env 의 DYLD_* 는 뺀다", () => {
+    const all: AppMcpCeiling = { appMcp: "all", appMcpCommands: ["npx"], allowedToolsCeiling: null };
+    const bot: RunnerRunBot = {
+      ...BOT,
+      mcpServers: {
+        a: { command: "/tmp/npx", args: ["x"] },
+        b: { command: "./npx" },
+        c: { command: "npx.sh" },
+        d: { command: "npx", env: { DYLD_INSERT_LIBRARIES: "/tmp/x.dylib" } },
+        e: { type: "stdio", command: "uvx" },
+      },
+      mcpAutoAllow: {},
+    };
+    const lines: string[] = [];
+    const out = assembleBotMcp(botSpec(bot, all), (l) => lines.push(l));
+    expect(Object.keys(out.servers).sort()).toEqual(["a", "b"]);
+    expect(out.servers.a).toEqual({ type: "stdio", command: "/tmp/npx", args: ["x"] });
+    expect(lines.filter((l) => l.includes("blocked"))).toEqual([
+      `dodok-runner: 런 ${RUN_ID} bot mcp blocked c commandNotAllowed(npx.sh)`,
+      `dodok-runner: 런 ${RUN_ID} bot mcp blocked d envKeyNotAllowed(DYLD_INSERT_LIBRARIES)`,
+      `dodok-runner: 런 ${RUN_ID} bot mcp blocked e commandNotAllowed(uvx)`,
+    ]);
+  });
+
+  it("off 러너·천장이 없는 spec 은 모두 막는다", () => {
+    const off: AppMcpCeiling = { appMcp: "off", appMcpCommands: null, allowedToolsCeiling: null };
+    expect(assembleBotMcp(botSpec(BOT, off)).servers).toEqual({});
+    expect(assembleBotMcp(botSpec(BOT, null)).servers).toEqual({});
+  });
+
+  it("러너 도구 상한 밖의 자동 허용만 「묻기」로 내리고 서버는 붙인다(T15)", () => {
+    const capped: AppMcpCeiling = { ...HTTP, allowedToolsCeiling: ["mcp__gh__other"] };
+    const lines: string[] = [];
+    const out = assembleBotMcp(botSpec(BOT, capped), (l) => lines.push(l));
+    expect(Object.keys(out.servers)).toEqual(["gh"]);
+    expect(out.allowedTools).toEqual([]);
+    expect(lines).toContain(
+      `dodok-runner: 런 ${RUN_ID} bot mcp gh auto-allow outside ceiling(mcp__gh__search)`,
+    );
+    // 「전부」도 상한에 mcp__gh 가 없으면 전부 허용만 막힌다
+    const all = assembleBotMcp(botSpec({ ...BOT, mcpAutoAllow: { gh: { mode: "all" } } }, capped));
+    expect(Object.keys(all.servers)).toEqual(["gh"]);
+    expect(all.allowedTools).toEqual([]);
+  });
+
+  it("주소는 WHATWG 호스트로도 다시 본다 — 스키마를 지나지 않은 \\·전각 주소도 http 러너는 막는다(T17)", () => {
+    const bot: RunnerRunBot = {
+      ...BOT,
+      mcpServers: {
+        a: { type: "http", url: "http://127.0.0.1\\@example.com/" },
+        b: { type: "http", url: "http://１２７.０.０.１/" },
+        c: { type: "http", url: "http://ⓛocalhost/" },
+        ok: { type: "http", url: "https://api.example.com/mcp" },
+      },
+      mcpAutoAllow: {},
+    };
+    const lines: string[] = [];
+    expect(Object.keys(assembleBotMcp(botSpec(bot), (l) => lines.push(l)).servers)).toEqual(["ok"]);
+    for (const name of ["a", "b", "c"])
+      expect(lines).toContain(`dodok-runner: 런 ${RUN_ID} bot mcp blocked ${name} privateAddress`);
+  });
+
+  it("runnerControl 켠 봇만 러너 제어 도구 — 이름이 dodok MCP 와 allowedTools 에", async () => {
+    const { fake, ctx } = harness();
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    const spec = botSpec(BOT, HTTP, { tmp: true });
+    try {
+      await runOnce(spec, ctx);
+    } finally {
+      rmSync(spec.workdir, { recursive: true, force: true });
+    }
+    expect(fake.servers[0]!.map((t) => t.name)).toEqual([
+      "post",
+      ...CONTROL_TOOLS.map((t) => t.name),
+      ...RUNNER_CONTROL_TOOLS.map((t) => t.name),
+    ]);
+    expect(fake.calls[0]!.options.allowedTools).toEqual(
+      expect.arrayContaining([...RUNNER_CONTROL_TOOL_FULL_NAMES]),
+    );
+
+    const plain = harness();
+    plain.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    const noControl = botSpec({ ...BOT, builtinTools: [] }, HTTP, { tmp: true });
+    try {
+      await runOnce(noControl, plain.ctx);
+    } finally {
+      rmSync(noControl.workdir, { recursive: true, force: true });
+    }
+    expect(plain.fake.servers[0]!.map((t) => t.name)).toEqual(["post", ...CONTROL_TOOLS.map((t) => t.name)]);
+    for (const name of RUNNER_CONTROL_TOOL_FULL_NAMES)
+      expect(plain.fake.calls[0]!.options.allowedTools).not.toContain(name);
+  });
+
+  it("프로젝트 에이전트 런에는 외부 MCP·러너 제어 도구가 없다(T12)", () => {
+    const o = buildQueryOptions(runSpec({ appMcp: HTTP }), deps(false));
+    expect(Object.keys(o.mcpServers ?? {})).toEqual(["dodok"]);
+    for (const name of RUNNER_CONTROL_TOOL_FULL_NAMES) expect(o.allowedTools).not.toContain(name);
+  });
+
+  it("자동 허용한 도구는 PreToolUse 가 묻게 만들지 않는다 — 나머지 MCP 도구는 권한 모드대로", () => {
+    expect(isAutoAllowedTool("mcp__gh__search", ["mcp__gh__search"])).toBe(true);
+    expect(isAutoAllowedTool("mcp__gh__delete", ["mcp__gh__search"])).toBe(false);
+    expect(isAutoAllowedTool("mcp__gh__delete", ["mcp__gh"])).toBe(true);
+    expect(isAutoAllowedTool("mcp__ghx__a", ["mcp__gh"])).toBe(false);
+    // 서버 a 의 「전부」가 서버 a_ 의 도구(mcp__a___x)를 허용하지 않는다
+    expect(isAutoAllowedTool("mcp__a___x", ["mcp__a"])).toBe(false);
+    expect(isAutoAllowedTool("mcp__a__x", ["mcp__a"])).toBe(true);
+    expect(preToolDecision("mcp__gh__search", "default", ["mcp__gh__search"])).toBeNull();
+    expect(preToolDecision("mcp__gh__delete", "default", ["mcp__gh__search"])).toBe("ask");
+    expect(preToolDecision("mcp__gh__delete", "dontAsk", ["mcp__gh__search"])).toBe("deny");
+  });
+});
+
+const RUN_ID_OF = (spec: { start: { deliver: { runId: string } } }) => spec.start.deliver.runId;
+const RUN_ID = runSpec().start.deliver.runId;

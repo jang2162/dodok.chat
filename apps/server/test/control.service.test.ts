@@ -3,15 +3,25 @@
  * 미리 거절, 시킨 사람 없는 런은 읽기만, 쓰기 뒤 운영 사건·시스템 메시지, 레이트 둘. 확인 카드의 흐름은 control.confirm.test.ts
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { CONTROL_TOOLS, type ControlToolName } from "@dodok/shared";
+import {
+  CONTROL_TOOLS,
+  type ControlToolName,
+  IssueRunnerTokenResult,
+  RUNNER_CONTROL_TOOLS,
+} from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { v7 as uuid } from "uuid";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { agents, approvals, messages, opsEvents } from "../src/db/schema.sqlite";
 import { getAgent } from "../src/modules/agents/service";
 import { addMember, getChannel } from "../src/modules/channels/service";
 import { userHandle } from "../src/modules/control/confirm";
-import { HANDLERS, type HandlerContext } from "../src/modules/control/handlers";
+import { HANDLERS, type HandlerContext, RUNNER_HANDLERS } from "../src/modules/control/handlers";
+import { type Principal, principalForRunner } from "../src/modules/control/principal";
+import { insertRun, updateRun } from "../src/modules/runs/store";
+import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
+import { connectWire, type WireClient } from "./helpers/wire";
 import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
 import { LIMITS } from "../src/modules/ops/limits";
 import { josa } from "../src/util/josa";
@@ -56,6 +66,7 @@ describe("제어 서비스", () => {
 
   it("처리기가 CONTROL_TOOLS 전부에 하나씩 있다", () => {
     expect(Object.keys(HANDLERS).sort()).toEqual(CONTROL_TOOLS.map((t) => t.name).sort());
+    expect(Object.keys(RUNNER_HANDLERS).sort()).toEqual(RUNNER_CONTROL_TOOLS.map((t) => t.name).sort());
   });
 
   describe("읽기 — owner 개인 토큰", () => {
@@ -776,5 +787,410 @@ describe("제어 서비스", () => {
       ).toBe("RATE_LIMITED");
       expectOk(await call(pat(writer.id), "list_agents"));
     });
+  });
+});
+
+/**
+ * 「이 러너 설정 제어」(러너 봇 2부 스펙 T7~T10·T14·T16, Review Focus 3·4) — 실제 러너 어댑터 + 가짜 러너 둘. 러너 경로의 주체만, 켠 봇만,
+ * 그 런의 러너만. 쓰기는 확인 카드
+ */
+describe("러너 제어 도구", () => {
+  let app: App;
+  let owner: string;
+  let ownerToken: string;
+  let clock = 1_000_000_000;
+  const runners: FakeRunner[] = [];
+  const sockets: WireClient[] = [];
+  const CAPS = [
+    "threads",
+    "interrupt",
+    "approvals",
+    "attachments",
+    "worktrees",
+    "bots",
+    "botMcp",
+    "runnerControl",
+    "remoteUpdate",
+  ];
+  const DEF = { purpose: "러너 돌보미", watches: "", does: "", reports: "" };
+  let latest = "9.9.9";
+
+  beforeAll(async () => {
+    app = await bootTestApp(
+      {},
+      {
+        adapters: [new FakeAdapter()],
+        runnerAdapter: true,
+        limitClock: () => clock,
+        latestRunner: { get: async () => latest, peek: () => ({ value: latest, fresh: true }) },
+      },
+    );
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    owner = app.ownerUserId;
+    ({ token: ownerToken } = await login(app));
+  });
+  beforeEach(() => {
+    clock += 60_000;
+  });
+  afterEach(() => {
+    for (const s of sockets.splice(0)) s.close();
+  });
+  afterAll(async () => {
+    for (const r of runners.splice(0)) r.close();
+    await app.close();
+  });
+
+  const inject = (method: "GET" | "POST" | "DELETE", url: string, payload?: object) =>
+    app.fastify.inject({
+      method,
+      url: `/api/v1${url}`,
+      headers: { authorization: `Bearer ${ownerToken}` },
+      ...(payload === undefined ? {} : { payload }),
+    });
+  /** 러너 하나 — 토큰 발급(REST) + 가짜 러너 접속 */
+  const runnerWith = async (label: string, caps = CAPS) => {
+    const res = await inject("POST", "/setup/runner-tokens", { label });
+    const issued = IssueRunnerTokenResult.parse(res.json());
+    const fake = await startFakeRunner({ url: app.url, token: issued.token, hello: { capabilities: caps } });
+    runners.push(fake);
+    await vi.waitFor(async () => {
+      const res = await inject("GET", "/runners");
+      const row = (res.json() as { runners: Array<{ id: string; connected: boolean }> }).runners.find(
+        (r) => r.id === issued.record.id,
+      );
+      expect(row?.connected).toBe(true);
+    });
+    return { id: issued.record.id, fake };
+  };
+  /** 그 러너의 봇과 그 봇의 열린 런(러너 연결) — 주체는 실제 러너 경로(principalForRunner)와 같다 */
+  const botRun = (tokenId: string, opts: { builtin?: boolean; requestedBy?: string | null } = {}) => {
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rb${++seq}`,
+      runnerTokenId: tokenId,
+      bot: { ...DEF, ...(opts.builtin === false ? {} : { builtinTools: ["runnerControl"] }) },
+    });
+    return runOn(tokenId, agent, opts.requestedBy === undefined ? owner : opts.requestedBy);
+  };
+  const runOn = (
+    tokenId: string,
+    agent: { id: string; providerAgentId: string },
+    requestedBy: string | null,
+  ) => {
+    const channel = newChannel(app);
+    addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+    const conversationId = channelConversation(app.db, channel.id);
+    const queued = insertRun(app.db, {
+      channelId: channel.id,
+      conversationId,
+      agentId: agent.id,
+      triggerKind: "mention",
+      rootMessageId: uuid(),
+      relayDepth: 0,
+      sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${conversationId}`,
+      connectionId: tokenId,
+      requestedBy,
+      createdAt: new Date(),
+    });
+    const run = updateRun(app.db, queued.id, { status: "tool", startedAt: new Date() });
+    const principal = principalForRunner(app.db, tokenId, run.id);
+    if (!principal) throw new Error("no principal");
+    return { agent, run, principal, channel };
+  };
+  let seq = 0;
+  const pendingCard = async (runId: string) => {
+    let id: string | undefined;
+    await vi.waitFor(() => {
+      id = app.db
+        .select({ id: approvals.id, status: approvals.status })
+        .from(approvals)
+        .where(
+          and(
+            eq(approvals.runId, runId),
+            eq(approvals.kind, "dodok_control"),
+            eq(approvals.status, "pending"),
+          ),
+        )
+        .get()?.id;
+      expect(id).toBeDefined();
+    });
+    return id!;
+  };
+  const allow = async (runId: string) => {
+    const socket = await connectWire(app, ownerToken);
+    sockets.push(socket);
+    await socket.emitWithAck("approval.resolve", {
+      approvalId: await pendingCard(runId),
+      decision: "allow-once",
+    } as never);
+  };
+  const cards = (runId: string) =>
+    app.db
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.runId, runId), eq(approvals.kind, "dodok_control")))
+      .all();
+  /** 쓰기 — 카드를 허용하고 결과를 받는다 */
+  const write = async (p: Principal, runId: string, tool: string, args: object) => {
+    const result = app.control.call(p, tool, args);
+    await allow(runId);
+    return result;
+  };
+  const project = async (tokenId: string, relPath: string) => {
+    const res = await inject("POST", `/runners/${tokenId}/projects`, { rootId: "src", relPath });
+    expect(res.statusCode, res.body).toBe(201);
+    return (res.json() as { project: { id: string } }).project;
+  };
+
+  it("켠 봇의 러너 경로에서만 — `/mcp`·켜지 않은 봇·프로젝트 에이전트·브리지에는 모르는 도구", async () => {
+    const a = await runnerWith("ctl-a");
+    const on = botRun(a.id);
+    expect(expectOk(await app.control.call(on.principal, "runner_status", {}))).toMatchObject({
+      runner: { id: a.id, label: "ctl-a", connected: true },
+    });
+    const off = botRun(a.id, { builtin: false });
+    expect(errorOf(await app.control.call(off.principal, "runner_status", {}))).toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(errorOf(await app.control.call(pat(owner), "runner_status", {}))).toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const { agent: plain } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `rp${++seq}`,
+      runnerTokenId: a.id,
+    });
+    expect(
+      errorOf(await app.control.call(runOn(a.id, plain, owner).principal, "runner_status", {})),
+    ).toMatchObject({
+      code: "NOT_FOUND",
+    });
+    // 러너 토큰 없는 같은 봇 주체(브리지 흉내)
+    const { runnerTokenId: _, ...bridgeLike } = on.principal;
+    expect(errorOf(await app.control.call(bridgeLike, "runner_status", {}))).toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("목록은 그 러너 것만, 다른 러너의 프로젝트·에이전트 id 는 NOT_FOUND(카드 없이), 자기 자신 고치기는 거절 [Review Focus 3]", async () => {
+    const a = await runnerWith("ctl-a2");
+    const b = await runnerWith("ctl-b2");
+    const mine = await project(a.id, "mine");
+    const theirs = await project(b.id, "theirs");
+    const on = botRun(a.id);
+    const listed = expectOk(await app.control.call(on.principal, "list_runner_projects", {})) as {
+      projects: Array<{ id: string }>;
+    };
+    expect(listed.projects.map((p) => p.id)).toEqual([mine.id]);
+    expect(
+      errorOf(
+        await app.control.call(on.principal, "update_runner_project", { projectId: theirs.id, label: "x" }),
+      ),
+    ).toMatchObject({ code: "NOT_FOUND" });
+    expect(
+      errorOf(await app.control.call(on.principal, "archive_runner_project", { projectId: theirs.id })),
+    ).toMatchObject({ code: "NOT_FOUND" });
+    expect(
+      errorOf(
+        await app.control.call(on.principal, "add_runner_worktree", { projectId: theirs.id, label: "w" }),
+      ),
+    ).toMatchObject({ code: "NOT_FOUND" });
+    const other = botRun(b.id);
+    expect(
+      errorOf(
+        await app.control.call(on.principal, "set_agent_session_defaults", {
+          agentId: other.agent.id,
+          sessionDefaults: { model: "opus" },
+        }),
+      ),
+    ).toMatchObject({ code: "NOT_FOUND" });
+    expect(
+      errorOf(
+        await app.control.call(on.principal, "create_runner_agent", {
+          handle: `x${++seq}`,
+          name: "x",
+          program: "claude",
+          runnerProjectId: theirs.id,
+        }),
+      ),
+    ).toMatchObject({ code: "NOT_FOUND" });
+    expect(
+      errorOf(
+        await app.control.call(on.principal, "set_agent_session_defaults", {
+          agentId: on.agent.id,
+          sessionDefaults: { model: "opus" },
+        }),
+      ),
+    ).toMatchObject({ code: "FORBIDDEN" });
+    expect(cards(on.run.id)).toEqual([]);
+    // 그 러너의 에이전트 목록에는 다른 러너의 봇이 없다
+    const agentsListed = expectOk(await app.control.call(on.principal, "list_runner_agents", {})) as {
+      agents: Array<{ id: string }>;
+    };
+    expect(agentsListed.agents.map((x) => x.id)).toContain(on.agent.id);
+    expect(agentsListed.agents.map((x) => x.id)).not.toContain(other.agent.id);
+  });
+
+  it("쓰기는 확인 카드 뒤 — 프로젝트 더하기·이름 바꾸기·다른 에이전트 시작값·봇 만들기", async () => {
+    const a = await runnerWith("ctl-a3");
+    const on = botRun(a.id);
+    const added = expectOk(
+      await write(on.principal, on.run.id, "create_runner_project", { rootId: "src", relPath: "via-bot" }),
+    ) as { project: { id: string; runnerId: string; relPath: string } };
+    expect(added.project).toMatchObject({ runnerId: a.id, relPath: "via-bot" });
+    expect(cards(on.run.id).at(-1)).toMatchObject({ status: "allowed", toolName: "create_runner_project" });
+    expect(cards(on.run.id).at(-1)?.title).toContain("러너 프로젝트(src/via-bot)를 더하려 합니다");
+    const renamed = expectOk(
+      await write(on.principal, on.run.id, "update_runner_project", {
+        projectId: added.project.id,
+        label: "새 이름",
+      }),
+    ) as { project: { label: string } };
+    expect(renamed.project.label).toBe("새 이름");
+    const sibling = botRun(a.id, { builtin: false });
+    const patched = expectOk(
+      await write(on.principal, on.run.id, "set_agent_session_defaults", {
+        agentId: sibling.agent.id,
+        sessionDefaults: { model: "opus", effort: "high" },
+      }),
+    ) as { agent: { sessionDefaults?: unknown } };
+    expect(patched.agent.sessionDefaults).toMatchObject({ model: "opus", effort: "high" });
+    const created = expectOk(
+      await write(on.principal, on.run.id, "create_runner_agent", {
+        handle: `nb${++seq}`,
+        name: "새 봇",
+        program: "claude",
+        bot: { purpose: "새 봇", watches: "", does: "", reports: "" },
+      }),
+    ) as {
+      agent: { id: string; runner?: { tokenId: string; bot?: boolean }; runnerAgent?: { bot?: object } };
+    };
+    expect(created.agent.runner).toMatchObject({ tokenId: a.id, bot: true });
+    expect(created.agent.runnerAgent?.bot).toEqual({ purpose: "새 봇", watches: "", does: "", reports: "" });
+  });
+
+  it("확인 카드가 떠 있는 사이 「이 러너 설정 제어」를 끄면 허용해도 FORBIDDEN — 쓰기는 나가지 않는다(T7)", async () => {
+    const a = await runnerWith("ctl-off");
+    const mine = await project(a.id, "stay");
+    const on = botRun(a.id);
+    const pending = app.control.call(on.principal, "update_runner_project", {
+      projectId: mine.id,
+      label: "바뀌면 안 됨",
+    });
+    await pendingCard(on.run.id);
+    app.db.update(agents).set({ runnerBot: DEF }).where(eq(agents.id, on.agent.id)).run();
+    await allow(on.run.id);
+    expect(errorOf(await pending)).toMatchObject({ code: "FORBIDDEN" });
+    const listed = (await inject("GET", `/runners/${a.id}/projects`)).json() as {
+      projects: Array<{ id: string; label: string }>;
+    };
+    const kept = listed.projects.find((p) => p.id === mine.id);
+    expect(kept).toBeDefined();
+    expect(kept?.label).not.toBe("바뀌면 안 됨");
+  });
+
+  it("자동화 사슬(requested_by null)은 쓰기 거절 — 카드도 없다", async () => {
+    const a = await runnerWith("ctl-a4");
+    const auto = botRun(a.id, { requestedBy: null });
+    expect(
+      errorOf(
+        await app.control.call(auto.principal, "create_runner_project", { rootId: "src", relPath: "auto" }),
+      ),
+    ).toMatchObject({ code: "FORBIDDEN" });
+    expect(errorOf(await app.control.call(auto.principal, "request_runner_update", {}))).toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(cards(auto.run.id)).toEqual([]);
+  });
+
+  it("list_runner_agents 에 MCP 헤더 값 원문이 없다 [Review Focus 2]", async () => {
+    const a = await runnerWith("ctl-a5");
+    const on = botRun(a.id);
+    createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `mcp${++seq}`,
+      runnerTokenId: a.id,
+      bot: {
+        ...DEF,
+        mcpServers: { gh: { type: "http", url: "https://x.example/mcp", headers: { A: "RAW_SECRET" } } },
+      },
+    });
+    const listed = await app.control.call(on.principal, "list_runner_agents", {});
+    expect(JSON.stringify(expectOk(listed))).not.toContain("RAW_SECRET");
+    expect(JSON.stringify(expectOk(await app.control.call(pat(owner), "list_agents", {})))).not.toContain(
+      "RAW_SECRET",
+    );
+  });
+
+  it("request_runner_update — 카드 → 「예약됨」, 런이 남으면 안 나가고 마지막 런이 끝나면 한 번, 대기 중 웹 단추는 지금처럼 [Review Focus 4]", async () => {
+    const a = await runnerWith("ctl-a6");
+    a.fake.onRunnerUpdate = () => ({ ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" });
+    const on = botRun(a.id);
+    const other = botRun(a.id, { builtin: false });
+    const result = expectOk(await write(on.principal, on.run.id, "request_runner_update", {}));
+    expect(result).toEqual({
+      message: "예약됨 — 이 러너의 런이 모두 끝나면 업데이트합니다",
+      targetVersion: "9.9.9",
+    });
+    const summary = async () =>
+      (
+        (await inject("GET", "/runners")).json() as { runners: Array<{ id: string; updateQueued?: unknown }> }
+      ).runners.find((r) => r.id === a.id);
+    expect((await summary())?.updateQueued).toEqual({ requestedAt: expect.any(String) });
+    // 대기 중 웹 「업데이트」는 지금처럼 바로 보낸다 — 러너가 바쁘다고 거절하면 409, 대기는 그대로
+    const web = await inject("POST", `/runners/${a.id}/update`);
+    expect(web.statusCode).toBe(409);
+    expect(a.fake.updateRequests).toHaveLength(1);
+    expect((await summary())?.updateQueued).not.toBeNull();
+    a.fake.onRunnerUpdate = () => ({ ok: true });
+
+    // 오케스트레이터 순서 그대로 — onRunEnded 뒤 같은 틱에 종료 쓰기
+    const end = (runId: string) => {
+      app.control.onRunEnded(runId);
+      updateRun(app.db, runId, { status: "done", endedAt: new Date() });
+    };
+    end(on.run.id);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(a.fake.updateRequests).toHaveLength(1);
+    end(other.run.id);
+    await vi.waitFor(() => expect(a.fake.updateRequests).toHaveLength(2));
+    expect(a.fake.updateRequests[1]).toEqual({ version: "9.9.9" });
+    expect((await summary())?.updateQueued).toBeNull();
+  });
+
+  it("업데이트 대기 취소 — DELETE 뒤에는 런이 끝나도 나가지 않는다, 없으면 404", async () => {
+    const a = await runnerWith("ctl-a7");
+    const on = botRun(a.id);
+    expectOk(await write(on.principal, on.run.id, "request_runner_update", {}));
+    expect((await inject("DELETE", `/runners/${a.id}/update-queue`)).statusCode).toBe(204);
+    expect((await inject("DELETE", `/runners/${a.id}/update-queue`)).statusCode).toBe(404);
+    app.control.onRunEnded(on.run.id);
+    updateRun(app.db, on.run.id, { status: "done", endedAt: new Date() });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(a.fake.updateRequests).toEqual([]);
+  });
+
+  it("request_runner_update — 원격 업데이트가 없는 러너·이미 최신이면 거절", async () => {
+    const old = await runnerWith(
+      "ctl-old",
+      CAPS.filter((c) => c !== "remoteUpdate"),
+    );
+    const onOld = botRun(old.id);
+    expect(errorOf(await app.control.call(onOld.principal, "request_runner_update", {}))).toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(cards(onOld.run.id)).toEqual([]);
+    const fresh = await runnerWith("ctl-fresh");
+    const onFresh = botRun(fresh.id);
+    latest = "0.0.0-fake";
+    try {
+      expect(
+        errorOf(await write(onFresh.principal, onFresh.run.id, "request_runner_update", {})),
+      ).toMatchObject({
+        code: "CONFLICT",
+      });
+    } finally {
+      latest = "9.9.9";
+    }
   });
 });

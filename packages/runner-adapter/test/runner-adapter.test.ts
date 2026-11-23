@@ -863,6 +863,69 @@ describe("send", () => {
       expect(start.channelRulesAppend).toContain("## What to do\n위험을 짚는다");
       expect(start.channelRulesAppend).not.toContain("agent-instructions");
     });
+
+    // 러너 봇 2부 스펙 T5·T7
+    const MCP_BOT = {
+      id: "r-0123456789",
+      soul: "# 리뷰 봇\n",
+      mcpServers: {
+        gh: { type: "http" as const, url: "https://api.example.com/mcp", headers: { A: "Bearer RAW" } },
+      },
+      mcpAutoAllow: { gh: { mode: "all" as const } },
+      builtinTools: ["runnerControl" as const],
+    };
+    const asMcpBot = (h: Harness, bot: Record<string, unknown> = MCP_BOT) =>
+      h.defineAgent("coder", {
+        project: undefined,
+        bot: bot as never,
+        instructions: null,
+        botDefinition: BOT_DEF,
+      });
+
+    it("botMcp 없는 러너 + MCP 봇 → VALIDATION 「러너를 업데이트하세요(봇 도구는 0.10.0 부터)」, 보내지 않는다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, {
+        capabilities: ["threads", "interrupt", "approvals", "bots"],
+      });
+      asMcpBot(h);
+      const error = await rejection(
+        h.adapter.send(deliver(), { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID }),
+      );
+      expect(error.code).toBe("VALIDATION");
+      expect(error.message).toBe("러너를 업데이트하세요(봇 도구는 0.10.0 부터)");
+      expect(r.runStarts).toHaveLength(0);
+    });
+
+    it("botMcp 없는 러너 + MCP 없는 봇 → 그대로 간다, runnerControl 없는 러너면 builtinTools 를 뺀다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, {
+        capabilities: ["threads", "interrupt", "approvals", "bots"],
+      });
+      asMcpBot(h, { id: "r-0123456789", soul: "# 리뷰 봇\n", builtinTools: ["runnerControl"] });
+      await startRun(h, r);
+      expect(r.runStarts[0]!.agent.bot).toEqual({ id: "r-0123456789", soul: "# 리뷰 봇\n" });
+    });
+
+    it("botMcp·runnerControl 러너에는 MCP 원문·자동 허용·내장 도구를 그대로 싣는다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, {
+        capabilities: ["threads", "interrupt", "approvals", "bots", "botMcp", "runnerControl"],
+      });
+      asMcpBot(h);
+      await startRun(h, r);
+      expect(r.runStarts[0]!.agent.bot).toEqual(MCP_BOT);
+    });
+
+    it("botMcp 만 있는 러너 — MCP 는 싣고 builtinTools 는 뺀다(런을 막지 않는다)", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, {
+        capabilities: ["threads", "interrupt", "approvals", "bots", "botMcp"],
+      });
+      asMcpBot(h);
+      await startRun(h, r);
+      const { builtinTools: _, ...withoutBuiltins } = MCP_BOT;
+      expect(r.runStarts[0]!.agent.bot).toEqual(withoutBuiltins);
+    });
   });
 
   it("drop 이면 그대로 돌려주고 그 런을 잊는다", async () => {

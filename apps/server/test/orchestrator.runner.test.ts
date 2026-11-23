@@ -221,6 +221,67 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
       expect(card.bodyMd).toContain("러너를 업데이트하세요(봇은 0.9.0 부터)");
       expect(runner.runStarts).toHaveLength(0);
     });
+
+    // 러너 봇 2부 스펙 T5·T11
+    const GH = {
+      type: "http" as const,
+      url: "https://api.example.com/mcp",
+      headers: { Authorization: "Bearer RAW" },
+    };
+
+    it("botMcp 없는 러너 + MCP 봇 — 보내지 않고 「러너를 업데이트하세요(봇 도구는 0.10.0 부터)」 카드", async () => {
+      const { runner, coder, log, channel } = await start({
+        agent: { bot: { ...DEF, mcpServers: { gh: GH } } },
+        hello: BOT_HELLO,
+      });
+      await sendMessage(log.socket, channel.id, "@coder 봐줘");
+      const run = await runOf(log, coder.id);
+      expect((await log.terminal(run.id)).status).toBe("error");
+      const card = await log.until(
+        () => log.created.find((m) => m.systemMeta?.kind === "run_error" && m.systemMeta.runId === run.id),
+        "봇 도구 카드",
+      );
+      expect(card.bodyMd).toContain("러너를 업데이트하세요(봇 도구는 0.10.0 부터)");
+      expect(runner.runStarts).toHaveLength(0);
+    });
+
+    it("botMcp 러너 — MCP 원문이 run.start 에, 가림 글자 그대로 다시 저장하면 같은 세션, 헤더 값을 바꾸면 새 세션 [Review Focus 5]", async () => {
+      const hello = {
+        capabilities: ["threads", "interrupt", "approvals", "attachments", "bots", "botMcp"] as never,
+      };
+      const { runner, coder, log, channel } = await start({
+        agent: { bot: { ...DEF, mcpServers: { gh: GH } } },
+        hello,
+      });
+      await sendMessage(log.socket, channel.id, "@coder 하나");
+      const first = await runOf(log, coder.id, 0);
+      expect((await log.terminal(first.id)).status).toBe("done");
+      const firstStart = startOf(runner, first.id);
+      expect(firstStart.agent.bot?.mcpServers).toEqual({ gh: GH });
+
+      const got = await rest<{ agents: Array<{ id: string; runnerAgent?: { bot?: object } }> }>(
+        live,
+        "GET",
+        `/agents`,
+      );
+      const shown = got.body.agents.find((a) => a.id === coder.id);
+      expect(JSON.stringify(shown)).not.toContain("Bearer RAW");
+      expect(
+        (await rest(live, "PATCH", `/agents/${coder.id}`, { bot: shown?.runnerAgent?.bot ?? {} })).status,
+      ).toBe(200);
+      await sendMessage(log.socket, channel.id, "@coder 둘");
+      const second = await runOf(log, coder.id, 1);
+      expect((await log.terminal(second.id)).status).toBe("done");
+      expect(startOf(runner, second.id).providerSessionId).toBe(firstStart.providerSessionId);
+      expect(startOf(runner, second.id).agent.bot?.mcpServers).toEqual({ gh: GH });
+
+      const changed = { ...DEF, mcpServers: { gh: { ...GH, headers: { Authorization: "Bearer NEW" } } } };
+      expect((await rest(live, "PATCH", `/agents/${coder.id}`, { bot: changed })).status).toBe(200);
+      await sendMessage(log.socket, channel.id, "@coder 셋");
+      const third = await runOf(log, coder.id, 2);
+      expect((await log.terminal(third.id)).status).toBe("done");
+      expect(startOf(runner, third.id).providerSessionId).not.toBe(firstStart.providerSessionId);
+    });
   });
 
   it("러너가 RUNNER_CEILING 으로 거절하면 항목을 단 카드와 「다시 실행」 — 러너 설정을 되돌리고 누르면 돈다 [Review Focus 2·3]", async () => {

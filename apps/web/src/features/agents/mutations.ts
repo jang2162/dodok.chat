@@ -179,3 +179,15 @@ export function useAgentAvatar(agentId: string) {
     }),
   };
 }
+
+/**
+ * 「업데이트 대기」 취소(러너 봇 2부 스펙 T16) — DELETE /runners/:id/update-queue. 끝나면 러너 목록을 다시 받는다(대기가 이미 나갔으면
+ * 404 — 다시 받은 목록이 그것을 보인다)
+ */
+export function useCancelRunnerUpdateQueue(runnerId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<void>("DELETE", `/runners/${runnerId}/update-queue`),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.runners() }),
+  });
+}

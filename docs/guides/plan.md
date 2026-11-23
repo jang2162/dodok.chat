@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.40)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.43)
 
-작성일: 2026-09-14 · 상태: v0.42 (2026-11-23) — 실사용 순서(8장 「다음 순서 — 실사용」)에서 쓰면서 나온 기능으로 채널 세션·에이전트 DM·러너 일반화(8장 Phase 4 의 세 항목)와 러너 평소 claude 로그인·플러그인 설치 한 줄·프로필·접속 상태·「연결」 탭 통합(연결의 주인·Gateway 승인)·사람 간 DM·파일함을 끝냈다(같은 순서 ② 의 완료 줄). 다음은 같은 순서 ① 의 실제 서버 배포·웹 확인(사람 몫 — 로컬 검증까지는 끝), ② 의 기본 메신저 기능 로드맵 남은 하나(A 메시지 수정·삭제 — 보류, `docs/superpowers/specs/2026-11-02-messenger-basics-roadmap.md`)와 ③ 앱이고, 남은 것은 8장 「이월」.
+작성일: 2026-09-14 · 상태: v0.43 (2026-11-23) — 실사용 순서(8장 「다음 순서 — 실사용」)에서 쓰면서 나온 기능으로 채널 세션·에이전트 DM·러너 일반화(8장 Phase 4 의 세 항목)와 러너 평소 claude 로그인·플러그인 설치 한 줄·프로필·접속 상태·「연결」 탭 통합(연결의 주인·Gateway 승인)·사람 간 DM·파일함을 끝냈다(같은 순서 ② 의 완료 줄). 다음은 같은 순서 ① 의 실제 서버 배포·웹 확인(사람 몫 — 로컬 검증까지는 끝), ② 의 기본 메신저 기능 로드맵 남은 하나(A 메시지 수정·삭제 — 보류, `docs/superpowers/specs/2026-11-02-messenger-basics-roadmap.md`)와 ③ 앱이고, 남은 것은 8장 「이월」.
 
 ### 변경 이력
 
@@ -46,6 +46,7 @@
 | v0.40 | **파일함 종료**(2026-11-09, 모델 런 0회) — 8장 「다음 순서」 ② 에 완료 줄, 「이월」 의 「파일함」 묶음 머리를 완료로 바꾸고 구현이 남긴 것(사람 업로드 메모리 버퍼 · 전체 목록 훑기 · `pos` NULL 커서 · 저장된 이름의 방향 제어 문자·내려받기 이름 · 좁은 폭 파일 줄 · 브라우저로 못 본 둘 · 좁은 화면 답글의 초점 지연 · 넓은 화면 패널 닫힘)을 더함 |
 | v0.41 | **에이전트 명령 종료**(2026-11-21, 런 0회 하네스·실물 dev Gateway 까지 — 모델 런 0회) — 8장 「다음 순서」 ② 에 완료 줄, 「이월」 에 새 묶음 「에이전트 명령」(스펙 C15 와 다른 PreToolUse 판정 · 「완료」 줄까지 10초 · 목록 첫 글자 · `handled` 길은 가짜로만 · 내장 명령 판차 · resume 직후 빈 result), 「실물 확인」 에 한 줄 |
 | v0.42 | **러너 봇 1부(폴더·정의) 종료**(2026-11-23, 시험·dev:fake 브라우저·런 0회 하네스까지 — 모델 런 0회, 러너 판본은 아직 0.8.0) — 8장 「다음 순서」 ② 에 완료 줄, 「이월」 에 새 묶음 「러너 봇(1부)」, 「실물 확인」 에 한 줄 |
+| v0.43 | **러너 봇 2부(봇 도구) 종료**(2026-11-23, 시험·dev:fake 브라우저·런 0회 하네스까지 — 모델 런 0회, 러너 판본은 아직 0.9.0) — 8장 「다음 순서」 ② 에 완료 줄, 「이월」 에 새 묶음 「러너 봇(2부)」, 「실물 확인」 에 한 줄 |
 
 ---
 
@@ -618,6 +619,7 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
    - UI 점검 반영(연결 점 둘 → 글이 있는 연결 상태 단추, 12px 미만 글자 걷기, 색 채운 이니셜 아바타·그룹 DM 인원수, 좁은 화면 대화 머리 셋의 「더 보기」, 로그인·가입·재설정 카드, 회색 비활성 주 버튼) → **완료**(2026-11-19, 두 줄기 병렬 — 합친 상태 웹 시험 2,591개, 수정 회차 뒤 줄기 B 2,574개·줄기 A 2,592개·dev:fake 브라우저 1440·390px × 라이트·다크 — 서버·러너 변경 없음) — 스펙 `docs/superpowers/specs/2026-11-19-ui-polish-design.md`, 계획 `docs/superpowers/plans/2026-11-19-ui-polish.md`. UI 점검 1·2·3·4·6번 항목. 구현에서 정한 것: 연결 상태 단추의 접근 이름은 보이는 글로 시작(WCAG 2.5.3), `aria-disabled` 로 잠근 주 버튼도 회색, 사람 이니셜 색상각은 에이전트 8색 사이 중간값 표, 64px 프로필 아바타도 같은 꼴, 좁은 화면 에이전트 DM 메뉴 맨 앞 「<이름> 프로필」·그룹 DM 메뉴 「참여자」, 메뉴에서 연 대화상자가 닫히면 초점은 「더 보기」로. 브라우저로 못 본 것: 빨간 「Gateway 끊김」(dev:fake 의 끊긴 Gateway 는 늘 「다시 연결 중」), 사진 아바타, member·보관 채널·초대 정원 찬 상태의 좁은 메뉴(데스크톱과 같은 판정 함수 — 코드로 확인).
    - 첨부 저장소 S3 연동(`ATTACHMENTS_STORAGE=s3` — 첨부 블롭을 S3 호환 버킷에) → **완료**(2026-11-23, 서버 시험 4,354개·임시 S3 호환 저장소(SeaweedFS 3.80 — MinIO 공식 이미지를 받을 수 없어 대신) 위 dev:fake 브라우저까지 — 실제 AWS·R2 는 미확인) — 스펙 `docs/superpowers/specs/2026-11-23-s3-attachments-design.md`, 계획 `docs/superpowers/plans/2026-11-23-s3-attachments.md`, 운영 `docs/guides/docker-deploy.md` 「S3 저장소」. 첨부 서비스·라우트·정리가 `BlobStore`(로컬·S3) 하나만 쓴다. 부팅 때 `HeadBucket` 으로 확인해 틀린 설정이면 뜨지 않고, 내려받기는 서버가 권한을 본 뒤 `GetObject` 를 흘린다(서명 URL 없음). S3 고아 정리는 하루 한 번 버킷 목록을 훑어 1시간 넘은 행 없는 객체만 지운다. 기존 볼륨 블롭 이관은 없다(빈 앱으로 시작). 새 의존성 `@aws-sdk/client-s3`(정확 핀, 서버 번들 안).
    - 러너 봇 1부 — 봇 폴더·봇 정의(프로젝트 없이 러너가 만든 `botsDir/<봇 id>` 에서 도는 러너 에이전트, 목적·지켜볼 것·할 일·보고할 것) → **완료**(2026-11-23, 시험·dev:fake 브라우저(390·1280px)·런 0회 하네스까지 — 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-23-runner-bots-design.md`, 계획 `docs/superpowers/plans/2026-11-23-runner-bots.md`, 보고 `.superpowers/sdd/2026-11-23-runner-bots/implement-report.md`. `agents.runner_bot`(마이그레이션 `0041_runner_bots`)이 봇을 가르고(B11 — `runner_project_id` null 만으로는 옛 것), 런 정의는 `project` 대신 `bot: { id, soul }`, 지시는 서버가 에이전트 지시 자리에 「봇 정의」 틀로(B9), 러너가 봇 폴더(0700, 링크 거절)를 만들고 런마다 `SOUL.md` 를 다시 쓴다(B4). 능력 `bots` 가 없는 러너는 만들기를 잠그고 봇 런을 보내지 않는다(「러너를 업데이트하세요(봇은 0.9.0 부터)」). 러너 설정 `roots` 는 0개도 받는다. 웹은 러너 상세의 「봇 N」·「봇 만들기」, 프로젝트 상세 폼의 「자리 — 이 프로젝트 / 봇(폴더만)」, 템플릿 넷, 에이전트 상세의 「정의 편집」, 트리의 러너 아래 「봇」 묶음. 2부(봇 전용 도구 MCP)·3부(도구 로그인)는 따로 설계한다. 러너 0.9.0 배포는 아직이다(조율자).
+   - 러너 봇 2부 — 봇 도구(앱에서 적는 MCP)와 「이 러너 설정 제어」 → **완료**(2026-11-23, 시험·dev:fake 브라우저(390·1280px)·런 0회 하네스까지 — 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-23-runner-bot-tools-design.md`, 계획 `docs/superpowers/plans/2026-11-23-runner-bot-tools.md`, 보고 `.superpowers/sdd/2026-11-23-runner-bot-tools/implement-report.md`. 봇 정의(`agents.runner_bot` JSON)에 `mcpServers`·`mcpAutoAllow`·`builtinTools` — 헤더·env 값은 쓰기 전용(응답 `••••`, 그대로 보내면 원래 값). 판정 `appMcpVerdict`(shared)를 서버 표시와 러너 런이 함께 쓰고, 러너는 로컬 `appMcp`(`off`·`http` 기본·`all`)·`appMcpCommands` 로 다시 판정해 통과한 것만 SDK `mcpServers` 에 `dodok` 과 나란히. 능력 `botMcp`·`runnerControl`(hello 는 `programs[].ceiling` 에 `appMcp`). 러너 제어 도구 열 개(`RUNNER_CONTROL_TOOLS`)는 켠 봇의 러너 경로에서만, 대상은 그 런의 러너, 권한을 올리는 필드는 입력에 없다. 봇의 업데이트 요청은 「업데이트 대기」(마이그레이션 `0042_runner_update_queue` — 러너 토큰 행)로 들어가 그 러너의 런이 모두 끝나면 나간다. 3부(도구 로그인 — OAuth)는 따로 설계한다. 러너 0.10.0 배포는 아직이다(조율자).
    - 러너·플러그인 판 비교와 원격 업데이트(러너 상세·Gateway 상세의 「판 X · 최신 Y [업데이트]」) → **완료**(2026-11-23, 시험·dev:fake·실제 러너 tgz 한 바퀴(로컬 가짜 레지스트리)까지 — 실물 Gateway 의 플러그인 한 바퀴는 못 봤다(아래 「이월」), 모델 런 0회) — 스펙 `docs/superpowers/specs/2026-11-23-remote-update-design.md`, 계획 `docs/superpowers/plans/2026-11-23-remote-update.md`, 보고 `.superpowers/sdd/2026-11-23-remote-update/implement-report.md`. 기본 허용, 끄기는 러너 설정 `remoteUpdate: false`·Gateway 설정 `channels.dodok.remoteUpdate: false`. 러너 「최신」은 npm `latest`(서버 1시간 캐시, 닿지 않으면 「최신을 알 수 없음」·단추 잠금), 러너는 정확한 semver·지금보다 높은 판만 자기 npm 전역 자리에 설치하고, 새 판을 지금 설정으로 `--check-config` 로 돌려 본 뒤(0 이 아니면 옛 판으로 되돌려 깔고 failed — 리뷰 M1) 같은 argv·env 로 다시 뜬다(런 중이면 거절, 다시 띄우기가 던지면 지금 판으로 다시 붙는다). 플러그인 「최신」은 서버가 품은 빌드, 플러그인이 Gateway 프로세스 안에서 받기(브리지 토큰)·sha256 대조·`gateway status` 서비스 확인을 먼저 하고(실패는 Gateway 를 건드리지 않고 `plugin.update` ack 사유로 — 리뷰 M2) 검증된 tgz 경로만 Gateway 밖 분리 스크립트에 넘겨 `gateway stop`·`plugins install`·`gateway start`(Gateway 를 내린 뒤 실패하면 다시 올린다), 내린 뒤의 결과는 다시 붙은 hello 의 `lastUpdate`. 러너 목록은 npm 레지스트리를 기다리지 않는다(쥔 값이 없으면 `latestVersion` 없이 답하고 뒤에서 묻는다, 부팅 때 미리 한 번 — 리뷰 L2). REST `POST /api/v1/runners/:id/update`·`POST /api/v1/gateways/:id/update`(주인·admin 이상, 진행 중이면 409)·`GET /api/v1/gateways/:id/update`(끊길 런 수), 진행은 서버 메모리(러너 3분·플러그인 5분 상한). 구현에서 정한 것: 러너 hello 는 strict 라 최상위 새 키(계획의 `remoteUpdate`·`lastUpdate`) 대신 능력 문자열 `remoteUpdate`·`remoteUpdateOff` 로 싣는다(옛 서버가 새 러너를 거절하지 않게) — 러너 실패 사유는 runner.update ack 로 온다. dev:fake 훅 `POST /__devfake/remote-update`. 손 확인(임시 npm prefix 에 이 브랜치의 러너 tgz 0.8.0, 로컬 가짜 레지스트리의 0.8.1, dev:fake 웹의 「업데이트」)이 결함 둘을 찾아 고쳤다 — npm 이 출력의 UUID 꼴 글자를 `***` 로 가려 `npm root -g` 로 전역 자리를 가를 수 없어 진입 파일의 실제 자리에서 prefix 를 구해 `--prefix` 로 설치하고, npm 감싸개(mise)의 설치 뒤 단계가 실패해 0 이 아니게 끝나도 목표 판이 깔렸으면 성공으로 친다. 고친 뒤 0.8.0 → 0.8.1 설치·자기 재시작·재접속 약 5초. 러너·플러그인 판본은 올리지 않았다.
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
@@ -990,12 +992,23 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 - **러너 0.9.0 이 나오기 전에는 npm 판 러너로 봇을 쓸 수 없다** — 능력 `bots` 는 이 브랜치의 러너 소스에만 있다(판본 0.8.0 그대로). 배포는 `docs/guides/runner-release.md`.
 - **봇 만들기 진입점이 스펙 문구와 다르다** — 스펙 B2 의 「에이전트 가져오기 → 러너 → 새로 만들기」는 지금 화면에 없다(러너 에이전트는 「연결」 탭 통합 뒤 프로젝트 상세에서 만든다). 러너 상세의 「봇 만들기」와 프로젝트 상세 폼의 「자리」 라디오 둘로 넣었다.
-- **제어 MCP 로 봇을 만들지 못한다**(B12 이월) — `register_agent` 는 OpenClaw 만, `update_agent` 는 정의를 받지 않는다.
+- **제어 MCP 로 봇을 만들지 못한다**(B12 이월) — `register_agent` 는 OpenClaw 만, `update_agent` 는 정의를 받지 않는다. 2부의 「이 러너 설정 제어」를 켠 봇은 `create_runner_agent` 로 **자기 러너에** 봇·러너 에이전트를 만든다(도구·내장 도구·권한 모드 없이) — 바깥 `/mcp`·다른 에이전트의 길은 그대로 없다.
 - **러너 첫 실행 마법사(`dodok-runner setup`)는 루트를 하나 이상 묻는다** — 봇만 쓰는 러너는 설정 파일에서 `roots` 를 비워야 한다. `botsDir` 도 마법사가 묻지 않는다(기본 `~/.dodok-runner/bots`).
 - **루트가 없는 러너의 모델 목록 query 는 cwd 없이(러너 프로세스의 cwd) 연다** — 런 0회 하네스에서 모델 요청 0 을 확인했다.
 - **실제 모델이 `<bot-definition>` 틀을 따르는지 모른다** — 틀 문장은 에이전트 지시 틀을 따랐을 뿐 모델로 보지 않았다.
 - **보관한 봇의 폴더는 러너에 남는다(B6)** — 서버·앱에는 지우는 길이 없고, 러너 머신의 사람이 지운다.
 - **리뷰가 남긴 사소한 것 넷** — ① 명령 목록 캐시 키 `bot:<id>` 에 러너 토큰이 없어 워크스페이스가 둘이고 봇 id 가 같으면 캐시를 나눠 쓸 수 있다(`apps/server/src/modules/agents/commands.ts`) ② `resolveBot` 검사와 CLI 실행 사이 폴더를 링크로 바꾸는 틈, 사람이 미리 만든 느슨한 권한의 `botsDir` 는 그대로다(러너 머신에 쓸 수 있어야 하는 공격) ③ 봇 만들기가 토큰의 워크스페이스를 보기 전에 러너 연결·능력을 물어 503·400 이 갈린다 ④ `botsDir` 가 허용 루트와 겹쳐도 경고하지 않는다. 출처: `.superpowers/sdd/2026-11-23-runner-bots/review-report.md` S1~S4.
+
+**러너 봇 2부(2026-11-23)** — 스펙 `docs/superpowers/specs/2026-11-23-runner-bot-tools-design.md`. 출처: 실행 원장 `.superpowers/sdd/2026-11-23-runner-bot-tools/`(구현 보고).
+
+- **러너 0.10.0 이 나오기 전에는 npm 판 러너로 봇 도구를 쓸 수 없다** — 능력 `botMcp`·`runnerControl` 은 이 브랜치의 러너 소스에만 있다(판본 0.9.0 그대로). 옛 러너에 도구가 있는 봇 런은 「러너를 업데이트하세요(봇 도구는 0.10.0 부터)」 카드다.
+- **MCP 헤더·env 값이 러너 머신의 프로세스 인자에 보인다** — SDK 가 MCP 설정을 CLI 에 `--mcp-config <JSON>` 인자로 넘긴다(런 0회 하네스 실측). 그 런의 CLI 가 도는 동안 그 머신의 `ps` 에 원문이 보인다. 러너·서버 로그에는 없다.
+- **MCP 비밀값은 DB·백업에 평문이다(T4)** — 서버에 비밀 암호화 층이 없다(`docs/guides/docker-deploy.md` 「백업」).
+- **`"http"` 천장의 사설 주소 판정은 주소 글자뿐이다(T17)** — 이름 풀이 뒤의 주소(DNS 리바인딩)는 막지 못한다. 글자가 WHATWG 호스트와 갈리는 길(authority 의 `\`·전각 숫자·`。`·`ⓛ`)은 스키마가 거절하고 러너가 `new URL().hostname` 으로 한 번 더 본다.
+- **러너 도구 상한(`allowedToolsCeiling`) 밖의 「묻지 않음」은 그 이름의 자동 허용만 막는다(T15)** — 서버는 붙고 그 도구는 권한 모드대로 묻는다. 웹 서버 줄에 「이 러너가 막음 — 도구 상한 밖: <이름>(자동 허용만 막힘)」. 「전부」(`mcp__<서버>`)는 상한에 그 이름이 그대로 있어야 받는다 — 상한에 `mcp__gh__a` 만 있으면 전부 허용은 막힌다.
+- **업데이트 대기의 보내기가 실패하면 다시 대기하지 않는다** — 로그 한 줄(`queued runner update not sent`)만 남고 웹에는 아무것도 보이지 않아, 「예약됨」을 들은 사람은 업데이트가 안 된 까닭을 모른다(리뷰 사소 3 — 운영 사건 한 줄이나 다음 런 끝 재시도는 정하지 않았다). 사람이 웹 「업데이트」로 다시 보낸다. 웹 진행 줄(「업데이트하지 못했습니다」)은 웹 단추 길에서만 남는다.
+- **봇이 만든 에이전트의 DM 허용·금지 도구는 기본값이다** — `create_runner_agent` 입력에 `dmAccess`·`disallowedTools` 를 두지 않았다(DM 범위를 넓히는 길을 확인 카드 하나로 열지 않게 — 스펙 T14 의 넷 밖이라 판단).
+- **실제 모델이 러너 제어 도구를 고르게 쓰는지 모른다** — 도구 설명은 모델로 보지 않았다.
 
 **원격 업데이트(2026-11-23)**
 
@@ -1006,6 +1019,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **실물 확인**
 
+- **봇 도구를 실물로 본 것은 런 0회 하네스(이 브랜치로 빌드한 러너 tgz — 판 0.9.0 그대로 + 설치본 2.1.330 + 가짜 Messages API + 스크래치 가짜 HTTP MCP, `docs/guides/live-smoke.md` 합격 기준 17)다 — 모델 런 0회.** `appMcp: "all"` 에서 `mcp__hxmcp__hx_echo` 가 CLI 요청의 지연 도구 목록에, `"off"` 에서 「no longer available」, 러너·서버 로그에 헤더 값 0. 결과는 `.superpowers/sdd/2026-11-23-runner-bot-tools/implement-report.md`.
 - **러너 봇을 실물로 본 것은 런 0회 하네스(이 브랜치로 빌드한 러너 tgz — 판 0.8.0 그대로 + 설치본 2.1.330 + 가짜 Messages API, `roots: []`·스크래치 `botsDir` — 봇 폴더 cwd·`SOUL.md`·`<bot-definition>` 한 벌·정의 수정 뒤 새 세션, `docs/guides/live-smoke.md` 합격 기준 16)다 — 모델 런 0회.** 결과는 `.superpowers/sdd/2026-11-23-runner-bots/implement-report.md`.
 - **에이전트 명령을 실물로 본 것은 런 0회 하네스(이 브랜치로 빌드한 러너 tgz — 판 0.7.0 그대로 + 설치본 2.1.330 + 가짜 Messages API — 목록·`/context`·`/compact`·`allowed-tools` 명령의 승인 카드·settings.json 표지 0)와 실물 dev Gateway 2026.9.5(`/status`·`/help`·`/whoami` 답 글, `/restart` 막힘)이다 — 모델 런 0회.** 결과는 `.superpowers/sdd/2026-11-21-agent-commands/implement-report.md`.
 - **러너 일반화를 실제 러너 설치본·번들 CLI 로 본 것은 실연(`docs/superpowers/reports/2026-10-30-runner-generalization-live-smoke-report.md` — 가짜 Messages API, 모델 런 0회)이다.** 앱에서 만든 프로젝트 디렉터리에서 CLI 가 도는 것(`cwd` 세 방법)·지시 틀·천장 카드 넷·옛 설정 거절·DB 와 서버 로그에 러너 머신 절대 경로 없음을 그 절이 본다.
