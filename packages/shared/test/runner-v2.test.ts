@@ -21,6 +21,7 @@ import {
   RunnerWorktreeCreateResult,
   RunnerWorktreeRemove,
   RunnerWorktreeRemoveResult,
+  RUNNER_BOT_MCP_UPDATE_MESSAGE,
 } from "../src";
 
 const ID = "01a09fc9-d204-7551-89d6-38544d07a101";
@@ -381,5 +382,48 @@ describe("둘러보기·프로젝트 확인·세션 프레임", () => {
 
   it("ErrorCode 에 RUNNER_CEILING", () => {
     expect(ErrorCode.safeParse("RUNNER_CEILING").success).toBe(true);
+  });
+});
+
+describe("봇 도구 — hello 천장·run.start bot(러너 봇 2부 스펙 T3·T5·T7)", () => {
+  const { project: _, ...noProject } = AGENT;
+  const BOT = { id: "r-0123456789", soul: "# 봇\n" };
+  const ceiling = HELLO.programs[0]!.ceiling;
+
+  it("옛 hello(천장에 appMcp 없음)는 그대로, 새 hello 는 천장 안에 appMcp·appMcpCommands", () => {
+    expect(RunnerHello.parse(HELLO).programs[0]?.ceiling.appMcp).toBeUndefined();
+    const hello = {
+      ...HELLO,
+      programs: [{ ...HELLO.programs[0], ceiling: { ...ceiling, appMcp: "all", appMcpCommands: ["npx"] } }],
+    };
+    expect(RunnerHello.parse(hello).programs[0]?.ceiling).toEqual({
+      ...ceiling,
+      appMcp: "all",
+      appMcpCommands: ["npx"],
+    });
+    const bad = { ...HELLO, programs: [{ ...HELLO.programs[0], ceiling: { ...ceiling, appMcp: "stdio" } }] };
+    expect(RunnerHello.safeParse(bad).success).toBe(false);
+    // 최상위에는 새 키를 두지 않는다 — strict
+    expect(RunnerHello.safeParse({ ...HELLO, appMcp: "http" }).success).toBe(false);
+  });
+
+  it("bot 에 mcpServers·mcpAutoAllow·builtinTools 를 싣는다 — 없어도 받는다", () => {
+    const bot = {
+      ...BOT,
+      mcpServers: { gh: { type: "http", url: "https://example.com/mcp", headers: { A: "b" } } },
+      mcpAutoAllow: { gh: { mode: "tools", tools: ["search"] } },
+      builtinTools: ["runnerControl"],
+    };
+    expect(RunnerRunStart.parse({ ...START, agent: { ...noProject, bot } }).agent.bot).toEqual(bot);
+    expect(RunnerRunStart.parse({ ...START, agent: { ...noProject, bot: BOT } }).agent.bot).toEqual(BOT);
+  });
+
+  it("서버를 믿지 않는다 — dodok 이름·틀린 꼴의 MCP 는 run.start 째로 거절", () => {
+    const bad = { ...BOT, mcpServers: { dodok: { type: "http", url: "https://example.com/" } } };
+    expect(RunnerRunStart.safeParse({ ...START, agent: { ...noProject, bot: bad } }).success).toBe(false);
+  });
+
+  it("옛 러너 문구", () => {
+    expect(RUNNER_BOT_MCP_UPDATE_MESSAGE).toBe("러너를 업데이트하세요(봇 도구는 0.10.0 부터)");
   });
 });

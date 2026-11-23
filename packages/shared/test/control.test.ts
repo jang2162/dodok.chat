@@ -16,6 +16,9 @@ import {
   controlToolJsonSchema,
   findControlTool,
   RunnerControlCall,
+  RUNNER_CONTROL_TOOLS,
+  RUNNER_UPDATE_SCHEDULED_MESSAGE,
+  findRunnerControlTool,
   UpdateChannelBody,
   UpdateChannelMemberBody,
 } from "../src/control";
@@ -395,5 +398,109 @@ describe("개인 토큰 계약", () => {
     };
     expect(PersonalTokenIssued.safeParse(issued).success).toBe(true);
     expect(PersonalTokenIssued.safeParse({ token: issued.token }).success).toBe(false);
+  });
+});
+
+describe("RUNNER_CONTROL_TOOLS — 「이 러너 설정 제어」(러너 봇 2부 스펙 T7~T10·T14)", () => {
+  const ID3 = "01a09fc9-d204-7551-89d6-38544d07a103";
+  const parse = (name: string, args: unknown) => findRunnerControlTool(name)!.input.safeParse(args);
+
+  it("이름 열 개, CONTROL_TOOLS 와 겹치지 않고 쓰기는 여섯", () => {
+    const names = RUNNER_CONTROL_TOOLS.map((t) => t.name);
+    expect([...names].sort()).toEqual(
+      [
+        "runner_status",
+        "list_runner_projects",
+        "create_runner_project",
+        "update_runner_project",
+        "archive_runner_project",
+        "add_runner_worktree",
+        "list_runner_agents",
+        "create_runner_agent",
+        "set_agent_session_defaults",
+        "request_runner_update",
+      ].sort(),
+    );
+    const control = new Set<string>(CONTROL_TOOLS.map((t) => t.name));
+    expect(names.filter((n) => control.has(n))).toEqual([]);
+    expect(findControlTool("runner_status")).toBeUndefined();
+    expect(
+      RUNNER_CONTROL_TOOLS.filter((t) => t.access === "write")
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(
+      [
+        "create_runner_project",
+        "update_runner_project",
+        "archive_runner_project",
+        "add_runner_worktree",
+        "create_runner_agent",
+        "set_agent_session_defaults",
+        "request_runner_update",
+      ].sort(),
+    );
+  });
+
+  it("대상 러너 id 는 입력에 없다 — runnerId·runnerTokenId 를 실으면 strict 거절", () => {
+    expect(parse("runner_status", {}).success).toBe(true);
+    expect(parse("runner_status", { runnerId: ID }).success).toBe(false);
+    expect(parse("create_runner_project", { rootId: "src", relPath: "x", runnerId: ID }).success).toBe(false);
+    expect(
+      parse("create_runner_agent", {
+        handle: "rb",
+        name: "rb",
+        program: "claude",
+        bot: { purpose: "", watches: "", does: "", reports: "" },
+        runnerTokenId: ID,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("권한을 올리는 필드(T14) — bot 의 mcpServers·mcpAutoAllow·builtinTools, sessionDefaults.permissionMode 는 거절", () => {
+    const bot = { purpose: "p", watches: "", does: "", reports: "" };
+    const base = { handle: "rb", name: "rb", program: "claude" };
+    expect(parse("create_runner_agent", { ...base, bot }).success).toBe(true);
+    for (const extra of [
+      { mcpServers: { gh: { type: "http", url: "https://example.com/" } } },
+      { mcpAutoAllow: { gh: { mode: "all" } } },
+      { builtinTools: ["runnerControl"] },
+    ])
+      expect(
+        parse("create_runner_agent", { ...base, bot: { ...bot, ...extra } }).success,
+        Object.keys(extra)[0],
+      ).toBe(false);
+    expect(parse("create_runner_agent", { ...base, bot, permissionMode: "acceptEdits" }).success).toBe(false);
+    expect(parse("create_runner_agent", { ...base, bot, dmAccess: "everyone" }).success).toBe(false);
+    expect(
+      parse("set_agent_session_defaults", { agentId: ID, sessionDefaults: { model: "opus" } }).success,
+    ).toBe(true);
+    expect(
+      parse("set_agent_session_defaults", { agentId: ID, sessionDefaults: { permissionMode: "acceptEdits" } })
+        .success,
+    ).toBe(false);
+    expect(
+      parse("set_agent_session_defaults", { agentId: ID, permissionMode: "acceptEdits", sessionDefaults: {} })
+        .success,
+    ).toBe(false);
+  });
+
+  it("create_runner_agent 는 프로젝트·봇 중 정확히 하나, 봇은 basePrompt 를 받지 않는다", () => {
+    const base = { handle: "rb", name: "rb", program: "claude" };
+    const bot = { purpose: "", watches: "", does: "", reports: "" };
+    expect(parse("create_runner_agent", { ...base, runnerProjectId: ID3, basePrompt: "x" }).success).toBe(
+      true,
+    );
+    expect(parse("create_runner_agent", base).success).toBe(false);
+    expect(parse("create_runner_agent", { ...base, runnerProjectId: ID3, bot }).success).toBe(false);
+    expect(parse("create_runner_agent", { ...base, bot, basePrompt: "x" }).success).toBe(false);
+  });
+
+  it("설명에 로컬 설정은 못 바꾼다는 문장(T10), 예약 문구(T16)", () => {
+    expect(findRunnerControlTool("runner_status").description).toMatch(/config\.json on the runner machine/);
+    expect(findRunnerControlTool("create_runner_project").description).toMatch(
+      /cannot change the runner machine/,
+    );
+    expect(RUNNER_UPDATE_SCHEDULED_MESSAGE).toBe("예약됨 — 이 러너의 런이 모두 끝나면 업데이트합니다");
+    for (const t of RUNNER_CONTROL_TOOLS) expect(controlToolJsonSchema(t).type, t.name).toBe("object");
   });
 });

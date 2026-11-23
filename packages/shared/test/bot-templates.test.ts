@@ -14,7 +14,8 @@ describe("봇 템플릿(러너 봇 스펙 B5)", () => {
 
   it("빈 봇만 네 칸이 비었다", () => {
     for (const t of BOT_TEMPLATES) {
-      const filled = Object.values(t.definition).every((v) => v.trim() !== "");
+      const { purpose, watches, does, reports } = t.definition;
+      const filled = [purpose, watches, does, reports].every((v) => v.trim() !== "");
       expect(filled, t.id).toBe(t.id !== "blank");
     }
   });

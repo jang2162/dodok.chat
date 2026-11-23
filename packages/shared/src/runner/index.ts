@@ -16,12 +16,14 @@ import {
 import { AGENT_COMMANDS_MAX, AgentCommand } from "../commands";
 import { RunEvent } from "../events";
 import { RemoteUpdateAck, RemoteUpdateVersion } from "../setup";
+import { type AppMcpCeiling, AppMcpMode, McpAutoAllowMap, McpServers, RunnerBotBuiltinTools } from "./mcp";
 
 // `/runner` 계약(러너 스펙 3장, 계획 판정 P1) — Socket.IO 네임스페이스, 프레임은 이벤트 이름 + ack. 경계에서 이 Zod 로 파싱한다.
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
 
 export * from "./prompt";
 export * from "./bot-templates";
+export * from "./mcp";
 export { permissionModeRank, RUNNER_PERMISSION_MODES, RunnerPermissionMode, RunnerProgram };
 
 export const RUNNER_NAMESPACE = "/runner";
@@ -42,6 +44,10 @@ export const RunnerCapability = z.enum([
   "commands",
   // 봇(러너 봇 스펙 B7) — run.start.agent.bot·commands.list 의 bot 갈래를 받는다. 없는 러너에는 봇 런을 보내지 않는다
   "bots",
+  // 봇 MCP(러너 봇 2부 스펙 T5) — run.start.agent.bot.mcpServers·mcpAutoAllow 를 받는다. 없는 러너에 MCP 가 있는 봇 런은 보내지 않는다
+  "botMcp",
+  // 「이 러너 설정 제어」(T7) — run.start.agent.bot.builtinTools 에 runnerControl 이면 러너 제어 도구를 dodok MCP 에 싣는다
+  "runnerControl",
   "remoteUpdate",
   "remoteUpdateOff",
 ]);
@@ -49,6 +55,9 @@ export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
 /** 능력 `bots` 가 없는 러너 — 봇 만들기 잠금 사유와 봇 런의 run_error 가 같은 글(러너 봇 스펙 B7) */
 export const RUNNER_BOTS_UPDATE_MESSAGE = "러너를 업데이트하세요(봇은 0.9.0 부터)";
+
+/** 능력 `botMcp` 가 없는 러너에 MCP 가 있는 봇 런 — run_error 글(러너 봇 2부 스펙 T5) */
+export const RUNNER_BOT_MCP_UPDATE_MESSAGE = "러너를 업데이트하세요(봇 도구는 0.10.0 부터)";
 
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
 export const RunnerRunAck = z.object({
@@ -256,6 +265,12 @@ export const RunnerProgramStatus = z.object({
     maxPermissionMode: RunnerPermissionMode,
     /** 배열이면 에이전트의 allowedTools 는 그 부분집합이어야 한다. null 이면 상한 없음 */
     allowedToolsCeiling: RunnerToolNames.nullable(),
+    /**
+     * 앱에서 온 MCP 의 천장(러너 봇 2부 스펙 T2·T3) — 러너 로컬 appMcp·appMcpCommands. 이 객체는 strict 가 아니라 옛 서버는 지운다
+     * (hello 최상위에 키를 두면 옛 서버가 새 러너를 거절한다). 옛 러너는 싣지 않는다 — 서버는 없으면 "off" 로 읽는다
+     */
+    appMcp: AppMcpMode.optional(),
+    appMcpCommands: z.array(z.string().min(1).max(128)).max(64).nullable().optional(),
   }),
   /**
    * 그 프로그램이 받는 모델(SDK supportedModels — 작성기 칩 스펙 C3). 받지 못했으면 없다. 옛 러너는 싣지 않는다 — 이 객체는
@@ -264,6 +279,15 @@ export const RunnerProgramStatus = z.object({
   models: z.array(RunnerModelOption).max(32).optional(),
 });
 export type RunnerProgramStatus = z.infer<typeof RunnerProgramStatus>;
+
+/** hello 의 그 프로그램 천장에서 MCP 판정 천장(appMcpVerdict 의 첫 인자)을 꺼낸다 — 옛 러너(appMcp 없음)는 "off" */
+export function appMcpCeilingOf(status: Pick<RunnerProgramStatus, "ceiling"> | undefined): AppMcpCeiling {
+  return {
+    appMcp: status?.ceiling.appMcp ?? "off",
+    appMcpCommands: status?.ceiling.appMcpCommands ?? null,
+    allowedToolsCeiling: status?.ceiling.allowedToolsCeiling ?? null,
+  };
+}
 
 /**
  * 러너 → 서버 hello. 루트는 id·라벨뿐이다 — 호스트 경로는 서버로 가지 않는다(스펙 결정 3). strict 라 옛 hello 의 agents·
@@ -300,7 +324,18 @@ export const RunnerBotId = z.string().regex(RUNNER_BOT_ID_PATTERN, "bot id must 
 export type RunnerBotId = z.infer<typeof RunnerBotId>;
 
 /** 봇 런의 자리 — soul 은 러너가 봇 폴더의 `SOUL.md` 로 쓰는 본문(서버 `renderBotSoul`). 지시는 서버가 channelRulesAppend 에 넣는다(B9) */
-export const RunnerRunBot = z.object({ id: RunnerBotId, soul: z.string().max(16_000) });
+export const RunnerRunBot = z.object({
+  id: RunnerBotId,
+  soul: z.string().max(16_000),
+  /**
+   * 봇의 MCP 서버 원문(러너 봇 2부 스펙 T5·T6) — 서버는 능력 botMcp 가 있는 러너에만 싣는다. 러너는 받은 것을 appMcpVerdict 로 다시
+   * 판정해 통과한 것만 SDK mcpServers 에 넣는다. strict 가 아니라 옛 러너는 이 키들을 버린다
+   */
+  mcpServers: McpServers.optional(),
+  mcpAutoAllow: McpAutoAllowMap.optional(),
+  /** 내장 도구(T7) — 서버는 능력 runnerControl 이 없는 러너에는 빼고 싣는다 */
+  builtinTools: RunnerBotBuiltinTools.optional(),
+});
 export type RunnerRunBot = z.infer<typeof RunnerRunBot>;
 
 /**

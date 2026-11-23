@@ -3,6 +3,7 @@ import { Id, IsoDateTime } from "../common";
 import { StoredComponentState, StoredComponentsV1, StoredItemId } from "../components";
 import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
 import { AvatarUrl } from "../profile";
+import { McpAutoAllowMap, McpServers, RunnerBotBuiltinTools } from "../runner/mcp";
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
 export type Handle = z.infer<typeof Handle>;
@@ -79,6 +80,15 @@ export const RunnerBotDefinition = z.object({
   watches: z.string().max(RUNNER_BOT_SECTION_MAX),
   does: z.string().max(RUNNER_BOT_SECTION_MAX),
   reports: z.string().max(RUNNER_BOT_SECTION_MAX),
+  /**
+   * 봇의 MCP 서버(러너 봇 2부 스펙 T1) — `.mcp.json` 의 mcpServers 꼴. headers·env 값은 쓰기 전용(T4 — REST 읽기는 MCP_SECRET_MASK).
+   * 빠지면(옛 클라이언트의 네 칸 저장) 저장된 값을 그대로 둔다 — 그래서 기본값이 아니라 선택이다. 없는 것은 빈 목록과 같다
+   */
+  mcpServers: McpServers.optional(),
+  /** 서버마다 「묻지 않음」(T15) — 없는 서버는 「없음」 */
+  mcpAutoAllow: McpAutoAllowMap.optional(),
+  /** 내장 도구(T7) — 「이 러너 설정 제어」(runnerControl). 없는 것은 빈 목록과 같다 */
+  builtinTools: RunnerBotBuiltinTools.optional(),
 });
 export type RunnerBotDefinition = z.infer<typeof RunnerBotDefinition>;
 export const Agent = z.object({
