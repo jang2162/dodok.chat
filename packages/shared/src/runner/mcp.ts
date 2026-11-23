@@ -8,12 +8,16 @@ import { z } from "zod";
 export const MCP_SERVERS_MAX = 16;
 
 /**
- * 서버 이름 — 도구 이름 `mcp__<서버>__<도구>` 의 가운데. `dodok`(대소문자 무시)은 러너의 dodok MCP 자리라 거절한다. `__` 도 거절한다 —
- * `dodok__x` 같은 이름이면 도구 이름이 `mcp__dodok__…` 로 시작해 러너가 늘 허용하는 dodok 도구로 읽힌다
+ * 서버 이름 — 도구 이름 `mcp__<서버>__<도구>` 의 가운데. `dodok`(대소문자 무시)은 러너의 dodok MCP 자리라 거절한다. `__` 와 처음·끝의
+ * `_` 도 거절한다 — `dodok__x`·`dodok_` 같은 이름이면 도구 이름이 `mcp__dodok__…` 로 시작해 러너가 늘 허용하는 dodok 도구로 읽히고,
+ * `a_` 의 도구 `mcp__a___x` 는 서버 `a` 의 「전부」(`mcp__a__` 로 시작)에 든다
  */
 export const McpServerName = z
   .string()
-  .regex(/^[a-zA-Z0-9_-]{1,64}$/, "MCP server name must match [a-zA-Z0-9_-]{1,64}")
+  .regex(
+    /^[a-zA-Z0-9-](?:[a-zA-Z0-9_-]{0,62}[a-zA-Z0-9-])?$/,
+    "MCP server name must match [a-zA-Z0-9_-]{1,64} and not start or end with _",
+  )
   .refine((name) => name.toLowerCase() !== "dodok", "MCP server name dodok is reserved")
   .refine((name) => !name.includes("__"), "MCP server name must not contain __");
 export type McpServerName = z.infer<typeof McpServerName>;
@@ -21,10 +25,23 @@ export type McpServerName = z.infer<typeof McpServerName>;
 /** 헤더·env — 키는 이름, 값은 비밀일 수 있다(T4 — REST 읽기에는 MCP_SECRET_MASK 로) */
 const SecretMap = z.record(z.string().min(1).max(256), z.string().max(8192));
 
-/** 원격 서버 — 주소는 http(s) 만 */
+/**
+ * 주소의 authority(`://` 뒤 첫 `/`·`?`·`#` 앞)가 판정(isPrivateAddress)이 읽는 글자 그대로 연결되는가(T17) — WHATWG URL 은 http(s)
+ * 에서 `\` 를 `/` 로 보고(`127.0.0.1\@example.com` 의 호스트는 127.0.0.1), 전각 숫자·`。`·`ⓛ` 같은 글자를 ASCII 로 바꾸고, 탭·줄바꿈을
+ * 지운다. 그런 글자가 authority 에 있으면 받지 않는다
+ */
+function plainAuthority(url: string): boolean {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(url);
+  return m !== null && /^[\x21-\x7e]*$/.test(m[1] ?? "") && !(m[1] ?? "").includes("\\");
+}
+
+/** 원격 서버 — 주소는 http(s) 만, authority 는 ASCII 만(plainAuthority) */
 export const McpRemoteServer = z.strictObject({
   type: z.enum(["http", "sse"]),
-  url: z.url({ protocol: /^https?$/ }).max(2048),
+  url: z
+    .url({ protocol: /^https?$/ })
+    .max(2048)
+    .refine(plainAuthority, "MCP server url host must be plain ASCII without \\"),
   headers: SecretMap.optional(),
 });
 export type McpRemoteServer = z.infer<typeof McpRemoteServer>;
@@ -102,12 +119,15 @@ export const AppMcpBlockReason = z.enum([
   "commandNotAllowed",
   "privateAddress",
   "envKeyNotAllowed",
-  "toolCeiling",
 ]);
 export type AppMcpBlockReason = z.infer<typeof AppMcpBlockReason>;
 
+/**
+ * ok 면 서버는 붙는다. allowedTools 는 묻지 않을 이름, outsideCeiling 은 자동 허용으로 골랐지만 러너 allowedToolsCeiling 밖이라
+ * 「묻기」로 내린 이름(T15 — 서버째 막지 않는다)
+ */
 export type AppMcpVerdict =
-  | { ok: true; allowedTools: string[] }
+  | { ok: true; allowedTools: string[]; outsideCeiling: string[] }
   | { ok: false; reason: AppMcpBlockReason; detail?: string };
 
 /** 「이 러너가 막음 — <문구>」 의 문구 */
@@ -123,9 +143,12 @@ export function appMcpBlockText(reason: AppMcpBlockReason, detail?: string): str
       return "로컬·사설 주소는 받지 않음";
     case "envKeyNotAllowed":
       return `env ${detail ?? "?"} 는 받지 않음`;
-    case "toolCeiling":
-      return "도구 상한 밖";
   }
+}
+
+/** ok 판정의 outsideCeiling 문구 — 「이 러너가 막음 — <문구>」. 서버는 붙고 그 이름의 자동 허용만 막힌다 */
+export function appMcpCeilingText(outsideCeiling: readonly string[]): string {
+  return `도구 상한 밖: ${outsideCeiling.join(", ")}(자동 허용만 막힘)`;
 }
 
 /** 명령 목록을 비켜 가는 쉬운 길(T18) — 이 env 키는 "all" 에서도 받지 않는다 */
@@ -227,7 +250,8 @@ export function isPrivateAddress(url: string): boolean {
     const h = parseIpv6(host.slice(1, -1));
     if (h === null) return true;
     if (h.slice(0, 7).every((x) => x === 0) && (h[7] ?? 0) <= 1) return true;
-    if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) {
+    // IPv4 대응(`::ffff:a.b.c.d`)·IPv4 호환(`::a.b.c.d` — 옛 꼴, OS 에 따라 그 IPv4 로 간다)
+    if (h.slice(0, 5).every((x) => x === 0) && (h[5] === 0xffff || h[5] === 0)) {
       const hi = h[6] ?? 0;
       const lo = h[7] ?? 0;
       return ipv4Private([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
@@ -267,11 +291,14 @@ export function appMcpVerdict(
   } else if (ceiling.appMcp === "http" && isPrivateAddress(server.url)) {
     return { ok: false, reason: "privateAddress" };
   }
-  const allowedTools = autoAllowToolNames(name, autoAllow);
+  const names = autoAllowToolNames(name, autoAllow);
   const limit = ceiling.allowedToolsCeiling;
-  const outside = limit === null ? undefined : allowedTools.find((tool) => !limit.includes(tool));
-  if (outside !== undefined) return { ok: false, reason: "toolCeiling", detail: outside };
-  return { ok: true, allowedTools };
+  if (limit === null) return { ok: true, allowedTools: names, outsideCeiling: [] };
+  return {
+    ok: true,
+    allowedTools: names.filter((tool) => limit.includes(tool)),
+    outsideCeiling: names.filter((tool) => !limit.includes(tool)),
+  };
 }
 
 /** REST 읽기의 비밀값 자리(T4) — U+2022 넷. 쓰기에서 값이 정확히 이것이면 저장된 원래 값을 지킨다 */
@@ -294,22 +321,34 @@ export function maskMcpSecrets(servers: McpServers): McpServers {
   );
 }
 
-export type McpSecretMerge = { ok: true; servers: McpServers } | { ok: false; server: string; key: string };
+/** 가림 자리를 못 채움 — missing: 저장된 값이 없다, moved: 같은 이름의 저장 서버가 있지만 주소·명령이 바뀌었다 */
+export type McpSecretMerge =
+  | { ok: true; servers: McpServers }
+  | { ok: false; server: string; key: string; reason: "missing" | "moved" };
+
+/** 비밀값이 따라가도 되는 같은 곳인가 — 원격은 같은 url, stdio 는 같은 command·args */
+function sameTarget(a: McpServerConfig, b: McpServerConfig): boolean {
+  if (isStdioServer(a) || isStdioServer(b))
+    return (
+      isStdioServer(a) &&
+      isStdioServer(b) &&
+      a.command === b.command &&
+      stableJson(a.args ?? []) === stableJson(b.args ?? [])
+    );
+  return a.url === b.url;
+}
 
 /**
- * 편집 저장(T4) — 값이 MCP_SECRET_MASK 인 자리는 저장된 값으로 채운다. 같은 이름의 저장 서버가 같은 종류면 그것에서, 없으면(서버 이름만
- * 바꾼 편집) 같은 주소(url)·같은 명령(command)의 저장 서버에서 같은 키를 찾는다. 못 찾으면 { ok: false } — 가림 글자를 값으로 저장하지 않는다
+ * 편집 저장(T4) — 값이 MCP_SECRET_MASK 인 자리는 저장된 값으로 채운다. 같은 곳(sameTarget — 같은 url, 같은 command·args)의 저장 서버에서만
+ * 같은 키를 찾는다 — 같은 이름이 먼저, 없으면(서버 이름만 바꾼 편집) 다른 이름. 주소·명령을 바꾸면 이름이 같아도 채우지 않는다(가림 자리를
+ * 두고 주소를 제 서버로 바꿔 남이 넣은 비밀값을 빼내지 못하게). 못 찾으면 { ok: false } — 가림 글자를 값으로 저장하지 않는다
  */
 export function mergeMcpSecrets(incoming: McpServers, stored: McpServers | undefined): McpSecretMerge {
   const storedEntries = Object.entries(stored ?? {});
   const sourceFor = (name: string, server: McpServerConfig): McpServerConfig | undefined => {
     const same = stored?.[name];
-    if (same !== undefined && isStdioServer(same) === isStdioServer(server)) return same;
-    return storedEntries.find(([, s]) =>
-      isStdioServer(server)
-        ? isStdioServer(s) && s.command === server.command
-        : !isStdioServer(s) && s.url === server.url,
-    )?.[1];
+    if (same !== undefined && sameTarget(same, server)) return same;
+    return storedEntries.find(([, s]) => sameTarget(s, server))?.[1];
   };
   const out: McpServers = {};
   for (const [name, server] of Object.entries(incoming)) {
@@ -328,7 +367,13 @@ export function mergeMcpSecrets(incoming: McpServers, stored: McpServers | undef
         continue;
       }
       const kept = from?.[key];
-      if (kept === undefined) return { ok: false, server: name, key };
+      if (kept === undefined)
+        return {
+          ok: false,
+          server: name,
+          key,
+          reason: source === undefined && stored?.[name] !== undefined ? "moved" : "missing",
+        };
       merged[key] = kept;
     }
     out[name] = { ...server, [field]: merged } as McpServerConfig;
