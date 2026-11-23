@@ -88,6 +88,11 @@ class FakeSocket {
       .map((entry) => (entry.payload as OutboundMessage).outboundId);
   }
 
+  /** 서버가 보낸 프레임을 흉내 낸다 */
+  serverEmit(event: string, ...args: unknown[]): void {
+    this.#fire(event, ...args);
+  }
+
   #fire(event: string, ...args: unknown[]): void {
     for (const handler of this.#handlers.get(event) ?? []) handler(...args);
   }
@@ -233,5 +238,52 @@ describe("createBridgeClient sendControl — 제어 도구 호출", () => {
     const bad = await ready(async (event) => (event === "hello" ? helloOk : { ok: "yes" }));
     expect(await bad.client.sendControl(call)).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
     await bad.client.stop();
+  });
+});
+
+describe("plugin.update(원격 업데이트 스펙 U5)", () => {
+  function updateClient(onPluginUpdate?: BridgeClientOptions["handlers"]["onPluginUpdate"]) {
+    const socket = new FakeSocket(async () => helloOk);
+    const client = createBridgeClient({
+      url: "ws://bridge.test/bridge",
+      token: "t0k",
+      hello,
+      handlers: {
+        onInbound: async () => ({ admission: "dispatch" }),
+        ...(onPluginUpdate ? { onPluginUpdate } : {}),
+      },
+      logger: silent,
+      backoff: { baseMs: 1, maxMs: 1, jitter: 0 },
+      connectSocket: (() => socket) as unknown as BridgeClientOptions["connectSocket"],
+    });
+    return { socket, client };
+  }
+  const ask = (socket: FakeSocket, payload: unknown) =>
+    new Promise<unknown>((resolve) => socket.serverEmit("plugin.update", payload, resolve));
+
+  it("sha256 을 검증해 처리기에 넘기고 그 답을 ack 봉투로", async () => {
+    const seen: unknown[] = [];
+    const { socket } = updateClient(async (p) => (seen.push(p), { ok: false, reason: "disabled" }));
+    const sha256 = "b".repeat(64);
+    expect(await ask(socket, { sha256 })).toEqual({ ok: true, data: { ok: false, reason: "disabled" } });
+    expect(seen).toEqual([{ sha256 }]);
+  });
+
+  it("sha256 이 아니면 처리기를 부르지 않고 VALIDATION", async () => {
+    let called = 0;
+    const { socket } = updateClient(async () => (called++, { ok: true }));
+    expect(await ask(socket, { sha256: "../../x" })).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION" },
+    });
+    expect(called).toBe(0);
+  });
+
+  it("처리기가 없으면 ADAPTER_UNAVAILABLE", async () => {
+    const { socket } = updateClient();
+    expect(await ask(socket, { sha256: "c".repeat(64) })).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
   });
 });

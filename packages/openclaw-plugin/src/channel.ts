@@ -29,6 +29,7 @@ import {
 import { toInboundMediaFacts } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-outbound";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { createBridgeClient, type BridgeClient, type BridgeLogger } from "./bridge-client";
 import { getBridge, getCorrelation, registerBridge, releaseBridge, setCorrelation } from "./bridge-registry";
@@ -39,6 +40,7 @@ import {
   listDodokAccountIds,
   resolveDodokAccount,
   resolveDodokChannelEntry,
+  resolveRemoteUpdate,
   type ResolvedDodokAccount,
 } from "./config";
 import { writeChannelConfig } from "./config-writer";
@@ -67,6 +69,7 @@ import {
 } from "./outbound-media";
 import { computeBundleSha256 } from "./bundle-hash";
 import { getDodokRuntime } from "./runtime";
+import { readLastUpdate, startPluginUpdate } from "./self-update";
 
 export const DODOK_CHANNEL_ID = "dodok";
 declare const __DODOK_PLUGIN_VERSION__: string;
@@ -86,6 +89,7 @@ export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
   "threads",
   "control",
   "commands",
+  "remoteUpdate",
 ];
 
 /**
@@ -416,6 +420,11 @@ async function startDodokAccount(ctx: {
   const logger = pluginLogger(ctx.log);
   const setStatus = ctx.setStatus as (next: Record<string, unknown>) => void;
   setStatus({ accountId: account.accountId, running: true, configured: true, enabled: account.enabled });
+  // 원격 업데이트(원격 업데이트 스펙 U1·U5) — 켜짐은 지금 설정에서, 지난 결과는 업데이트 스크립트가 상태 디렉터리에 남긴 파일에서
+  const stateDir = resolveStateDir(process.env);
+  const remoteUpdateEnabled = () =>
+    resolveRemoteUpdate(sectionOf(runtime.config.current() as OpenClawConfig));
+  const lastUpdate = readLastUpdate(stateDir);
 
   const bridge: BridgeClient = createBridgeClient({
     url: account.bridgeUrl,
@@ -427,12 +436,32 @@ async function startDodokAccount(ctx: {
       gatewayVersion: runtime.version,
       ...(BUNDLE_SHA256 ? { bundleSha256: BUNDLE_SHA256 } : {}),
       capabilities: DODOK_BRIDGE_CAPABILITIES,
+      remoteUpdate: remoteUpdateEnabled(),
+      ...(lastUpdate ? { lastUpdate } : {}),
     },
     logger,
     handlers: {
       onInbound: (delivery) => dispatchInbound({ delivery, account, channelRuntime, bridge, logger }),
       onConfigSet: (payload) => writeChannelConfig(runtime, payload, logger),
       onReady: () => setStatus({ accountId: account.accountId, running: true, connected: true }),
+      onPluginUpdate: async ({ sha256 }) => {
+        const result = startPluginUpdate({
+          sha256,
+          enabled: remoteUpdateEnabled(),
+          bridgeOrigin: bridgeHttpOrigin(account.bridgeUrl!),
+          token: account.token!,
+          stateDir,
+          env: process.env,
+          openclawNode: process.execPath,
+          ...(process.argv[1] ? { openclawEntry: process.argv[1] } : {}),
+        });
+        logger.info(
+          result.ok
+            ? "dodok: 원격 업데이트를 시작합니다 — 곧 Gateway 가 내려갔다 올라옵니다"
+            : `dodok: 원격 업데이트를 하지 않았습니다(${result.reason})`,
+        );
+        return result;
+      },
     },
   });
   registerBridge(account.accountId, bridge);
