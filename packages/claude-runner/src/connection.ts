@@ -49,6 +49,9 @@ const CAPABILITIES: RunnerCapability[] = [
   "worktrees",
   "commands",
   "bots",
+  // 봇 도구(러너 봇 2부 스펙 T5·T7) — 앱의 MCP 서버를 appMcp 천장으로 다시 판정해 붙이고, runnerControl 켠 봇에 러너 제어 도구를 싣는다
+  "botMcp",
+  "runnerControl",
 ];
 /** commands.list 를 끊는 시간 — 서버 ack 상한(RUNNER_COMMANDS_LIST_TIMEOUT_MS 30초)보다 앞서 failed 로 답한다 */
 export const COMMANDS_LIST_TIMEOUT_MS = 25_000;
@@ -239,6 +242,9 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       ceiling: {
         maxPermissionMode: ceiling.maxPermissionMode,
         allowedToolsCeiling: ceiling.allowedToolsCeiling,
+        // 앱 MCP 천장(T3) — strict 가 아닌 이 자리에 싣는다(hello 최상위에 키를 두면 옛 서버가 거절한다)
+        appMcp: config.appMcp,
+        appMcpCommands: config.appMcpCommands ?? null,
       },
     };
     const driver = drivers.get(program);
@@ -476,6 +482,12 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       permissionMode: agent.permissionMode,
       allowedTools: agent.allowedTools,
       disallowedTools: [...new Set([...programCeiling.disallowedTools, ...agent.disallowedTools])],
+      // 봇 MCP 는 드라이버가 이 천장으로 다시 판정한다(서버를 믿지 않는다 — T3)
+      appMcp: {
+        appMcp: config.appMcp,
+        appMcpCommands: config.appMcpCommands ?? null,
+        allowedToolsCeiling: programCeiling.allowedToolsCeiling,
+      },
     };
     const sink = createRunSink({ workdir: ceiling.workdir, emit, bridge: bridgeFor(generation) });
     const submitted = scheduler.submit(

@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
-import { RunnerPermissionMode, RunnerProgram, RunnerRootId } from "@dodok/shared";
+import { AppMcpMode, RunnerPermissionMode, RunnerProgram, RunnerRootId } from "@dodok/shared";
 import { z } from "zod";
 
 // 설정 파일 — 러너 머신의 「천장」만 쥔다(러너 일반화 스펙 2장): 허용 루트·프로그램별 로그인 디렉터리·실행 파일·권한 상한·늘 막는 도구·
@@ -47,6 +47,21 @@ export const RunnerConfig = z.strictObject({
   browse: z.boolean().default(true),
   // 서버(웹의 「업데이트」)가 이 러너를 npm 의 새 판으로 올리는 것을 받는가 — 기본 허용, false 면 거절한다(원격 업데이트 스펙 U1)
   remoteUpdate: z.boolean().default(true),
+  // 앱(봇 상세)에서 적은 MCP 서버를 어디까지 받는가(러너 봇 2부 스펙 T2) — off: 모두 막음, http: 원격(http·sse)만(기본, 로컬·사설 주소는
+  // 막는다 — T17), all: stdio 명령도. all 은 앱의 러너 주인·admin 을 이 머신에서 코드를 돌려도 되는 사람으로 믿는다는 뜻이다(T18) —
+  // appMcpCommands 는 실행 파일만 좁히고 args·env 로 임의 코드가 돈다. 앱·도구로는 바꾸지 못한다
+  appMcp: AppMcpMode.default("http"),
+  // all 일 때 stdio command 의 basename 허용 목록(예 ["npx", "uvx"]) — 없으면 명령을 가리지 않는다
+  appMcpCommands: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(128)
+        .regex(/^[^/\\]+$/, "basename only"),
+    )
+    .max(64)
+    .optional(),
   // 적지 않은 프로그램은 꺼진 것이다
   programs: z.strictObject(
     Object.fromEntries(RunnerProgram.options.map((p) => [p, ProgramCeiling.optional()])) as Record<

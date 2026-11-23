@@ -120,6 +120,7 @@ describe("runSetupWizard", () => {
       ],
       browse: true,
       remoteUpdate: true,
+      appMcp: "http",
       programs: {
         claude: { maxPermissionMode: "acceptEdits", disallowedTools: [], allowedToolsCeiling: null },
       },
@@ -269,6 +270,7 @@ describe("runSetupWizard — 설정이 이미 있을 때(setup)", () => {
     expect(seen).toEqual([{ executable: "/opt/claude", configDir: join(home, ".claude-alt") }]);
     expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
       ...prev,
+      appMcp: "http",
       roots: [prev.roots[0], prev.roots[2]],
     });
     expect(JSON.parse(readFileSync(`${configPath}.bak`, "utf8"))).toEqual(prev);

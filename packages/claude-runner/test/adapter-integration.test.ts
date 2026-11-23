@@ -151,6 +151,8 @@ function startRunner(
     uploadGate?: Promise<void>;
     selfUpdate?: RunnerConnectionOptions["selfUpdate"];
     remoteUpdate?: boolean;
+    appMcp?: "off" | "http" | "all";
+    appMcpCommands?: string[];
   } = {},
 ) {
   const fatal: number[] = [];
@@ -182,6 +184,8 @@ function startRunner(
       botsDir: join(realpathSync(workdir), ".bots-unused"),
       browse: true,
       remoteUpdate: opts.remoteUpdate ?? true,
+      appMcp: opts.appMcp ?? "http",
+      ...(opts.appMcpCommands === undefined ? {} : { appMcpCommands: opts.appMcpCommands }),
       programs: {
         claude: {
           configDir: AGENT.configDir,
@@ -290,6 +294,8 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       "worktrees",
       "commands",
       "bots",
+      "botMcp",
+      "runnerControl",
     ]);
     const info = server.adapter.runnerInfo(TOKEN_ID);
     expect(info).toMatchObject({ roots: [{ id: "src", label: "my-repo" }], browse: true });

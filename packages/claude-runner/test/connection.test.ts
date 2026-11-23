@@ -203,6 +203,8 @@ async function setup(
     sdk?: (fake: FakeSdk) => void;
     modelsTimeoutMs?: number;
     remoteUpdate?: boolean;
+    appMcp?: "off" | "http" | "all";
+    appMcpCommands?: string[];
     selfUpdate?: RunnerConnectionOptions["selfUpdate"];
   } = {},
 ) {
@@ -221,6 +223,8 @@ async function setup(
     botsDir: join(dirs.base, "bots"),
     browse: opts.browse ?? true,
     remoteUpdate: opts.remoteUpdate ?? true,
+    appMcp: opts.appMcp ?? "http",
+    ...(opts.appMcpCommands === undefined ? {} : { appMcpCommands: opts.appMcpCommands }),
     programs: opts.programs ?? { claude: CLAUDE_CEILING },
   };
   const conn: RunnerConnection = startRunnerConnection({
@@ -273,7 +277,17 @@ describe("startRunnerConnection", () => {
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
       bundleSha256: null,
-      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees", "commands", "bots"],
+      capabilities: [
+        "threads",
+        "interrupt",
+        "approvals",
+        "attachments",
+        "worktrees",
+        "commands",
+        "bots",
+        "botMcp",
+        "runnerControl",
+      ],
       roots: [{ id: "src", label: "내 저장소들" }],
       browse: true,
       programs: [
@@ -288,7 +302,12 @@ describe("startRunnerConnection", () => {
           cli: "bundled",
           reason: expect.any(String),
           capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
-          ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+          ceiling: {
+            maxPermissionMode: "acceptEdits",
+            allowedToolsCeiling: null,
+            appMcp: "http",
+            appMcpCommands: null,
+          },
           models: toModelOptions(FAKE_MODELS),
         },
       ],
@@ -325,7 +344,12 @@ describe("startRunnerConnection", () => {
         login: "dedicated",
         cli: "bundled",
         capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
-        ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
+        ceiling: {
+          maxPermissionMode: "default",
+          allowedToolsCeiling: ["Read"],
+          appMcp: "http",
+          appMcpCommands: null,
+        },
         models: toModelOptions(FAKE_MODELS),
       },
       {
@@ -334,7 +358,12 @@ describe("startRunnerConnection", () => {
         auth: "unknown",
         reason: NO_DRIVER_REASON,
         capabilities: [],
-        ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+        ceiling: {
+          maxPermissionMode: "acceptEdits",
+          allowedToolsCeiling: null,
+          appMcp: "http",
+          appMcpCommands: null,
+        },
       },
     ]);
     expect(JSON.stringify(server.hellos[0])).not.toContain(base);
@@ -483,6 +512,7 @@ describe("startRunnerConnection", () => {
         botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
         remoteUpdate: true,
+        appMcp: "http",
         programs: { claude: CLAUDE_CEILING },
       },
       token: TOKEN,
@@ -516,6 +546,7 @@ describe("startRunnerConnection", () => {
         botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
         remoteUpdate: true,
+        appMcp: "http",
         programs: { claude: CLAUDE_CEILING },
       },
       token: TOKEN,
@@ -785,7 +816,12 @@ describe("startRunnerConnection", () => {
         auth: "unknown",
         reason: "상태를 확인하지 못했습니다",
         capabilities: [],
-        ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+        ceiling: {
+          maxPermissionMode: "acceptEdits",
+          allowedToolsCeiling: null,
+          appMcp: "http",
+          appMcpCommands: null,
+        },
       },
     ]);
     await sendStart(server.sockets[0]!, runStart());
@@ -888,6 +924,38 @@ describe("startRunnerConnection", () => {
     await waitFor(() => server.errors.length === 1);
     expect(server.errors[0]).toMatchObject({ code: "RUNNER_CEILING", message: "bot" });
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("봇 MCP — 가짜 서버가 stdio 를 보내도 http 러너는 빼고, all + 명령 목록 러너는 hello 천장에 싣고 그 명령만 붙인다 [러너 봇 2부 Review Focus 1]", async () => {
+    const bot = {
+      id: "r-0123456789",
+      soul: "x",
+      mcpServers: {
+        gh: { type: "http" as const, url: "https://api.example.com/mcp", headers: { A: "Bearer TOPSECRET" } },
+        sh: { command: "/tmp/npx", args: ["-y", "evil"] },
+        sh2: { command: "bash", args: ["-c", "touch /tmp/pwned"] },
+      },
+    };
+    const http = await setup();
+    await waitFor(() => http.server.hellos.length === 1);
+    http.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await sendStart(http.server.sockets[0]!, runStart({ agent: { project: undefined, bot } }));
+    await waitFor(() => http.server.finals.length === 1);
+    expect(Object.keys(http.fake.calls[0]!.options.mcpServers ?? {}).sort()).toEqual(["dodok", "gh"]);
+    expect(http.logs.join("\n")).toContain("bot mcp blocked sh stdioNotAllowed");
+    expect(http.logs.join("\n")).not.toContain("TOPSECRET");
+
+    const all = await setup({ appMcp: "all", appMcpCommands: ["npx"] });
+    await waitFor(() => all.server.hellos.length === 1);
+    expect(all.server.hellos[0]!.programs[0]!.ceiling).toMatchObject({
+      appMcp: "all",
+      appMcpCommands: ["npx"],
+    });
+    all.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await sendStart(all.server.sockets[0]!, runStart({ agent: { project: undefined, bot } }));
+    await waitFor(() => all.server.finals.length === 1);
+    expect(Object.keys(all.fake.calls[0]!.options.mcpServers ?? {}).sort()).toEqual(["dodok", "gh", "sh"]);
+    expect(all.logs.join("\n")).toContain("bot mcp blocked sh2 commandNotAllowed(bash)");
   });
 
   it("commands.list 봇 갈래 — 봇 폴더 cwd, 프로젝트 감싸개는 봇 폴더의 .claude/commands 를 잇는다 [B8·B13]", async () => {

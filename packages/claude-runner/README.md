@@ -50,6 +50,23 @@ npm 판은 서버와 다른 빌드일 수 있다 — 설정 → 연결의 러너
 
 러너의 로컬 설정은 **천장**만 쥔다 — 에이전트가 돌 수 있는 디렉터리(`roots`)·켜 둘 프로그램(`programs`)·권한 상한(`maxPermissionMode`·`allowedToolsCeiling`·`disallowedTools`). 그 루트 안의 **프로젝트와 에이전트는 dodok 앱**(설정 → 연결의 러너·프로젝트 상세, admin 이상)에서 만든다. 서버가 런마다 에이전트 정의를 보내면 러너가 천장 안인지 보고 돌린다 — 서버나 토큰이 털려도 이 파일의 범위를 넘지 못한다.
 
+### 봇의 도구(앱에서 적는 MCP)
+
+봇 상세의 「도구」에 적은 MCP 서버(`.mcp.json` 의 `mcpServers` 꼴)를 이 머신이 어디까지 받을지도 로컬 설정이 정한다. 러너는 서버를 믿지 않고 런마다 다시 판정해, 막은 서버는 빼고 로그에 `bot mcp blocked <이름> <사유>` 한 줄(헤더·env 값 없이)을 남긴다.
+
+- `"appMcp": "http"`(기본) — 원격(http·sse) 서버만. 주소 글자가 `localhost`·`127.0.0.0/8`·`::1`·`10/8`·`172.16/12`·`192.168/16`·`169.254/16`·`fc00::/7`·`fe80::/10` 이면 막는다(이 머신의 로컬 서비스를 부르지 않게). 이름 풀이 뒤의 주소(DNS 리바인딩)까지는 막지 못한다.
+- `"appMcp": "off"` — 앱의 MCP 를 모두 막는다.
+- `"appMcp": "all"` — stdio(이 머신에서 명령을 띄우는) 서버도 받는다. **이것은 앱의 이 러너 주인·admin 을 이 머신에서 코드를 돌려도 되는 사람으로 믿는다는 뜻이다.** `"appMcpCommands": ["npx", "uvx"]` 를 적으면 `command` 의 마지막 이름(basename)이 그 안에 있을 때만 받지만, 실행 파일만 좁힐 뿐 `args`(`npx -y 아무패키지`)·`env` 로 임의 코드가 돈다. `env` 의 `NODE_OPTIONS`·`LD_PRELOAD`·`LD_LIBRARY_PATH`·`DYLD_*`·`PATH` 는 받지 않는다(명령 목록을 비켜 가는 쉬운 길만 막는다).
+
+```json
+{
+  "appMcp": "all",
+  "appMcpCommands": ["npx", "uvx"]
+}
+```
+
+앱에서 고른 「묻지 않음」 도구는 `allowedToolsCeiling` 이 있으면 그 목록에 든 이름만 받는다(밖이면 그 서버를 붙이지 않는다). 이 설정은 앱이나 봇의 「이 러너 설정 제어」 도구로 바꿀 수 없다.
+
 ## 자세한 것
 
 - 설치·설정 키·끊김·업데이트: [docs/guides/docker-deploy.md 「러너 설치」](https://github.com/jang2162/dodok.chat/blob/main/docs/guides/docker-deploy.md#러너-설치)
