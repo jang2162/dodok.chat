@@ -60,6 +60,9 @@ OpenClaw Gateway 의 주소·공유 토큰과 브리지 토큰은 `.env` 에 두
 | `FCM_SERVICE_ACCOUNT_PATH` | 선택(Android 앱 푸시) | Firebase 서비스 계정 JSON 의 컨테이너 안 경로. 비우면 `/data/fcm/service-account.json`. 없으면 Android 통로는 꺼진다 |
 | `PUSH_RELAY_URL` | 쓰지 않는다 | 중앙 푸시 중계 자리 — 구현이 없어 값이 있으면 부팅 때 warn 한 줄을 남기고 무시한다 |
 | `DB_PATH` · `ATTACHMENTS_DIR` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
+| `ATTACHMENTS_STORAGE` | 선택(기본 `local`) | 첨부 블롭을 둘 곳 — `local` 은 볼륨의 `/data/attachments`, `s3` 는 S3 호환 버킷(아래 「S3 저장소」). 바꿔도 이미 있는 블롭은 옮기지 않는다 |
+| `S3_REGION` · `S3_BUCKET` · `S3_ACCESS_KEY_ID` · `S3_SECRET_ACCESS_KEY` | `s3` 모드면 **필수** | 리전·버킷·접근 키. 하나라도 비면 부팅 때 그 이름이 든 설정 오류로 멈춘다(값은 싣지 않는다). 키는 `.env` 에만 |
+| `S3_ENDPOINT` · `S3_PREFIX` · `S3_FORCE_PATH_STYLE` | 선택 | S3 호환 엔드포인트(비우면 AWS 기본)·키 접두사(기본 빈 값 — 객체 키는 `<S3_PREFIX><sha 앞 2자>/<sha>`)·경로 방식 주소 `true`/`false`(기본 `false`, MinIO 는 보통 `true`) |
 | `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` · `DODOK_RUNNER_DIR` · `DODOK_WEB_DIR` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz)·`/app/runner`(러너 tgz)·`/app/web`(빌드된 웹)을 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다 — 이미지 ENV 로만 두면 그 빈 줄이 값을 덮는다 |
 | `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 진단·스파이크 전용 |
 
@@ -642,6 +645,56 @@ docker compose logs app | grep '"event":"ops.'
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
+## S3 저장소
+
+`ATTACHMENTS_STORAGE=s3` 면 첨부 블롭(사람·에이전트가 올린 사진·파일)을 S3 호환 저장소(AWS S3·MinIO·Cloudflare R2 등)의 버킷에 둔다. DB·아바타·VAPID 키·Gateway 디바이스·백업은 그대로 볼륨 `/data` 에 남는다. 업로드·내려받기 주소(웹 `/api/v1/attachments/:id`, 플러그인 `/bridge/attachments`, 러너 `/runner/attachments`)와 권한은 `local` 과 같다 — 내려받기는 서버가 권한을 확인한 뒤 버킷 객체를 그대로 흘린다(서명 URL 로 버킷에 직접 보내지 않는다).
+
+**1. 버킷을 만든다** — 이 앱 전용 버킷이 좋다. 다른 것과 나눠 쓰면 `S3_PREFIX`(예: `dodok/`)로 자리를 가른다 — 정리는 그 접두사 아래 `<sha 앞 2자>/<sha>` 꼴의 키만 본다. 공개 읽기는 켜지 않는다.
+
+**2. 최소 권한의 키** — 그 버킷(과 접두사)에 아래만 준다. AWS IAM 정책 예:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": "arn:aws:s3:::<버킷>" },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::<버킷>/*"
+    }
+  ]
+}
+```
+
+`HeadBucket`(부팅 확인)은 `s3:ListBucket` 으로, `HeadObject`(같은 바이트가 있는지)는 `s3:GetObject` 로 허락된다. MinIO·R2 는 그 저장소의 정책·토큰 화면에서 같은 네 동작을 준다.
+
+**3. `.env`** — 위 표의 `ATTACHMENTS_STORAGE=s3` 와 `S3_*`. MinIO 예:
+
+```bash
+ATTACHMENTS_STORAGE=s3
+S3_ENDPOINT=http://minio:9000
+S3_REGION=us-east-1
+S3_BUCKET=dodok
+S3_ACCESS_KEY_ID=<키 id>
+S3_SECRET_ACCESS_KEY=<시크릿>
+S3_FORCE_PATH_STYLE=true
+```
+
+**4. 기동 확인** — 부팅 때 `HeadBucket` 으로 버킷에 닿는지 본다. 닿지 않으면(버킷 없음·키 틀림·엔드포인트 닿지 않음) 서버가 뜨지 않고 로그에 한 줄을 남긴다 — 업로드만 조용히 실패하는 일을 막는다. 문구에는 실패 종류만 있고 키·시크릿은 없다:
+
+```
+설정 오류: 첨부 저장소(S3)에 닿을 수 없다 — HeadBucket NotFound (HTTP 404). S3_ENDPOINT·S3_REGION·S3_BUCKET·키를 확인한다
+```
+
+`NotFound (HTTP 404)` 는 버킷 없음, `… (HTTP 403)`(HEAD 응답이라 이름은 `Unknown`·`Forbidden` 등 저장소마다 다르다)은 키·권한, `ECONNREFUSED`·`ENOTFOUND` 같은 네트워크 코드는 엔드포인트다. 뜬 뒤의 S3 오류(업로드·내려받기)는 500 이고 로그에도 `S3 <동작> 실패: <종류> (HTTP <상태>)` 만 남는다.
+
+**정리** — 미묶음 첨부는 24시간 뒤 지우고(그때 다른 행이 안 쓰는 블롭도 함께), 행 없는 고아 객체(채널 삭제가 남긴 것, 쓰기 뒤 행을 넣기 전에 죽은 것)는 **하루 한 번** 버킷 목록을 훑어 지운다 — 1시간 안 된 객체는 올리는 중일 수 있어 남긴다. 훑은 시각은 메모리에 있어 재시작하면 첫 정리가 한 번 더 훑는다. 버킷 수명 주기 규칙으로 이 앱의 객체를 지우지 않는다 — 행이 있는 블롭이 사라지면 그 첨부는 404 가 된다.
+
+**버전 관리** — 버킷의 버전 관리(versioning)를 켜면 정리·실수로 지운 객체도 이전 버전으로 남는다(지우기는 삭제 표지만 단다). 되살릴 수 있는 대신 저장 비용이 는다 — 오래된 이전 버전만 지우는 수명 주기 규칙(예: 이전 버전 30일)과 함께 쓴다.
+
+**바꾸기** — `local` ↔ `s3` 는 이미 있는 블롭을 옮기지 않는다. 바꾼 뒤 옛 저장소에만 있는 첨부는 404 다. 빈 앱으로 시작할 때 고른다.
+
 ## 백업
 
 ```bash
@@ -654,7 +707,7 @@ docker compose exec app node dist/backup.js [--keep N]
 - **`.partial-*`**: 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(Ctrl-C·`SIGTERM` 은 스스로 지운다, `SIGKILL`·전원 끊김은 남는다)으로 남은 `.partial-*` 는 **복원에 쓰지 않는다** — 1시간이 지나면 다음 백업이 지운다.
 - 출력은 한 줄(시크릿 없음), 실패는 exit 1 과 `백업 실패: <사유>` 한 줄(디스크 부족이면 부분 디렉터리를 지운다).
 - **네이티브 푸시 자격 증명(`/data/apns/`·`/data/fcm/`)도 들어가지 않는다** — 백업이 담는 부수 파일은 `vapid.json`·`gateways/`·`avatars/` 뿐이다. 볼륨을 잃으면 APNs `.p8`(Apple 에서 다시 받을 수 없다)·서비스 계정 JSON 은 원본 보관본에서 다시 놓아야 한다(위 「네이티브 푸시 자격 증명」).
-- **첨부는 백업에 들어가지 않는다** — 내용 주소(sha256) 블롭이라 백업마다 복사하지 않는다. 첨부까지 옮기려면 아래 「볼륨째 옮기기」.
+- **첨부는 백업에 들어가지 않는다** — 내용 주소(sha256) 블롭이라 백업마다 복사하지 않는다. 첨부까지 옮기려면 아래 「볼륨째 옮기기」. **S3 모드면 첨부는 버킷 쪽이다** — 볼륨에도 백업에도 없고, 보존은 버킷의 버전 관리·복제(위 「S3 저장소」)로 한다. DB 를 백업에서 되돌리면 그 뒤에 올린 첨부의 객체는 행이 없어 다음 하루 훑기가 지운다.
 - 백업은 같은 볼륨 안에 있다 — 호스트가 죽으면 같이 잃는다. 다른 곳으로 보내는 것은 사람 몫이다: `docker compose cp app:/data/backups/<이름> ./<이름>` 로 호스트에 꺼낸 뒤 옮긴다.
 
 **cron 예시**(매일 04:00, 14개 보관). cron 에는 TTY 가 없으므로 `-T`. 저장소 루트에서 부르면 `.env`·덮어쓰기 파일을 compose 가 함께 읽는다.
@@ -665,7 +718,7 @@ docker compose exec app node dist/backup.js [--keep N]
 
 ### 볼륨째 옮기기(첨부 포함)
 
-데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`avatars/`·`vapid.json`·`gateways/`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다.
+데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`avatars/`·`vapid.json`·`gateways/`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다. S3 모드면 첨부는 버킷에 있으니 볼륨만 옮기고 새 호스트의 `.env` 에 같은 `S3_*` 를 둔다.
 
 ```bash
 docker compose stop app
@@ -794,6 +847,8 @@ docker compose ps     # app (healthy)
 
 | 증상 | 원인·확인 | 고침 |
 | --- | --- | --- |
+| 앱이 `설정 오류: 첨부 저장소(S3)에 닿을 수 없다 — HeadBucket …` 한 줄로 멈춤(재시작 반복) | `ATTACHMENTS_STORAGE=s3` 인데 버킷에 닿지 않는다 — `NotFound (HTTP 404)` 버킷 없음, `… (HTTP 403)` 키·권한, 네트워크 코드(`ECONNREFUSED` 등)는 엔드포인트 | 「S3 저장소」 1~3 — 버킷·키·`S3_ENDPOINT`·`S3_FORCE_PATH_STYLE` 을 고치고 `docker compose up -d` |
+| 앱이 `설정 오류:` 와 `S3_…: ATTACHMENTS_STORAGE=s3 에 필요하다` 로 멈춤 | `s3` 모드의 필수 값이 `.env` 에 없다 | 그 줄의 이름을 `.env` 에 채운다 |
 | `up` 이 `port is already allocated`(`Bind for 127.0.0.1:3000 failed` 류)로 멈춤 | 호스트의 그 루프백 포트를 다른 것이 쓴다 | `.env` 의 `DODOK_HTTP_PORT` 를 빈 포트로(프록시 대상도 함께), 또는 컨테이너 프록시면 「컨테이너 프록시」의 덮어쓰기 파일로 포트를 닫는다 |
 | `up` 이 `TRUST_PROXY 가 필요하다 — …`·`DODOK_PROXY_NETWORK 가 필요하다 — …` 로 멈춤 | 덮어쓰기 파일(「컨테이너 프록시」)이 읽는 값이 `.env` 에 없다 | `.env` 에 값을 넣는다 |
 | `up` 이 `network … declared as external, but could not be found` 로 멈춤 | 공유 네트워크가 [A] 에 없다 | 「컨테이너 프록시」 1 |

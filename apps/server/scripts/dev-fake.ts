@@ -432,7 +432,16 @@ export type DevFakeOptions = {
   pushSend?: AppDeps["pushSend"];
   /** 끊김 사건 임계(기본 운영과 같은 DISCONNECT_EVENT_MS) — 브라우저 검증이 60초를 기다리지 않게 줄인다 */
   disconnectEventMs?: number;
+  /**
+   * 첨부 저장소 설정(ATTACHMENTS_STORAGE·S3_* — 운영 이름 그대로 loadConfig 에 넘긴다). 없으면 기본 local(data/attachments).
+   * 임시 S3 호환 저장소로 S3 모드를 손으로 볼 때 쓴다
+   */
+  attachmentsEnv?: Record<string, string>;
 };
+
+/** 셸 env 에서 dev:fake 가 운영 설정으로 넘기는 첨부 저장소 이름들 — 나머지 운영 env 는 읽지 않는다(머리 주석) */
+const DEV_FAKE_ATTACHMENT_ENV =
+  /^(ATTACHMENTS_STORAGE|S3_(ENDPOINT|REGION|BUCKET|PREFIX|ACCESS_KEY_ID|SECRET_ACCESS_KEY|FORCE_PATH_STYLE))$/;
 
 const DEV_FAKE_LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const;
 type DevFakeLogLevel = (typeof DEV_FAKE_LOG_LEVELS)[number];
@@ -472,6 +481,12 @@ export function devFakeCliOptions(
     keep: argv.includes("--keep"),
     disconnectEventMs: disconnectMsFromEnv(env.DODOK_DEVFAKE_DISCONNECT_MS),
     logLevel: logLevelFromEnv(env.LOG_LEVEL),
+    attachmentsEnv: Object.fromEntries(
+      Object.entries(env).filter(
+        (e): e is [string, string] =>
+          DEV_FAKE_ATTACHMENT_ENV.test(e[0]) && typeof e[1] === "string" && e[1] !== "",
+      ),
+    ),
   };
 }
 export type DevFake = {
@@ -1931,6 +1946,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       LOG_LEVEL: opts.logLevel ?? "info",
       LOCAL_AUTH_TOKEN: DEV_FAKE_LOCAL_TOKEN,
       BETTER_AUTH_SECRET: DEV_FAKE_SECRET,
+      ...opts.attachmentsEnv,
     });
     const seedDb = createDb(config.dbPath);
     try {
