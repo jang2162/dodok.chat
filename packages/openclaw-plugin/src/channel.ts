@@ -445,7 +445,7 @@ async function startDodokAccount(ctx: {
       onConfigSet: (payload) => writeChannelConfig(runtime, payload, logger),
       onReady: () => setStatus({ accountId: account.accountId, running: true, connected: true }),
       onPluginUpdate: async ({ sha256 }) => {
-        const result = startPluginUpdate({
+        const result = await startPluginUpdate({
           sha256,
           enabled: remoteUpdateEnabled(),
           bridgeOrigin: bridgeHttpOrigin(account.bridgeUrl!),
@@ -458,7 +458,7 @@ async function startDodokAccount(ctx: {
         logger.info(
           result.ok
             ? "dodok: 원격 업데이트를 시작합니다 — 곧 Gateway 가 내려갔다 올라옵니다"
-            : `dodok: 원격 업데이트를 하지 않았습니다(${result.reason})`,
+            : `dodok: 원격 업데이트를 하지 않았습니다(${result.reason}) — ${result.message ?? ""}`,
         );
         return result;
       },
