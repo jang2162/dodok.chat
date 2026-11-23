@@ -17,6 +17,7 @@ import {
   npmBesideNode,
   npmEnv,
   RunFailure,
+  maskedSnippet,
   type Runner,
   selfUpdate,
   type SelfUpdateOptions,
@@ -30,13 +31,14 @@ const ENTRY = `${ROOT}/@dodok/runner/dist/main.js`;
 
 type Calls = {
   npm: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv }>;
+  check: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv; timeoutMs: number }>;
   spawn: unknown[][];
   exit: number[];
   order: string[];
 };
 
 function harness(over: Partial<SelfUpdateOptions> = {}, npm?: Runner) {
-  const calls: Calls = { npm: [], spawn: [], exit: [], order: [] };
+  const calls: Calls = { npm: [], check: [], spawn: [], exit: [], order: [] };
   const fakeNpm: Runner = async (file, args, opts) => {
     calls.npm.push({ file, args, env: opts.env });
     calls.order.push(`npm ${args[0]}`);
@@ -54,6 +56,11 @@ function harness(over: Partial<SelfUpdateOptions> = {}, npm?: Runner) {
     env: { PATH: "/usr/bin", DODOK_RUNNER_TOKEN: "drn_x", ANTHROPIC_API_KEY: "k", HOME: "/h" },
     npm: npm ?? fakeNpm,
     npmPath: "npm",
+    check: async (file, args, o) => {
+      calls.check.push({ file, args, env: o.env, timeoutMs: o.timeoutMs });
+      calls.order.push("check");
+      return { stdout: "" };
+    },
     // npm 이 실패했을 때 그 자리에 깔린 판 — 기본은 지금 판 그대로
     installedVersion: () => "0.8.0",
     // 전역 bin 링크는 패키지 안 main.js 로 풀린다
@@ -82,7 +89,16 @@ describe("selfUpdate", () => {
     expect(calls.npm.map((c) => c.args)).toEqual([
       ["install", "--global", "--prefix", "/g", "@dodok/runner@0.9.0"],
     ]);
-    expect(calls.order).toEqual(["npm install", "beforeRestart", "spawn", "exit"]);
+    expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "spawn", "exit"]);
+    // 새 판 검사 — 같은 인자·같은 env 로 설정만 읽는 모드, 상한 20초
+    expect(calls.check).toEqual([
+      {
+        file: "/usr/bin/node",
+        args: ["--enable-source-maps", "/g/bin/dodok-runner", "--config", "/c.json", "--check-config"],
+        env: opts.env,
+        timeoutMs: 20_000,
+      },
+    ]);
     expect(calls.spawn).toEqual([
       [
         "/usr/bin/node",
@@ -193,7 +209,69 @@ describe("selfUpdate", () => {
       throw new RunFailure(127, "added 1 package\nmise: command not found");
     });
     expect(await selfUpdate(opts)).toEqual({ ok: true });
-    expect(calls.order).toEqual(["beforeRestart", "spawn", "exit"]);
+    expect(calls.order).toEqual(["check", "beforeRestart", "spawn", "exit"]);
+  });
+
+  // 리뷰 M1 — 새 판이 지금 설정을 거절하면(옛 agents 키 같은 일) 다시 띄우지 않고 옛 판으로 되돌린다
+  it("새 판 검사 실패 → 옛 판으로 되돌려 깔고 failed(출력 앞 200자, 경로 가림) — 연결을 닫지 않는다", async () => {
+    const { opts, calls } = harness({
+      check: async () => {
+        calls.order.push("check");
+        throw new RunFailure(
+          1,
+          `dodok-runner: /h/.dodok-runner/config.json: 옛 agents 키는 받지 않습니다 ${"x".repeat(400)}`,
+        );
+      },
+    });
+    const result = await selfUpdate(opts);
+    expect(calls.npm.map((c) => c.args)).toEqual([
+      ["install", "--global", "--prefix", "/g", "@dodok/runner@0.9.0"],
+      ["install", "--global", "--prefix", "/g", "@dodok/runner@0.8.0"],
+    ]);
+    expect(calls.order).toEqual(["npm install", "check", "npm install"]);
+    expect(result).toMatchObject({ ok: false, reason: "failed" });
+    const message = result.ok === false ? (result.message ?? "") : "";
+    expect(message).toContain(
+      "새 판(0.9.0) 검사에 실패했습니다 — dodok-runner: <경로>: 옛 agents 키는 받지 않습니다",
+    );
+    expect(message).toContain("0.8.0 로 되돌렸습니다");
+    expect(message).not.toContain("/h/");
+    expect(message.length).toBeLessThanOrEqual(400);
+    // 되돌리기 npm 에도 비밀 env 는 가지 않는다
+    expect(calls.npm[1]!.env.DODOK_RUNNER_TOKEN).toBeUndefined();
+    expect(calls.spawn).toEqual([]);
+    expect(calls.exit).toEqual([]);
+  });
+
+  it("검사 실패 뒤 되돌리기도 실패하면 그 머신에서 돌릴 명령을 싣는다", async () => {
+    const { opts, calls } = harness(
+      {
+        check: async () => {
+          throw new RunFailure(null, "");
+        },
+        installedVersion: () => "0.9.0",
+      },
+      async (_file, args) => {
+        if (args.at(-1) === "@dodok/runner@0.8.0") throw new RunFailure(1, "npm error code E404");
+        return { stdout: "" };
+      },
+    );
+    const result = await selfUpdate(opts);
+    expect(result).toMatchObject({ ok: false, reason: "failed" });
+    expect(result.ok === false && result.message).toBe(
+      "새 판(0.9.0) 검사에 실패했습니다 · 0.8.0 로 되돌리지 못했습니다 — 그 머신에서 npm i -g @dodok/runner@0.8.0 을 돌려 보세요",
+    );
+    expect(calls.spawn).toEqual([]);
+  });
+
+  it("spawn 이 던지면 그대로 던진다 — 부르는 쪽이 연결을 되살린다", async () => {
+    const { opts, calls } = harness({
+      spawn: () => {
+        throw new Error("spawn EAGAIN");
+      },
+    });
+    await expect(selfUpdate(opts)).rejects.toThrow("spawn EAGAIN");
+    expect(calls.exit).toEqual([]);
   });
 
   it("npm 을 찾지 못하면 failed — 다시 띄우지 않는다", async () => {
@@ -224,6 +302,10 @@ describe("도우미", () => {
     ).toEqual({
       A: "1",
     });
+  });
+  it("maskedSnippet 는 절대·홈 경로를 가리고 공백을 접어 200자로 자른다", () => {
+    expect(maskedSnippet("a /x/y.json:\n  b ~/c (d /e)")).toBe("a <경로>: b <경로> (d <경로>)");
+    expect(maskedSnippet("y".repeat(300))).toHaveLength(200);
   });
   it("npmBesideNode — node 옆에 npm 이 있으면 그것, 없으면 PATH 의 npm", () => {
     expect(npmBesideNode("/opt/node/bin/node", (p) => p === "/opt/node/bin/npm")).toBe("/opt/node/bin/npm");

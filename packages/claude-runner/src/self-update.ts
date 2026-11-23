@@ -17,6 +17,10 @@ export const DISABLED_MESSAGE = "이 머신의 러너 설정에서 원격 업데
 export const BUSY_MESSAGE = "런이 끝난 뒤 다시 시도하세요";
 export const UNSUPPORTED_MESSAGE = "이 설치 방식은 원격 업데이트를 지원하지 않습니다";
 export const INVALID_VERSION_MESSAGE = "정확한 판(예: 0.9.0)만 받습니다";
+/** 새 판 검사(설정만 읽고 끝나는 모드)의 상한 */
+export const CHECK_TIMEOUT_MS = 20_000;
+/** 새 판 검사의 인자 — main.ts 가 이 플래그면 설정만 읽고 0/1 로 끝난다 */
+export const CHECK_CONFIG_FLAG = "--check-config";
 
 export type Runner = (
   file: string,
@@ -81,6 +85,15 @@ function npmErrorCode(output: string): string | null {
   return /npm (?:ERR!|error) code (E[A-Z0-9_]+)/.exec(output)?.[1] ?? null;
 }
 
+/** 서버로 보내는 출력 조각 — 절대 경로·홈 경로는 가리고 앞 200자만 */
+export function maskedSnippet(output: string): string {
+  return output
+    .replace(/(?:~|\/)[^\s'"`()<>,;:]*/g, (m) => (m === "/" ? m : "<경로>"))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
 /** `<prefix>/lib/node_modules/@dodok/runner/package.json` 의 판 — 읽지 못하면 null */
 export function readInstalledVersion(prefix: string): string | null {
   try {
@@ -122,6 +135,8 @@ export type SelfUpdateOptions = {
   execArgv?: string[];
   env: NodeJS.ProcessEnv;
   npm?: Runner;
+  /** 새 판 검사 실행 — 시험이 바꾼다(기본 nodeRunner) */
+  check?: Runner;
   spawn?: Spawner;
   realpath?: (p: string) => string;
   npmPath?: string;
@@ -133,8 +148,10 @@ export type SelfUpdateOptions = {
 };
 
 /**
- * 원격 업데이트 한 번. 실패면 사유와 함께 돌려주고 아무것도 다시 띄우지 않는다. 성공이면 beforeRestart → 같은 argv 로 분리된 자식 →
- * exit(0) 를 차례로 부르고 ok 를 돌려준다
+ * 원격 업데이트 한 번. 실패면 사유와 함께 돌려주고 아무것도 다시 띄우지 않는다. 설치 뒤 새 진입 파일을 지금 설정으로
+ * `--check-config` 로 돌려 보고(설정 거절·Node 하한 등으로 새 판이 못 뜨면 러너가 내려간 채로 남는다 — 리뷰 M1), 0 이 아니면 옛 판으로
+ * 되돌려 깔고 failed. 통과면 beforeRestart → 같은 argv 로 분리된 자식 → exit(0) 를 차례로 부르고 ok 를 돌려준다. spawn 이 던지면
+ * 그대로 던진다 — 부르는 쪽(connection)이 연결을 되살린다
  */
 export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateResult> {
   if (!opts.enabled) return { ok: false, reason: "disabled", message: DISABLED_MESSAGE };
@@ -181,10 +198,40 @@ export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateR
     }
   }
 
+  // 새 판 검사 — 진입 파일 자리(argv[1])는 npm 이 같은 자리를 덮었으므로 이제 새 판이다. 같은 인자(--config 등)·같은 env 로
+  const entryArgs = [...(opts.execArgv ?? []), ...opts.argv.slice(1)];
+  try {
+    await (opts.check ?? nodeRunner)(opts.execPath, [...entryArgs, CHECK_CONFIG_FLAG], {
+      env: opts.env,
+      timeoutMs: CHECK_TIMEOUT_MS,
+    });
+  } catch (error) {
+    const output = error instanceof RunFailure ? error.output : error instanceof Error ? error.message : "";
+    let reverted = true;
+    try {
+      await run(
+        npm,
+        ["install", "--global", "--prefix", prefix, `${RUNNER_PACKAGE}@${opts.currentVersion}`],
+        {
+          env,
+          timeoutMs: RUNNER_NPM_INSTALL_TIMEOUT_MS,
+        },
+      );
+    } catch {
+      reverted = (opts.installedVersion ?? readInstalledVersion)(prefix) === opts.currentVersion;
+    }
+    const snippet = maskedSnippet(output);
+    const message =
+      `새 판(${opts.version}) 검사에 실패했습니다${snippet ? ` — ${snippet}` : ""}` +
+      (reverted
+        ? ` · ${opts.currentVersion} 로 되돌렸습니다`
+        : ` · ${opts.currentVersion} 로 되돌리지 못했습니다 — 그 머신에서 npm i -g ${RUNNER_PACKAGE}@${opts.currentVersion} 을 돌려 보세요`);
+    // ack 의 message 상한(400자)
+    return { ok: false, reason: "failed", message: message.slice(0, 400) };
+  }
+
   await opts.beforeRestart?.();
-  (opts.spawn ?? nodeSpawner)(opts.execPath, [...(opts.execArgv ?? []), ...opts.argv.slice(1)], {
-    env: opts.env,
-  });
+  (opts.spawn ?? nodeSpawner)(opts.execPath, entryArgs, { env: opts.env });
   (opts.exit ?? ((code: number) => process.exit(code)))(0);
   return { ok: true };
 }

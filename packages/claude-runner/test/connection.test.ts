@@ -1755,4 +1755,26 @@ describe("원격 업데이트 — runner.update(원격 업데이트 스펙 U1·U
     expect(server.hellos).toHaveLength(1);
     expect(logs.join("\n")).toContain("새 판으로 다시 띄웁니다");
   });
+
+  // 리뷰 M1 — 연결을 닫은 뒤 다시 띄우기가 던지면 산 프로세스가 영영 붙지 않는다
+  it("beforeRestart 뒤 selfUpdate 가 던지면(spawn 실패) 지금 판으로 다시 붙고, 다시 업데이트를 받는다", async () => {
+    let calls = 0;
+    const { server, logs } = await setup({
+      selfUpdate: async (r) => {
+        calls += 1;
+        if (calls > 1) return { ok: false, reason: "busy", message: "둘째" };
+        await r.beforeRestart();
+        throw new Error("spawn EAGAIN");
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toEqual({ ok: true });
+    await waitFor(() => server.hellos.length === 2);
+    expect(logs.join("\n")).toContain("지금 판으로 다시 붙습니다");
+    expect(await askUpdate(server.sockets.at(-1)!, "0.9.0")).toEqual({
+      ok: false,
+      reason: "busy",
+      message: "둘째",
+    });
+  });
 });
