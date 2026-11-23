@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import packageJson from "../package.json" with { type: "json" };
 import { type App, createApp, watchGatewayReconnecting } from "../src/app";
 import { loadConfig } from "../src/config";
+import { createLatestRunnerVersion } from "../src/modules/runners/latest";
 import { agentSessions, agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
@@ -630,7 +631,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
     const { logger } = captureLogger();
     const app = await createApp(
       loadConfig({ ...testEnv, DATA_DIR: base, ATTACHMENTS_DIR: join(base, "attachments") }),
-      { logger },
+      { logger, latestRunner: createLatestRunnerVersion({ fixed: null }) },
     );
     try {
       expect(openclawOf(app)).not.toBeInstanceOf(FakeAdapter);

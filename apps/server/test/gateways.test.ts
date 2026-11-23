@@ -25,6 +25,7 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { agents, bridgeTokens, gateways } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { createLatestRunnerVersion } from "../src/modules/runners/latest";
 import {
   approveGateway,
   createGateway,
@@ -93,7 +94,13 @@ async function bootReal(): Promise<Live> {
   const { logger, lines } = captureLogger();
   const app = await createApp(
     loadConfig({ ...testEnv, DATA_DIR: dir, ATTACHMENTS_DIR: join(dir, "attachments") }),
-    { logger, pushSend: noExternalPush, statfs: plentyOfDisk, gatewayBackoff: { initialMs: 50, maxMs: 200 } },
+    {
+      logger,
+      pushSend: noExternalPush,
+      statfs: plentyOfDisk,
+      gatewayBackoff: { initialMs: 50, maxMs: 200 },
+      latestRunner: createLatestRunnerVersion({ fixed: null }),
+    },
   );
   cleanups.push(() => app.close());
   await app.fastify.listen({ host: "127.0.0.1", port: 0 });

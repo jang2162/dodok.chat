@@ -327,6 +327,29 @@ describe("startPluginUpdate — 내리기 전 단계는 이 프로세스에서(�
     expect(seen.launched).toHaveLength(1);
   });
 
+  it("오래된 잠금을 넘길 때 죽은 스크립트가 남긴 download-* 도 지운다", async () => {
+    const { opts, state } = base();
+    const paths = updatePaths(state);
+    mkdirSync(join(paths.dir, "download-DEAD01"), { recursive: true });
+    writeFileSync(join(paths.dir, "download-DEAD01", "x.tgz"), "x");
+    writeFileSync(paths.lock, "0\n");
+    const old = (1_000_000 - LOCK_STALE_MS - 1000) / 1000;
+    utimesSync(paths.lock, old, old);
+    expect(await startPluginUpdate(opts)).toEqual({ ok: true });
+    expect(existsSync(join(paths.dir, "download-DEAD01"))).toBe(false);
+  });
+
+  it("살아 있는 잠금(busy)이면 download-* 를 건드리지 않는다", async () => {
+    const { opts, state } = base();
+    const paths = updatePaths(state);
+    mkdirSync(join(paths.dir, "download-LIVE01"), { recursive: true });
+    writeFileSync(paths.lock, "0\n");
+    const fresh = 1_000_000 / 1000;
+    utimesSync(paths.lock, fresh, fresh);
+    expect((await startPluginUpdate(opts)).ok).toBe(false);
+    expect(existsSync(join(paths.dir, "download-LIVE01"))).toBe(true);
+  });
+
   it("systemd 서비스 아래(INVOCATION_ID)면 systemd-run --user --scope 로 띄운다", () => {
     expect(
       launchCommand({

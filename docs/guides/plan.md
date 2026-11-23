@@ -999,9 +999,9 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **원격 업데이트(2026-11-23)**
 
-- **플러그인 원격 업데이트를 실물 Gateway 로 돌려 보지 않았다** — 스크립트는 가짜 `openclaw` 위에서 bash 로 그대로 돌려 내린 뒤 실패 단계의 「Gateway 다시 올리기」를 쟀고(받기·sha·서비스 확인은 Gateway 프로세스 안 — 가짜 fetch·명령으로)(`packages/openclaw-plugin/test/self-update.test.ts`), 서비스로 깐 실제 Gateway(launchd·systemd) 아래에서 `openclaw gateway stop` 이 분리된 스크립트를 함께 죽이지 않는지는 모른다. systemd 서비스(INVOCATION_ID)면 OpenClaw 자기 업데이트와 같은 `systemd-run --user --scope` 로 띄우지만 실기로 본 적은 없다. 원격 Gateway 호스트에서 사람이 한 번 본다.
+- **플러그인 원격 업데이트를 실물 Gateway 로 돌려 보지 않았다** — 스크립트는 가짜 `openclaw` 위에서 bash 로 그대로 돌려 내린 뒤 실패 단계의 「Gateway 다시 올리기」를 쟀고(받기·sha·서비스 확인은 Gateway 프로세스 안 — 가짜 fetch·명령으로)(`packages/openclaw-plugin/test/self-update.test.ts`), 서비스로 깐 실제 Gateway(launchd·systemd) 아래에서 `openclaw gateway stop` 이 분리된 스크립트를 함께 죽이지 않는지는 모른다. systemd 서비스(INVOCATION_ID)면 OpenClaw 자기 업데이트와 같은 `systemd-run --user --scope` 로 띄우지만 실기로 본 적은 없다. 원격 Gateway 호스트에서 사람이 한 번 본다. 같은 자리에서 `openclaw gateway status` 의 5초 상한이 부하 높은 호스트에서 충분한지도 본다(못 끝나면 서비스여도 「상태를 읽지 못했습니다」로 거절된다).
 - **서비스 관리자로 띄운 러너의 원격 업데이트** — 러너는 분리된 자식으로 스스로 다시 뜨고 끝난다(스펙 U3). systemd 가 주 프로세스 종료 때 같은 cgroup 의 자식을 거두거나, 다시 띄우는 설정이면 두 러너가 같은 토큰으로 잠깐 서로를 밀어낼 수 있다(`docs/guides/docker-deploy.md` 「러너 설치」 「업데이트」). 서비스 설치 절차가 생기면 그때 서비스 아래 다시 띄우기를 따로 정한다.
-- **러너 새 판 검사가 실패해 되돌리기까지 하면 ack 가 상한을 넘을 수 있다** — 설치(상한 150초)·검사(20초)·되돌리기 설치(150초)가 모두 길면 ack 상한 170초·진행 상한 3분을 넘는다. 그때 웹은 「응답이 없습니다」 뒤에 늦은 실패 사유를 받는다(러너는 옛 판으로 붙어 있다). 출처: `.superpowers/sdd/2026-11-23-remote-update/fix-report.md`.
+- **러너 새 판 검사가 실패해 되돌리기까지 하면 ack 가 상한을 넘을 수 있다** — 설치(상한 150초)·검사(20초)·되돌리기 설치(150초)가 모두 길면 ack 상한 170초·진행 상한 3분을 넘는다. 170초 안에 답이 오면 웹은 「응답이 없습니다」 뒤에 늦은 실패 사유를 받고, 170초(`RUNNER_UPDATE_ACK_TIMEOUT_MS`)를 넘으면 「응답이 없습니다」뿐이다(러너는 옛 판으로 붙어 있다 — 판 줄로 보인다). 출처: `.superpowers/sdd/2026-11-23-remote-update/fix-report.md`.
 - **원격 업데이트 진행은 서버 메모리에만 있다** — 서버를 재시작하면 「업데이트 중…」이 사라진다(머신 쪽 업데이트는 그대로 끝난다).
 
 **실물 확인**

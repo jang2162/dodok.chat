@@ -19,6 +19,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -37,10 +38,10 @@ export const NOT_SERVICE_MESSAGE =
 /** 앞 업데이트의 잠금 파일이 이보다 오래됐으면 죽은 것으로 본다 — 서버 상한(5분)보다 길게 */
 export const LOCK_STALE_MS = 10 * 60_000;
 /**
- * 받기·상태 확인의 상한 — 둘을 더해도 서버의 브리지 ack 상한(openclaw-adapter bridge/server.ts 기본 15초)보다 짧게. 넘으면 서버는 답을
- * 놓치고 상한(5분) 뒤 「응답이 없습니다」로만 보인다
+ * 받기·상태 확인의 상한 — 둘에 띄우기 지켜보기(LAUNCH_SETTLE_MS)까지 더해도(6+5+1=12초) 서버의 브리지 ack 상한(openclaw-adapter
+ * bridge/server.ts 기본 15초)보다 짧게, 파일 쓰기 몫의 여유를 두고. 넘으면 서버는 답을 놓치고 상한(5분) 뒤 「응답이 없습니다」로만 보인다
  */
-export const FETCH_TIMEOUT_MS = 8_000;
+export const FETCH_TIMEOUT_MS = 6_000;
 export const STATUS_TIMEOUT_MS = 5_000;
 /** 띄운 뒤 이만큼 지켜본다 — systemd-run 이 user 버스에 닿지 못하면 곧바로 0 이 아니게 끝난다 */
 export const LAUNCH_SETTLE_MS = 1_000;
@@ -397,6 +398,9 @@ export async function startPluginUpdate(opts: StartPluginUpdateOptions): Promise
       const age = now - statSync(paths.lock).mtimeMs;
       if (age < LOCK_STALE_MS) return { ok: false, reason: "busy", message: ALREADY_UPDATING_MESSAGE };
       rmSync(paths.lock, { force: true });
+      // 죽은 스크립트(SIGKILL 로 EXIT trap 이 못 돈)가 남긴 받은 파일도 함께 치운다
+      for (const name of readdirSync(paths.dir))
+        if (name.startsWith("download-")) rmSync(join(paths.dir, name), { recursive: true, force: true });
     }
     writeFileSync(paths.lock, `${now}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
