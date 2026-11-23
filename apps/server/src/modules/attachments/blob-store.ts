@@ -52,9 +52,12 @@ async function listDir(path: string): Promise<string[]> {
   }
 }
 
+/** 로컬 블롭 파일 자리 `<dir>/<sha 앞 2자>/<sha>` — 시험이 디스크를 직접 볼 때도 쓴다 */
+export const localBlobPath = (dir: string, sha: string): string => join(dir, sha.slice(0, 2), sha);
+
 /** 로컬 디스크 — 임시 파일에 쓰고 rename 해서 반쯤 쓴 파일이 보이지 않게 한다 */
 export function createLocalBlobStore(dir: string): BlobStore {
-  const pathOf = (sha: string) => join(dir, sha.slice(0, 2), sha);
+  const pathOf = (sha: string) => localBlobPath(dir, sha);
   return {
     kind: "local",
     async put(sha, bytes) {

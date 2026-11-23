@@ -29,7 +29,8 @@ import { createAgentCommandsService } from "./modules/agents/commands";
 import { registerAgentCommandRoutes } from "./modules/agents/commands.routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
-import { sweepAttachments } from "./modules/attachments/service";
+import { type BlobStore, createBlobStore } from "./modules/attachments/blob-store";
+import { createAttachmentSweep } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import type { PostDeps } from "./modules/automations/post";
 import { registerAutomationRoutes } from "./modules/automations/routes";
@@ -143,6 +144,8 @@ export type AppDeps = {
   closeTimeoutMs?: number;
   /** 첨부 블롭 sha 잠금(기본은 앱마다 새로 하나) — 업로드 경로와 정리가 같은 객체를 쓰는지 테스트가 들여다본다 */
   blobLocks?: BlobLocks;
+  /** 첨부 블롭 저장소(기본은 설정의 모드로 createBlobStore) — 테스트가 메모리 흉내 S3 를 준다. 부팅 때 check() 를 부른다 */
+  blobStore?: BlobStore;
   /** 첨부 정리 주기(기본 ATTACHMENT_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
   attachmentSweepIntervalMs?: number;
   /** 만료 세션 청소 주기(기본 SESSION_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
@@ -211,6 +214,8 @@ export type App = {
   setPreviousClean(previousClean: boolean | null): void;
   /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
   readonly blobLocks: BlobLocks;
+  /** 첨부 블롭 저장소(로컬·S3) — 업로드·내려받기·정리가 함께 쓴다(dev:fake 씨앗 첨부도) */
+  readonly blobStore: BlobStore;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
   readonly url: string;
   /** 한 번만 실행한다 — 다시 부르면 같은 프로미스. 닫힌 어댑터를 다시 쓰지 않는다(sc-t11 재리뷰 이월). */
@@ -229,6 +234,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   /** 접속 점 허브가 뒤에 생긴다 — 그 전에 만든 라우트·타이머가 이 자리를 부른다(허브가 채운다) */
   const presenceHooks: { modeChanged(userId: string): void } = { modeChanged: () => {} };
   try {
+    // 첨부 저장소를 먼저 확인한다 — 틀린 S3 설정이면 서버가 뜨지 않는다(업로드만 조용히 실패하지 않게, S3 스펙 S3). 로컬은 디렉터리를 만든다
+    const blobStore = deps.blobStore ?? createBlobStore(config);
+    await blobStore.check();
     // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
     if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
     const db = createDb(config.dbPath, {
@@ -578,7 +586,6 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerTokenRoutes(fastify, { auth, db, workspaceId });
     // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다 —
     // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
-    mkdirSync(config.attachmentsDir, { recursive: true });
     const blobLocks = deps.blobLocks ?? createBlobLocks();
     // 꺼진(또는 아직 승인되지 않은) Gateway 의 토큰은 401 이되 실패로 세지 않는다. 첨부 HTTP 는 핸드셰이크와 같은 값 — 어댑터에 넘기는
     // gatewayConfig 의 enabled(켜짐 && 승인)를 그대로 본다(승인 전에는 이 서버의 일에 끼지 않는다, 연결 탭 통합 스펙 5.4).
@@ -598,7 +605,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       auth,
       db,
       workspaceId,
-      dir: config.attachmentsDir,
+      store: blobStore,
       verifyBridgeToken,
       acceptBridgeGateway,
       runner: {
@@ -685,9 +692,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       publicKey: vapid.publicKey,
       capabilities: () => capabilities,
     });
+    const sweepOnce = createAttachmentSweep({ db, store: blobStore, locks: blobLocks });
     const sweeper = startAttachmentSweeper(
       () =>
-        sweepAttachments({ db, dir: config.attachmentsDir, locks: blobLocks }).then(
+        sweepOnce().then(
           (r) => (r.rows > 0 || r.blobs > 0 ? logger.info(r, "attachments swept") : undefined),
           (err: unknown) => logger.error({ err }, "attachments sweep failed"),
         ),
@@ -1086,6 +1094,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         previousClean = value;
       },
       blobLocks,
+      blobStore,
       get url() {
         const addr = fastify.server.address();
         return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";

@@ -14,6 +14,7 @@ import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { attachments, gateways } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { createLocalBlobStore } from "../src/modules/attachments/blob-store";
 import { uploadAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage } from "../src/modules/messages/service";
@@ -203,7 +204,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const upload = (runnerTokenId: string) =>
       uploadAttachment(
-        { db: app.db, dir },
+        { db: app.db, store: createLocalBlobStore(dir) },
         { channelId: channel.id, uploader: { type: "bridge", runnerTokenId }, bytes: PDF_BYTES },
       );
     const [own, others] = [await upload(runner), await upload(other)];

@@ -4,6 +4,7 @@ import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
 import { fstatSync, mkdtempSync, readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
@@ -15,7 +16,9 @@ import { type App, createApp, startAttachmentSweeper } from "../src/app";
 import { loadConfig } from "../src/config";
 import { SESSION_COOKIE } from "../src/auth";
 import { attachments, channels, workspaces } from "../src/db/schema.sqlite";
-import { blobPath, type BlobLocks, createBlobLocks, sha256Of } from "../src/modules/attachments/store";
+import { BlobStoreCheckError, localBlobPath as blobPath } from "../src/modules/attachments/blob-store";
+import { createS3BlobStore } from "../src/modules/attachments/s3-store";
+import { type BlobLocks, createBlobLocks, sha256Of } from "../src/modules/attachments/store";
 import { registerAttachmentRoutes } from "../src/modules/attachments/routes";
 import { markBound, uploadAttachment } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
@@ -23,6 +26,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { attachmentsDirOf, bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { MEMORY_S3_CONFIG, type MemoryS3, memoryS3 } from "./helpers/memory-s3";
 import { makePng, PDF_BYTES } from "./helpers/png";
 import { channelConversation, seedConversation } from "./helpers/seed";
 
@@ -51,9 +55,23 @@ function isOpen(path: string): boolean {
   });
 }
 
-describe("첨부 HTTP (스펙 4.3)", () => {
+// 같은 묶음을 로컬 디스크와 메모리 흉내 S3 로 돌린다(S3 스펙 4장). 파일 fd 를 재는 단언은 로컬만 — S3 는 아래 「S3 내려받기」 묶음
+describe.each(["local", "s3"] as const)("첨부 HTTP (스펙 4.3) — %s", (backend) => {
   let app: App;
   let dir: string;
+  let s3: MemoryS3 | undefined;
+  const localOnly = it.skipIf(backend !== "local");
+  const s3Key = (sha: string) => `${sha.slice(0, 2)}/${sha}`;
+  /** 행은 남기고 블롭만 지운다(정리와 스친 행 흉내) */
+  const dropBlob = async (sha: string) => {
+    if (s3) s3.objects.delete(s3Key(sha));
+    else await rm(blobPath(dir, sha));
+  };
+  /** 블롭 바이트를 바꾼다(디스크 손상·손 조작 흉내) */
+  const corruptBlob = (sha: string, bytes: Uint8Array) => {
+    if (s3) s3.objects.set(s3Key(sha), { bytes, lastModified: new Date() });
+    else writeFileSync(blobPath(dir, sha), bytes);
+  };
   let session: { authorization: string };
   let sessionToken: string;
   let ch: string;
@@ -62,7 +80,11 @@ describe("첨부 HTTP (스펙 4.3)", () => {
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "dodok-att-routes-"));
-    app = await bootTestApp({ ATTACHMENTS_DIR: dir }, { logger });
+    s3 = backend === "s3" ? memoryS3() : undefined;
+    app = await bootTestApp(
+      { ATTACHMENTS_DIR: dir },
+      { logger, ...(s3 ? { blobStore: createS3BlobStore(MEMORY_S3_CONFIG, s3.client) } : {}) },
+    );
     BRIDGE_TOKEN = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
     const l = await login(app);
     session = l.headers;
@@ -272,7 +294,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect((await upload(makePng(1, 1), {}, other)).statusCode).toBe(404);
     // 다른 워크스페이스 채널 메시지에 묶인 첨부도 이 워크스페이스 사람에게는 없는 것이다
     const foreign = await uploadAttachment(
-      { db: app.db, dir },
+      { db: app.db, store: app.blobStore },
       { channelId: other, uploader: { type: "user", userId: app.ownerUserId }, bytes: makePng(8, 1) },
     );
     bind([foreign.id], other);
@@ -322,7 +344,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
 
   it("사람: 남의 미묶음 첨부·브리지 미묶음 첨부·없는 id GET → 404, 틀린 id → 400", async () => {
     const theirs = await uploadAttachment(
-      { db: app.db, dir },
+      { db: app.db, store: app.blobStore },
       { channelId: ch, uploader: { type: "user", userId: uuid() }, bytes: makePng(5, 5) },
     );
     const get = (id: string) =>
@@ -342,7 +364,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
 
   it("사람: 행은 있는데 블롭 파일이 없으면 500 이 아니라 404", async () => {
     const a = (await upload(makePng(7, 7))).json() as Attachment;
-    await rm(blobPath(dir, sha256Of(makePng(7, 7))));
+    await dropBlob(sha256Of(makePng(7, 7)));
     const r = await app.fastify.inject({
       method: "GET",
       url: `/api/v1/attachments/${a.id}`,
@@ -359,7 +381,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     const png = makePng(11, 11);
     const a = (await upload(png)).json() as Attachment;
     const path = blobPath(dir, sha256Of(png));
-    writeFileSync(path, png.subarray(0, 10)); // 디스크 손상·손 조작 흉내
+    corruptBlob(sha256Of(png), png.subarray(0, 10)); // 디스크 손상·손 조작 흉내
     const before = lines.length;
     const r = await app.fastify.inject({
       method: "GET",
@@ -374,7 +396,9 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]?.cause).toEqual({ attachmentId: a.id, storedSize: png.length, blobSize: 10 });
     expect(JSON.stringify(errors)).not.toContain(dir);
-    await vi.waitFor(() => expect(isOpen(path)).toBe(false), { timeout: 3000, interval: 20 });
+    expect(JSON.stringify(errors)).not.toContain(s3Key(sha256Of(png)));
+    if (backend === "local")
+      await vi.waitFor(() => expect(isOpen(path)).toBe(false), { timeout: 3000, interval: 20 });
   });
 
   it("저장값이 헤더로 못 쓰는 문자면(mime 에 개행) 파일을 열기 전에 500 — 블롭 fd 가 남지 않는다", async () => {
@@ -382,6 +406,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     const a = (await upload(png)).json() as Attachment;
     app.db.update(attachments).set({ mime: "image/png\n" }).where(eq(attachments.id, a.id)).run();
     const path = blobPath(dir, sha256Of(png));
+    const gets = s3?.count("GetObject");
     const r = await app.fastify.inject({
       method: "GET",
       url: `/api/v1/attachments/${a.id}`,
@@ -389,7 +414,8 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     });
     expect(r.statusCode).toBe(500);
     expect(r.headers["cache-control"]).toBeUndefined();
-    expect(isOpen(path)).toBe(false);
+    if (s3) expect(s3.count("GetObject")).toBe(gets);
+    else expect(isOpen(path)).toBe(false);
   });
 
   it("브리지: 토큰 없거나 틀리면 401, channel 헤더 없거나 틀리면 400, 없는 채널 404", async () => {
@@ -553,7 +579,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(bad.statusCode).toBe(400);
   });
 
-  it("받다가 끊으면 블롭 파일을 연 채 남기지 않는다", async () => {
+  localOnly("받다가 끊으면 블롭 파일을 연 채 남기지 않는다", async () => {
     const bytes = Buffer.alloc(ATTACHMENT_LIMITS.agentFileMaxBytes, 7);
     const up = (await bridgeUpload(bytes, { "x-dodok-file-name": "big.bin" })).json() as Attachment;
     bind([up.id]);
@@ -603,6 +629,188 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     });
     expect(viaHttp.status).toBe(200);
     expect(viaHttp.body.equals(bytes)).toBe(true);
+  });
+});
+
+describe("S3 내려받기 — 끊김(S3 스펙 S5)", () => {
+  let app: App;
+  let s3: MemoryS3;
+  let session: { authorization: string };
+  let ch: string;
+  let port: number;
+
+  beforeAll(async () => {
+    s3 = memoryS3();
+    app = await bootTestApp({}, { blobStore: createS3BlobStore(MEMORY_S3_CONFIG, s3.client) });
+    session = (await login(app)).headers;
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/channels",
+      headers: session,
+      payload: { name: "s3" },
+    });
+    ch = res.json().channel.id;
+    await app.fastify.listen({ port: 0, host: "127.0.0.1" });
+    port = (app.fastify.server.address() as { port: number }).port;
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  /** 사람이 올리고 자기 채널 메시지에 묶는다 — 내려받기 권한이 생긴다 */
+  async function uploadBound(bytes: Uint8Array): Promise<Attachment> {
+    const r = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/attachments?channelId=${ch}`,
+      headers: { ...session, "content-type": "application/octet-stream" },
+      payload: Buffer.from(bytes),
+    });
+    expect(r.statusCode).toBe(200);
+    const a = r.json() as Attachment;
+    const msg = createUserMessage(app.db, app.bus, {
+      conversationId: channelConversation(app.db, ch),
+      authorId: app.ownerUserId,
+      bodyMd: "f",
+      clientMsgId: uuid(),
+    });
+    app.db.transaction((tx) => markBound(tx, [a.id], msg.id));
+    return a;
+  }
+
+  /** 첫 조각을 받은 뒤 쉬는 GET — 본문 스트림을 바로 다 흘리지 않는 S3 응답을 흉내 낸다 */
+  function slowBody(first: Buffer) {
+    const body = new Readable({ read() {} });
+    body.push(first);
+    return body;
+  }
+
+  it("client abort closes S3 body", async () => {
+    const bytes = Buffer.alloc(64 * 1024, 3);
+    const a = await uploadBound(bytes);
+    let body: Readable | undefined;
+    s3.body.set(
+      `${sha256Of(bytes).slice(0, 2)}/${sha256Of(bytes)}`,
+      () => (body = slowBody(bytes.subarray(0, 1024))),
+    );
+    const req = httpRequest({
+      host: "127.0.0.1",
+      port,
+      path: `/api/v1/attachments/${a.id}`,
+      headers: session,
+    });
+    const firstChunk = new Promise<number>((resolve, reject) => {
+      req.on("response", (res) => res.once("data", () => resolve(res.statusCode ?? 0)));
+      req.on("error", reject);
+    });
+    req.end();
+    expect(await firstChunk).toBe(200);
+    // 대조군: 받는 중에는 S3 본문이 열려 있다
+    expect(body?.destroyed).toBe(false);
+    req.on("error", () => {});
+    req.destroy();
+    await vi.waitFor(() => expect(body?.destroyed).toBe(true), { timeout: 3000, interval: 20 });
+    s3.body.clear();
+  });
+
+  it("download stream error mid-way closes response", async () => {
+    const bytes = Buffer.alloc(64 * 1024, 4);
+    const a = await uploadBound(bytes);
+    let body: Readable | undefined;
+    s3.body.set(
+      `${sha256Of(bytes).slice(0, 2)}/${sha256Of(bytes)}`,
+      () => (body = slowBody(bytes.subarray(0, 1024))),
+    );
+    const outcome = new Promise<{ status: number; received: number; ended: boolean; aborted: boolean }>(
+      (resolve) => {
+        const req = httpRequest(
+          { host: "127.0.0.1", port, path: `/api/v1/attachments/${a.id}`, headers: session, agent: false },
+          (res) => {
+            let received = 0;
+            let ended = false;
+            res.on("data", (c: Buffer) => {
+              received += c.length;
+              // 첫 조각이 닿은 뒤 S3 소켓이 끊긴 것처럼 본문 스트림이 오류를 낸다
+              if (received === c.length) setImmediate(() => body?.destroy(new Error("ECONNRESET from S3")));
+            });
+            res.on("end", () => (ended = true));
+            res.on("close", () => resolve({ status: res.statusCode ?? 0, received, ended, aborted: !ended }));
+            res.on("error", () => {});
+          },
+        );
+        req.on("error", () => {});
+        req.end();
+      },
+    );
+    const r = await outcome;
+    expect(r.status).toBe(200);
+    // 틀린 길이로 「다 받았다」가 되지 않는다 — 응답이 끊긴다
+    expect(r.received).toBeLessThan(bytes.length);
+    expect(r.ended).toBe(false);
+    expect(r.aborted).toBe(true);
+    expect(body?.destroyed).toBe(true);
+    // 서버는 그대로 산다 — 끊기지 않는 본문이면 다 받는다
+    s3.body.clear();
+    const health = await app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${a.id}`,
+      headers: session,
+    });
+    expect(health.statusCode).toBe(200);
+  });
+
+  it("GetObject 가 실패하면(403) 500 — 응답·로그에 키·시크릿이 없다", async () => {
+    const bytes = Buffer.alloc(100, 5);
+    const a = await uploadBound(bytes);
+    s3.fail.set(
+      "GetObject",
+      Object.assign(new Error("denied"), {
+        name: "AccessDenied",
+        AWSAccessKeyId: MEMORY_S3_CONFIG.accessKeyId,
+        $metadata: { httpStatusCode: 403 },
+      }),
+    );
+    try {
+      const r = await app.fastify.inject({
+        method: "GET",
+        url: `/api/v1/attachments/${a.id}`,
+        headers: session,
+      });
+      expect(r.statusCode).toBe(500);
+      expect(r.body).not.toContain(MEMORY_S3_CONFIG.accessKeyId);
+      expect(r.body).not.toContain(MEMORY_S3_CONFIG.secretAccessKey);
+    } finally {
+      s3.fail.clear();
+    }
+  });
+});
+
+describe("S3 부팅 확인(S3 스펙 S3)", () => {
+  it("HeadBucket 이 실패하면 createApp 이 BlobStoreCheckError 로 던지고 아무것도 띄우지 않는다", async () => {
+    const s3 = memoryS3({ bucket: "missing-bucket" });
+    const err = await bootTestApp({}, { blobStore: createS3BlobStore(MEMORY_S3_CONFIG, s3.client) }).then(
+      (app) => app.close().then(() => undefined),
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(BlobStoreCheckError);
+    expect((err as Error).message).not.toContain(MEMORY_S3_CONFIG.secretAccessKey);
+    expect((err as Error).message).not.toContain(MEMORY_S3_CONFIG.accessKeyId);
+    expect(s3.calls).toEqual(["HeadBucket"]);
+  });
+
+  it("s3 모드면 ATTACHMENTS_DIR 을 만들지 않는다", async () => {
+    const base = mkdtempSync(join(tmpdir(), "dodok-att-s3-nodir-"));
+    const dir = join(base, "attachments");
+    try {
+      const s3 = memoryS3();
+      const app = await bootTestApp(
+        { ATTACHMENTS_DIR: dir },
+        { blobStore: createS3BlobStore(MEMORY_S3_CONFIG, s3.client) },
+      );
+      await app.close();
+      expect(existsSync(dir)).toBe(false);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 });
 
@@ -844,7 +1052,7 @@ describe("브리지 첨부 인증 — 실패 카운터(운영 보강 스펙 4.1)
       auth: app.auth,
       db: app.db,
       workspaceId: app.workspaceId,
-      dir: attachmentsDirOf(app) as string,
+      store: app.blobStore,
       verifyBridgeToken: () => verify(),
       acceptBridgeGateway: () => true,
       bridgeGuard: { guard, now: () => 0, onBlocked: () => {} },

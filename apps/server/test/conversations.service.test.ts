@@ -10,6 +10,7 @@ import { roleOf } from "../src/auth/roles";
 import type { Db } from "../src/db/client";
 import { attachments, channels, conversations, memberships, messages, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { createLocalBlobStore } from "../src/modules/attachments/blob-store";
 import { uploadAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel, setSessionManager, updateChannel } from "../src/modules/channels/service";
 import { interact } from "../src/modules/components/service";
@@ -372,7 +373,7 @@ describe("세션 서비스", () => {
       components: { blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "좋아요" }] }] },
     });
     const image = await uploadAttachment(
-      { db: t.db, dir },
+      { db: t.db, store: createLocalBlobStore(dir) },
       { channelId: t.channel.id, uploader: { type: "user", userId: t.mia }, bytes: makePng(1, 1) },
     );
     t.updated.length = 0;

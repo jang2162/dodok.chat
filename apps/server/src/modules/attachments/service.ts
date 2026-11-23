@@ -3,8 +3,6 @@
  * 메시지 행을 넣은 뒤 markBound 로 message_id 를 채운다(메시지 id 는 insert 때 정해진다)
  */
 import { ATTACHMENT_LIMITS, type Attachment, artifactUrl, sanitizeAttachmentName } from "@dodok/shared";
-import { readdir, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { and, eq, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
@@ -14,18 +12,11 @@ import { apiError, HttpError } from "../../http/errors";
 import { getChannel } from "../channels/service";
 import { TERMINAL_STATUSES } from "../runs/machine";
 import { sniff } from "./sniff";
-import {
-  type BlobLocks,
-  blobPath,
-  defaultBlobLocks,
-  removeBlob,
-  sha256Of,
-  TMP_SUFFIX,
-  writeBlob,
-} from "./store";
+import type { BlobStore } from "./blob-store";
+import { type BlobLocks, defaultBlobLocks, sha256Of } from "./store";
 
-/** locks 는 없으면 모듈 하나(defaultBlobLocks) — 같은 dir 을 쓰는 업로드·정리는 같은 잠금을 지나야 한다 */
-export type AttachmentDeps = { db: Db; dir: string; now?: () => Date; locks?: BlobLocks };
+/** locks 는 없으면 모듈 하나(defaultBlobLocks) — 같은 store 를 쓰는 업로드·정리는 같은 잠금을 지나야 한다 */
+export type AttachmentDeps = { db: Db; store: BlobStore; now?: () => Date; locks?: BlobLocks };
 /**
  * 러너가 올린 것도 에이전트 쪽(bridge)이다 — runnerTokenId 는 uploader_id 에 남아 그 러너의 읽기 범위가 된다(판정 R5). 플러그인이
  * 올린 것은 gatewayId(그 브리지 토큰의 Gateway)가 gateway_id 에 남아 그 Gateway 의 읽기·묶기 범위가 된다(멀티 Gateway 스펙 「브리지 첨부 범위」 절)
@@ -48,7 +39,10 @@ type Row = typeof attachments.$inferSelect;
 export const UNBOUND_TTL_MS = 24 * 3600_000;
 /** 이보다 오래된 `.tmp` 는 죽은 쓰기의 잔재다(스펙 4.7) */
 export const STALE_TMP_MS = 3600_000;
-const SHA_NAME = /^[0-9a-f]{64}$/;
+/** S3 고아 훑기는 이보다 오래된 객체만 지운다 — 올리는 중(PutObject 뒤 행 넣기 전)인 것을 지키게(S3 스펙 S6) */
+export const ORPHAN_MIN_AGE_MS = 3_600_000;
+/** S3 모드의 버킷 전체 훑기 간격(S6) — 그 사이 정리는 오래된 미묶음 행의 블롭만 지운다 */
+export const FULL_SCAN_INTERVAL_MS = 24 * 3600_000;
 const EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -90,7 +84,7 @@ export async function uploadAttachment(
   const sha = sha256Of(input.bytes);
   const fallback = s.kind === "image" ? `image.${EXT[s.mime] ?? "bin"}` : "file";
   const row = await (deps.locks ?? defaultBlobLocks).run(sha, async () => {
-    await writeBlob(deps.dir, sha, input.bytes);
+    await deps.store.put(sha, input.bytes);
     return deps.db
       .insert(attachments)
       .values({
@@ -195,7 +189,7 @@ export function findReadable(
   deps: AttachmentDeps,
   id: string,
   viewer: { type: "user"; userId: string; workspaceId: string } | BridgeViewer | RunnerViewer,
-): { attachment: Attachment; path: string } | undefined {
+): { attachment: Attachment; sha: string } | undefined {
   const row = deps.db.select().from(attachments).where(eq(attachments.id, id)).get();
   if (!row) return undefined;
   const ok =
@@ -207,7 +201,7 @@ export function findReadable(
         : row.messageId === null
           ? row.uploaderType === "user" && row.uploaderId === viewer.userId
           : readableBy(deps.db, getChannel(deps.db, row.channelId, viewer.workspaceId), viewer.userId);
-  return ok ? { attachment: toAttachment(row), path: blobPath(deps.dir, row.sha256) } : undefined;
+  return ok ? { attachment: toAttachment(row), sha: row.sha256 } : undefined;
 }
 
 /** 묶인 첨부는 그 메시지의 채널을 읽을 수 있는 사람만 — 남의 DM 의 첨부는 없는 id 와 같은 404(auth/channel-access.ts) */
@@ -246,25 +240,21 @@ function countRows(db: Db, sha: string): number {
   );
 }
 
-async function listDir(path: string): Promise<string[]> {
-  try {
-    return await readdir(path);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw e;
-  }
-}
+export type SweepResult = { rows: number; blobs: number };
 
 /**
- * 오래된 미묶음 행을 지운 뒤 dir 을 훑어 어느 행도 안 가리키는 블롭과 STALE_TMP_MS 넘은 `.tmp` 를 지운다(스펙 4.7).
- * 채널 cascade·insert 실패·쓰기와 넣기 사이 프로세스 죽음이 남긴 것도 여기서 치운다. 지우기는 sha 잠금 안에서만
+ * 오래된 미묶음 행을 지우고, 그 행들이 가리키던 블롭을 (다른 행이 없으면) 그 자리에서 지운다. fullScan 이면(기본) 저장소를 훑어
+ * 어느 행도 안 가리키는 블롭도 지운다 — 채널 cascade·insert 실패·쓰기와 넣기 사이 프로세스 죽음이 남긴 것(스펙 4.7). 훑기에서 로컬은
+ * 블롭을 바로, `.tmp` 는 STALE_TMP_MS 넘은 것만, S3 는 ORPHAN_MIN_AGE_MS 넘은 객체만 지운다(올리는 중인 것 보호, S3 스펙 S6).
+ * 지우기는 sha 잠금 안에서만
  */
 export async function sweepAttachments(
   deps: AttachmentDeps,
-  opts: { unboundTtlMs?: number } = {},
-): Promise<{ rows: number; blobs: number }> {
+  opts: { unboundTtlMs?: number; fullScan?: boolean } = {},
+): Promise<SweepResult> {
   const now = (deps.now ?? (() => new Date()))();
   const locks = deps.locks ?? defaultBlobLocks;
+  const { store } = deps;
   const cutoff = new Date(now.getTime() - (opts.unboundTtlMs ?? UNBOUND_TTL_MS));
   const stale = deps.db
     .delete(attachments)
@@ -272,27 +262,39 @@ export async function sweepAttachments(
     .returning({ sha: attachments.sha256 })
     .all();
   let blobs = 0;
-  for (const prefix of await listDir(deps.dir)) {
-    // 블롭 하위 디렉터리는 sha 앞 2자(hex)뿐이다 — 맨 위의 다른 항목(.DS_Store·사람이 둔 파일)은 건너뛴다
-    if (!/^[0-9a-f]{2}$/.test(prefix)) continue;
-    const sub = join(deps.dir, prefix);
-    for (const name of await listDir(sub)) {
-      const sha = name.slice(0, 64);
-      if (!SHA_NAME.test(sha)) continue;
-      if (name === sha) {
-        await locks.run(sha, async () => {
-          if (countRows(deps.db, sha) > 0) return;
-          await removeBlob(deps.dir, sha);
-          blobs++;
-        });
-      } else if (name.endsWith(TMP_SUFFIX)) {
-        await locks.run(sha, async () => {
-          const path = join(sub, name);
-          const st = await stat(path).catch(() => undefined);
-          if (st && now.getTime() - st.mtimeMs > STALE_TMP_MS) await rm(path, { force: true });
-        });
+  const removeIfUnused = (sha: string) =>
+    locks.run(sha, async () => {
+      if (countRows(deps.db, sha) > 0) return;
+      await store.remove(sha);
+      blobs++;
+    });
+  for (const sha of new Set(stale.map((r) => r.sha))) await removeIfUnused(sha);
+  if (opts.fullScan !== false) {
+    for await (const entry of store.list()) {
+      const age = now.getTime() - entry.modifiedAt.getTime();
+      if (entry.temp) {
+        if (age > STALE_TMP_MS) await locks.run(entry.sha, () => store.removeTemp(entry.key));
+        continue;
       }
+      if (store.kind === "s3" && age <= ORPHAN_MIN_AGE_MS) continue;
+      await removeIfUnused(entry.sha);
     }
   }
   return { rows: stale.length, blobs };
+}
+
+/**
+ * 주기 정리 한 회 — 로컬은 매 회 fullScan, S3 는 FULL_SCAN_INTERVAL_MS 에 한 번만(버킷 목록은 돈·시간이 든다, S3 스펙 S6).
+ * 마지막 훑은 시각은 메모리라 재시작하면 첫 회가 다시 훑는다(스펙 5장이 받아들인 것). 훑기가 실패하면 다음 회에 다시 훑는다
+ */
+export function createAttachmentSweep(deps: AttachmentDeps): () => Promise<SweepResult> {
+  let lastFullScan: number | undefined;
+  return async () => {
+    const at = (deps.now ?? (() => new Date()))().getTime();
+    const fullScan =
+      deps.store.kind === "local" || lastFullScan === undefined || at - lastFullScan >= FULL_SCAN_INTERVAL_MS;
+    const result = await sweepAttachments(deps, { fullScan });
+    if (fullScan) lastFullScan = at;
+    return result;
+  };
 }

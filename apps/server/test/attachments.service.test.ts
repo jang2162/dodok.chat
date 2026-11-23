@@ -12,28 +12,45 @@ import { attachments, users } from "../src/db/schema.sqlite";
 import {
   claimBridgeAttachments,
   claimUserAttachments,
+  createAttachmentSweep,
+  FULL_SCAN_INTERVAL_MS,
   findReadable,
   markBound,
+  ORPHAN_MIN_AGE_MS,
   sweepAttachments,
   type UploadedBy,
   type Uploader,
   uploadAttachment,
 } from "../src/modules/attachments/service";
-import { type BlobLocks, blobPath, createBlobLocks } from "../src/modules/attachments/store";
+import {
+  type BlobStore,
+  createLocalBlobStore,
+  localBlobPath as blobPath,
+} from "../src/modules/attachments/blob-store";
+import { createS3BlobStore } from "../src/modules/attachments/s3-store";
+import { type BlobLocks, createBlobLocks } from "../src/modules/attachments/store";
 import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
+import { MEMORY_S3_CONFIG, type MemoryS3, memoryS3 } from "./helpers/memory-s3";
 import { HTML_BYTES, makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
 import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 const RUNNER = "runner-token-1";
 const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-describe("attachments service", () => {
+// 같은 시험 묶음을 로컬 디스크와 메모리 흉내 S3 두 저장소로 돌린다(S3 스펙 4장). 디스크를 직접 만지는 시험은 로컬만
+describe.each(["local", "s3"] as const)("attachments service — %s", (backend) => {
   let db: Db;
   let dir: string;
+  let store: BlobStore;
+  let s3: MemoryS3 | undefined;
+  /** 그 sha 의 블롭이 저장소에 있는가 */
+  const stored = (sha: string): boolean =>
+    s3 ? s3.objects.has(`${sha.slice(0, 2)}/${sha}`) : existsSync(blobPath(dir, sha));
+  const localOnly = it.skipIf(backend !== "local");
   let ws: string;
   let chA: string;
   let chB: string;
@@ -44,6 +61,8 @@ describe("attachments service", () => {
   beforeEach(async () => {
     db = newTestDb();
     dir = await mkdtemp(join(tmpdir(), "dodok-attachments-"));
+    s3 = backend === "s3" ? memoryS3() : undefined;
+    store = s3 ? createS3BlobStore(MEMORY_S3_CONFIG, s3.client) : createLocalBlobStore(dir);
     const seeded = seedWorkspace(db, { userHandle: "alice" });
     ws = seeded.workspaceId;
     alice = seeded.userId;
@@ -74,7 +93,7 @@ describe("attachments service", () => {
 
   it("사람 업로드: PNG → image, artifact URL, 가로·세로", async () => {
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "user", userId: alice },
@@ -95,12 +114,12 @@ describe("attachments service", () => {
 
   it("이름이 없으면 이미지는 image.<확장자>, 이름은 정리된다", async () => {
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
     expect(a.name).toBe("image.png");
     const b = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "bridge" },
@@ -115,7 +134,7 @@ describe("attachments service", () => {
     const nfd = "회의록.pdf".normalize("NFD");
     expect(nfd).not.toBe("회의록.pdf");
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES, nameHint: nfd },
     );
     expect(a.name).toBe("회의록.pdf");
@@ -124,12 +143,12 @@ describe("attachments service", () => {
 
   it("사람도 이미지가 아닌 파일을 올린다 — PDF 는 file·application/pdf, SVG 는 file", async () => {
     const pdf = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: PDF_BYTES, nameHint: "보고서.pdf" },
     );
     expect(pdf).toMatchObject({ kind: "file", mime: "application/pdf", name: "보고서.pdf" });
     const svg = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "user", userId: alice },
@@ -142,7 +161,7 @@ describe("attachments service", () => {
 
   it("[Review Focus 4] 사람이 .png 이름·image/png 로 올린 HTML 은 file·application/octet-stream", async () => {
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "user", userId: alice },
@@ -159,13 +178,13 @@ describe("attachments service", () => {
     const fileAt = (size: number) => Buffer.concat([PDF_BYTES, Buffer.alloc(size - PDF_BYTES.length)]);
     await expect(
       uploadAttachment(
-        { db, dir },
+        { db, store },
         { channelId: chA, uploader: user, bytes: fileAt(ATTACHMENT_LIMITS.userFileMaxBytes) },
       ),
     ).resolves.toMatchObject({ kind: "file", size: ATTACHMENT_LIMITS.userFileMaxBytes });
     await expect(
       uploadAttachment(
-        { db, dir },
+        { db, store },
         { channelId: chA, uploader: user, bytes: fileAt(ATTACHMENT_LIMITS.userFileMaxBytes + 1) },
       ),
     ).rejects.toMatchObject({ body: { code: "VALIDATION", details: { maxBytes: 20971520 } } });
@@ -173,16 +192,19 @@ describe("attachments service", () => {
     const png = makePng(1, 1);
     const bigPng = Buffer.concat([png, Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes + 1 - png.length)]);
     await expect(
-      uploadAttachment({ db, dir }, { channelId: chA, uploader: user, bytes: bigPng }),
+      uploadAttachment({ db, store }, { channelId: chA, uploader: user, bytes: bigPng }),
     ).rejects.toMatchObject({ body: { code: "VALIDATION", details: { maxBytes: 5242880 } } });
     await expect(
-      uploadAttachment({ db, dir }, { channelId: chA, uploader: user, bytes: Buffer.alloc(0) }),
+      uploadAttachment({ db, store }, { channelId: chA, uploader: user, bytes: Buffer.alloc(0) }),
     ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
   });
 
   it("빈 파일은 VALIDATION", async () => {
     await expect(
-      uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: Buffer.alloc(0) }),
+      uploadAttachment(
+        { db, store },
+        { channelId: chA, uploader: { type: "bridge" }, bytes: Buffer.alloc(0) },
+      ),
     ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
   });
 
@@ -190,22 +212,22 @@ describe("attachments service", () => {
     const big = Buffer.concat([makePng(1, 1), Buffer.alloc(ATTACHMENT_LIMITS.userImageMaxBytes)]);
     await expect(
       uploadAttachment(
-        { db, dir },
+        { db, store },
         { channelId: chA, uploader: { type: "user", userId: alice }, bytes: big },
       ),
     ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
     await expect(
-      uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: big }),
+      uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: big }),
     ).resolves.toMatchObject({ kind: "image" });
     const huge = Buffer.alloc(ATTACHMENT_LIMITS.agentFileMaxBytes + 1);
     await expect(
-      uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: huge }),
+      uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: huge }),
     ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
   });
 
   it("브리지 업로드: PDF 는 file, 이름이 없으면 file", async () => {
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES },
     );
     expect(a).toMatchObject({ kind: "file", mime: "application/pdf", name: "file" });
@@ -214,11 +236,11 @@ describe("attachments service", () => {
   it("[Review Focus 2] 같은 바이트 두 번 → 행 둘, 블롭 하나. 한 행이 정리돼도 다른 행은 열린다", async () => {
     const png = makePng(2, 2);
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: png },
     );
     const b = await uploadAttachment(
-      { db, dir, now: () => new Date(Date.now() + 1) },
+      { db, store, now: () => new Date(Date.now() + 1) },
       { channelId: chA, uploader: { type: "user", userId: bob }, bytes: png },
     );
     expect(a.id).not.toBe(b.id);
@@ -226,41 +248,44 @@ describe("attachments service", () => {
     // b 를 메시지에 묶고, a 는 미묶음인 채 25시간 뒤 정리
     db.transaction((tx) => markBound(tx, [b.id], msgInA));
     const later = () => new Date(Date.now() + 25 * 3600_000);
-    expect(await sweepAttachments({ db, dir, now: later })).toEqual({ rows: 1, blobs: 0 });
-    const readable = findReadable({ db, dir }, b.id, { type: "user", userId: bob, workspaceId: ws });
-    expect(readable?.path).toBe(blobPath(dir, sha256Of(png)));
-    expect(readable && existsSync(readable.path)).toBe(true); // 같은 sha 를 b 가 쓰므로 블롭이 남는다
+    expect(await sweepAttachments({ db, store, now: later })).toEqual({ rows: 1, blobs: 0 });
+    const readable = findReadable({ db, store }, b.id, { type: "user", userId: bob, workspaceId: ws });
+    expect(readable?.sha).toBe(sha256Of(png));
+    expect(readable && stored(readable.sha)).toBe(true); // 같은 sha 를 b 가 쓰므로 블롭이 남는다
   });
 
-  it("정리: 첨부 디렉터리 맨 위에 파일(.DS_Store 등)이 있어도 던지지 않고 고아 블롭을 지운다", async () => {
-    await writeFile(join(dir, ".DS_Store"), "x");
-    await uploadAttachment(
-      { db, dir },
-      { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(7, 7) },
-    );
-    const path = blobPath(dir, createHash("sha256").update(makePng(7, 7)).digest("hex"));
-    const res = await sweepAttachments({ db, dir, now: () => new Date(Date.now() + 25 * 3600_000) });
-    expect(res).toEqual({ rows: 1, blobs: 1 });
-    expect(existsSync(path)).toBe(false);
-    expect(existsSync(join(dir, ".DS_Store"))).toBe(true);
-  });
+  localOnly(
+    "정리: 첨부 디렉터리 맨 위에 파일(.DS_Store 등)이 있어도 던지지 않고 고아 블롭을 지운다",
+    async () => {
+      await writeFile(join(dir, ".DS_Store"), "x");
+      await uploadAttachment(
+        { db, store },
+        { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(7, 7) },
+      );
+      const path = blobPath(dir, createHash("sha256").update(makePng(7, 7)).digest("hex"));
+      const res = await sweepAttachments({ db, store, now: () => new Date(Date.now() + 25 * 3600_000) });
+      expect(res).toEqual({ rows: 1, blobs: 1 });
+      expect(existsSync(path)).toBe(false);
+      expect(existsSync(join(dir, ".DS_Store"))).toBe(true);
+    },
+  );
 
   it("정리: 아무도 안 가리키는 블롭은 지우고, 24시간 안 된 미묶음은 남긴다", async () => {
     const old = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(5, 5) },
     );
-    const oldPath = blobPath(dir, sha256Of(makePng(5, 5)));
-    expect(existsSync(oldPath)).toBe(true);
+    const oldSha = sha256Of(makePng(5, 5));
+    expect(stored(oldSha)).toBe(true);
     const fresh = await uploadAttachment(
-      { db, dir, now: () => new Date(Date.now() + 24 * 3600_000) },
+      { db, store, now: () => new Date(Date.now() + 24 * 3600_000) },
       { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(6, 6) },
     );
-    const res = await sweepAttachments({ db, dir, now: () => new Date(Date.now() + 25 * 3600_000) });
+    const res = await sweepAttachments({ db, store, now: () => new Date(Date.now() + 25 * 3600_000) });
     expect(res).toEqual({ rows: 1, blobs: 1 });
-    expect(existsSync(oldPath)).toBe(false);
+    expect(stored(oldSha)).toBe(false);
     expect(
-      findReadable({ db, dir }, old.id, { type: "user", userId: alice, workspaceId: ws }),
+      findReadable({ db, store }, old.id, { type: "user", userId: alice, workspaceId: ws }),
     ).toBeUndefined();
     expect(
       db
@@ -273,19 +298,19 @@ describe("attachments service", () => {
 
   it("claimUserAttachments: 올린 사람·같은 채널·미묶음만, 하나라도 틀리면 VALIDATION", async () => {
     const mine = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
     const bobs = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: bob }, bytes: makePng(1, 2) },
     );
     const otherCh = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chB, uploader: { type: "user", userId: alice }, bytes: makePng(2, 1) },
     );
     const bridged = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(2, 2) },
     );
     expect(
@@ -309,7 +334,7 @@ describe("attachments service", () => {
 
   it("claimBridgeAttachments: 틀린 것은 빼고 순서를 지킨다", async () => {
     const f1 = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "bridge", runnerTokenId: RUNNER },
@@ -318,7 +343,7 @@ describe("attachments service", () => {
       },
     );
     const f2 = await uploadAttachment(
-      { db, dir },
+      { db, store },
       {
         channelId: chA,
         uploader: { type: "bridge", runnerTokenId: RUNNER },
@@ -327,11 +352,11 @@ describe("attachments service", () => {
       },
     );
     const wrongCh = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chB, uploader: { type: "bridge", runnerTokenId: RUNNER }, bytes: PDF_BYTES },
     );
     const human = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
     const r = db.transaction((tx) =>
@@ -358,7 +383,7 @@ describe("attachments service", () => {
     const [office, home] = [uuid(), uuid()];
     for (const id of [office, home]) insertGateway(db, ws, { id, name: id.slice(-6) });
     const fromOffice = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge", gatewayId: office }, bytes: PDF_BYTES },
     );
     const claim = (by: UploadedBy | undefined) =>
@@ -371,7 +396,7 @@ describe("attachments service", () => {
 
   it("claimBridgeAttachments: 러너 정본은 자기 토큰이 올린 것만 — 다른 러너·Gateway 가 비어 버린 업로드는 묶지 못한다", async () => {
     const upload = (uploader: Uploader) =>
-      uploadAttachment({ db, dir }, { channelId: chA, uploader, bytes: PDF_BYTES });
+      uploadAttachment({ db, store }, { channelId: chA, uploader, bytes: PDF_BYTES });
     const own = await upload({ type: "bridge", runnerTokenId: RUNNER });
     const otherRunner = await upload({ type: "bridge", runnerTokenId: "other-runner" });
     const orphan = await upload({ type: "bridge" }); // Gateway 를 지워 gateway_id 가 빈 플러그인 업로드와 같은 행
@@ -388,15 +413,15 @@ describe("attachments service", () => {
 
   it("findReadable: 묶인 것은 같은 워크스페이스 채널 사용자, 미묶음은 올린 사람만", async () => {
     const a = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
-    expect(findReadable({ db, dir }, a.id, { type: "user", userId: alice, workspaceId: ws })).toBeDefined();
-    expect(findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeUndefined();
+    expect(findReadable({ db, store }, a.id, { type: "user", userId: alice, workspaceId: ws })).toBeDefined();
+    expect(findReadable({ db, store }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeUndefined();
     db.transaction((tx) => markBound(tx, [a.id], msgInA));
-    expect(findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeDefined();
+    expect(findReadable({ db, store }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeDefined();
     expect(
-      findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: "other-ws" }),
+      findReadable({ db, store }, a.id, { type: "user", userId: bob, workspaceId: "other-ws" }),
     ).toBeUndefined();
   });
 
@@ -405,20 +430,22 @@ describe("attachments service", () => {
     for (const id of [office, home]) insertGateway(db, ws, { id, name: id.slice(-6) });
     const bridge = (gatewayId: string) => ({ type: "bridge", gatewayId }) as const;
     const own = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge", gatewayId: office }, bytes: PDF_BYTES },
     );
     const human = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
-    expect(findReadable({ db, dir }, own.id, bridge(office))).toBeDefined();
-    expect(findReadable({ db, dir }, own.id, bridge(home))).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, bridge(office))).toBeDefined();
+    expect(findReadable({ db, store }, own.id, bridge(home))).toBeUndefined();
     db.transaction((tx) => markBound(tx, [own.id, human.id], msgInA));
-    expect(findReadable({ db, dir }, own.id, bridge(office))).toBeDefined();
-    expect(findReadable({ db, dir }, own.id, bridge(home))).toBeUndefined();
-    expect(findReadable({ db, dir }, human.id, bridge(office))).toBeUndefined();
-    expect(findReadable({ db, dir }, "01a0cc16-0000-7000-8000-000000000000", bridge(office))).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, bridge(office))).toBeDefined();
+    expect(findReadable({ db, store }, own.id, bridge(home))).toBeUndefined();
+    expect(findReadable({ db, store }, human.id, bridge(office))).toBeUndefined();
+    expect(
+      findReadable({ db, store }, "01a0cc16-0000-7000-8000-000000000000", bridge(office)),
+    ).toBeUndefined();
   });
 
   it("findReadable 러너: 자기 토큰이 올린 것(묶이기 전후)과 mayRead 가 허락한 것만 — 묶였어도 나머지는 못 본다(판정 R5)", async () => {
@@ -426,71 +453,71 @@ describe("attachments service", () => {
     const runner = (tokenId: string, allowed: string[] = []) =>
       ({ type: "runner", tokenId, mayRead: (id: string) => allowed.includes(id) }) as const;
     const own = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge", runnerTokenId: tokenA }, bytes: makePng(3, 1) },
     );
     expect(db.select().from(attachments).where(eq(attachments.id, own.id)).get()).toMatchObject({
       uploaderType: "bridge",
       uploaderId: tokenA,
     });
-    expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
-    expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, runner(tokenA))).toBeDefined();
+    expect(findReadable({ db, store }, own.id, runner(tokenB))).toBeUndefined();
     // 러너가 올린 것은 어느 Gateway 의 것도 아니다 — 묶여도 브리지 뷰어는 못 본다
     const gateway = insertGateway(db, ws, { id: uuid() });
-    expect(findReadable({ db, dir }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
     db.transaction((tx) => markBound(tx, [own.id], msgInA));
-    expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
-    expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
-    expect(findReadable({ db, dir }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, runner(tokenA))).toBeDefined();
+    expect(findReadable({ db, store }, own.id, runner(tokenB))).toBeUndefined();
+    expect(findReadable({ db, store }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
 
     const human = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(3, 2) },
     );
     const bridged = await uploadAttachment(
-      { db, dir },
+      { db, store },
       { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(3, 3) },
     );
     db.transaction((tx) => markBound(tx, [human.id, bridged.id], msgInA));
     for (const id of [human.id, bridged.id]) {
-      expect(findReadable({ db, dir }, id, runner(tokenA))).toBeUndefined();
-      expect(findReadable({ db, dir }, id, runner(tokenA, [id]))).toBeDefined();
+      expect(findReadable({ db, store }, id, runner(tokenA))).toBeUndefined();
+      expect(findReadable({ db, store }, id, runner(tokenA, [id]))).toBeDefined();
     }
     // 허락은 행이 있을 때만 뜻이 있다 — 없는 id 는 허락돼도 undefined
     const missing = "01a0cc16-0000-7000-8000-000000000000";
-    expect(findReadable({ db, dir }, missing, runner(tokenA, [missing]))).toBeUndefined();
+    expect(findReadable({ db, store }, missing, runner(tokenA, [missing]))).toBeUndefined();
   });
 
   it("[결함 3] 정리가 블롭을 지우는 사이 같은 바이트 업로드가 끼어도 새 행의 블롭은 남는다", async () => {
     const png = makePng(7, 7);
-    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    await uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
     const later = () => new Date(Date.now() + 25 * 3600_000);
     // 정리를 먼저 시작하고(동기 부분에서 행 삭제), 끝나기 전에 같은 바이트를 올린다
-    const sweeping = sweepAttachments({ db, dir, now: later });
+    const sweeping = sweepAttachments({ db, store, now: later });
     const uploading = uploadAttachment(
-      { db, dir, now: later },
+      { db, store, now: later },
       { channelId: chA, uploader: { type: "bridge" }, bytes: png },
     );
     const [swept, b] = await Promise.all([sweeping, uploading]);
     expect(swept.rows).toBe(1);
     expect(db.select().from(attachments).all()).toHaveLength(1);
     db.transaction((tx) => markBound(tx, [b.id], msgInA));
-    const readable = findReadable({ db, dir }, b.id, { type: "user", userId: alice, workspaceId: ws });
-    expect(readable && existsSync(readable.path)).toBe(true);
+    const readable = findReadable({ db, store }, b.id, { type: "user", userId: alice, workspaceId: ws });
+    expect(readable && stored(readable.sha)).toBe(true);
   });
 
   it("[결함 3] 업로드가 먼저 시작해도 같은 sha 의 정리가 그 블롭을 지우지 않는다", async () => {
     const png = makePng(8, 8);
-    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    await uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
     const later = () => new Date(Date.now() + 25 * 3600_000);
     const uploading = uploadAttachment(
-      { db, dir, now: later },
+      { db, store, now: later },
       { channelId: chA, uploader: { type: "bridge" }, bytes: png },
     );
-    const sweeping = sweepAttachments({ db, dir, now: later });
+    const sweeping = sweepAttachments({ db, store, now: later });
     const [b, swept] = await Promise.all([uploading, sweeping]);
     expect(swept).toEqual({ rows: 1, blobs: 0 });
-    expect(existsSync(blobPath(dir, sha256Of(png)))).toBe(true);
+    expect(stored(sha256Of(png))).toBe(true);
     expect(
       db
         .select()
@@ -503,7 +530,7 @@ describe("attachments service", () => {
   it("[결함 3] 정리가 행 없음을 확인하고 블롭을 지우는 바로 그 순간 같은 바이트 업로드가 와도 블롭은 남는다(잠금이 직렬화)", async () => {
     const png = makePng(10, 10);
     const sha = sha256Of(png);
-    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    await uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
     const later = () => new Date(Date.now() + 25 * 3600_000);
     const real = createBlobLocks();
     let started = false;
@@ -516,58 +543,198 @@ describe("attachments service", () => {
           if (key === sha && !started) {
             started = true;
             uploading = uploadAttachment(
-              { db, dir, now: later, locks },
+              { db, store, now: later, locks },
               { channelId: chA, uploader: { type: "bridge" }, bytes: png },
             );
           }
           return fn();
         }),
     };
-    const swept = await sweepAttachments({ db, dir, now: later, locks });
+    const swept = await sweepAttachments({ db, store, now: later, locks });
     await uploading;
     expect(swept).toEqual({ rows: 1, blobs: 1 }); // 정리가 먼저 잠금을 잡아 지웠고
     expect(db.select().from(attachments).all()).toHaveLength(1);
-    expect(existsSync(blobPath(dir, sha))).toBe(true); // 업로드가 그 뒤에 다시 썼다
+    expect(stored(sha)).toBe(true); // 업로드가 그 뒤에 다시 썼다
   });
 
-  it("[결함 4] 어느 행도 안 가리키는 블롭과 1시간 넘은 .tmp 를 지우고, 새 .tmp·쓰이는 블롭은 남긴다", async () => {
-    const kept = await uploadAttachment(
-      { db, dir },
-      { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES },
-    );
-    const keptPath = blobPath(dir, sha256Of(PDF_BYTES));
-    // 행 없는 블롭 — 채널 cascade·insert 실패·쓰기와 넣기 사이 프로세스 죽음이 남기는 모양
-    const orphanBytes = makePng(9, 9);
-    const orphanPath = blobPath(dir, sha256Of(orphanBytes));
-    await mkdir(join(orphanPath, ".."), { recursive: true });
-    await writeFile(orphanPath, orphanBytes);
-    const oldTmp = `${orphanPath}.old.tmp`;
-    const newTmp = `${keptPath}.new.tmp`;
-    await writeFile(oldTmp, "x");
-    await writeFile(newTmp, "y");
+  localOnly(
+    "[결함 4] 어느 행도 안 가리키는 블롭과 1시간 넘은 .tmp 를 지우고, 새 .tmp·쓰이는 블롭은 남긴다",
+    async () => {
+      const kept = await uploadAttachment(
+        { db, store },
+        { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES },
+      );
+      const keptPath = blobPath(dir, sha256Of(PDF_BYTES));
+      // 행 없는 블롭 — 채널 cascade·insert 실패·쓰기와 넣기 사이 프로세스 죽음이 남기는 모양
+      const orphanBytes = makePng(9, 9);
+      const orphanPath = blobPath(dir, sha256Of(orphanBytes));
+      await mkdir(join(orphanPath, ".."), { recursive: true });
+      await writeFile(orphanPath, orphanBytes);
+      const oldTmp = `${orphanPath}.old.tmp`;
+      const newTmp = `${keptPath}.new.tmp`;
+      await writeFile(oldTmp, "x");
+      await writeFile(newTmp, "y");
+      const now = Date.now();
+      const twoHoursAgo = new Date(now - 2 * 3600_000);
+      await utimes(oldTmp, twoHoursAgo, twoHoursAgo);
+      const halfHourAgo = new Date(now - 30 * 60_000);
+      await utimes(newTmp, halfHourAgo, halfHourAgo);
+      const res = await sweepAttachments({ db, store, now: () => new Date(now) });
+      expect(res).toEqual({ rows: 0, blobs: 1 });
+      expect(existsSync(orphanPath)).toBe(false);
+      expect(existsSync(oldTmp)).toBe(false);
+      expect(existsSync(newTmp)).toBe(true); // 1시간 안 된 .tmp 는 쓰는 중일 수 있다
+      expect(existsSync(keptPath)).toBe(true);
+      expect(
+        db
+          .select()
+          .from(attachments)
+          .all()
+          .map((r) => r.id),
+      ).toEqual([kept.id]);
+      expect((await readdir(join(orphanPath, ".."))).sort()).toEqual([]);
+    },
+  );
+
+  localOnly("[결함 4] 첨부 디렉터리가 아직 없어도 정리는 돈다", async () => {
+    await rm(dir, { recursive: true, force: true });
+    expect(await sweepAttachments({ db, store })).toEqual({ rows: 0, blobs: 0 });
+  });
+});
+
+describe("attachments service — S3 정리(S3 스펙 S6)", () => {
+  let db: Db;
+  let chA: string;
+  let s3: MemoryS3;
+  let store: BlobStore;
+  const keyOf = (sha: string) => `${sha.slice(0, 2)}/${sha}`;
+  /** 행 없는 객체 — 쓰기 뒤 행 넣기 전에 죽었거나(올리는 중), 채널 cascade 가 남긴 것 */
+  const orphan = (bytes: Uint8Array, lastModified: Date) => {
+    const sha = sha256Of(bytes);
+    s3.objects.set(keyOf(sha), { bytes, lastModified });
+    return sha;
+  };
+
+  beforeEach(() => {
+    db = newTestDb();
+    const seeded = seedWorkspace(db, { userHandle: "alice" });
+    chA = createChannel(db, { workspaceId: seeded.workspaceId, createdBy: seeded.userId, name: "a" }).id;
+    s3 = memoryS3();
+    store = createS3BlobStore(MEMORY_S3_CONFIG, s3.client);
+  });
+
+  it("s3 sweep keeps objects younger than 1h without rows", async () => {
     const now = Date.now();
-    const twoHoursAgo = new Date(now - 2 * 3600_000);
-    await utimes(oldTmp, twoHoursAgo, twoHoursAgo);
-    const halfHourAgo = new Date(now - 30 * 60_000);
-    await utimes(newTmp, halfHourAgo, halfHourAgo);
-    const res = await sweepAttachments({ db, dir, now: () => new Date(now) });
+    const young = orphan(makePng(3, 3), new Date(now - ORPHAN_MIN_AGE_MS + 60_000));
+    const edge = orphan(makePng(3, 4), new Date(now - ORPHAN_MIN_AGE_MS));
+    const old = orphan(makePng(3, 5), new Date(now - ORPHAN_MIN_AGE_MS - 60_000));
+    const res = await sweepAttachments({ db, store, now: () => new Date(now) }, { fullScan: true });
     expect(res).toEqual({ rows: 0, blobs: 1 });
-    expect(existsSync(orphanPath)).toBe(false);
-    expect(existsSync(oldTmp)).toBe(false);
-    expect(existsSync(newTmp)).toBe(true); // 1시간 안 된 .tmp 는 쓰는 중일 수 있다
-    expect(existsSync(keptPath)).toBe(true);
+    expect(s3.objects.has(keyOf(young))).toBe(true); // 올리는 중일 수 있다
+    expect(s3.objects.has(keyOf(edge))).toBe(true); // 꼭 1시간은 아직 지키는 쪽
+    expect(s3.objects.has(keyOf(old))).toBe(false);
+  });
+
+  it("s3 sweep removes old orphan objects only on full scan", async () => {
+    const now = Date.now();
+    const old = orphan(makePng(4, 4), new Date(now - 2 * 3600_000));
+    const at = () => new Date(now);
+    expect(await sweepAttachments({ db, store, now: at }, { fullScan: false })).toEqual({
+      rows: 0,
+      blobs: 0,
+    });
+    expect(s3.count("ListObjectsV2")).toBe(0);
+    expect(s3.objects.has(keyOf(old))).toBe(true);
+    expect(await sweepAttachments({ db, store, now: at }, { fullScan: true })).toEqual({ rows: 0, blobs: 1 });
+    expect(s3.objects.has(keyOf(old))).toBe(false);
+  });
+
+  it("훑지 않는 회에도 오래된 미묶음 행의 블롭은 그 자리에서 지운다(행이 0 일 때만)", async () => {
+    const png = makePng(5, 5);
+    const sha = sha256Of(png);
+    await uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    const later = () => new Date(Date.now() + 25 * 3600_000);
+    expect(await sweepAttachments({ db, store, now: later }, { fullScan: false })).toEqual({
+      rows: 1,
+      blobs: 1,
+    });
+    expect(s3.objects.has(keyOf(sha))).toBe(false);
+    expect(s3.count("ListObjectsV2")).toBe(0);
+    expect(s3.calls.filter((c) => c === "DeleteObject")).toHaveLength(1);
+  });
+
+  it("행이 있는 오래된 객체는 훑기에서도 지우지 않는다", async () => {
+    const png = makePng(6, 6);
+    const a = await uploadAttachment(
+      { db, store },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: png },
+    );
+    const later = () => new Date(Date.now() + 2 * 3600_000);
+    expect(await sweepAttachments({ db, store, now: later }, { fullScan: true })).toEqual({
+      rows: 0,
+      blobs: 0,
+    });
+    expect(s3.objects.has(keyOf(sha256Of(png)))).toBe(true);
     expect(
       db
         .select()
         .from(attachments)
         .all()
         .map((r) => r.id),
-    ).toEqual([kept.id]);
-    expect((await readdir(join(orphanPath, ".."))).sort()).toEqual([]);
+    ).toEqual([a.id]);
   });
 
-  it("[결함 4] 첨부 디렉터리가 아직 없어도 정리는 돈다", async () => {
-    await rm(dir, { recursive: true, force: true });
-    expect(await sweepAttachments({ db, dir })).toEqual({ rows: 0, blobs: 0 });
+  it("concurrent same-bytes upload → one PutObject, two rows", async () => {
+    const png = makePng(7, 7);
+    const up = () =>
+      uploadAttachment({ db, store }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    const [a, b] = await Promise.all([up(), up()]);
+    expect(a.id).not.toBe(b.id);
+    expect(s3.count("PutObject")).toBe(1);
+    expect(s3.objects.size).toBe(1);
+    expect(db.select().from(attachments).all()).toHaveLength(2);
+  });
+
+  it("주기 정리는 버킷 전체를 24시간에 한 번만 훑는다 — 첫 회는 훑고, 그 사이 회는 훑지 않는다", async () => {
+    let now = Date.now();
+    const sweep = createAttachmentSweep({ db, store, now: () => new Date(now) });
+    await sweep();
+    expect(s3.count("ListObjectsV2")).toBe(1);
+    now += 3600_000;
+    await sweep();
+    now += FULL_SCAN_INTERVAL_MS - 2 * 3600_000;
+    await sweep();
+    expect(s3.count("ListObjectsV2")).toBe(1);
+    now += 3600_000; // 첫 훑기에서 꼭 24시간
+    await sweep();
+    expect(s3.count("ListObjectsV2")).toBe(2);
+  });
+
+  it("훑기가 실패하면 다음 회에 다시 훑는다", async () => {
+    let now = Date.now();
+    const sweep = createAttachmentSweep({ db, store, now: () => new Date(now) });
+    s3.fail.set(
+      "ListObjectsV2",
+      Object.assign(new Error("x"), { name: "InternalError", $metadata: { httpStatusCode: 500 } }),
+    );
+    await expect(sweep()).rejects.toThrow("S3 ListObjectsV2 실패: InternalError (HTTP 500)");
+    s3.fail.clear();
+    now += 3600_000;
+    await sweep();
+    expect(s3.count("ListObjectsV2")).toBe(2);
+  });
+
+  it("로컬은 매 회 훑는다", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dodok-attachments-sweep-"));
+    try {
+      const local = createLocalBlobStore(dir);
+      const orphanBytes = makePng(8, 8);
+      const sweep = createAttachmentSweep({ db, store: local });
+      await sweep();
+      await local.put(sha256Of(orphanBytes), orphanBytes);
+      expect(await sweep()).toEqual({ rows: 0, blobs: 1 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
