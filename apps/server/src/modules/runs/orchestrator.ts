@@ -11,6 +11,7 @@ import {
   type Run,
   RUNNER_PROGRAM_NAME,
   RunnerCeilingItem,
+  RUNNER_BOT_MCP_UPDATE_MESSAGE,
   RUNNER_BOTS_UPDATE_MESSAGE,
   type RunnerProgram,
   type RunSignal,
@@ -1690,8 +1691,9 @@ function runErrorBody(
       return `@${handle} 실행이 실패했습니다: 러너 설정이 이 에이전트를 허용하지 않습니다${item.success ? `(${item.data})` : ""} — 러너 머신의 설정을 확인하세요`;
     }
     case "ADAPTER_ERROR:VALIDATION":
-      // 능력 bots 가 없는 러너에 봇 런을 보내지 않았다(러너 봇 스펙 B7) — 정해진 글일 때만 싣는다
-      if (message === RUNNER_BOTS_UPDATE_MESSAGE) return `@${handle} 실행이 실패했습니다: ${message}`;
+      // 능력 bots 가 없는 러너에 봇 런을, botMcp 가 없는 러너에 MCP 봇 런을 보내지 않았다(러너 봇 스펙 B7·2부 T5) — 정해진 글일 때만 싣는다
+      if (message === RUNNER_BOTS_UPDATE_MESSAGE || message === RUNNER_BOT_MCP_UPDATE_MESSAGE)
+        return `@${handle} 실행이 실패했습니다: ${message}`;
       return `@${handle} 실행이 실패했습니다: ${code}`;
     default:
       return `@${handle} 실행이 실패했습니다: ${code}`;

@@ -22,6 +22,9 @@ const SECRET_KEYS = new Set([
   "authorization",
   "cookie",
   "set-cookie",
+  // 봇의 MCP 서버(러너 봇 2부 스펙 T4) — 헤더·env 값이 비밀이다. 지금 서버 로그에 실리는 자리는 없다 — 봇 정의·런 정의를 통째로
+  // 로그에 실어도 원문이 나가지 않게 키째 가린다(깊이 0~3)
+  "mcpServers",
 ]);
 
 /** 식별자가 아닌 키(set-cookie)는 괄호 표기로 — pino redact 경로 문법 */

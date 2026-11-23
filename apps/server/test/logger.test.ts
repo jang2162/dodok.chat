@@ -14,6 +14,17 @@ function capture(level = "info"): {
 }
 
 describe("createLogger 가림", () => {
+  it("봇 정의·런 정의를 통째로 실어도 MCP 헤더·env 값 원문이 나가지 않는다(러너 봇 2부 스펙 T4)", () => {
+    const { lines, log } = capture();
+    const mcpServers = {
+      gh: { type: "http", url: "https://x.example/mcp", headers: { "X-Api-Key": "HDR_RAW" } },
+      lin: { command: "npx", env: { LINEAR_TOKEN: "ENV_RAW" } },
+    };
+    log.info({ bot: { purpose: "p", mcpServers } }, "a");
+    log.info({ definition: { agent: { bot: { id: "r-0123456789", mcpServers } } } }, "b");
+    expect(JSON.stringify(lines)).not.toMatch(/HDR_RAW|ENV_RAW/);
+  });
+
   it("깊이 0~3 의 token 을 *** 로 가린다", () => {
     const { lines, log } = capture();
     log.info(
@@ -42,6 +53,7 @@ describe("createLogger 가림", () => {
     "authorization",
     "cookie",
     "set-cookie",
+    "mcpServers",
   ])("%s 를 깊이 0 과 3 에서 가린다", (key) => {
     const { lines, log } = capture();
     log.info({ [key]: "top", a: { b: { c: { [key]: "deep" } } } }, "m");
