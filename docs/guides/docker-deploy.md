@@ -62,7 +62,7 @@ OpenClaw Gateway 의 주소·공유 토큰과 브리지 토큰은 `.env` 에 두
 | `DB_PATH` · `ATTACHMENTS_DIR` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
 | `ATTACHMENTS_STORAGE` | 선택(기본 `local`) | 첨부 블롭을 둘 곳 — `local` 은 볼륨의 `/data/attachments`, `s3` 는 S3 호환 버킷(아래 「S3 저장소」). 바꿔도 이미 있는 블롭은 옮기지 않는다 |
 | `S3_REGION` · `S3_BUCKET` · `S3_ACCESS_KEY_ID` · `S3_SECRET_ACCESS_KEY` | `s3` 모드면 **필수** | 리전·버킷·접근 키. 하나라도 비면 부팅 때 그 이름이 든 설정 오류로 멈춘다(값은 싣지 않는다). 키는 `.env` 에만 |
-| `S3_ENDPOINT` · `S3_PREFIX` · `S3_FORCE_PATH_STYLE` | 선택 | S3 호환 엔드포인트(비우면 AWS 기본)·키 접두사(기본 빈 값 — 객체 키는 `<S3_PREFIX><sha 앞 2자>/<sha>`)·경로 방식 주소 `true`/`false`(기본 `false`, MinIO 는 보통 `true`) |
+| `S3_ENDPOINT` · `S3_PREFIX` · `S3_FORCE_PATH_STYLE` | 선택 | S3 호환 엔드포인트(비우면 AWS 기본)·키 접두사(기본 빈 값 — 객체 키는 `<S3_PREFIX><sha 앞 2자>/<sha>`, 앞의 `/` 는 떼고 끝은 `/` 하나로 맞춘다 — `dodok`·`/dodok/` 모두 `dodok/`)·경로 방식 주소 `true`/`false`(기본 `false`, MinIO 는 보통 `true`) |
 | `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` · `DODOK_RUNNER_DIR` · `DODOK_WEB_DIR` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz)·`/app/runner`(러너 tgz)·`/app/web`(빌드된 웹)을 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다 — 이미지 ENV 로만 두면 그 빈 줄이 값을 덮는다 |
 | `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 진단·스파이크 전용 |
 
@@ -649,7 +649,7 @@ docker compose logs app | grep '"event":"ops.'
 
 `ATTACHMENTS_STORAGE=s3` 면 첨부 블롭(사람·에이전트가 올린 사진·파일)을 S3 호환 저장소(AWS S3·MinIO·Cloudflare R2 등)의 버킷에 둔다. DB·아바타·VAPID 키·Gateway 디바이스·백업은 그대로 볼륨 `/data` 에 남는다. 업로드·내려받기 주소(웹 `/api/v1/attachments/:id`, 플러그인 `/bridge/attachments`, 러너 `/runner/attachments`)와 권한은 `local` 과 같다 — 내려받기는 서버가 권한을 확인한 뒤 버킷 객체를 그대로 흘린다(서명 URL 로 버킷에 직접 보내지 않는다).
 
-**1. 버킷을 만든다** — 이 앱 전용 버킷이 좋다. 다른 것과 나눠 쓰면 `S3_PREFIX`(예: `dodok/`)로 자리를 가른다 — 정리는 그 접두사 아래 `<sha 앞 2자>/<sha>` 꼴의 키만 본다. 공개 읽기는 켜지 않는다.
+**1. 버킷을 만든다** — 이 앱 전용 버킷이 좋다. 다른 것과 나눠 쓰면 `S3_PREFIX`(예: `dodok/`)로 자리를 가른다 — 정리는 그 접두사 아래 `<sha 앞 2자>/<sha>` 꼴의 키만 본다. **한 버킷·접두사는 dodok 서버 하나만 쓴다** — 스테이징·복사본 서버는 다른 버킷이나 다른 `S3_PREFIX` 를 준다. 같은 자리를 쓰면 그 서버의 정리가 자기 DB 에 없는 객체(다른 서버의 첨부)를 지운다. 공개 읽기는 켜지 않는다.
 
 **2. 최소 권한의 키** — 그 버킷(과 접두사)에 아래만 준다. AWS IAM 정책 예:
 
@@ -687,7 +687,7 @@ S3_FORCE_PATH_STYLE=true
 설정 오류: 첨부 저장소(S3)에 닿을 수 없다 — HeadBucket NotFound (HTTP 404). S3_ENDPOINT·S3_REGION·S3_BUCKET·키를 확인한다
 ```
 
-`NotFound (HTTP 404)` 는 버킷 없음, `… (HTTP 403)`(HEAD 응답이라 이름은 `Unknown`·`Forbidden` 등 저장소마다 다르다)은 키·권한, `ECONNREFUSED`·`ENOTFOUND` 같은 네트워크 코드는 엔드포인트다. 뜬 뒤의 S3 오류(업로드·내려받기)는 500 이고 로그에도 `S3 <동작> 실패: <종류> (HTTP <상태>)` 만 남는다.
+`NotFound (HTTP 404)` 는 버킷 없음, `… (HTTP 403)`(HEAD 응답이라 이름은 `Unknown`·`Forbidden` 등 저장소마다 다르다)은 키·권한, `ECONNREFUSED`·`ENOTFOUND` 같은 네트워크 코드는 엔드포인트다. `ETIMEDOUT`·`TimeoutError` 는 엔드포인트가 접속을 받고 답하지 않거나(응답 헤더까지 30초) 연결이 서지 않는(5초) 것이다 — SDK 가 세 번까지 다시 시도하므로 그 한 줄은 1분 반 남짓 뒤에 나온다. 뜬 뒤의 S3 오류(업로드·내려받기)는 500 이고 로그에도 `S3 <동작> 실패: <종류> (HTTP <상태>)` 만 남는다.
 
 **정리** — 미묶음 첨부는 24시간 뒤 지우고(그때 다른 행이 안 쓰는 블롭도 함께), 행 없는 고아 객체(채널 삭제가 남긴 것, 쓰기 뒤 행을 넣기 전에 죽은 것)는 **하루 한 번** 버킷 목록을 훑어 지운다 — 1시간 안 된 객체는 올리는 중일 수 있어 남긴다. 훑은 시각은 메모리에 있어 재시작하면 첫 정리가 한 번 더 훑는다. 버킷 수명 주기 규칙으로 이 앱의 객체를 지우지 않는다 — 행이 있는 블롭이 사라지면 그 첨부는 404 가 된다.
 
