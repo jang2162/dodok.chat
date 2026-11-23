@@ -67,6 +67,7 @@ import {
   type DevFake,
   devFakeCliOptions,
   DEV_FAKE_PLUGIN_HELLO,
+  DEV_FAKE_RUNNERS,
   fakeAgentScript,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
@@ -179,6 +180,12 @@ describe("fakeAgentScript", () => {
     const status = { ...delivery("@dev /status", owner), command: { name: "status", args: "" } };
     expect(fakeAgentScript("dev", status).reply).toContain("`/status`");
     expect(DEV_FAKE_PLUGIN_HELLO.capabilities).toContain("commands");
+  });
+
+  it("봇 능력(러너 봇 스펙 B7) — 주 가짜 러너는 bots, 제한 러너는 옛 러너처럼 없다", () => {
+    const caps = (key: string) => DEV_FAKE_RUNNERS.find((r) => r.key === key)?.hello.capabilities ?? [];
+    expect(caps("main")).toContain("bots");
+    expect(caps("limited")).not.toContain("bots");
   });
 
   const owner: Author = { type: "user", handle: "owner" };

@@ -42,6 +42,9 @@ export const RunnerCapability = z.enum([
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
+/** 능력 `bots` 가 없는 러너 — 봇 만들기 잠금 사유와 봇 런의 run_error 가 같은 글(러너 봇 스펙 B7) */
+export const RUNNER_BOTS_UPDATE_MESSAGE = "러너를 업데이트하세요(봇은 0.9.0 부터)";
+
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
 export const RunnerRunAck = z.object({
   runId: Id,

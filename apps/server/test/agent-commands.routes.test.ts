@@ -110,6 +110,37 @@ describe("GET …/agent-commands [에이전트 명령 C8·C9]", () => {
     expect(fake.commandsRequests).toEqual([{ project: { rootId: "src", relPath: agent.handle } }]);
   });
 
+  it("봇은 봇 폴더로 묻는다 — commands.list { bot: { id } }, 캐시는 봇마다, 능력 bots 가 없으면 supported false [러너 봇 스펙 B13]", async () => {
+    const def = { purpose: "리뷰", watches: "", does: "", reports: "" };
+    const { tokenId, fake } = await connect([...fakeRunnerHello().capabilities, "commands", "bots"]);
+    const { agent } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `bot${++n}`,
+      runnerTokenId: tokenId,
+      bot: def,
+    });
+    const { channel, conversationId } = channelWith([agent.id]);
+    const first = await listOf(mia.token, `/api/v1/conversations/${conversationId}/agent-commands`);
+    expect(first).toEqual([
+      { agentId: agent.id, supported: true, commands: FAKE_RUNNER_COMMANDS.map((c) => ({ ...c })) },
+    ]);
+    await listOf(mia.token, `/api/v1/channels/${channel.id}/agent-commands`);
+    expect(fake.commandsRequests).toEqual([{ bot: { id: agent.providerAgentId } }]);
+
+    const old = await connect([...fakeRunnerHello().capabilities, "commands"]);
+    const { agent: oldBot } = createRunnerAgentForTest(app.db, {
+      workspaceId: app.workspaceId,
+      handle: `bot${++n}`,
+      runnerTokenId: old.tokenId,
+      bot: def,
+    });
+    const other = channelWith([oldBot.id]);
+    expect(await listOf(mia.token, `/api/v1/conversations/${other.conversationId}/agent-commands`)).toEqual([
+      { agentId: oldBot.id, supported: false, commands: [] },
+    ]);
+    expect(old.fake.commandsRequests).toEqual([]);
+  });
+
   it("러너가 다시 붙으면(hello 시각이 바뀌면) 캐시가 남아 있어도 새로 묻는다", async () => {
     const issued = issueRunnerToken(app.db, app.workspaceId, `r${++n}`, null);
     const hello = { capabilities: [...fakeRunnerHello().capabilities, "commands"] as never };

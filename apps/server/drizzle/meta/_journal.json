@@ -288,6 +288,13 @@
       "when": 1794986221539,
       "tag": "0040_runner_worktrees",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1795413838125,
+      "tag": "0041_runner_bots",
+      "breakpoints": true
     }
   ]
 }

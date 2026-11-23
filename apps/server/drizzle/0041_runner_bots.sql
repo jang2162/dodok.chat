@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `runner_bot` text;

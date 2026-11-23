@@ -1,7 +1,8 @@
 /**
  * 에이전트별 명령 목록(에이전트 명령 스펙 C8·C9·5.2) — 작성기 자동완성의 도움말일 뿐 허용 목록이 아니다(C5). OpenClaw 는 shared 고정
  * 목록, 러너는 그 프로젝트의 commands.list(프로젝트마다 10분 캐시 — 러너가 다시 붙으면 hello 시각이 바뀌어 새로 묻는다). 맡은 쪽이
- * 끊겼거나 옛 판(능력 commands 없음)이면 supported false·빈 목록
+ * 끊겼거나 옛 판(능력 commands 없음)이면 supported false·빈 목록. 봇은 그 봇 폴더로 묻는다(러너 봇 스펙 B13 — 능력 bots 일 때, 캐시
+ * 키는 봇 id)
  */
 import {
   type Agent,
@@ -9,8 +10,8 @@ import {
   type AgentCommandsResponse,
   checkCommand,
   OPENCLAW_COMMANDS,
+  type RunnerCommandsList,
   type RunnerCommandsListResult,
-  type RunnerProjectRef,
   skillAliasesOf,
 } from "@dodok/shared";
 import type { RunnerAdapter } from "@dodok/runner-adapter";
@@ -68,14 +69,17 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     return commands.filter((c) => checkCommand(program, c.name, "", { skillAliases }).ok);
   }
 
+  /** cacheKey 는 프로젝트 id 또는 `bot:<봇 id>` — 같은 폴더면 같은 목록 */
   function runnerCommands(
     tokenId: string,
-    projectId: string,
-    project: RunnerProjectRef,
+    cacheKey: string,
+    req: RunnerCommandsList,
   ): CacheEntry | undefined {
+    const projectId = cacheKey;
     const runners = deps.runners;
     const live = runners?.runnerInfo(tokenId) ?? null;
     if (!runners || !live || !runners.hasCapability(tokenId, "commands")) return undefined;
+    if ("bot" in req && !runners.hasCapability(tokenId, "bots")) return undefined;
     const at = now();
     const hit = cache.get(projectId);
     if (hit && hit.connectedAt === live.connectedAt && hit.expiresAt > at) return hit;
@@ -83,7 +87,7 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     const forget = () => {
       if (cache.get(projectId) === entry) cache.delete(projectId);
     };
-    const commands = runners.commandsList(tokenId, project).then(
+    const commands = runners.commandsList(tokenId, req).then(
       (result: RunnerCommandsListResult) => {
         entry.settled = { commands: result.ok ? result.commands : null };
         if (result.ok) return result.commands;
@@ -112,16 +116,25 @@ export function createAgentCommandsService(deps: AgentCommandsDeps): AgentComman
     const row = db
       .select({
         tokenId: agents.runnerTokenId,
+        providerAgentId: agents.providerAgentId,
+        bot: agents.runnerBot,
         projectId: runnerProjects.id,
         rootId: runnerProjects.rootId,
         relPath: runnerProjects.relPath,
       })
       .from(agents)
-      .innerJoin(runnerProjects, eq(runnerProjects.id, agents.runnerProjectId))
+      .leftJoin(runnerProjects, eq(runnerProjects.id, agents.runnerProjectId))
       .where(eq(agents.id, agent.id))
       .get();
     if (!row || row.tokenId === null) return undefined;
-    return runnerCommands(row.tokenId, row.projectId, { rootId: row.rootId, relPath: row.relPath });
+    if (row.bot !== null) {
+      const id = row.providerAgentId.toLowerCase();
+      return runnerCommands(row.tokenId, `bot:${id}`, { bot: { id } });
+    }
+    if (row.projectId === null || row.rootId === null || row.relPath === null) return undefined;
+    return runnerCommands(row.tokenId, row.projectId, {
+      project: { rootId: row.rootId, relPath: row.relPath },
+    });
   }
 
   /** 러너 에이전트의 목록 — undefined 면 맡은 쪽이 없다(끊김·옛 판·프로젝트 없음), null 이면 묻기가 실패했다 */

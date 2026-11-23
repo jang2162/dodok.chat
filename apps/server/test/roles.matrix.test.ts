@@ -109,7 +109,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
           url: app.url,
           token: issued.token,
           // 워크트리 만들기가 묻는 능력(워크트리 스펙 5.2) — 나무가 없으면 worktree.* 는 언제나 ok
-          hello: { capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees"] },
+          hello: { capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees", "bots"] },
         }),
       );
       runnerIds.push(issued.record.id);
@@ -346,6 +346,44 @@ describe("역할 매트릭스(스펙 2장)", () => {
           permissionMode: "acceptEdits",
         },
       }),
+    },
+    {
+      name: "POST /agents {provider: runner, bot} (러너 봇)",
+      min: "admin",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: "/api/v1/agents",
+        payload: {
+          provider: "runner",
+          runnerTokenId: runnerA(),
+          bot: { purpose: "리뷰", watches: "", does: "", reports: "" },
+          program: "claude",
+          handle: `bot${++n}`,
+          name: "봇",
+        },
+      }),
+    },
+    {
+      name: "PATCH /agents/:id {bot} (러너 봇)",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        const agent = createAgent(app.db, {
+          workspaceId: app.workspaceId,
+          provider: "runner",
+          runnerTokenId: runnerA(),
+          bot: { purpose: "리뷰", watches: "", does: "", reports: "" },
+          program: "claude",
+          handle: `bpa${++n}`,
+          name: "봇",
+        });
+        return {
+          method: "PATCH",
+          url: `/api/v1/agents/${agent.id}`,
+          payload: { bot: { purpose: "릴리스", watches: "", does: "", reports: "" } },
+        };
+      },
     },
     {
       name: "PATCH /agents/:id {permissionMode} (러너 에이전트)",

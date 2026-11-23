@@ -180,6 +180,49 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
     expect(notices).toHaveLength(1);
   });
 
+  describe("봇 런(러너 봇 스펙 B2·B7·B9·B10)", () => {
+    const DEF = { purpose: "리뷰 봇", watches: "PR 링크", does: "위험을 짚는다", reports: "요약 한 줄" };
+    const BOT_HELLO = { capabilities: ["threads", "interrupt", "approvals", "attachments", "bots"] as never };
+
+    it("run.start.agent 는 project 대신 bot — 지시 자리는 봇 정의, 정의를 고치면 다음 런이 새 세션 [Review Focus 3]", async () => {
+      const { runner, coder, log, channel } = await start({ agent: { bot: DEF }, hello: BOT_HELLO });
+      await sendMessage(log.socket, channel.id, "@coder 봐줘");
+      const first = await runOf(log, coder.id, 0);
+      expect((await log.terminal(first.id)).status).toBe("done");
+      const firstStart = startOf(runner, first.id);
+      expect(firstStart.agent.bot?.id).toBe(coder.providerAgentId);
+      expect(firstStart.agent.bot?.soul).toContain("## What to do\n위험을 짚는다");
+      expect(firstStart.agent).not.toHaveProperty("project");
+      expect(firstStart.channelRulesAppend.startsWith("# dodok bot definition\n")).toBe(true);
+      expect(firstStart.channelRulesAppend).toContain("## Purpose\n리뷰 봇");
+
+      const patched = await rest(live, "PATCH", `/agents/${coder.id}`, {
+        bot: { ...DEF, does: "테스트를 돌린다" },
+      });
+      expect(patched.status).toBe(200);
+      await sendMessage(log.socket, channel.id, "@coder 다시");
+      const second = await runOf(log, coder.id, 1);
+      expect((await log.terminal(second.id)).status).toBe("done");
+      const secondStart = startOf(runner, second.id);
+      expect(secondStart.providerSessionId).not.toBe(firstStart.providerSessionId);
+      expect(secondStart.channelRulesAppend).toContain("## What to do\n테스트를 돌린다");
+      expect(secondStart.agent.bot?.soul).toContain("테스트를 돌린다");
+    });
+
+    it("능력 bots 가 없는 옛 러너 — 봇 런을 보내지 않고 「러너를 업데이트하세요(봇은 0.9.0 부터)」 카드 [Review Focus 4]", async () => {
+      const { runner, coder, log, channel } = await start({ agent: { bot: DEF } });
+      await sendMessage(log.socket, channel.id, "@coder 봐줘");
+      const run = await runOf(log, coder.id);
+      expect((await log.terminal(run.id)).status).toBe("error");
+      const card = await log.until(
+        () => log.created.find((m) => m.systemMeta?.kind === "run_error" && m.systemMeta.runId === run.id),
+        "옛 러너 카드",
+      );
+      expect(card.bodyMd).toContain("러너를 업데이트하세요(봇은 0.9.0 부터)");
+      expect(runner.runStarts).toHaveLength(0);
+    });
+  });
+
   it("러너가 RUNNER_CEILING 으로 거절하면 항목을 단 카드와 「다시 실행」 — 러너 설정을 되돌리고 누르면 돈다 [Review Focus 2·3]", async () => {
     let refuse: string | null = "root";
     const { runner, coder, log, channel } = await start({

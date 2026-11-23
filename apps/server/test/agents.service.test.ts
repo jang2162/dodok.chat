@@ -2,11 +2,22 @@ import { Agent } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
-import { agents } from "../src/db/schema.sqlite";
-import { agentForRole, createAgent, getAgent, listAgents, updateAgent } from "../src/modules/agents/service";
+import { renderBotSoul } from "@dodok/shared";
+import { agents, runnerTokens } from "../src/db/schema.sqlite";
+import {
+  agentForRole,
+  archiveAgent,
+  createAgent,
+  getAgent,
+  listAgents,
+  RUNNER_AGENT_WITHOUT_PROJECT,
+  restoreAgent,
+  updateAgent,
+} from "../src/modules/agents/service";
+import { runnerAgentDefinition } from "../src/modules/runners/definition";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
-import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
+import { createRunnerAgentForTest, insertRunnerToken, seedWorkspace } from "./helpers/seed";
 
 /** 워크스페이스 하나와 그 Gateway 하나 — OpenClaw 에이전트는 Gateway 에 묶여 등록된다 */
 function setup() {
@@ -189,5 +200,129 @@ describe("agents service", () => {
       expect.objectContaining({ status: 409 }),
     );
     expect(() => updateAgent(db, uuid(), { name: "x" })).toThrow(expect.objectContaining({ status: 404 }));
+  });
+});
+
+describe("러너 봇(러너 봇 스펙 B2·B3·B10·B11)", () => {
+  const DEF = { purpose: "리뷰 봇", watches: "PR", does: "위험을 짚는다", reports: "요약 한 줄" };
+  const noop = { orchestrator: { abort: async () => {} } };
+  const revision = (db: ReturnType<typeof setup>["db"], id: string) =>
+    db.select({ r: agents.instructionsRevision }).from(agents).where(eq(agents.id, id)).get()?.r;
+  const errorOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return e as { status: number; body: { code: string; message: string; details?: { field?: string } } };
+    }
+    throw new Error("던지지 않았다");
+  };
+
+  it("프로젝트 없이 러너 토큰에 묶인다 — runner.bot true, 정의는 runnerAgent.bot, 기본 지시는 저장하지 않는다", () => {
+    const { db, workspaceId } = setup();
+    const runnerTokenId = insertRunnerToken(db, workspaceId);
+    const bot = createAgent(db, {
+      workspaceId,
+      provider: "runner",
+      runnerTokenId,
+      bot: DEF,
+      program: "claude",
+      handle: "rev",
+      name: "Rev",
+      basePrompt: "무시된다",
+    });
+    expect(bot.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
+    expect(bot.runner).toMatchObject({ tokenId: runnerTokenId, bot: true });
+    expect(bot.runner).not.toHaveProperty("projectLabel");
+    expect(bot.runnerAgent).toEqual({ projectId: null, disallowedTools: [], bot: DEF });
+    expect(bot.basePrompt).toBeUndefined();
+    // 프로젝트 에이전트에는 bot 표시가 없다
+    const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain", runnerTokenId }).agent;
+    expect(plain.runner).not.toHaveProperty("bot");
+    expect(plain.runnerAgent).not.toHaveProperty("bot");
+  });
+
+  it("member 는 봇임(runner.bot)을 알되 정의 내용은 받지 않는다 — admin·연결 주인은 받는다 [Review Focus 5]", () => {
+    const { db, workspaceId } = setup();
+    const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: DEF });
+    const forMember = agentForRole(agent, "member");
+    expect(forMember.runner?.bot).toBe(true);
+    expect(forMember.runnerAgent).toBeUndefined();
+    expect(JSON.stringify(forMember)).not.toContain("위험을 짚는다");
+    expect(agentForRole(agent, "admin").runnerAgent?.bot).toEqual(DEF);
+    expect(agentForRole(agent, "member", true).runnerAgent?.bot).toEqual(DEF);
+  });
+
+  it("없는·다른 워크스페이스·폐기한 러너 토큰이면 VALIDATION(runnerTokenId)", () => {
+    const { db, workspaceId } = setup();
+    const otherWs = seedWorkspace(db, { userHandle: "other" }).workspaceId;
+    const foreign = insertRunnerToken(db, otherWs);
+    const revoked = insertRunnerToken(db, workspaceId);
+    db.update(runnerTokens).set({ revokedAt: new Date() }).where(eq(runnerTokens.id, revoked)).run();
+    for (const runnerTokenId of [uuid(), foreign, revoked]) {
+      const e = errorOf(() =>
+        createAgent(db, {
+          workspaceId,
+          provider: "runner",
+          runnerTokenId,
+          bot: DEF,
+          program: "claude",
+          handle: "x",
+          name: "x",
+        }),
+      );
+      expect(e.body).toMatchObject({ code: "VALIDATION", details: { field: "runnerTokenId" } });
+    }
+  });
+
+  it("정의를 고치면 지시 리비전 +1 — 같은 정의·이름만은 그대로, 봇에 기본 지시·봇 아닌 에이전트에 정의는 VALIDATION [Review Focus 3]", () => {
+    const { db, workspaceId } = setup();
+    const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: DEF });
+    updateAgent(db, agent.id, { bot: { ...DEF } });
+    updateAgent(db, agent.id, { name: "새 이름" });
+    expect(revision(db, agent.id)).toBe(0);
+    for (const key of ["purpose", "watches", "does", "reports"] as const) {
+      const before = revision(db, agent.id)!;
+      const changed = updateAgent(db, agent.id, { bot: { ...DEF, [key]: `${key} 바뀜` } });
+      expect(changed.runnerAgent?.bot?.[key]).toBe(`${key} 바뀜`);
+      expect(revision(db, agent.id)).toBe(before + 1);
+    }
+    expect(errorOf(() => updateAgent(db, agent.id, { basePrompt: "지시" })).body).toMatchObject({
+      code: "VALIDATION",
+      details: { field: "basePrompt" },
+    });
+    const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain" }).agent;
+    expect(errorOf(() => updateAgent(db, plain.id, { bot: DEF })).body).toMatchObject({
+      code: "VALIDATION",
+      details: { field: "bot" },
+    });
+  });
+
+  it("런 정의 — project 대신 bot(id = providerAgentId, soul = renderBotSoul), 지시 대신 봇 정의. 다른 토큰이면 null", () => {
+    const { db, workspaceId } = setup();
+    const { agent, runnerTokenId } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: DEF });
+    const def = runnerAgentDefinition(db, workspaceId, agent.providerAgentId, runnerTokenId);
+    expect(def).toMatchObject({ instructions: null, botDefinition: DEF });
+    expect(def?.agent.bot).toEqual({ id: agent.providerAgentId, soul: renderBotSoul(DEF) });
+    expect(def?.agent).not.toHaveProperty("project");
+    expect(
+      runnerAgentDefinition(db, workspaceId, agent.providerAgentId, insertRunnerToken(db, workspaceId)),
+    ).toBeNull();
+  });
+
+  it("봇은 되살린다 — 프로젝트 없는 옛 러너 에이전트는 그대로 거절 [Review Focus 2]", async () => {
+    const { db, workspaceId } = setup();
+    const { agent: bot } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: DEF });
+    await archiveAgent(db, noop, bot.id, workspaceId);
+    expect(restoreAgent(db, bot.id, workspaceId).agent.archivedAt).toBeNull();
+
+    const { agent: legacy } = createRunnerAgentForTest(db, { workspaceId, handle: "legacy" });
+    await archiveAgent(db, noop, legacy.id, workspaceId);
+    db.update(agents).set({ runnerProjectId: null }).where(eq(agents.id, legacy.id)).run();
+    expect(errorOf(() => restoreAgent(db, legacy.id, workspaceId)).body).toMatchObject({
+      code: "VALIDATION",
+      message: RUNNER_AGENT_WITHOUT_PROJECT,
+    });
+    // 옛 것은 봇으로 읽히지 않는다
+    expect(getAgent(db, legacy.id, workspaceId)?.runner?.bot).toBeUndefined();
   });
 });

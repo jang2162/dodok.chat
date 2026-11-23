@@ -13,6 +13,7 @@ import type {
   OpsEventKind,
   OpsSeverity,
   RelayPolicy,
+  RunnerBotDefinition,
   RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
@@ -150,6 +151,9 @@ export const agents = sqliteTable(
     // 지킨다(0031 이 프로젝트 없는 옛 러너 에이전트를 보관했다). 금지 도구와 함께 run.start.agent 의 에이전트 쪽 정본 — 모델·effort·권한
     // 모드는 대화마다(conversation_agent_settings), 없으면 아래 「새 세션 시작값」(세션 설정 스펙 S10)
     runnerProjectId: text("runner_project_id").references((): AnySQLiteColumn => runnerProjects.id),
+    // 러너 봇의 정의(러너 봇 스펙 B2·B3) — not null 이면 봇이다(B11): runner_project_id 는 null 이고 봇 폴더(러너의 botsDir/<provider_agent_id>)
+    // 에서 돈다. 프로젝트 없는 옛 러너 에이전트(0031)는 이 칸도 null 이다 — 봇에는 「옛 것」 뜻을 쓰지 않는다
+    runnerBot: json<RunnerBotDefinition>("runner_bot"),
     disallowedToolsJson: json<string[]>("disallowed_tools_json").notNull().default([]),
     // 새 세션 시작값 — 설정 행이 없는 대화가 이 값으로 돈다. 모두 null 이면 프로그램 기본·권한 「기본」(min(default, 러너 상한))
     sessionDefaultModel: text("session_default_model"),

@@ -4,6 +4,7 @@
  * 어댑터가 채널 규칙 틀 앞에 싣는다(계획 판정 PR1). 권한 「기본」(null)은 어댑터가 그 러너의 상한으로 채운다
  */
 import type { RunnerAgentDefinition } from "@dodok/runner-adapter";
+import { renderBotSoul } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../db/client";
 import { agents, runnerProjects } from "../../db/schema.sqlite";
@@ -15,7 +16,8 @@ import { getEffectiveSettings, sessionDefaultsOf } from "../conversations/agent-
  * 정의가 있다 — 프로젝트 보관은 목록 정리일 뿐 런은 돈다(스펙 8장).
  * 에이전트와 프로젝트가 둘 다 그 토큰의 것이어야 한다 — (rootId, relPath) 는 러너 머신 하나 안에서만 뜻이 있어, 에이전트 토큰만 다른
  * 러너를 가리키면 그 러너의 같은 이름 루트에서 돈다(태스크 3 리뷰 D1). 둘을 함께 바꾸는 길은 프로젝트 옮기기(projects.ts moveProject) 하나다.
- * conversationId 가 없으면(능력 묻기처럼 대화가 없는 자리) 에이전트 시작값이다
+ * conversationId 가 없으면(능력 묻기처럼 대화가 없는 자리) 에이전트 시작값이다. 봇(runner_bot — 러너 봇 스펙 B2)은 프로젝트 대신
+ * bot(그 러너의 봇 폴더 id = providerAgentId·SOUL.md 본문)을 싣고 지시 자리에 기본 지시 대신 봇 정의가 간다(B9)
  */
 export function runnerAgentDefinition(
   db: DbOrTx,
@@ -27,28 +29,38 @@ export function runnerAgentDefinition(
   const row = db
     .select({ agent: agents, project: runnerProjects })
     .from(agents)
-    .innerJoin(runnerProjects, eq(runnerProjects.id, agents.runnerProjectId))
+    .leftJoin(runnerProjects, eq(runnerProjects.id, agents.runnerProjectId))
     .where(
       and(
         eq(agents.workspaceId, workspaceId),
         eq(agents.provider, "runner"),
         providerAgentIdIs(providerAgentId),
         eq(agents.runnerTokenId, runnerTokenId),
-        eq(runnerProjects.runnerTokenId, runnerTokenId),
       ),
     )
     .get();
   if (!row || row.agent.program === null) return null;
+  const bot = row.agent.runnerBot;
+  let place: Pick<RunnerAgentDefinition["agent"], "project" | "bot">;
+  if (bot !== null) {
+    // 봇 폴더 id 는 providerAgentId 그대로 — 서버가 짓는 `r-` + 소문자 hex 10(B1)
+    place = { bot: { id: row.agent.providerAgentId.toLowerCase(), soul: renderBotSoul(bot) } };
+  } else {
+    // 프로젝트도 그 토큰의 것이어야 한다(태스크 3 리뷰 D1). 프로젝트 없는 옛 에이전트는 정의가 없다
+    if (row.project === null || row.project.runnerTokenId !== runnerTokenId) return null;
+    place = { project: { rootId: row.project.rootId, relPath: row.project.relPath } };
+  }
   const settings =
     conversationId === undefined
       ? sessionDefaultsOf(db, row.agent.id)
       : getEffectiveSettings(db, { conversationId, agentId: row.agent.id });
   return {
     name: row.agent.name,
-    instructions: row.agent.basePrompt,
+    instructions: bot === null ? row.agent.basePrompt : null,
+    ...(bot === null ? {} : { botDefinition: bot }),
     agent: {
       program: row.agent.program,
-      project: { rootId: row.project.rootId, relPath: row.project.relPath },
+      ...place,
       model: settings.model,
       effort: settings.effort,
       permissionMode: settings.permissionMode,

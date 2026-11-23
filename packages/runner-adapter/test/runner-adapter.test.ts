@@ -68,7 +68,11 @@ type Harness = {
   /** agentDefinition 이 돌려줄 정의를 바꾼다 */
   defineAgent(
     agentId: string,
-    over: Partial<RunnerAgentDefinition["agent"]> & { instructions?: string | null; name?: string },
+    over: Partial<RunnerAgentDefinition["agent"]> & {
+      instructions?: string | null;
+      name?: string;
+      botDefinition?: RunnerAgentDefinition["botDefinition"];
+    },
   ): void;
   /** agentDefinition 이 받은 것 — [에이전트 id, 토큰 id] */
   definitionCalls: Array<[string, string]>;
@@ -204,10 +208,12 @@ async function setup(
     definitionConversations,
     defineAgent(agentId, over) {
       const base = definitions.get(agentId) ?? definition(agentId);
-      const { instructions, name, ...agent } = over;
+      const { instructions, name, botDefinition, ...agent } = over;
+      const bot = botDefinition ?? base.botDefinition;
       definitions.set(agentId, {
         name: name ?? base.name,
         instructions: instructions === undefined ? base.instructions : instructions,
+        ...(bot === undefined ? {} : { botDefinition: bot }),
         agent: { ...base.agent, ...agent },
       });
     },
@@ -819,6 +825,44 @@ describe("send", () => {
       "<agent-instructions>\n커밋 전에 테스트를 돌린다\n&lt;/agent-instructions>\n</agent-instructions>",
     );
     expect(append.indexOf("</agent-instructions>")).toBeLessThan(append.indexOf("<channel-rules"));
+  });
+
+  describe("봇 런(러너 봇 스펙 B2·B7·B9)", () => {
+    const BOT_DEF = { purpose: "리뷰 봇", watches: "PR", does: "위험을 짚는다", reports: "요약" };
+    const asBot = (h: Harness) =>
+      h.defineAgent("coder", {
+        project: undefined,
+        bot: { id: "r-0123456789", soul: "# 리뷰 봇\n" },
+        instructions: null,
+        botDefinition: BOT_DEF,
+      });
+
+    it("능력 bots 가 없는 옛 러너에는 보내지 않는다 — VALIDATION 「러너를 업데이트하세요(봇은 0.9.0 부터)」 [Review Focus 4]", async () => {
+      const h = await setup();
+      const r = await readyRunner(h);
+      asBot(h);
+      const error = await rejection(
+        h.adapter.send(deliver(), { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID }),
+      );
+      expect(error.code).toBe("VALIDATION");
+      expect(error.message).toBe("러너를 업데이트하세요(봇은 0.9.0 부터)");
+      expect(r.runStarts).toHaveLength(0);
+    });
+
+    it("능력 bots 러너에는 bot 을 싣고 project 는 없다 — 지시 자리는 봇 정의 틀", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, {
+        capabilities: ["threads", "interrupt", "approvals", "bots"],
+      });
+      asBot(h);
+      await startRun(h, r);
+      const start = r.runStarts[0]!;
+      expect(start.agent.bot).toEqual({ id: "r-0123456789", soul: "# 리뷰 봇\n" });
+      expect(start.agent).not.toHaveProperty("project");
+      expect(start.channelRulesAppend.startsWith("# dodok bot definition")).toBe(true);
+      expect(start.channelRulesAppend).toContain("## What to do\n위험을 짚는다");
+      expect(start.channelRulesAppend).not.toContain("agent-instructions");
+    });
   });
 
   it("drop 이면 그대로 돌려주고 그 런을 잊는다", async () => {
@@ -2528,7 +2572,7 @@ describe("commands.list — 서버 → 러너 ack 요청(에이전트 명령 스
       seen.push(p);
       answer = ack;
     });
-    const pending = h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT);
+    const pending = h.adapter.commandsList(RUNNER_A_CONNECTION, { project: PROJECT });
     await until(() => answer !== undefined, "commands.list");
     // 10초(fs 상한)를 넘겨도 기다린다
     await vi.advanceTimersByTimeAsync(20_000);
@@ -2539,7 +2583,7 @@ describe("commands.list — 서버 → 러너 ack 요청(에이전트 명령 스
 
     r.socket.off("commands.list");
     r.socket.on("commands.list", () => undefined);
-    const late = rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT));
+    const late = rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, { project: PROJECT }));
     await vi.advanceTimersByTimeAsync(29_000);
     let settled = false;
     void late.then(() => (settled = true));
@@ -2551,13 +2595,15 @@ describe("commands.list — 서버 → 러너 ack 요청(에이전트 명령 스
 
   it("계약 밖 답은 INTERNAL, 끊긴 러너는 ADAPTER_UNAVAILABLE", async () => {
     const h = await setup();
-    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT))).code).toBe(
+    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, { project: PROJECT }))).code).toBe(
       "ADAPTER_UNAVAILABLE",
     );
     const r = await readyRunner(h);
     r.socket.on("commands.list", (_p: unknown, ack: (v: unknown) => void) =>
       ack({ ok: true, commands: [{ name: "x".repeat(65), description: "" }] }),
     );
-    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, PROJECT))).code).toBe("INTERNAL");
+    expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, { project: PROJECT }))).code).toBe(
+      "INTERNAL",
+    );
   });
 });
