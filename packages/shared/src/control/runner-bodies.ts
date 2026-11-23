@@ -9,6 +9,7 @@ import {
   RunnerRelPath,
   RunnerRootId,
 } from "../runner";
+import { RemoteUpdateProgress, RemoteUpdateSupport } from "../setup";
 
 // 「러너」 탭 REST(러너 일반화 스펙 5·6·7장) — admin 이상. 러너는 runner_tokens 행 하나다. 연결 상태·hello 내용은 서버 메모리에만
 // 있어(스펙 5장) 끊긴 러너는 「마지막으로 알린」 값 없이 null·빈 목록으로 온다
@@ -27,6 +28,12 @@ export const RunnerSummary = z.object({
   capabilities: z.array(RunnerCapability),
   /** 보관하지 않은 프로젝트 수 */
   projectCount: z.int().min(0),
+  /** npm `@dodok/runner` 의 latest(서버 1시간 캐시, 원격 업데이트 스펙 U2). 레지스트리에 닿지 않으면 null — 「최신을 알 수 없음」 */
+  latestVersion: z.string().nullable().optional(),
+  /** 붙은 러너의 원격 업데이트(U1·U8). 끊겼으면 null */
+  remoteUpdate: RemoteUpdateSupport.nullable().optional(),
+  /** 서버가 쥔 업데이트 진행(U9). 없으면 null */
+  update: RemoteUpdateProgress.nullable().optional(),
 });
 export type RunnerSummary = z.infer<typeof RunnerSummary>;
 

@@ -10,6 +10,8 @@ import {
   InboundDeliverResult,
   InboundReaction,
   OutboundMessage,
+  PluginUpdate,
+  PluginUpdateResult,
   REACTION_EXCERPT_MAX,
 } from "../src/bridge";
 
@@ -217,5 +219,40 @@ describe("리액션 상한 — 서버가 쓰는 상수가 곧 스키마의 상�
     });
     expect(InboundContext.safeParse(ctx(INBOUND_REACTIONS_MAX)).success).toBe(true);
     expect(InboundContext.safeParse(ctx(INBOUND_REACTIONS_MAX + 1)).success).toBe(false);
+  });
+});
+
+describe("원격 업데이트(원격 업데이트 스펙 U1·U5·U8)", () => {
+  const base = {
+    pluginId: "dodok",
+    version: "0.0.0",
+    sdkVersion: "2026.9.4",
+    capabilities: ["remoteUpdate"],
+  };
+  it("hello 는 remoteUpdate·lastUpdate 를 싣고, 옛 플러그인은 둘 다 없다", () => {
+    const at = "2026-11-23T00:00:00.000Z";
+    expect(
+      BridgeHello.parse({
+        ...base,
+        remoteUpdate: false,
+        lastUpdate: { ok: false, message: "설치 실패", at },
+      }),
+    ).toMatchObject({ capabilities: ["remoteUpdate"], remoteUpdate: false, lastUpdate: { ok: false, at } });
+    const old = BridgeHello.parse({ ...base, capabilities: [] });
+    expect(old.remoteUpdate).toBeUndefined();
+    expect(old.lastUpdate).toBeUndefined();
+  });
+  it("꼴이 틀린 lastUpdate 는 hello 를 거절하지 않고 버린다", () => {
+    const parsed = BridgeHello.parse({ ...base, lastUpdate: { ok: "yes" } });
+    expect(parsed.lastUpdate).toBeUndefined();
+  });
+  it("plugin.update 는 sha256 hex 만, 답은 runner.update 와 같은 꼴", () => {
+    const sha256 = "a".repeat(64);
+    expect(PluginUpdate.parse({ sha256 })).toEqual({ sha256 });
+    expect(PluginUpdate.safeParse({ sha256: "../x" }).success).toBe(false);
+    expect(PluginUpdateResult.parse({ ok: false, reason: "disabled" })).toEqual({
+      ok: false,
+      reason: "disabled",
+    });
   });
 });

@@ -18,6 +18,8 @@ import {
   RunnerProgramStatus,
   RunnerRunAbort,
   RunnerRunAck,
+  RunnerUpdate,
+  RunnerUpdateResult,
   RunnerRunError,
   RunnerRunEvent,
   RunnerRunFinal,
@@ -115,7 +117,49 @@ describe("/runner 상수(P1)", () => {
       "worktrees",
       "commands",
       "bots",
+      "remoteUpdate",
+      "remoteUpdateOff",
     ]);
+  });
+});
+
+describe("runner.update — 정확한 semver 만(원격 업데이트 스펙 U3)", () => {
+  it.each(["0.9.0", "1.2.3", "0.9.0-rc.1", "10.20.30-beta-2.x"])("받는다 %s", (version) => {
+    expect(RunnerUpdate.parse({ version })).toEqual({ version });
+  });
+  it.each([
+    "latest",
+    "^0.9.0",
+    "~0.9.0",
+    ">=0.9.0",
+    "0.9",
+    "0.9.x",
+    "../x",
+    "0.9.0/../../x",
+    "https://evil.example/runner.tgz",
+    "file:/tmp/runner.tgz",
+    "git+ssh://x",
+    "0.9.0 || 1.0.0",
+    "0.9.0\n",
+    "",
+  ])("거절한다 %s", (version) => {
+    expect(RunnerUpdate.safeParse({ version }).success).toBe(false);
+  });
+  it("답 — ok 또는 사유", () => {
+    expect(RunnerUpdateResult.parse({ ok: true })).toEqual({ ok: true });
+    expect(
+      RunnerUpdateResult.parse({ ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" }),
+    ).toEqual({ ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" });
+    expect(RunnerUpdateResult.safeParse({ ok: false, reason: "nope" }).success).toBe(false);
+  });
+  it("hello 최상위에는 새 키가 없다 — 꺼짐은 능력 문자열로(옛 서버가 새 러너를 거절하지 않게)", () => {
+    expect(RunnerHello.safeParse({ ...HELLO, remoteUpdate: true }).success).toBe(false);
+    expect(
+      RunnerHello.parse({
+        ...HELLO,
+        capabilities: [...HELLO.capabilities, "remoteUpdate", "remoteUpdateOff"],
+      }).capabilities,
+    ).toContain("remoteUpdateOff");
   });
 });
 

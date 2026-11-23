@@ -4,6 +4,9 @@ import {
   CreateAgentBody,
   CreateWorktreeBody,
   CreateRunnerAgentBody,
+  compareVersions,
+  GatewaySetup,
+  RunnerSummary,
   DiscoverAgentsQuery,
   findControlTool,
   RunnerFsQuery,
@@ -164,5 +167,81 @@ describe("러너 워크트리 REST", () => {
     expect(ArchiveRunnerProjectBody.parse({})).toEqual({});
     expect(ArchiveRunnerProjectBody.parse({ keepFolder: true })).toEqual({ keepFolder: true });
     expect(ArchiveRunnerProjectBody.safeParse({ keepFolder: false }).success).toBe(false);
+  });
+});
+
+describe("원격 업데이트 — 판 비교·상세 응답(원격 업데이트 스펙 U2·U9)", () => {
+  it.each([
+    ["0.9.0", "0.8.0", 1],
+    ["0.8.0", "0.9.0", -1],
+    ["0.10.0", "0.9.9", 1],
+    ["1.0.0", "1.0.0", 0],
+    ["1.0.0", "1.0.0-rc.1", 1],
+    ["1.0.0-rc.2", "1.0.0-rc.10", -1],
+    ["1.0.0-alpha", "1.0.0-alpha.1", -1],
+    ["1.0.0-beta", "1.0.0-alpha", 1],
+  ])("%s 대 %s", (a, b, sign) => {
+    expect(Math.sign(compareVersions(a, b))).toBe(sign);
+  });
+  it("semver 가 아니면 NaN", () => {
+    expect(compareVersions("dev", "0.9.0")).toBeNaN();
+    expect(compareVersions("0.9.0", "latest")).toBeNaN();
+  });
+  it("러너 요약은 최신 판·원격 업데이트·진행을 싣는다(옛 서버는 싣지 않는다)", () => {
+    const summary = {
+      id: ID,
+      label: "맥북",
+      connected: true,
+      revoked: false,
+      runnerVersion: "0.8.0",
+      browse: true,
+      roots: [],
+      programs: [],
+      capabilities: ["remoteUpdate"],
+      projectCount: 0,
+    };
+    expect(RunnerSummary.parse(summary)).toEqual(summary);
+    const withUpdate = {
+      ...summary,
+      latestVersion: null,
+      remoteUpdate: "off",
+      update: { state: "failed", message: "npm 설치 실패", at: "2026-11-23T00:00:00.000Z" },
+    };
+    expect(RunnerSummary.parse(withUpdate)).toEqual(withUpdate);
+    expect(RunnerSummary.safeParse({ ...summary, remoteUpdate: "maybe" }).success).toBe(false);
+  });
+  it("Gateway 상세의 플러그인은 원격 업데이트·마지막 결과를, Gateway 는 진행을 싣는다", () => {
+    const at = "2026-11-23T00:00:00.000Z";
+    const gateway = {
+      id: ID,
+      name: "사무실",
+      url: "ws://x",
+      enabled: true,
+      approved: true,
+      gateway: {
+        state: "connected",
+        host: "x",
+        version: null,
+        pinned: "2026.9.4",
+        drift: false,
+        pairing: null,
+      },
+      bridge: {
+        state: "connected",
+        plugin: {
+          version: "0.0.0",
+          sdkVersion: "2026.9.4",
+          gatewayVersion: null,
+          bundleSha256: null,
+          tokenId: null,
+          connectedAt: at,
+          remoteUpdate: "on",
+          lastUpdate: { ok: true, at },
+        },
+      },
+      pluginMatches: false,
+      update: { state: "updating", targetVersion: null, startedAt: at, deadline: at },
+    };
+    expect(GatewaySetup.parse(gateway)).toEqual(gateway);
   });
 });
