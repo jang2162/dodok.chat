@@ -1,6 +1,7 @@
 import {
   appMcpBlockText,
   appMcpCeilingOf,
+  appMcpCeilingText,
   appMcpVerdict,
   isStdioServer,
   MCP_SECRET_MASK,
@@ -62,6 +63,10 @@ export function parseMcpText(
 }
 
 type AutoMode = McpAutoAllow["mode"];
+
+/** 「이 도구만」에 이름이 하나 이상인가 — 빈 목록은 서버가 받지 않는다(tools.min(1)) */
+const toolsFilled = (autoAllow: McpAutoAllowMap) =>
+  Object.values(autoAllow).every((a) => a.mode !== "tools" || a.tools.length > 0);
 const AUTO_LABEL: Record<AutoMode, string> = {
   none: "묻기(기본)",
   all: "전부 묻지 않음",
@@ -111,11 +116,12 @@ export function BotToolsFields({
       return;
     }
     setProblem(undefined);
-    onValidity(true);
     // 없어진 서버의 자동 허용은 걷는다
     const autoAllow: McpAutoAllowMap = Object.fromEntries(
       Object.entries(value.mcpAutoAllow).filter(([name]) => name in parsed.servers),
     );
+    // 남은 서버에 빈 「이 도구만」이 있으면 잠금을 그대로 둔다(setAuto 와 같은 판정 — JSON 편집이 풀지 않게)
+    onValidity(toolsFilled(autoAllow));
     onChange({ ...value, mcpServers: parsed.servers, mcpAutoAllow: autoAllow });
   }
 
@@ -131,9 +137,7 @@ export function BotToolsFields({
     else next[name] = { mode: "tools", tools: [] };
     onChange({ ...value, mcpAutoAllow: next });
     // 빈 도구 목록은 서버가 받지 않는다 — 고를 때까지 저장을 잠근다
-    onValidity(
-      problem === undefined && Object.values(next).every((a) => a.mode !== "tools" || a.tools.length > 0),
-    );
+    onValidity(problem === undefined && toolsFilled(next));
   }
 
   return (
@@ -192,9 +196,11 @@ export function BotToolsFields({
                   >
                     {verdict === undefined
                       ? "러너가 붙으면 판정합니다"
-                      : verdict.ok
-                        ? "쓸 수 있음"
-                        : `이 러너가 막음 — ${appMcpBlockText(verdict.reason, verdict.detail)}`}
+                      : !verdict.ok
+                        ? `이 러너가 막음 — ${appMcpBlockText(verdict.reason, verdict.detail)}`
+                        : verdict.outsideCeiling.length > 0
+                          ? `쓸 수 있음 · 이 러너가 막음 — ${appMcpCeilingText(verdict.outsideCeiling)}`
+                          : "쓸 수 있음"}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

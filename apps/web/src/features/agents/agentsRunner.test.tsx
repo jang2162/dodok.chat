@@ -555,7 +555,7 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     const TOOL_CAPS: RunnerCapability[] = [...BOTS_CAPS, "botMcp", "runnerControl"];
     const httpCeiling = {
       maxPermissionMode: "acceptEdits" as const,
-      allowedToolsCeiling: null,
+      allowedToolsCeiling: null as string[] | null,
       appMcp: "http" as const,
       appMcpCommands: null,
     };
@@ -570,12 +570,10 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
       },
     });
     /** 도구 칸을 보는 러너 상세 — 능력·천장을 바꿔 가며 */
-    function serveTools(caps: RunnerCapability[] = TOOL_CAPS) {
+    function serveTools(caps: RunnerCapability[] = TOOL_CAPS, ceiling = httpCeiling) {
       const hits: Hit[] = [];
       const routes = runnersRoutes({
-        runners: [
-          runnerOf(1, { label: "맥북", capabilities: caps, programs: [programOf({ ceiling: httpCeiling })] }),
-        ],
+        runners: [runnerOf(1, { label: "맥북", capabilities: caps, programs: [programOf({ ceiling })] })],
       });
       vi.stubGlobal(
         "fetch",
@@ -639,6 +637,38 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
       await userEvent.paste('{"mcpServers": {"dodok": {"type":"http","url":"https://x.example/"}}}');
       expect(within(dialog).getByRole("alert")).toHaveTextContent("dodok");
       expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
+    });
+
+    it("「이 도구만」을 빈 채로 두면 잠근다 — 그 뒤 JSON 을 고쳐도 잠금이 풀리지 않는다", async () => {
+      serveTools();
+      const dialog = await openBotDialog();
+      await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "rev");
+      await userEvent.click(mcpBox(dialog));
+      await userEvent.paste(MCP_JSON);
+      const create = within(dialog).getByRole("button", { name: "만들기" });
+      expect(create).toBeEnabled();
+      await userEvent.selectOptions(
+        within(dialog).getAllByRole("combobox", { name: "묻지 않음" })[0]!,
+        "tools",
+      );
+      expect(create).toBeDisabled();
+      await userEvent.type(mcpBox(dialog), " ");
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      expect(create).toBeDisabled();
+    });
+
+    it("러너 도구 상한 밖의 자동 허용 — 서버는 쓸 수 있고 자동 허용만 막힌다고 보인다(T15)", async () => {
+      serveTools(TOOL_CAPS, { ...httpCeiling, allowedToolsCeiling: ["mcp__github__a"] });
+      const dialog = await openBotDialog();
+      await userEvent.click(mcpBox(dialog));
+      await userEvent.paste(MCP_JSON);
+      await userEvent.selectOptions(
+        within(dialog).getAllByRole("combobox", { name: "묻지 않음" })[0]!,
+        "all",
+      );
+      expect(within(dialog).getByTestId("mcp-verdict-github")).toHaveTextContent(
+        "쓸 수 있음 · 이 러너가 막음 — 도구 상한 밖: mcp__github(자동 허용만 막힘)",
+      );
     });
 
     it("runnerControl 이 없는 러너 — 「이 러너 설정 제어」를 사유와 함께 잠근다", async () => {
