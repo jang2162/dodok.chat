@@ -44,6 +44,7 @@
   쿠키까지 가르려면 호스트도 가른다 — `PORT=<api> APP_ORIGIN=http://<슬러그>.localhost:<web> pnpm -F @dodok/server dev:fake` 와
   `DODOK_API_ORIGIN=http://127.0.0.1:<api> pnpm -F @dodok/web dev --port <web>` 로 띄우고 `http://<슬러그>.localhost:<web>` 으로 연다. Vite 기본 설정이
   `*.localhost` 를 받고, 웹이 API 를 프록시해 `dodok.session` 이 그 호스트에만 앉으며, wire 핸드셰이크 Origin 도 `APP_ORIGIN` 과 같아 붙는다.
+- ⚠ **긴 한 줄(JSON·URL)을 받는 `Textarea` 는 `field-sizing-content` 라 그 폭이 대화상자·그리드 폭을 밀어낸다.** jsdom 시험으로는 못 잡는다 — 390px 에서 붙여넣기 뒤 `scrollWidth`·`clientWidth` 를 견주고, 그런 칸은 `field-sizing-fixed min-w-0` 로 둔다(러너 봇 도구 칸, 2026-11-23).
 - ⚠ **초점 이동은 jsdom 테스트가 통과해도 실제 브라우저에서 따로 본다.** jsdom 은 숨겨진 요소의 초점을 body 로 옮기지 않고(브라우저는 커밋 뒤
   정리한다), act 환경이라 캐시 갱신의 다시 그리기가 늦어 언마운트된 컴포넌트의 `mutate` 콜백도 불린다(브라우저에서는 불리지 않는다) — 두 결함이
   테스트를 통과한 채 실제 브라우저에서만 났다. 언마운트 뒤에도 돌아야 하는 일은 `mutateAsync().then` 으로 쓰고, 숨은 자리 안의 초점은 떨어진 것으로
