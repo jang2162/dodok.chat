@@ -27,6 +27,8 @@
 4. **CI** — `runner-publish` 워크플로가 돈다: 태그 커밋이 `origin/main` 에 있는지(아니면 실패) → Node·pnpm 판이 `mise.toml` 과 같은지 → 태그가 `runner-v<package.json version>` 과 같은지(다르면 실패) → `pnpm install --frozen-lockfile`(러너와 그 의존 패키지만) → 러너 typecheck·test·build → `pnpm -F @dodok/runner publish`(`prepublishOnly` 가 다시 빌드하고 `scripts/check-pack.mjs` 로 꾸러미를 확인한다).
 5. **확인** — `npm view @dodok/runner version` 이 새 판본이고, npmjs.com 패키지 화면에 provenance 표시가 붙는다. 다른 머신에서 `npm i -g @dodok/runner && dodok-runner --version`.
 
+배포한 판은 서버마다 1시간 안에 「설정 → 연결」의 러너 상세 「최신」에 뜨고, 그 상세의 「업데이트」가 러너 머신에 `npm i -g @dodok/runner@<그 판>` 을 시킨다(원격 업데이트 — `docs/guides/docker-deploy.md` 「러너 설치」의 「업데이트」). 서버는 npm 의 `latest` 태그만 본다 — 프리릴리스를 `latest` 로 올리지 않는다.
+
 올라간 판본은 지울 수 없다(72시간 안 unpublish 는 되지만 같은 판본 번호는 다시 못 쓴다). 잘못 올렸으면 판본을 올려 다시 배포하고, 필요하면 `npm deprecate @dodok/runner@<판본> "<사유>"`.
 
 ## 꾸러미에 들어가는 것
