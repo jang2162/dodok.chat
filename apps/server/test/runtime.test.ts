@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -60,6 +60,14 @@ describe.skipIf(process.getuid?.() === 0)("unwritableDataPath", () => {
     chmodSync(`${p.dbPath}-wal`, 0o644);
     mkdirSync(p.attachmentsDir, { mode: 0o555 });
     expect(unwritableDataPath(p)).toEqual({ path: p.attachmentsDir, code: "EACCES" });
+  });
+
+  it("S3 모드(attachmentsDir 을 주지 않음) — 첨부 디렉터리를 보지도 만들지도 않는다", () => {
+    const { attachmentsDir, ...rest } = paths(dir);
+    expect(unwritableDataPath(rest)).toBeNull();
+    expect(existsSync(attachmentsDir)).toBe(false);
+    mkdirSync(attachmentsDir, { mode: 0o555 });
+    expect(unwritableDataPath(rest)).toBeNull();
   });
 
   it("메시지는 한 줄 — 경로·사유·고치는 명령", () => {

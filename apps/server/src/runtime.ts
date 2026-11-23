@@ -27,7 +27,8 @@ export type UnwritablePath = { path: string; code: string };
 export function unwritableDataPath(paths: {
   dataDir: string;
   dbPath: string;
-  attachmentsDir: string;
+  /** 로컬 첨부 모드에서만 — S3 모드면 주지 않는다(디렉터리를 보지도 만들지도 않는다) */
+  attachmentsDir?: string;
 }): UnwritablePath | null {
   const code = (e: unknown) => (e as NodeJS.ErrnoException).code ?? String(e);
   try {
@@ -39,7 +40,8 @@ export function unwritableDataPath(paths: {
     paths.dbPath === ":memory:"
       ? []
       : [dirname(paths.dbPath), paths.dbPath, `${paths.dbPath}-wal`, `${paths.dbPath}-shm`];
-  for (const path of [paths.dataDir, ...db, paths.attachmentsDir]) {
+  const attachments = paths.attachmentsDir === undefined ? [] : [paths.attachmentsDir];
+  for (const path of [paths.dataDir, ...db, ...attachments]) {
     if (!existsSync(path)) continue;
     try {
       accessSync(path, constants.W_OK);

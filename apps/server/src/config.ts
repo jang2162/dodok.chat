@@ -23,6 +23,17 @@ const Raw = z.object({
   DB_PATH: z.string().optional(),
   // 첨부 블롭 디렉터리(스펙 4.1). 없으면 DATA_DIR/attachments
   ATTACHMENTS_DIR: z.string().optional(),
+  // 첨부 블롭 저장소(S3 스펙 S1) — local 은 ATTACHMENTS_DIR, s3 는 아래 S3_* 의 버킷. 기존 볼륨 블롭은 옮기지 않는다
+  ATTACHMENTS_STORAGE: z.enum(["local", "s3"]).default("local"),
+  // S3 호환 저장소(S2). ENDPOINT 가 없으면 AWS 기본, PREFIX 는 키 앞에 그대로 붙는다(`<PREFIX><sha 앞 2자>/<sha>`).
+  // 키·시크릿은 .env 에만 — 오류 문구·로그에 싣지 않는다
+  S3_ENDPOINT: z.url().optional(),
+  S3_REGION: z.string().min(1).optional(),
+  S3_BUCKET: z.string().min(1).optional(),
+  S3_PREFIX: z.string().default(""),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   DODOK_WORKSPACE_NAME: z.string().min(1).max(80).default("dodok"),
   OWNER_HANDLE: Handle.default("owner"),
@@ -66,9 +77,25 @@ const Raw = z.object({
   APNS_CA_PATH: z.string().min(1).optional(),
 });
 
+/** S3 모드의 연결 값(S2) — s3 모드에서만 있다 */
+export type S3Config = {
+  endpoint?: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  forcePathStyle: boolean;
+};
+
+/** s3 모드에 없으면 부팅 실패인 env(S2) — 오류에는 이름만 싣는다 */
+const S3_REQUIRED = ["S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
+
 export type ServerConfig = z.infer<typeof Raw> & {
   dbPath: string;
   attachmentsDir: string;
+  attachmentsStorage: "local" | "s3";
+  s3?: S3Config;
   vapid: { publicKey?: string; privateKey?: string; subject: string };
 };
 
@@ -80,10 +107,29 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new Error(`설정 오류:\n${lines.join("\n")}`);
   }
   const c = parsed.data;
+  let s3: S3Config | undefined;
+  if (c.ATTACHMENTS_STORAGE === "s3") {
+    const missing = S3_REQUIRED.filter((key) => c[key] === undefined);
+    if (missing.length > 0)
+      throw new Error(
+        `설정 오류:\n${missing.map((key) => `${key}: ATTACHMENTS_STORAGE=s3 에 필요하다`).join("\n")}`,
+      );
+    s3 = {
+      ...(c.S3_ENDPOINT === undefined ? {} : { endpoint: c.S3_ENDPOINT }),
+      region: c.S3_REGION as string,
+      bucket: c.S3_BUCKET as string,
+      prefix: c.S3_PREFIX,
+      accessKeyId: c.S3_ACCESS_KEY_ID as string,
+      secretAccessKey: c.S3_SECRET_ACCESS_KEY as string,
+      forcePathStyle: c.S3_FORCE_PATH_STYLE === "true",
+    };
+  }
   return {
     ...c,
     dbPath: c.DB_PATH ?? join(c.DATA_DIR, "dodok.sqlite"),
     attachmentsDir: c.ATTACHMENTS_DIR ?? join(c.DATA_DIR, "attachments"),
+    attachmentsStorage: c.ATTACHMENTS_STORAGE,
+    ...(s3 === undefined ? {} : { s3 }),
     vapid: { publicKey: c.VAPID_PUBLIC_KEY, privateKey: c.VAPID_PRIVATE_KEY, subject: c.VAPID_SUBJECT },
   };
 }
