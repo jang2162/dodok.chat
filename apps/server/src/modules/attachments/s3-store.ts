@@ -42,11 +42,26 @@ function describe(err: unknown): string {
 /** TCP 연결이 이 안에 서지 않으면 오류 */
 export const S3_CONNECTION_TIMEOUT_MS = 5_000;
 /**
- * 요청을 보내고 응답 헤더를 받기까지의 상한. SDK 기본은 둘 다 0(무한)이라 멈춘 엔드포인트에서 부팅 check 가 끝나지 않고, 업로드가
- * sha 잠금을 쥔 채 멈춰 정리 전체가 그 뒤에 묶였다. 헤더를 받은 뒤의 본문(큰 내려받기)에는 걸리지 않는다 — 내려받기 도중 멈춘 본문은
- * 클라이언트가 끊을 때 닫는다(routes.ts sendBlob). SDK 의 재시도(기본 3회)마다 다시 재므로 한 호출의 최악은 그 곱에 백오프를 더한 것이다
+ * 요청을 만들 때부터 응답 헤더를 받기까지의 상한 — 요청 본문을 보내는 시간도 그 안이다. SDK 기본은 둘 다 0(무한)이라 멈춘
+ * 엔드포인트에서 부팅 check 가 끝나지 않고, 업로드가 sha 잠금을 쥔 채 멈춰 정리 전체가 그 뒤에 묶였다. 헤더를 받은 뒤의 본문(큰
+ * 내려받기)에는 걸리지 않는다 — 내려받기 도중 멈춘 본문은 클라이언트가 끊을 때 닫는다(routes.ts sendBlob). SDK 의 재시도(기본 3회)마다
+ * 다시 재므로 한 호출의 최악은 그 곱에 백오프를 더한 것이다. PutObject 만은 본문 크기에 비례해 늘린다(putRequestTimeout)
  */
 export const S3_REQUEST_TIMEOUT_MS = 30_000;
+/** PutObject 상한을 셀 때 가정하는 가장 느린 업로드 속도 — 이보다 느린 업링크면 큰 업로드가 상한에 걸린다 */
+export const S3_PUT_MIN_BYTES_PER_SECOND = 64 * 1024;
+
+/** PutObject 한 번의 상한 — 요청 상한에 본문을 가장 느린 속도로 보내는 시간을 더한다(20 MiB 면 약 6분) */
+export function putRequestTimeout(
+  size: number,
+  base = S3_REQUEST_TIMEOUT_MS,
+  minBytesPerSecond = S3_PUT_MIN_BYTES_PER_SECOND,
+): number {
+  return base + Math.ceil((size / minBytesPerSecond) * 1000);
+}
+
+/** 저장소가 PutObject 상한을 셀 때 쓰는 값 — 시험이 줄인다. 클라이언트의 requestTimeout 과 같은 값을 준다 */
+export type S3PutTimeout = { requestTimeout: number; minBytesPerSecond: number };
 
 export type S3Timeouts = { connectionTimeout: number; requestTimeout: number };
 
@@ -71,7 +86,14 @@ export function s3ClientConfig(
   };
 }
 
-export function createS3BlobStore(cfg: S3Config, client?: S3Client): BlobStore {
+export function createS3BlobStore(
+  cfg: S3Config,
+  client?: S3Client,
+  putTimeout: S3PutTimeout = {
+    requestTimeout: S3_REQUEST_TIMEOUT_MS,
+    minBytesPerSecond: S3_PUT_MIN_BYTES_PER_SECOND,
+  },
+): BlobStore {
   const s3 = client ?? new S3Client(s3ClientConfig(cfg));
   const Bucket = cfg.bucket;
   const keyOf = (sha: string) => `${cfg.prefix}${sha.slice(0, 2)}/${sha}`;
@@ -96,6 +118,14 @@ export function createS3BlobStore(cfg: S3Config, client?: S3Client): BlobStore {
             ContentLength: bytes.length,
             ContentType: "application/octet-stream",
           }),
+          // 요청별 requestTimeout 이 클라이언트 값보다 앞선다 — 본문을 보내는 동안에도 상한이 흐르므로 크기만큼 늘린다
+          {
+            requestTimeout: putRequestTimeout(
+              bytes.length,
+              putTimeout.requestTimeout,
+              putTimeout.minBytesPerSecond,
+            ),
+          },
         );
       } catch (err) {
         throw fail("PutObject", err);

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,9 @@ import {
 } from "../src/modules/attachments/blob-store";
 import {
   createS3BlobStore,
+  putRequestTimeout,
   S3_CONNECTION_TIMEOUT_MS,
+  S3_PUT_MIN_BYTES_PER_SECOND,
   S3_REQUEST_TIMEOUT_MS,
   s3ClientConfig,
 } from "../src/modules/attachments/s3-store";
@@ -337,6 +340,84 @@ describe("S3 BlobStore — 타임아웃(멈춘 엔드포인트)", () => {
     expect(await within(sweep)).toBe("resolved");
     await expect(sweep).resolves.toBe("swept");
   });
+});
+
+/**
+ * HeadObject 에는 404, PutObject 본문은 bytesPerSecond 로만 읽고 다 읽으면 200 — 느린 업링크를 흉내 낸다. 0 이면 본문을 읽지도
+ * 답하지도 않는다
+ */
+async function slowPutServer(bytesPerSecond: number): Promise<{ endpoint: string; close(): Promise<void> }> {
+  const server = createHttpServer((req, res) => {
+    if (req.method === "HEAD") {
+      res.writeHead(404).end();
+      return;
+    }
+    if (bytesPerSecond === 0) {
+      req.pause();
+      return;
+    }
+    req.on("data", (chunk: Buffer) => {
+      req.pause();
+      setTimeout(() => req.resume(), (chunk.length / bytesPerSecond) * 1000);
+    });
+    req.on("end", () => res.writeHead(200, { ETag: '"slow"' }).end());
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return {
+    endpoint: `http://127.0.0.1:${port}`,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+describe("S3 BlobStore — PutObject 상한은 본문 크기에 비례한다", () => {
+  // 시험용으로 줄인 값 — 요청 상한 300ms, 가장 느린 업로드 256 KiB/s
+  const short = { connectionTimeout: 200, requestTimeout: 300 };
+  const putTimeout = { requestTimeout: 300, minBytesPerSecond: 256 * 1024 };
+  let slow: Awaited<ReturnType<typeof slowPutServer>> | undefined;
+  afterEach(async () => {
+    await slow?.close();
+    slow = undefined;
+  });
+  async function slowStore(bytesPerSecond: number): Promise<BlobStore> {
+    slow = await slowPutServer(bytesPerSecond);
+    const cfg = { ...MEMORY_S3_CONFIG, endpoint: slow.endpoint };
+    return createS3BlobStore(
+      cfg,
+      new S3Client({ ...s3ClientConfig(cfg, short), maxAttempts: 1 }),
+      putTimeout,
+    );
+  }
+
+  it("기본 상한은 30초 + 바이트 / 64 KiB/s — 20 MiB 면 약 6분", () => {
+    expect(S3_PUT_MIN_BYTES_PER_SECOND).toBe(64 * 1024);
+    expect(putRequestTimeout(0)).toBe(30_000);
+    expect(putRequestTimeout(3 * 1024 * 1024)).toBe(30_000 + 48_000);
+    expect(putRequestTimeout(20 * 1024 * 1024)).toBe(30_000 + 320_000);
+  });
+
+  it("본문을 천천히 받는 서버에도 요청 상한보다 오래 걸리는 업로드가 성공한다", async () => {
+    const store = await slowStore(512 * 1024);
+    const body = new Uint8Array(1024 * 1024).fill(7);
+    const started = Date.now();
+    await store.put(sha("slow"), body);
+    // 요청 상한(300ms)보다 오래 걸렸다 — 그 상한만 걸었다면 실패했을 업로드다
+    expect(Date.now() - started).toBeGreaterThan(short.requestTimeout);
+  }, 15_000);
+
+  it("아무것도 받지 않는 서버면 상한 안에 PutObject 오류로 끝난다", async () => {
+    const store = await slowStore(0);
+    const body = new Uint8Array(64 * 1024).fill(7);
+    const limit = putRequestTimeout(body.length, putTimeout.requestTimeout, putTimeout.minBytesPerSecond);
+    const started = Date.now();
+    await expect(store.put(sha("never"), body)).rejects.toThrow(/S3 PutObject 실패/);
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(limit - 50);
+    expect(took).toBeLessThan(limit + 2_000);
+  }, 15_000);
 });
 
 describe("createBlobStore — local 모드는 S3 SDK 를 읽지 않는다", () => {
