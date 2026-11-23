@@ -10,7 +10,13 @@ import type {
   RemoteUpdateSupport,
   RunnerCapability,
 } from "@dodok/shared";
+import { and, eq, isNotNull, notInArray, sql } from "drizzle-orm";
+import type { DbOrTx } from "../../db/client";
+import { runnerTokens, runs } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
+import type { Logger } from "../../logger";
+import { TERMINAL_STATUSES } from "../runs/machine";
+import { getRunConnectionId } from "../runs/store";
 
 type Updating = {
   state: "updating";
@@ -209,4 +215,130 @@ export async function sendUpdate(input: {
     // 늦은 끊김·시간 초과 — 러너가 ok 를 답하기 전에 끊고 다시 떴을 수 있다. 상한(deadline)이 가른다
     () => {},
   );
+}
+
+/**
+ * 「업데이트 대기」(러너 봇 2부 스펙 T16) — 러너는 런이 하나라도 돌면 업데이트를 거절한다(러너 self-update busy). 그래서 봇의
+ * request_runner_update 는 바로 보내지 않고 러너 토큰 행에 대기를 둔다(서버 재시작을 넘긴다). 그 러너가 붙어 있고 그 러너의 열린 런이
+ * 0 이 되면 — 런이 끝날 때(onRunEnded 뒤 종료 쓰기가 끝난 다음 틱)나 러너가 다시 붙을 때(어댑터 setup 이벤트) — 대기를 비우고 웹
+ * 「업데이트」와 같은 요청(start)을 보낸다. 보내기가 실패하면 그 사유를 로그에 남기고 다시 대기하지 않는다(사람이 웹에서 다시 누른다)
+ */
+export type RunnerUpdateQueue = ReturnType<typeof createRunnerUpdateQueue>;
+
+export function createRunnerUpdateQueue(deps: {
+  db: DbOrTx;
+  workspaceId: string;
+  logger: Pick<Logger, "info" | "warn">;
+  /** 그 러너가 붙어 있나 */
+  connected(tokenId: string): boolean;
+  /** 웹 「업데이트」와 같은 요청 — 거절이면 던진다 */
+  start(tokenId: string, userId: string | null): Promise<unknown>;
+  /** 대기가 생기거나 지워졌다 — 열린 「연결」 탭이 다시 받게 */
+  onChanged(): void;
+  /** 판정을 미루는 시계 — 테스트 주입. 기본 setTimeout 0(종료 쓰기 트랜잭션이 끝난 뒤) */
+  defer?: (fn: () => void) => void;
+}) {
+  const { db, workspaceId } = deps;
+  const defer =
+    deps.defer ??
+    ((fn: () => void) => {
+      setTimeout(fn, 0).unref?.();
+    });
+  // 같은 러너에 판정이 겹쳐 두 번 보내지 않게 — 비우기(UPDATE … WHERE queued)가 한 번만 이긴다
+  const inFlight = new Set<string>();
+
+  const row = (tokenId: string) =>
+    db
+      .select({ at: runnerTokens.updateQueuedAt, by: runnerTokens.updateQueuedBy })
+      .from(runnerTokens)
+      .where(and(eq(runnerTokens.id, tokenId), eq(runnerTokens.workspaceId, workspaceId)))
+      .get();
+
+  const openRuns = (tokenId: string): number =>
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(runs)
+      .where(and(eq(runs.connectionId, tokenId), notInArray(runs.status, [...TERMINAL_STATUSES])))
+      .get()?.n ?? 0;
+
+  async function check(tokenId: string): Promise<void> {
+    if (inFlight.has(tokenId)) return;
+    const queued = row(tokenId);
+    if (!queued?.at) return;
+    if (!deps.connected(tokenId) || openRuns(tokenId) > 0) return;
+    inFlight.add(tokenId);
+    try {
+      const cleared = db
+        .update(runnerTokens)
+        .set({ updateQueuedAt: null, updateQueuedBy: null })
+        .where(and(eq(runnerTokens.id, tokenId), isNotNull(runnerTokens.updateQueuedAt)))
+        .returning({ id: runnerTokens.id })
+        .all();
+      if (cleared.length === 0) return;
+      deps.onChanged();
+      deps.logger.info({ runnerId: tokenId, userId: queued.by }, "queued runner update sending");
+      try {
+        await deps.start(tokenId, queued.by);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.logger.warn({ runnerId: tokenId, message }, "queued runner update not sent");
+      }
+    } finally {
+      inFlight.delete(tokenId);
+    }
+  }
+
+  return {
+    /** 대기를 둔다 — 이미 있으면 시각을 그대로 둔다. 지금 열린 런이 없으면 곧바로 판정한다 */
+    enqueue(tokenId: string, userId: string | null): void {
+      db.update(runnerTokens)
+        .set({
+          updateQueuedAt: sql`coalesce(${runnerTokens.updateQueuedAt}, ${Date.now()})`,
+          updateQueuedBy: userId,
+        })
+        .where(and(eq(runnerTokens.id, tokenId), eq(runnerTokens.workspaceId, workspaceId)))
+        .run();
+      deps.onChanged();
+      defer(() => void check(tokenId));
+    },
+    /** 대기를 지운다 — 없었으면 false */
+    cancel(tokenId: string): boolean {
+      const cleared = db
+        .update(runnerTokens)
+        .set({ updateQueuedAt: null, updateQueuedBy: null })
+        .where(
+          and(
+            eq(runnerTokens.id, tokenId),
+            eq(runnerTokens.workspaceId, workspaceId),
+            isNotNull(runnerTokens.updateQueuedAt),
+          ),
+        )
+        .returning({ id: runnerTokens.id })
+        .all();
+      if (cleared.length > 0) deps.onChanged();
+      return cleared.length > 0;
+    },
+    /** 러너 상세의 「업데이트 대기」 — 없으면 null */
+    view(tokenId: string): { requestedAt: string } | null {
+      const at = row(tokenId)?.at;
+      return at ? { requestedAt: at.toISOString() } : null;
+    },
+    /** 런 하나가 끝났다 — 종료 쓰기 뒤에 그 런의 러너를 판정한다 */
+    onRunEnded(runId: string): void {
+      const tokenId = getRunConnectionId(db, runId);
+      if (tokenId === null) return;
+      defer(() => void check(tokenId));
+    },
+    /** 러너가 붙거나 끊겼다(어댑터 setup 이벤트) — 대기가 있는 러너를 모두 판정한다 */
+    onRunnersChanged(): void {
+      const pending = db
+        .select({ id: runnerTokens.id })
+        .from(runnerTokens)
+        .where(and(eq(runnerTokens.workspaceId, workspaceId), isNotNull(runnerTokens.updateQueuedAt)))
+        .all();
+      for (const { id } of pending) defer(() => void check(id));
+    },
+    /** 시험·진단 — 그 러너를 지금 판정한다 */
+    check,
+  };
 }

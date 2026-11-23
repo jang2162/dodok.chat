@@ -1,4 +1,16 @@
-import type { AnyControlTool, ControlToolName, Message, OpsStatus, TeamRole } from "@dodok/shared";
+import {
+  type AnyControlTool,
+  type AnyRunnerControlTool,
+  type ControlToolName,
+  CreateRunnerBotAgentBody,
+  CreateRunnerProjectAgentBody,
+  type Message,
+  type OpsStatus,
+  RUNNER_UPDATE_SCHEDULED_MESSAGE,
+  type RunnerControlToolName,
+  type TeamRole,
+} from "@dodok/shared";
+import { and, eq } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
 import { readableChannelSqlFor } from "../../auth/channel-access";
@@ -16,14 +28,17 @@ import {
   authorizeChannelUnarchive,
   authorizeOpsRead,
   authorizeRead,
+  authorizeRunnerManage,
 } from "../../auth/policies";
 import { roleOf } from "../../auth/roles";
 import type { Db } from "../../db/client";
+import { agents, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { josa } from "../../util/josa";
 import {
   type AgentActionContext,
   archiveAgentAndNotify,
+  createRunnerAgentAndNotify,
   discoverAgents,
   patchAgentAndNotify,
   registerAgentAndNotify,
@@ -35,7 +50,20 @@ import {
   gatewayOwner,
   isOwner,
   ownerOfAgent,
+  runnerOwner,
 } from "../connections/owner";
+import { activeProjectCounts, getProject, type RunnerProjectRow } from "../runners/projects";
+import {
+  addRunnerProject,
+  addRunnerWorktree,
+  archiveRunnerProjectAndNotify,
+  renameRunnerProject,
+  runnerProjectsOf,
+  runnerSummaryOf,
+  type RunnerOpsContext,
+  updateTarget,
+} from "../runners/projects.routes";
+import { runnerSupport } from "../connections/remote-updates";
 import {
   addChannelMemberAndNotify,
   archiveChannelAndNotify,
@@ -74,6 +102,8 @@ export type HandlerContext = {
   agents: AgentActionContext;
   opsStatus(): OpsStatus;
   now(): Date;
+  /** 「이 러너 설정 제어」(러너 봇 2부 스펙 T8) — 러너 REST 와 같은 문맥. 없으면(러너 어댑터 없는 시험 앱) ADAPTER_UNAVAILABLE */
+  runner?: RunnerOpsContext;
 };
 
 type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { name: N }>["input"]>;
@@ -82,17 +112,28 @@ type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { nam
  * 시킨 사람이 그 연결의 주인인가(연결 탭 통합 스펙 5.3 — 제어 도구도 REST 와 같은 주인 규칙). 원래 인자(raw)의 id 로 묻는다 —
  * 모르는 id·문자열 아님·사람 없는 주체는 거짓(정책이 admin 이상을 요구한다). 최소 역할을 찾는 판정(service.ts passes)은 NO_OWNERSHIP
  */
-export type Ownership = { gateway(gatewayId: unknown): boolean; agent(agentId: unknown): boolean };
+export type Ownership = {
+  gateway(gatewayId: unknown): boolean;
+  agent(agentId: unknown): boolean;
+  /** 러너 제어 도구 — 시킨 사람이 그 런의 러너(인자로 받지 않는다)의 주인인가 */
+  runner(): boolean;
+};
 
-export const NO_OWNERSHIP: Ownership = { gateway: () => false, agent: () => false };
+export const NO_OWNERSHIP: Ownership = { gateway: () => false, agent: () => false, runner: () => false };
 
-export function ownershipOf(db: Db, workspaceId: string, userId: string | null): Ownership {
+export function ownershipOf(
+  db: Db,
+  workspaceId: string,
+  userId: string | null,
+  runnerTokenId?: string,
+): Ownership {
   if (userId === null) return NO_OWNERSHIP;
   return {
     gateway: (gatewayId) =>
       typeof gatewayId === "string" && isOwner(gatewayOwner(db, workspaceId, gatewayId), userId),
     agent: (agentId) =>
       typeof agentId === "string" && isOwner(agentConnectionOwner(db, workspaceId, agentId), userId),
+    runner: () => runnerTokenId !== undefined && isOwner(runnerOwner(db, workspaceId, runnerTokenId), userId),
   };
 }
 
@@ -671,4 +712,283 @@ export type AnyHandler = {
 /** 이름으로 처리기를 고른다 — 이름은 CONTROL_TOOLS 에서 찾은 것이라 늘 있다 */
 export function handlerFor(tool: AnyControlTool): AnyHandler {
   return HANDLERS[tool.name] as unknown as AnyHandler;
+}
+
+// ── 「이 러너 설정 제어」(러너 봇 2부 스펙 T7~T10·T14·T16) ─────────────────────────────
+// 대상 러너는 인자로 받지 않고 주체의 runnerTokenId(그 런의 연결)다. 프로젝트·에이전트 id 가 그 러너의 것이 아니면 없는 것과 같다
+// (NOT_FOUND). 역할은 러너 REST 와 같은 정책(그 러너의 주인·admin 이상), 실행은 러너 REST 와 같은 함수(runners/projects.routes.ts)
+
+type RunnerInputOf<N extends RunnerControlToolName> = z.output<
+  Extract<AnyRunnerControlTool, { name: N }>["input"]
+>;
+
+export type RunnerControlHandler<N extends RunnerControlToolName> = Omit<
+  ControlHandler<ControlToolName>,
+  "access" | "check" | "channelId" | "targetAgentId" | "wording" | "summary" | "run"
+> & {
+  access?(ctx: HandlerContext, input: RunnerInputOf<N>, principal: Principal): void;
+  targetAgentId?(input: RunnerInputOf<N>): string;
+  wording?(ctx: HandlerContext, input: RunnerInputOf<N>): Wording;
+  summary?(ctx: HandlerContext, input: RunnerInputOf<N>): string | undefined;
+  run(ctx: HandlerContext, input: RunnerInputOf<N>, principal: Principal): unknown;
+};
+
+/** 그 런의 러너 — 러너 경로가 아니면(여기 오지 않는다) NOT_FOUND, 러너 문맥이 없으면 ADAPTER_UNAVAILABLE */
+function runnerOf(ctx: HandlerContext, p: Principal): { ops: RunnerOpsContext; tokenId: string } {
+  if (p.runnerTokenId === undefined) throw apiError("NOT_FOUND", "runner not found");
+  if (!ctx.runner) throw apiError("ADAPTER_UNAVAILABLE", "runner adapter not configured");
+  return { ops: ctx.runner, tokenId: p.runnerTokenId };
+}
+
+/** 그 러너의 프로젝트 — 다른 러너·다른 워크스페이스·없는 것은 NOT_FOUND(있다는 것을 드러내지 않는다) */
+function projectOfRunner(ctx: HandlerContext, projectId: string, p: Principal): RunnerProjectRow {
+  const project = getProject(ctx.db, ctx.workspaceId, projectId);
+  if (!project || project.runnerTokenId !== p.runnerTokenId)
+    throw apiError("NOT_FOUND", "runner project not found");
+  return project;
+}
+
+/** 그 러너의 러너 에이전트·봇 — 다른 러너의 것·OpenClaw 에이전트는 NOT_FOUND, 부른 봇 자신은 FORBIDDEN(T14) */
+function otherAgentOfRunner(ctx: HandlerContext, agentId: string, p: Principal): void {
+  const row = ctx.db
+    .select({ runnerTokenId: agents.runnerTokenId })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.workspaceId, ctx.workspaceId)))
+    .get();
+  if (!row || row.runnerTokenId === null || row.runnerTokenId !== p.runnerTokenId)
+    throw apiError("NOT_FOUND", "agent not found");
+  if (agentId === p.agentId)
+    throw apiError("FORBIDDEN", "자기 자신의 설정은 이 도구로 바꿀 수 없습니다 — dodok 웹에서 바꾸세요");
+}
+
+const manageRunner = (role: TeamRole | undefined, owns: Ownership) =>
+  authorizeRunnerManage({ role, ownsConnection: owns.runner() });
+
+type RunnerHandlers = { [N in RunnerControlToolName]: RunnerControlHandler<N> };
+
+export const RUNNER_HANDLERS: RunnerHandlers = {
+  runner_status: {
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    run: (ctx, _input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      const token = ctx.db
+        .select({ id: runnerTokens.id, label: runnerTokens.label, revokedAt: runnerTokens.revokedAt })
+        .from(runnerTokens)
+        .where(and(eq(runnerTokens.id, tokenId), eq(runnerTokens.workspaceId, ctx.workspaceId)))
+        .get();
+      if (!token) throw apiError("NOT_FOUND", "runner not found");
+      const counts = activeProjectCounts(ctx.db, ctx.workspaceId);
+      return { runner: runnerSummaryOf(ops, token, counts.get(tokenId) ?? 0, ops.latest.peek().value) };
+    },
+  },
+  list_runner_projects: {
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    run: (ctx, input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      const projects = runnerProjectsOf(ops, tokenId);
+      return { projects: input.archived === true ? projects : projects.filter((x) => x.archivedAt === null) };
+    },
+  },
+  create_runner_project: {
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    wording: (_ctx, input) => ({
+      want: `러너 프로젝트(${input.rootId}/${input.relPath || "."})를 더하려 합니다`,
+      done: `러너 프로젝트(${input.rootId}/${input.relPath || "."})를 더했습니다`,
+    }),
+    summary: (_ctx, input) => (input.label === undefined ? undefined : `이름: ${clip(input.label)}`),
+    run: async (ctx, input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      if (p.userId === null) throw apiError("FORBIDDEN", "사람이 시킨 런에서만 바꿀 수 있습니다");
+      return { project: await addRunnerProject(ops, tokenId, input, p.userId) };
+    },
+  },
+  update_runner_project: {
+    access: (ctx, input, p) => void projectOfRunner(ctx, input.projectId, p),
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    wording: (ctx, input) => {
+      const label = getProject(ctx.db, ctx.workspaceId, input.projectId)?.label ?? "?";
+      return {
+        want: `러너 프로젝트 ${label} 의 이름을 바꾸려 합니다`,
+        done: `러너 프로젝트 ${label} 의 이름을 바꿨습니다`,
+      };
+    },
+    summary: (_ctx, input) => `새 이름: ${clip(input.label)}`,
+    run: (ctx, input, p) => {
+      projectOfRunner(ctx, input.projectId, p);
+      return { project: renameRunnerProject(runnerOf(ctx, p).ops, input.projectId, input.label) };
+    },
+  },
+  archive_runner_project: {
+    access: (ctx, input, p) => void projectOfRunner(ctx, input.projectId, p),
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    wording: (ctx, input) => {
+      const label = getProject(ctx.db, ctx.workspaceId, input.projectId)?.label ?? "?";
+      return {
+        want: `러너 프로젝트 ${label} 를 보관하려 합니다`,
+        done: `러너 프로젝트 ${label} 를 보관했습니다`,
+      };
+    },
+    summary: (_ctx, input) => (input.keepFolder ? "폴더는 그대로 둡니다" : undefined),
+    run: async (ctx, input, p) => {
+      projectOfRunner(ctx, input.projectId, p);
+      return {
+        project: await archiveRunnerProjectAndNotify(
+          runnerOf(ctx, p).ops,
+          input.projectId,
+          input.keepFolder === true,
+        ),
+      };
+    },
+  },
+  add_runner_worktree: {
+    access: (ctx, input, p) => void projectOfRunner(ctx, input.projectId, p),
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    wording: (ctx, input) => {
+      const label = getProject(ctx.db, ctx.workspaceId, input.projectId)?.label ?? "?";
+      return {
+        want: `러너 프로젝트 ${label} 에 워크트리 ${input.label} 를 만들려 합니다`,
+        done: `러너 프로젝트 ${label} 에 워크트리 ${input.label} 를 만들었습니다`,
+      };
+    },
+    summary: (_ctx, input) => (input.branch === undefined ? undefined : `브랜치: ${clip(input.branch)}`),
+    run: async (ctx, input, p) => {
+      const parent = projectOfRunner(ctx, input.projectId, p);
+      if (p.userId === null) throw apiError("FORBIDDEN", "사람이 시킨 런에서만 바꿀 수 있습니다");
+      const { projectId: _, ...body } = input;
+      return { project: await addRunnerWorktree(runnerOf(ctx, p).ops, parent, body, p.userId) };
+    },
+  },
+  list_runner_agents: {
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    // MCP 헤더·env 값은 toApiAgent 가 이미 가렸다(T4). 정의는 list_agents 와 같은 규칙(시킨 사람이 admin 이상·연결 주인일 때만)
+    run: (ctx, _input, p) => {
+      const { tokenId } = runnerOf(ctx, p);
+      const role = p.userId === null ? undefined : roleOf(ctx.db, ctx.workspaceId, p.userId);
+      const owners = connectionOwners(ctx.db, ctx.workspaceId);
+      return {
+        agents: listAgents(ctx.db, ctx.workspaceId)
+          .filter((agent) => agent.runner?.tokenId === tokenId)
+          .map((agent) => agentForRole(agent, role, isOwner(ownerOfAgent(agent, owners), p.userId))),
+      };
+    },
+  },
+  create_runner_agent: {
+    access: (ctx, input, p) => {
+      if (input.runnerProjectId !== undefined) projectOfRunner(ctx, input.runnerProjectId, p);
+    },
+    authorize: (role, _raw, owns) => authorizeAgentRegister({ role, ownsConnection: owns.runner() }),
+    wording: (_ctx, input) => ({
+      want: `러너 ${input.bot === undefined ? "에이전트" : "봇"} @${input.handle} ${eul(input.handle)} 만들려 합니다`,
+      done: `러너 ${input.bot === undefined ? "에이전트" : "봇"} @${input.handle} ${eul(input.handle)} 만들었습니다`,
+    }),
+    summary: (_ctx, input) =>
+      input.bot === undefined
+        ? input.basePrompt === undefined
+          ? undefined
+          : `지시: ${clip(input.basePrompt)}`
+        : input.bot.purpose.trim() === ""
+          ? undefined
+          : `목적: ${clip(input.bot.purpose)}`,
+    run: (ctx, input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      const { runnerProjectId, bot, basePrompt, ...common } = input;
+      // 봇은 그 런의 러너에 — 도구·내장 도구·권한 모드는 입력에 없다(T14)
+      const body =
+        bot !== undefined
+          ? CreateRunnerBotAgentBody.parse({ ...common, provider: "runner", runnerTokenId: tokenId, bot })
+          : CreateRunnerProjectAgentBody.parse({
+              ...common,
+              provider: "runner",
+              runnerProjectId: projectOfRunner(ctx, runnerProjectId ?? "", p).id,
+              ...(basePrompt === undefined ? {} : { basePrompt }),
+            });
+      return {
+        agent: createRunnerAgentAndNotify(
+          { ...ctx.agents, runners: ops.runners },
+          body,
+          ctx.workspaceId,
+          p.userId,
+        ),
+      };
+    },
+  },
+  set_agent_session_defaults: {
+    access: (ctx, input, p) => otherAgentOfRunner(ctx, input.agentId, p),
+    authorize: (role, raw, owns) => authorizeAgentPatch({ role, ownsConnection: owns.agent(raw.agentId) }),
+    targetAgentId: (input) => input.agentId,
+    wording: (ctx, input) => {
+      const handle = agentHandle(ctx, input.agentId);
+      return {
+        want: `@${handle} 의 새 세션 시작값을 바꾸려 합니다`,
+        done: `@${handle} 의 새 세션 시작값을 바꿨습니다`,
+      };
+    },
+    summary: (_ctx, input) =>
+      [
+        input.sessionDefaults.model === undefined
+          ? undefined
+          : `모델: ${input.sessionDefaults.model ?? "기본"}`,
+        input.sessionDefaults.effort === undefined
+          ? undefined
+          : `노력치: ${input.sessionDefaults.effort ?? "기본"}`,
+      ]
+        .filter((line) => line !== undefined)
+        .join("\n") || undefined,
+    run: (ctx, input, p) => {
+      otherAgentOfRunner(ctx, input.agentId, p);
+      return {
+        agent: patchAgentAndNotify(
+          ctx.agents,
+          input.agentId,
+          { sessionDefaults: input.sessionDefaults },
+          ctx.workspaceId,
+        ),
+      };
+    },
+  },
+  request_runner_update: {
+    // 카드 전에 곧바로 알 수 있는 거절(붙지 않음·옛 판·꺼짐) — 최신 판 비교는 실행 때(레지스트리를 묻는다)
+    access: (ctx, _input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      if (!ops.runners?.runnerInfo(tokenId)) throw apiError("ADAPTER_UNAVAILABLE", "runner is not connected");
+      const support = runnerSupport((c) => ops.runners?.hasCapability(tokenId, c) ?? false);
+      if (support === "unsupported")
+        throw apiError("CONFLICT", "이 러너 판은 원격 업데이트를 지원하지 않습니다", {
+          reason: "unsupported",
+        });
+      if (support === "off")
+        throw apiError("CONFLICT", "이 머신에서 원격 업데이트를 껐습니다", { reason: "disabled" });
+    },
+    authorize: (role, _raw, owns) => manageRunner(role, owns),
+    wording: () => ({
+      want: "이 러너를 최신 판으로 업데이트하려 합니다(런이 모두 끝나면)",
+      done: "러너 업데이트를 예약했습니다",
+    }),
+    run: async (ctx, _input, p) => {
+      const { ops, tokenId } = runnerOf(ctx, p);
+      const target = await updateTarget(ops, tokenId);
+      ops.updateQueue.enqueue(tokenId, p.userId);
+      ctx.runner?.logger.info(
+        { runnerId: tokenId, userId: p.userId, to: target.latest },
+        "runner update queued",
+      );
+      return { message: RUNNER_UPDATE_SCHEDULED_MESSAGE, targetVersion: target.latest };
+    },
+  },
+};
+
+/** 러너 제어 도구의 처리기 — 이름은 RUNNER_CONTROL_TOOLS 에서 찾은 것이라 늘 있다 */
+export function runnerHandlerFor(tool: AnyRunnerControlTool): AnyHandler {
+  return RUNNER_HANDLERS[tool.name] as unknown as AnyHandler;
+}
+
+/** 부른 에이전트가 「이 러너 설정 제어」를 켠 그 러너의 봇인가(T7) — 아니면 러너 제어 도구는 없는 도구다 */
+export function hasRunnerControl(ctx: Pick<HandlerContext, "db" | "workspaceId">, p: Principal): boolean {
+  if (p.agentId === undefined || p.runnerTokenId === undefined) return false;
+  const row = ctx.db
+    .select({ bot: agents.runnerBot, runnerTokenId: agents.runnerTokenId })
+    .from(agents)
+    .where(and(eq(agents.id, p.agentId), eq(agents.workspaceId, ctx.workspaceId)))
+    .get();
+  return row?.runnerTokenId === p.runnerTokenId && row.bot?.builtinTools?.includes("runnerControl") === true;
 }

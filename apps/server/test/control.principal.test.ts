@@ -59,6 +59,8 @@ describe("principalForRunner·principalForBridge", () => {
       via: "agent",
       agentId: seed.agentId,
       runId: open.id,
+      // 「이 러너 설정 제어」의 대상 러너(러너 봇 2부 스펙 T8)
+      runnerTokenId: "rt-1",
     });
     expect(principalForRunner(db, "rt-2", open.id)).toBeUndefined();
     expect(principalForRunner(db, "rt-1", uuid())).toBeUndefined();

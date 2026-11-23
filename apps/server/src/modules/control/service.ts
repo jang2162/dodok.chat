@@ -2,6 +2,7 @@ import {
   type Approval,
   type ControlResult,
   findControlTool,
+  findRunnerControlTool,
   type OpsStatus,
   type TeamRole,
 } from "@dodok/shared";
@@ -23,8 +24,18 @@ import type { Limits } from "../ops/limits";
 import { KeyedLimiter, monotonicNow } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
 import { getRun } from "../runs/store";
+import type { z } from "zod";
 import { type Confirmations, createConfirmations, userHandle } from "./confirm";
-import { type AnyHandler, type HandlerContext, handlerFor, NO_OWNERSHIP, ownershipOf } from "./handlers";
+import {
+  type AnyHandler,
+  type HandlerContext,
+  handlerFor,
+  hasRunnerControl,
+  NO_OWNERSHIP,
+  ownershipOf,
+  runnerHandlerFor,
+} from "./handlers";
+import type { RunnerOpsContext } from "../runners/projects.routes";
 import type { Principal } from "./principal";
 
 // 제어 서비스(제어 MCP 스펙 「실행 흐름」 장) — 바깥 MCP 클라이언트(/mcp)와 채널 안 에이전트(러너·플러그인)가 같은 입구로 부른다.
@@ -49,6 +60,8 @@ export type ControlDeps = {
   /** 확인 카드 기한 — 기본 CONTROL_CONFIRM_TTL_MS(10분). 브리지 주체는 bridgeConfirmTtlMs(없으면 이 값, 그것도 없으면 5분) */
   confirmTtlMs?: number;
   bridgeConfirmTtlMs?: number;
+  /** 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T8)·업데이트 대기(T16) — 러너 REST 와 같은 문맥. 없으면 그 도구는 ADAPTER_UNAVAILABLE */
+  runner?: RunnerOpsContext;
 };
 
 export type ControlService = {
@@ -97,7 +110,23 @@ export function createControlService(deps: ControlDeps): ControlService {
     agents: deps.agents,
     opsStatus: deps.opsStatus,
     now: clock,
+    ...(deps.runner === undefined ? {} : { runner: deps.runner }),
   };
+
+  /**
+   * 도구 찾기 — 제어 도구, 그리고 러너 경로에서 「이 러너 설정 제어」를 켠 그 러너의 봇이 부를 때만 러너 제어 도구(T7). 그 밖(`/mcp`·
+   * 브리지·켜지 않은 봇·프로젝트 에이전트)에서는 모르는 도구다
+   */
+  function toolFor(
+    p: Principal,
+    name: string,
+  ): { tool: { name: string; input: z.ZodType; access: "read" | "write" }; handler: AnyHandler } | undefined {
+    const control = findControlTool(name);
+    if (control) return { tool: control, handler: handlerFor(control) };
+    const runner = findRunnerControlTool(name);
+    if (runner && hasRunnerControl(ctx, p)) return { tool: runner, handler: runnerHandlerFor(runner) };
+    return undefined;
+  }
 
   /**
    * 사람마다 — 같은 사람의 개인 토큰과 그 사람이 시킨 에이전트들은 한 버킷이다(에이전트를 늘려 상한을 곱하지 못하게).
@@ -132,7 +161,7 @@ export function createControlService(deps: ControlDeps): ControlService {
     raw: Record<string, unknown>,
   ): void {
     try {
-      handler.authorize(role, raw, ownershipOf(db, workspaceId, p.userId));
+      handler.authorize(role, raw, ownershipOf(db, workspaceId, p.userId, p.runnerTokenId));
     } catch (err) {
       if (!(err instanceof HttpError) || err.body.code !== "FORBIDDEN") throw err;
       const min = ROLES.find((r) => passes(handler, r, raw));
@@ -146,13 +175,13 @@ export function createControlService(deps: ControlDeps): ControlService {
 
   async function run(p: Principal, toolName: string, args: unknown): Promise<unknown> {
     if (limited(allCalls, p)) throw apiError("RATE_LIMITED", "제어 도구 호출이 너무 많습니다");
-    const tool = findControlTool(toolName);
-    if (!tool) throw apiError("NOT_FOUND", `unknown tool: ${toolName}`);
+    const found = toolFor(p, toolName);
+    if (!found) throw apiError("NOT_FOUND", `unknown tool: ${toolName}`);
+    const { tool, handler } = found;
     const write = tool.access === "write";
     if (write && limited(writeCalls, p)) throw apiError("RATE_LIMITED", "제어 도구 쓰기가 너무 많습니다");
     const input = parsePayload(tool.input, args);
     const raw = args as Record<string, unknown>;
-    const handler = handlerFor(tool);
     // 접근 판정(남의 DM 은 NOT_FOUND)이 역할 판정보다 먼저다 — auth/channel-access.ts
     handler.access?.(ctx, input, p);
     authorize(handler, p, roleFor(p, write), raw);
@@ -271,7 +300,7 @@ export function createControlService(deps: ControlDeps): ControlService {
       // 인자 값·프롬프트·토큰은 싣지 않는다 — 누가·무엇을·어떻게 끝났나만. tool 은 호출자가 보낸 문자열이라 알려진 도구일 때만 그대로
       logger.info(
         {
-          tool: findControlTool(tool) ? tool : "unknown",
+          tool: findControlTool(tool) || findRunnerControlTool(tool) ? tool : "unknown",
           via: principal.via,
           userId: principal.userId,
           agentId: principal.agentId ?? null,
@@ -283,7 +312,11 @@ export function createControlService(deps: ControlDeps): ControlService {
       );
       return result;
     },
-    onRunEnded: (runId) => confirmations.onRunEnded(runId),
+    onRunEnded: (runId) => {
+      confirmations.onRunEnded(runId);
+      // 업데이트 대기(T16) — 그 런의 러너에 남은 런이 없으면 종료 쓰기 뒤에 보낸다
+      deps.runner?.updateQueue.onRunEnded(runId);
+    },
     onApprovalSettled: (approval) => confirmations.onApprovalSettled(approval),
   };
 }
