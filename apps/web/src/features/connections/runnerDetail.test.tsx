@@ -425,3 +425,48 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     );
   });
 });
+
+describe("업데이트 대기(러너 봇 2부 스펙 T16)", () => {
+  it("대기가 있으면 「업데이트 대기 — 런이 끝나면 올립니다」와 「취소」 — 누르면 DELETE /runners/:id/update-queue", async () => {
+    let queued = true;
+    const calls: string[] = [];
+    const routes = stubRunners({ runners: [runnerOf(1, { label: "맥북" })] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (method === "DELETE" && url === `/api/v1/runners/${runnerId(1)}/update-queue`) {
+          calls.push(`${method} ${url}`);
+          queued = false;
+          return new Response(null, { status: 204 });
+        }
+        if (method === "GET" && url === "/api/v1/runners")
+          return json(200, {
+            runners: [
+              runnerOf(1, {
+                label: "맥북",
+                updateQueued: queued ? { requestedAt: "2026-11-23T00:00:00.000Z" } : null,
+              }),
+            ],
+          });
+        return routes.fetch(input, init);
+      }),
+    );
+    renderRunnersPage("admin", undefined, runnerPath());
+    const runner = await detail();
+    const box = await within(runner).findByTestId("update-queued");
+    expect(box).toHaveTextContent("업데이트 대기 — 런이 끝나면 올립니다");
+    await userEvent.click(within(box).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(calls).toEqual([`DELETE /api/v1/runners/${runnerId(1)}/update-queue`]));
+    await waitFor(() => expect(within(runner).queryByTestId("update-queued")).toBeNull());
+  });
+
+  it("대기가 없으면 아무것도 없다", async () => {
+    vi.stubGlobal("fetch", vi.fn(stubRunners({ runners: [runnerOf(1, { label: "맥북" })] }).fetch));
+    renderRunnersPage("admin", undefined, runnerPath());
+    const runner = await detail();
+    await within(runner).findByRole("heading", { name: /^프로젝트/ });
+    expect(within(runner).queryByTestId("update-queued")).toBeNull();
+  });
+});

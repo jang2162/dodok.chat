@@ -455,7 +455,8 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     expect(hits[0]?.body).toEqual({
       provider: "runner",
       runnerTokenId: runnerOf(1).id,
-      bot: review.definition,
+      // 도구 칸(러너 봇 2부 스펙 T1·T7) — 비운 채로 만들면 빈 값
+      bot: { ...review.definition, mcpServers: {}, mcpAutoAllow: {}, builtinTools: [] },
       program: "claude",
       handle: "rev",
       name: "rev",
@@ -532,7 +533,9 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     await userEvent.type(doField, "테스트를 돌린다");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     await waitFor(() =>
-      expect(server.bodies("PATCH")).toEqual([{ bot: { ...DEF, does: "테스트를 돌린다" } }]),
+      expect(server.bodies("PATCH")).toEqual([
+        { bot: { ...DEF, does: "테스트를 돌린다", mcpServers: {}, mcpAutoAllow: {}, builtinTools: [] } },
+      ]),
     );
   });
 
@@ -546,6 +549,150 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     expect(within(row).queryByRole("button", { name: /봇 정의 편집/ })).toBeNull();
     expect(row).not.toHaveTextContent("리뷰 봇");
     expect(screen.getByText(/› 봇/)).toBeInTheDocument();
+  });
+
+  describe("봇 도구(러너 봇 2부 스펙 T1·T3·T4·T7·T15)", () => {
+    const TOOL_CAPS: RunnerCapability[] = [...BOTS_CAPS, "botMcp", "runnerControl"];
+    const httpCeiling = {
+      maxPermissionMode: "acceptEdits" as const,
+      allowedToolsCeiling: null,
+      appMcp: "http" as const,
+      appMcpCommands: null,
+    };
+    const MCP_JSON = JSON.stringify({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: { Authorization: "Bearer x" },
+        },
+        linear: { command: "npx", args: ["-y", "linear-mcp"] },
+      },
+    });
+    /** 도구 칸을 보는 러너 상세 — 능력·천장을 바꿔 가며 */
+    function serveTools(caps: RunnerCapability[] = TOOL_CAPS) {
+      const hits: Hit[] = [];
+      const routes = runnersRoutes({
+        runners: [
+          runnerOf(1, { label: "맥북", capabilities: caps, programs: [programOf({ ceiling: httpCeiling })] }),
+        ],
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const method = init?.method ?? "GET";
+          const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+          if (method === "POST" && url === "/api/v1/agents") {
+            hits.push({ method, url, body });
+            return json(201, {
+              agent: makeAgent({
+                provider: "runner",
+                providerAgentId: "r-0123456789",
+                handle: "rev",
+                name: "rev",
+              }),
+            });
+          }
+          const hit = routes.handle(method, url, body);
+          if (hit) return hit;
+          if (url === "/api/v1/agents") return json(200, { agents: [] });
+          return json(404, { code: "NOT_FOUND", message: "x" });
+        }),
+      );
+      return { hits };
+    }
+    const mcpBox = (scope: HTMLElement) =>
+      within(scope).getByRole("textbox", { name: "MCP 서버(.mcp.json)" });
+
+    it("붙여 넣은 .mcp.json 의 서버 둘 — http 러너에서 stdio 는 「이 러너가 막음 — 이 러너는 stdio 서버를 받지 않음」, 자동 허용·내장 도구가 본문에", async () => {
+      const { hits } = serveTools();
+      const dialog = await openBotDialog();
+      await userEvent.click(mcpBox(dialog));
+      await userEvent.paste(MCP_JSON);
+      expect(within(dialog).getByTestId("mcp-verdict-github")).toHaveTextContent("쓸 수 있음");
+      expect(within(dialog).getByTestId("mcp-verdict-linear")).toHaveTextContent(
+        "이 러너가 막음 — 이 러너는 stdio 서버를 받지 않음",
+      );
+      const github = within(dialog).getAllByRole("combobox", { name: "묻지 않음" })[0]!;
+      await userEvent.selectOptions(github, "tools");
+      await userEvent.type(
+        within(dialog).getByRole("textbox", { name: "github 묻지 않을 도구(쉼표로)" }),
+        "search, get",
+      );
+      await userEvent.click(within(dialog).getByRole("checkbox", { name: "이 러너 설정 제어" }));
+      await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "rev");
+      await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+      await waitFor(() => expect(hits).toHaveLength(1));
+      expect((hits[0]!.body as { bot: unknown }).bot).toMatchObject({
+        mcpServers: JSON.parse(MCP_JSON).mcpServers,
+        mcpAutoAllow: { github: { mode: "tools", tools: ["search", "get"] } },
+        builtinTools: ["runnerControl"],
+      });
+    });
+
+    it("틀린 JSON 이면 사유 한 줄과 함께 만들기를 잠근다", async () => {
+      serveTools();
+      const dialog = await openBotDialog();
+      await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "rev");
+      await userEvent.click(mcpBox(dialog));
+      await userEvent.paste('{"mcpServers": {"dodok": {"type":"http","url":"https://x.example/"}}}');
+      expect(within(dialog).getByRole("alert")).toHaveTextContent("dodok");
+      expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
+    });
+
+    it("runnerControl 이 없는 러너 — 「이 러너 설정 제어」를 사유와 함께 잠근다", async () => {
+      serveTools(BOTS_CAPS);
+      const dialog = await openBotDialog();
+      const box = within(dialog).getByRole("checkbox", { name: "이 러너 설정 제어" });
+      expect(box).toBeDisabled();
+      expect(box).toHaveAccessibleDescription("러너를 업데이트하세요(봇 도구는 0.10.0 부터)");
+    });
+
+    it("상세 편집 — 가림 글자(••••)는 그대로 보이고, 바꾸지 않고 저장하면 본문에도 •••• 그대로", async () => {
+      const masked = {
+        github: { type: "http" as const, url: "https://x.example/mcp", headers: { Authorization: "••••" } },
+      };
+      const base = coder({
+        projectId: null,
+        bot: { ...DEF, mcpServers: masked, mcpAutoAllow: { github: { mode: "all" } } },
+      });
+      const server = stubServer({
+        agents: [{ ...base, runner: { ...base.runner!, bot: true } }],
+        runners: runnersRoutes({
+          runners: [
+            runnerOf(1, {
+              label: "맥북",
+              capabilities: TOOL_CAPS,
+              programs: [programOf({ ceiling: httpCeiling })],
+            }),
+          ],
+        }).handle,
+      });
+      renderPage(
+        createQueryClient(() => {}),
+        "admin",
+      );
+      const row = await agentDetail();
+      await userEvent.click(within(row).getByRole("button", { name: "@coder 봇 정의 편집" }));
+      expect((mcpBox(row) as HTMLTextAreaElement).value).toContain('"Authorization": "••••"');
+      await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(server.bodies("PATCH")).toHaveLength(1));
+      const body = server.bodies("PATCH")[0] as { bot: { mcpServers: unknown; mcpAutoAllow: unknown } };
+      expect(body.bot.mcpServers).toEqual(masked);
+      expect(body.bot.mcpAutoAllow).toEqual({ github: { mode: "all" } });
+    });
+
+    it("member 에게는 도구 칸이 없다", async () => {
+      stubServer({ agents: [bot(false)] });
+      renderPage(
+        createQueryClient(() => {}),
+        "member",
+      );
+      const row = await agentDetail();
+      expect(within(row).queryByRole("group", { name: "도구" })).toBeNull();
+      expect(within(row).queryByText("MCP 서버(.mcp.json)")).toBeNull();
+    });
   });
 
   it("보관한 봇은 되살린다 — 「프로젝트가 없어 되살릴 수 없습니다」가 아니다", async () => {

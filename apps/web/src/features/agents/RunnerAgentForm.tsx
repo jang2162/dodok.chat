@@ -20,6 +20,7 @@ import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react"
 import { ApiRequestError } from "@/api/http";
 import { detailField, formError } from "@/api/formErrors";
 import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
+import { type BotTools, BotToolsFields, botToolsOf, EMPTY_BOT_TOOLS } from "./BotToolsFields";
 import {
   PERMISSION_MODE_LABEL,
   ROOT_MISSING,
@@ -125,7 +126,7 @@ function serverCreateError(err: unknown): { field: string; message: string } | u
 }
 
 /** 봇 정의 네 칸의 화면 이름(러너 봇 스펙 B3) — 만들기와 상세 편집이 같은 글 */
-export const BOT_FIELD_LABEL: Record<keyof RunnerBotDefinition, string> = {
+export const BOT_FIELD_LABEL: Record<"purpose" | "watches" | "does" | "reports", string> = {
   purpose: "목적(한 줄)",
   watches: "지켜볼 것",
   does: "할 일",
@@ -135,6 +136,20 @@ export const BOT_FIELD_LABEL: Record<keyof RunnerBotDefinition, string> = {
 export const BOT_PLACE_HINT =
   "러너가 이 봇 전용 폴더를 만들고 그 폴더에서 돕니다 — 저장소·프로젝트가 없어도 됩니다";
 export const EMPTY_BOT: RunnerBotDefinition = { purpose: "", watches: "", does: "", reports: "" };
+
+/** 봇 정의 네 칸 + 도구 — 빈 도구는 키째 뺀다(옛 정의와 같은 꼴) */
+function withTools(def: RunnerBotDefinition, tools: BotTools): RunnerBotDefinition {
+  const { purpose, watches, does, reports } = def;
+  return {
+    purpose,
+    watches,
+    does,
+    reports,
+    mcpServers: tools.mcpServers,
+    mcpAutoAllow: tools.mcpAutoAllow,
+    builtinTools: tools.builtinTools,
+  };
+}
 
 /**
  * 봇 정의 네 칸과 템플릿(러너 봇 스펙 B3·B5) — 템플릿을 고르면 네 칸을 그 글로 채운다(고친 글은 덮인다). 상한은 칸의 maxLength 가
@@ -150,7 +165,7 @@ export function BotDefinitionFields({
   disabled: boolean;
 }) {
   const ids = useId();
-  const set = (key: keyof RunnerBotDefinition) => (text: string) => onChange({ ...value, [key]: text });
+  const set = (key: keyof typeof BOT_FIELD_LABEL) => (text: string) => onChange({ ...value, [key]: text });
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
@@ -215,8 +230,12 @@ const botWithinLimits = (def: RunnerBotDefinition) =>
 export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const current = agent.runnerAgent?.bot;
   const save = usePatchAgent();
+  const runners = useRunners();
   const [draft, setDraft] = useState<RunnerBotDefinition>();
+  const [tools, setTools] = useState<BotTools>(EMPTY_BOT_TOOLS);
+  const [toolsValid, setToolsValid] = useState(true);
   const [error, setError] = useState<string>();
+  const runner = runners.data?.find((r) => r.id === agent.runner?.tokenId);
   const handle = `@${agent.handle}`;
   if (current === undefined) return null;
   if (draft === undefined || readOnly) {
@@ -233,7 +252,11 @@ export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnl
             variant="outline"
             size="sm"
             aria-label={`${handle} 봇 정의 편집`}
-            onClick={() => setDraft({ ...current })}
+            onClick={() => {
+              setDraft({ ...current });
+              setTools(botToolsOf(current));
+              setToolsValid(true);
+            }}
           >
             정의 편집
           </Button>
@@ -243,10 +266,11 @@ export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnl
   }
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (draft === undefined || save.isPending || !botWithinLimits(draft)) return;
+    if (draft === undefined || save.isPending || !botWithinLimits(draft) || !toolsValid) return;
     setError(undefined);
     save.mutate(
-      { id: agent.id, patch: { bot: draft } },
+      // 가림 글자(••••) 자리는 그대로 보낸다 — 서버가 원래 값을 지킨다(T4)
+      { id: agent.id, patch: { bot: withTools(draft, tools) } },
       {
         onSuccess: () => setDraft(undefined),
         onError: (err) => setError(formError(err) ?? "봇 정의를 저장하지 못했습니다 — 다시 시도하세요"),
@@ -260,6 +284,13 @@ export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnl
         저장하면 이 봇의 세션이 새 정의로 새로 열립니다. 러너 머신의 SOUL.md 도 다음 런에 이 정의로 바뀝니다.
       </p>
       <BotDefinitionFields value={draft} onChange={setDraft} disabled={save.isPending} />
+      <BotToolsFields
+        value={tools}
+        onChange={setTools}
+        onValidity={setToolsValid}
+        runner={runner}
+        disabled={save.isPending}
+      />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -269,7 +300,7 @@ export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnl
         <Button type="button" variant="ghost" onClick={() => setDraft(undefined)} disabled={save.isPending}>
           취소
         </Button>
-        <Button type="submit" disabled={save.isPending}>
+        <Button type="submit" disabled={save.isPending || !toolsValid}>
           {save.isPending ? "저장 중…" : "저장"}
         </Button>
       </div>
@@ -304,6 +335,8 @@ export function RunnerAgentForm({
   // 「자리」(러너 봇 스펙 B2) — 프로젝트 또는 봇(폴더만). 프로젝트 없이 열면 봇뿐
   const [place, setPlace] = useState<"project" | "bot">(projectId === undefined ? "bot" : "project");
   const [botDef, setBotDef] = useState<RunnerBotDefinition>(EMPTY_BOT);
+  const [botTools, setBotTools] = useState<BotTools>(EMPTY_BOT_TOOLS);
+  const [botToolsValid, setBotToolsValid] = useState(true);
   const [programPick, setProgramPick] = useState<RunnerProgram>();
   const [handle, setHandle] = useState("");
   const [name, setName] = useState<string>(); // undefined 면 핸들을 따른다
@@ -361,7 +394,7 @@ export function RunnerAgentForm({
   const ready =
     runner !== undefined &&
     runnerIssue === undefined &&
-    (asBot ? botLock === undefined && botWithinLimits(botDef) : project !== undefined) &&
+    (asBot ? botLock === undefined && botWithinLimits(botDef) && botToolsValid : project !== undefined) &&
     program !== undefined &&
     handle !== "" &&
     handleIssue(handle, takenHandles) === undefined &&
@@ -380,7 +413,7 @@ export function RunnerAgentForm({
       const botInput: CreateRunnerAgentInput = {
         provider: "runner",
         runnerTokenId: runner.id,
-        bot: botDef,
+        bot: withTools(botDef, botTools),
         program: program.program,
         handle,
         name: currentName.trim(),
@@ -652,7 +685,20 @@ export function RunnerAgentForm({
               }}
               disabled={pending || botLock !== undefined}
             />
-          ) : (
+          ) : null}
+          {asBot && (
+            <BotToolsFields
+              value={botTools}
+              onChange={(next) => {
+                clear();
+                setBotTools(next);
+              }}
+              onValidity={setBotToolsValid}
+              runner={runner}
+              disabled={pending || botLock !== undefined}
+            />
+          )}
+          {asBot ? null : (
             <Row label="지시">
               {(id, describedBy) => (
                 <Textarea
