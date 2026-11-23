@@ -16,6 +16,11 @@ const LatestBody = z.object({ version: RemoteUpdateVersion });
 export type LatestRunnerVersion = {
   /** 쥔 값이 살아 있으면 그것, 아니면 레지스트리에 묻는다(같은 때 두 번 묻지 않는다) */
   get(): Promise<string | null>;
+  /**
+   * 기다리지 않고 지금 쥔 값 — 한 번도 묻지 않았으면 value 가 undefined. fresh 가 false 면 부르는 쪽이 get() 을 뒤에서 부른다(러너 목록이
+   * 레지스트리 응답을 기다리지 않게 — 리뷰 L2)
+   */
+  peek(): { value: string | null | undefined; fresh: boolean };
 };
 
 export function createLatestRunnerVersion(opts: {
@@ -27,7 +32,7 @@ export function createLatestRunnerVersion(opts: {
 }): LatestRunnerVersion {
   if (opts.fixed !== undefined) {
     const fixed = opts.fixed;
-    return { get: async () => fixed };
+    return { get: async () => fixed, peek: () => ({ value: fixed, fresh: true }) };
   }
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
@@ -58,6 +63,9 @@ export function createLatestRunnerVersion(opts: {
         return value;
       });
       return inflight;
+    },
+    peek() {
+      return { value: cached?.value, fresh: cached !== undefined && now() < cached.until };
     },
   };
 }

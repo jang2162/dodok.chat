@@ -186,7 +186,14 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     async (request): Promise<{ runners: RunnerSummary[] }> => {
       const user = sessionUser(request);
       const projectCounts = activeProjectCounts(ctx.db, ctx.workspaceId);
-      const latestVersion = await ctx.latest.get();
+      // 레지스트리를 기다리지 않는다(리뷰 L2) — 쥔 값이 없거나 낡았으면 뒤에서 묻고, 값이 바뀌면 연결 변경으로 웹이 다시 받는다. 한 번도
+      // 묻지 않았으면 latestVersion 없이 답한다(웹은 판 줄을 숨긴다)
+      const peeked = ctx.latest.peek();
+      if (!peeked.fresh)
+        void ctx.latest.get().then((value) => {
+          if (value !== peeked.value) connectionsChanged();
+        });
+      const latestVersion = peeked.value;
       return {
         runners: listRunnerTokens(ctx.db, ctx.workspaceId, new Set())
           .filter((token) => canReadConnection(user, token.ownerUserId))
@@ -205,7 +212,7 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
                 ? RunnerCapability.options.filter((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
                 : [],
               projectCount: projectCounts.get(token.id) ?? 0,
-              latestVersion,
+              ...(latestVersion === undefined ? {} : { latestVersion }),
               remoteUpdate: hello
                 ? runnerSupport((c) => ctx.runners?.hasCapability(token.id, c) ?? false)
                 : null,

@@ -53,6 +53,19 @@ describe("createLatestRunnerVersion", () => {
     }
   });
 
+  it("peek 은 기다리지 않는다 — 묻기 전 undefined, 쥔 동안 fresh, 지나면 낡은 값 그대로 fresh false", async () => {
+    let now = 0;
+    const f = fakeFetch([ok({ version: "0.9.0" })]);
+    const latest = createLatestRunnerVersion({ fetch: f.fetch, now: () => now });
+    expect(latest.peek()).toEqual({ value: undefined, fresh: false });
+    expect(f.urls).toEqual([]);
+    await latest.get();
+    expect(latest.peek()).toEqual({ value: "0.9.0", fresh: true });
+    now = LATEST_TTL_MS + 1;
+    expect(latest.peek()).toEqual({ value: "0.9.0", fresh: false });
+    expect(createLatestRunnerVersion({ fixed: null }).peek()).toEqual({ value: null, fresh: true });
+  });
+
   it("fixed 면 레지스트리에 묻지 않는다", async () => {
     const f = fakeFetch([]);
     expect(await createLatestRunnerVersion({ fetch: f.fetch, fixed: null }).get()).toBeNull();

@@ -718,6 +718,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const publicUrl = bridgePublicUrl(config);
     // 원격 업데이트(원격 업데이트 스펙 U2·U9) — npm latest 캐시와 연결마다의 진행(메모리)
     const latestRunner = deps.latestRunner ?? createLatestRunnerVersion({});
+    // 부팅 때 한 번 미리 — 첫 러너 목록부터 「최신」이 있게(리뷰 L2). 실패는 null 로 쥔다
+    void latestRunner.get();
     const remoteUpdates = createRemoteUpdates({ now: deps.remoteUpdateClock ?? Date.now });
     const runnerDetail = () => {
       const detail = registry.forProvider("runner")?.setupDetail();

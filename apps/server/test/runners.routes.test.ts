@@ -23,6 +23,7 @@ import type { App } from "../src/app";
 import { opsEvents } from "../src/db/schema.sqlite";
 import { markBound } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
+import { createLatestRunnerVersion } from "../src/modules/runners/latest";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { RUNNER_TOKEN_FILE } from "../src/modules/runners/routes";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
@@ -544,7 +545,7 @@ describe("러너 원격 업데이트 POST /runners/:id/update(원격 업데이�
       {
         adapters: [new FakeAdapter()],
         runnerAdapter: true,
-        latestRunner: { get: async () => latest },
+        latestRunner: { get: async () => latest, peek: () => ({ value: latest, fresh: true }) },
         remoteUpdateClock: () => Date.now() + clockOffset,
       },
     );
@@ -694,5 +695,56 @@ describe("러너 원격 업데이트 POST /runners/:id/update(원격 업데이�
     runner.disconnect();
     await new Promise((r) => setTimeout(r, 50));
     expect((await update(id)).statusCode).toBe(503);
+  });
+});
+
+// 리뷰 L2 — 러너 목록은 npm 레지스트리를 기다리지 않는다
+describe("GET /api/v1/runners 와 npm latest", () => {
+  it("레지스트리가 답하기 전에는 latestVersion 없이 곧바로 답하고, 답이 오면 connections.changed 뒤 목록에 실린다 — 부팅 때 미리 한 번 묻는다", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked: string[] = [];
+    const fetch = (async (url: string) => {
+      asked.push(String(url));
+      await gate;
+      return new Response(JSON.stringify({ version: "0.9.0" }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    const app = await bootTestApp(
+      {},
+      {
+        adapters: [new FakeAdapter()],
+        runnerAdapter: true,
+        latestRunner: createLatestRunnerVersion({ fetch }),
+      },
+    );
+    try {
+      // 부팅 때 미리 묻는다
+      expect(asked).toHaveLength(1);
+      const owner = (await login(app)).headers;
+      await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/setup/runner-tokens",
+        headers: owner,
+        payload: { label: "latest" },
+      });
+      let changed = 0;
+      const off = app.bus.on("connections.changed", () => void changed++);
+      const first = await app.fastify.inject({ method: "GET", url: "/api/v1/runners", headers: owner });
+      expect(first.statusCode).toBe(200);
+      const [runner] = (first.json() as { runners: Array<Record<string, unknown>> }).runners;
+      expect(runner).toBeDefined();
+      expect(runner).not.toHaveProperty("latestVersion");
+      release();
+      await vi.waitFor(() => expect(changed).toBeGreaterThan(0));
+      off();
+      const second = await app.fastify.inject({ method: "GET", url: "/api/v1/runners", headers: owner });
+      expect((second.json() as { runners: Array<Record<string, unknown>> }).runners[0]).toMatchObject({
+        latestVersion: "0.9.0",
+      });
+      // 같은 질문은 한 번 — 부팅 때의 것을 목록이 함께 기다렸다
+      expect(asked).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
   });
 });

@@ -2000,7 +2000,10 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       disconnectEventMs: opts.disconnectEventMs ?? DISCONNECT_EVENT_MS,
       gatewayBackoff: DEV_FAKE_GATEWAY_BACKOFF,
       // npm 레지스트리에 묻지 않는다 — 훅 remote-update 가 바꾼다
-      latestRunner: { get: async () => remoteUpdate.latest },
+      latestRunner: {
+        get: async () => remoteUpdate.latest,
+        peek: () => ({ value: remoteUpdate.latest, fresh: true }),
+      },
     });
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
