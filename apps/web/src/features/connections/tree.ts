@@ -38,7 +38,9 @@ export type TreeRunner = {
   state: RunnerStateLabel | null;
   ownerUserId: string | null;
   projects: TreeProject[];
-  /** 프로젝트를 모르거나 프로젝트에 묶이지 않은 그 러너의 에이전트 */
+  /** 그 러너의 봇(러너 봇 스펙 B11) — 프로젝트 없이 봇 폴더에서 돈다. 트리에서는 러너 아래 「봇」 묶음 */
+  bots: TreeAgent[];
+  /** 프로젝트를 모르거나 프로젝트에 묶이지 않은 그 러너의 에이전트(봇 빼고) */
   agents: TreeAgent[];
 };
 export type TreeConnection = TreeGateway | TreeRunner;
@@ -106,6 +108,7 @@ export function buildConnectionTree(input: TreeInput): ConnectionTree {
       state,
       ownerUserId: owner,
       projects: [],
+      bots: [],
       agents: [],
     };
     runners.set(id, node);
@@ -156,6 +159,10 @@ export function buildConnectionTree(input: TreeInput): ConnectionTree {
             : undefined));
       if (!bound || bound.revoked || !runner) {
         orphaned.push(leaf);
+        continue;
+      }
+      if (bound.bot) {
+        runner.bots.push(leaf);
         continue;
       }
       const projectId = agent.runnerAgent?.projectId;

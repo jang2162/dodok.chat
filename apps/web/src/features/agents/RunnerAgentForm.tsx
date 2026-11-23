@@ -1,6 +1,11 @@
 import {
   type Agent,
+  BOT_TEMPLATES,
   type DmAccess,
+  RUNNER_BOT_PURPOSE_MAX,
+  RUNNER_BOT_SECTION_MAX,
+  RUNNER_BOTS_UPDATE_MESSAGE,
+  type RunnerBotDefinition,
   type RunnerProject,
   RUNNER_EFFORTS,
   RUNNER_PERMISSION_MODES,
@@ -35,7 +40,7 @@ import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { Textarea } from "@/ui/textarea";
 import { AgentFields, HANDLE_TAKEN, handleIssue, nameProblem } from "./ManualAgentForm";
-import { type CreateRunnerAgentInput, useCreateAgent } from "./mutations";
+import { type CreateRunnerAgentInput, useCreateAgent, usePatchAgent } from "./mutations";
 
 const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 aria-invalid:border-destructive";
@@ -109,12 +114,167 @@ function Row({
   );
 }
 
-/** 서버 400 의 칸 — 천장(program)은 고정 문구, 프로젝트는 PROJECT_GONE */
+/** 서버 400 의 칸 — 천장(program)은 고정 문구, 프로젝트는 PROJECT_GONE, 봇은 옛 러너·폐기한 러너 */
 function serverCreateError(err: unknown): { field: string; message: string } | undefined {
   if (!(err instanceof ApiRequestError) || err.code !== "VALIDATION") return undefined;
-  const field = detailField(err, ["program", "runnerProjectId"]);
+  const field = detailField(err, ["program", "runnerProjectId", "bot", "runnerTokenId"]);
   if (field === undefined) return undefined;
+  if (field === "bot") return { field: "place", message: RUNNER_BOTS_UPDATE_MESSAGE };
+  if (field === "runnerTokenId") return { field: "form", message: PICKED_RUNNER_REVOKED };
   return { field, message: field === "runnerProjectId" ? PROJECT_GONE : CEILING_REFUSED };
+}
+
+/** 봇 정의 네 칸의 화면 이름(러너 봇 스펙 B3) — 만들기와 상세 편집이 같은 글 */
+export const BOT_FIELD_LABEL: Record<keyof RunnerBotDefinition, string> = {
+  purpose: "목적(한 줄)",
+  watches: "지켜볼 것",
+  does: "할 일",
+  reports: "보고할 것",
+};
+/** 「봇(폴더만)」 선택지의 설명 — 러너가 그 봇 전용 폴더를 만들고 런은 그 폴더에서 돈다(B1) */
+export const BOT_PLACE_HINT =
+  "러너가 이 봇 전용 폴더를 만들고 그 폴더에서 돕니다 — 저장소·프로젝트가 없어도 됩니다";
+export const EMPTY_BOT: RunnerBotDefinition = { purpose: "", watches: "", does: "", reports: "" };
+
+/**
+ * 봇 정의 네 칸과 템플릿(러너 봇 스펙 B3·B5) — 템플릿을 고르면 네 칸을 그 글로 채운다(고친 글은 덮인다). 상한은 칸의 maxLength 가
+ * 지킨다(목적 200, 나머지 2000 — 서버도 거른다)
+ */
+export function BotDefinitionFields({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: RunnerBotDefinition;
+  onChange: (next: RunnerBotDefinition) => void;
+  disabled: boolean;
+}) {
+  const ids = useId();
+  const set = (key: keyof RunnerBotDefinition) => (text: string) => onChange({ ...value, [key]: text });
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <span id={`${ids}-templates`} className="text-sm font-medium">
+          템플릿
+        </span>
+        <div role="group" aria-labelledby={`${ids}-templates`} className="flex flex-wrap gap-2">
+          {BOT_TEMPLATES.map((t) => (
+            <Button
+              key={t.id}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => onChange({ ...t.definition })}
+            >
+              {t.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <Row label={BOT_FIELD_LABEL.purpose}>
+        {(id, describedBy) => (
+          <Input
+            id={id}
+            value={value.purpose}
+            maxLength={RUNNER_BOT_PURPOSE_MAX}
+            aria-describedby={describedBy}
+            disabled={disabled}
+            onChange={(e) => set("purpose")(e.target.value)}
+          />
+        )}
+      </Row>
+      {(["watches", "does", "reports"] as const).map((key) => (
+        <Row key={key} label={BOT_FIELD_LABEL[key]}>
+          {(id, describedBy) => (
+            <Textarea
+              id={id}
+              value={value[key]}
+              rows={3}
+              maxLength={RUNNER_BOT_SECTION_MAX}
+              aria-describedby={describedBy}
+              disabled={disabled}
+              onChange={(e) => set(key)(e.target.value)}
+            />
+          )}
+        </Row>
+      ))}
+    </div>
+  );
+}
+
+/** 봇 정의가 상한 안인가 — maxLength 가 지키지만 붙여 넣기·옛 값까지 */
+const botWithinLimits = (def: RunnerBotDefinition) =>
+  def.purpose.length <= RUNNER_BOT_PURPOSE_MAX &&
+  [def.watches, def.does, def.reports].every((t) => t.length <= RUNNER_BOT_SECTION_MAX);
+
+/**
+ * 에이전트 상세의 봇 정의(러너 봇 스펙 B3·B10) — 접힌 채로는 목적 한 줄, 펼치면 네 칸 편집. 정의는 그 연결의 주인·admin 이상만 받는다
+ * (member 의 Agent 에는 없다 — 그때는 그리지 않는다). 저장하면 그 봇의 세션이 새 정의로 새로 열린다
+ */
+export function BotDefinitionEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  const current = agent.runnerAgent?.bot;
+  const save = usePatchAgent();
+  const [draft, setDraft] = useState<RunnerBotDefinition>();
+  const [error, setError] = useState<string>();
+  const handle = `@${agent.handle}`;
+  if (current === undefined) return null;
+  if (draft === undefined || readOnly) {
+    return (
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="text-xs text-muted-foreground">봇 정의</p>
+          <p className={current.purpose === "" ? "text-sm text-muted-foreground" : "line-clamp-2 text-sm"}>
+            {current.purpose === "" ? "목적이 비어 있습니다" : current.purpose}
+          </p>
+        </div>
+        {!readOnly && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`${handle} 봇 정의 편집`}
+            onClick={() => setDraft({ ...current })}
+          >
+            정의 편집
+          </Button>
+        )}
+      </div>
+    );
+  }
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (draft === undefined || save.isPending || !botWithinLimits(draft)) return;
+    setError(undefined);
+    save.mutate(
+      { id: agent.id, patch: { bot: draft } },
+      {
+        onSuccess: () => setDraft(undefined),
+        onError: (err) => setError(formError(err) ?? "봇 정의를 저장하지 못했습니다 — 다시 시도하세요"),
+      },
+    );
+  }
+  return (
+    <form onSubmit={submit} aria-label={`${handle} 봇 정의`} className="flex flex-col gap-3">
+      <p className="text-sm font-medium">봇 정의</p>
+      <p className="-mt-2 text-xs text-muted-foreground">
+        저장하면 이 봇의 세션이 새 정의로 새로 열립니다. 러너 머신의 SOUL.md 도 다음 런에 이 정의로 바뀝니다.
+      </p>
+      <BotDefinitionFields value={draft} onChange={setDraft} disabled={save.isPending} />
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={() => setDraft(undefined)} disabled={save.isPending}>
+          취소
+        </Button>
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? "저장 중…" : "저장"}
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 /**
@@ -132,14 +292,18 @@ export function RunnerAgentForm({
   onCreated,
 }: {
   runnerId: string;
-  projectId: string;
+  /** 없으면 봇만 만든다(러너 상세의 「봇 만들기」). 있으면 「이 프로젝트 / 봇(폴더만)」을 고른다 */
+  projectId?: string;
   takenHandles: ReadonlySet<string>;
   onCreated: () => void;
 }) {
   const runners = useRunners();
   const create = useCreateAgent({ silent: true });
   const runnerPick: string = runnerId;
-  const projectPick: string = projectId;
+  const projectPick: string = projectId ?? "";
+  // 「자리」(러너 봇 스펙 B2) — 프로젝트 또는 봇(폴더만). 프로젝트 없이 열면 봇뿐
+  const [place, setPlace] = useState<"project" | "bot">(projectId === undefined ? "bot" : "project");
+  const [botDef, setBotDef] = useState<RunnerBotDefinition>(EMPTY_BOT);
   const [programPick, setProgramPick] = useState<RunnerProgram>();
   const [handle, setHandle] = useState("");
   const [name, setName] = useState<string>(); // undefined 면 핸들을 따른다
@@ -149,7 +313,7 @@ export function RunnerAgentForm({
   // 「작업 위치」 — 이 프로젝트 또는 새 워크트리(워크트리 스펙 5.5). 만든 워크트리는 에이전트가 실패해도 남아 다시 누르면 그것을 쓴다
   const [where, setWhere] = useState<"here" | "worktree">("here");
   const [madeWorktree, setMadeWorktree] = useState<RunnerProject>();
-  const createWorktree = useCreateWorktree(projectId);
+  const createWorktree = useCreateWorktree(projectPick);
   const ids = useId();
 
   const list = useMemo(() => (runners.data ?? []).filter((r) => !r.revoked), [runners.data]);
@@ -157,14 +321,17 @@ export function RunnerAgentForm({
   const runner = list.find((r) => r.id === runnerPick);
   const live = runner?.connected === true;
   const runnerIssue = runner === undefined ? PICKED_RUNNER_REVOKED : live ? undefined : PICKED_RUNNER_OFFLINE;
-  const projects = useRunnerProjects(runner?.id);
+  const projects = useRunnerProjects(runner?.id, { enabled: projectId !== undefined });
+  const asBot = place === "bot";
+  // 능력 bots 가 없는 러너(옛 판)에서는 봇을 잠근다(B7). 끊겼으면 runnerIssue 가 먼저 막는다
+  const botLock = live && !runner.capabilities.includes("bots") ? RUNNER_BOTS_UPDATE_MESSAGE : undefined;
   const activeProjects = (projects.data ?? []).filter((p) => p.archivedAt === null);
   // 붙은 러너가 그 루트를 알리지 않는 프로젝트 — 보이되 고를 수 없다(거기 만든 에이전트는 첫 런부터 천장 밖이다)
   const rootMissing = (p: { rootLabel: string | null }) => live && p.rootLabel === null;
   const selectable = activeProjects.filter((p) => !rootMissing(p));
   const project = selectable.find((p) => p.id === projectPick);
   const projectIssue =
-    project !== undefined || projects.data === undefined
+    asBot || project !== undefined || projects.data === undefined
       ? undefined
       : activeProjects.some((p) => p.id === projectPick)
         ? PICKED_PROJECT_ROOT_MISSING
@@ -179,7 +346,7 @@ export function RunnerAgentForm({
   const draft = useWorktreeDraft(project ?? { rootId: "", relPath: "" });
   // 부모가 git 저장소 맨 위이고 잠금이 없을 때만(옛 러너·끊김·워크트리 자신이면 지름길이 없다)
   const canWorktree =
-    project !== undefined && runner !== undefined && worktreeLock(project, runner) === undefined;
+    !asBot && project !== undefined && runner !== undefined && worktreeLock(project, runner) === undefined;
   // 이미 만든 워크트리가 있으면 러너가 그 사이 끊겨(canWorktree 거짓) 라디오가 사라져도 그 워크트리에 만든다 — 부모로 새지 않게
   const toWorktree = where === "worktree" && (canWorktree || madeWorktree !== undefined);
   const pending = create.isPending || createWorktree.isPending;
@@ -194,7 +361,7 @@ export function RunnerAgentForm({
   const ready =
     runner !== undefined &&
     runnerIssue === undefined &&
-    project !== undefined &&
+    (asBot ? botLock === undefined && botWithinLimits(botDef) : project !== undefined) &&
     program !== undefined &&
     handle !== "" &&
     handleIssue(handle, takenHandles) === undefined &&
@@ -207,7 +374,22 @@ export function RunnerAgentForm({
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (toWorktree) draft.touch();
-    if (!ready || !project || !program) return;
+    if (!ready || !program || !runner) return;
+    if (asBot) {
+      clear();
+      const botInput: CreateRunnerAgentInput = {
+        provider: "runner",
+        runnerTokenId: runner.id,
+        bot: botDef,
+        program: program.program,
+        handle,
+        name: currentName.trim(),
+        dmAccess,
+      };
+      create.mutate(botInput, { onSuccess: onCreated, onError: failed });
+      return;
+    }
+    if (!project) return;
     clear();
     let target = project.id;
     let kept: RunnerProject | undefined;
@@ -253,6 +435,14 @@ export function RunnerAgentForm({
     });
   }
 
+  function failed(err: unknown) {
+    const field = serverCreateError(err);
+    if (field) return setServerError(field);
+    if (err instanceof ApiRequestError && err.code === "CONFLICT")
+      return setServerError({ field: "handle", message: HANDLE_TAKEN });
+    setServerError({ field: "form", message: runnerRequestError(err) ?? formError(err) ?? CREATE_FAILED });
+  }
+
   if (runners.isPending)
     return (
       <p role="status" className="text-sm text-muted-foreground">
@@ -279,23 +469,70 @@ export function RunnerAgentForm({
           </dd>
         </div>
         <FieldError id={`${ids}-runner-error`}>{runnerIssue}</FieldError>
-        <div className="flex flex-wrap gap-x-2">
-          <dt className="text-muted-foreground">프로젝트</dt>
-          <dd className="min-w-0 break-all">
-            {fixedProject ? (
-              <>
-                {worktreeName(fixedProject, projects.data ?? [])} — {projectPlace(fixedProject)}
-                {rootMissing(fixedProject) ? ` (${ROOT_MISSING})` : ""}
-              </>
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
+        {projectId !== undefined && !asBot && (
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">프로젝트</dt>
+            <dd className="min-w-0 break-all">
+              {fixedProject ? (
+                <>
+                  {worktreeName(fixedProject, projects.data ?? [])} — {projectPlace(fixedProject)}
+                  {rootMissing(fixedProject) ? ` (${ROOT_MISSING})` : ""}
+                </>
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
+        )}
         <FieldError id={`${ids}-project-error`}>
           {projectIssue ?? (serverError?.field === "runnerProjectId" ? serverError.message : undefined)}
         </FieldError>
       </dl>
+      {projectId !== undefined && (
+        <RadioGroup
+          aria-label="자리"
+          value={place}
+          disabled={pending || madeWorktree !== undefined}
+          onValueChange={(v) => {
+            clear();
+            setPlace(v as "project" | "bot");
+          }}
+          className="flex flex-col gap-2"
+        >
+          <span className="text-sm font-medium">자리</span>
+          <div className="flex items-center gap-2">
+            <RadioGroupItem id={`${ids}-place-project`} value="project" />
+            <Label htmlFor={`${ids}-place-project`} className="font-normal">
+              이 프로젝트
+            </Label>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <RadioGroupItem
+                id={`${ids}-place-bot`}
+                value="bot"
+                disabled={botLock !== undefined}
+                aria-describedby={`${ids}-place-bot-hint`}
+              />
+              <Label
+                htmlFor={`${ids}-place-bot`}
+                className={botLock ? "font-normal text-muted-foreground" : "font-normal"}
+              >
+                봇(폴더만)
+              </Label>
+            </div>
+            <p id={`${ids}-place-bot-hint`} className="pl-6 text-xs text-muted-foreground">
+              {botLock ?? BOT_PLACE_HINT}
+            </p>
+          </div>
+        </RadioGroup>
+      )}
+      {projectId === undefined && (
+        <p className="text-sm text-muted-foreground">{botLock ?? BOT_PLACE_HINT}</p>
+      )}
+      <FieldError id={`${ids}-place-error`}>
+        {serverError?.field === "place" ? serverError.message : undefined}
+      </FieldError>
       {canWorktree && runner && (
         <div className="flex flex-col gap-3">
           <RadioGroup
@@ -406,19 +643,30 @@ export function RunnerAgentForm({
               disabled={pending}
             />
           </div>
-          <Row label="지시">
-            {(id, describedBy) => (
-              <Textarea
-                id={id}
-                value={prompt}
-                rows={4}
-                maxLength={PROMPT_MAX}
-                aria-describedby={describedBy}
-                disabled={pending}
-                onChange={(e) => setPrompt(e.target.value)}
-              />
-            )}
-          </Row>
+          {asBot ? (
+            <BotDefinitionFields
+              value={botDef}
+              onChange={(next) => {
+                clear();
+                setBotDef(next);
+              }}
+              disabled={pending || botLock !== undefined}
+            />
+          ) : (
+            <Row label="지시">
+              {(id, describedBy) => (
+                <Textarea
+                  id={id}
+                  value={prompt}
+                  rows={4}
+                  maxLength={PROMPT_MAX}
+                  aria-describedby={describedBy}
+                  disabled={pending}
+                  onChange={(e) => setPrompt(e.target.value)}
+                />
+              )}
+            </Row>
+          )}
           <fieldset className="grid gap-2" disabled={pending}>
             <legend className="mb-1 text-sm font-medium">DM 허용</legend>
             <RadioGroup

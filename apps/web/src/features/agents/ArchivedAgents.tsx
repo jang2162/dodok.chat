@@ -84,7 +84,8 @@ function ArchivedRow({
           {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
         </p>
       </div>
-      {!readOnly && agent.runnerAgent?.projectId === null ? (
+      {/* 봇은 프로젝트 없이 되살린다(러너 봇 스펙 B11) — 「되살릴 수 없음」은 옛 것만 */}
+      {!readOnly && agent.runnerAgent?.projectId === null && !agent.runner?.bot ? (
         <p className="max-w-56 text-xs text-muted-foreground">{NO_PROJECT_RESTORE}</p>
       ) : (
         !readOnly && (

@@ -198,6 +198,29 @@ describe("삭제·되살리기 뒤 초점 — 누른 단추가 사라져도 body
   });
 });
 
+describe("보관한 봇(러너 봇 스펙 B6·B11)", () => {
+  it("봇은 프로젝트가 없어도 되살린다 — 「되살리기」 단추", async () => {
+    const gone = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-0123456789",
+      handle: "rev",
+      name: "Rev",
+      archivedAt: ARCHIVED_AT,
+      runner: { tokenId: "01a00000-0000-7000-8000-0000000000c1", label: "맥북", revoked: false, bot: true },
+      runnerAgent: {
+        projectId: null,
+        disallowedTools: [],
+        bot: { purpose: "리뷰", watches: "", does: "", reports: "" },
+      },
+    });
+    stubServer({ agents: [gone] });
+    renderPage(undefined, "admin", agentPath(gone));
+    expect(
+      await within(await agentDetail()).findByRole("button", { name: "@rev 되살리기" }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("가져오기의 삭제된 항목", () => {
   it("archivedAgentId 가 실린 항목은 체크 대신 「삭제됨 — 되살리기」 — 누르면 restore, 그 항목은 목록에서 빠진다", async () => {
     const gone = archivedFin();

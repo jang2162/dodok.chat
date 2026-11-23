@@ -20,7 +20,7 @@ import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { AvatarPicker } from "@/features/account/AvatarPicker";
 import { useAgentAvatar, useArchiveAgent, usePatchAgent } from "./mutations";
 import { providerIdLabel } from "./providerLabels";
-import { DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
+import { BotDefinitionEditor, DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
 
@@ -117,7 +117,12 @@ export function AgentRow({
           projectId={agent.runnerAgent?.projectId ?? null}
         />
       )}
-      <BasePromptEditor agent={agent} readOnly={readOnly} />
+      {/* 봇은 기본 지시 대신 봇 정의(러너 봇 스펙 B3) — 정의는 주인·admin 이상만 받는다 */}
+      {agent.runner?.bot ? (
+        <BotDefinitionEditor agent={agent} readOnly={readOnly} />
+      ) : (
+        <BasePromptEditor agent={agent} readOnly={readOnly} />
+      )}
       <DmAccessField agent={agent} readOnly={readOnly} />
       {!readOnly && <AgentAvatarField agent={agent} />}
     </Root>

@@ -106,6 +106,7 @@ function AgentPath({ agent }: { agent: Agent }) {
         ) : (
           "러너 없음"
         )}
+        {agent.runner?.bot && " › 봇"}
         {project && (
           <>
             {" › "}
@@ -161,7 +162,7 @@ function ArchivedBody({
         <code className="font-mono">{agent.providerAgentId}</code>
       </p>
       {!readOnly &&
-        (agent.runnerAgent?.projectId === null ? (
+        (agent.runnerAgent?.projectId === null && !agent.runner?.bot ? (
           <p className="text-xs text-muted-foreground">{NO_PROJECT_RESTORE}</p>
         ) : (
           <Button

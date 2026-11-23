@@ -44,7 +44,7 @@ describe("owner", () => {
     const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
       (el) => el.getAttribute("aria-label") ?? el.textContent,
     );
-    expect(order).toEqual(["프로젝트 0", "설치 안내", "러너 토큰"]);
+    expect(order).toEqual(["프로젝트 0", "봇 0", "설치 안내", "러너 토큰"]);
     // 붙은 적이 없는 러너 — 설치 안내가 펼친 채
     expect(within(runner).getByRole("group", { name: "설치 안내" })).toHaveAttribute("open");
   });
@@ -138,7 +138,7 @@ describe("연결의 주인(2단계)", () => {
     const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
       (el) => el.getAttribute("aria-label") ?? el.textContent,
     );
-    expect(order).toEqual(["프로젝트 0", "설치 안내", "러너 토큰"]);
+    expect(order).toEqual(["프로젝트 0", "봇 0", "설치 안내", "러너 토큰"]);
     expect(runner).toHaveTextContent("주인 나");
   });
 
@@ -274,5 +274,40 @@ describe("프로젝트 상세", () => {
     vi.stubGlobal("fetch", vi.fn(server.fetch));
     renderRunnersPage("admin", undefined, projectPath(projectOf(9).id));
     expect(await screen.findByText("이 프로젝트를 찾을 수 없습니다")).toBeInTheDocument();
+  });
+});
+
+describe("러너 상세의 「봇」 묶음(러너 봇 스펙 B11)", () => {
+  it("봇은 「봇 N」에, 「프로젝트 밖 에이전트」는 옛 것만 — 봇을 옛 것으로 읽지 않는다 [Review Focus 2]", async () => {
+    const runner = { tokenId: runnerId(1), label: "맥북", revoked: false };
+    const rev = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-0123456789",
+      handle: "rev",
+      name: "리뷰 봇",
+      runner: { ...runner, bot: true },
+      runnerAgent: { projectId: null, disallowedTools: [] },
+    });
+    const legacy = makeAgent({
+      provider: "runner",
+      providerAgentId: "r-aaaaaaaaaa",
+      handle: "old",
+      name: "옛 에이전트",
+      runner,
+      runnerAgent: { projectId: null, disallowedTools: [] },
+    });
+    const server = stubRunners({ runners: [runnerOf(1, { label: "맥북" })] }, async (input) =>
+      String(input) === "/api/v1/agents" ? json(200, { agents: [rev, legacy] }) : json(404, {}),
+    );
+    vi.stubGlobal("fetch", vi.fn(server.fetch));
+    renderRunnersPage("admin");
+    const detail = await screen.findByTestId("runner-detail");
+    const bots = await within(detail).findByRole("region", { name: "봇 1" });
+    expect(within(bots).getByRole("link", { name: /리뷰 봇/ })).toBeInTheDocument();
+    expect(bots).not.toHaveTextContent("옛 에이전트");
+    const unbound = within(detail).getByRole("region", { name: "프로젝트 밖 에이전트 1" });
+    expect(unbound).toHaveTextContent("옛 에이전트");
+    expect(unbound).not.toHaveTextContent("리뷰 봇");
+    expect(within(detail).getByRole("button", { name: "봇 만들기" })).toBeEnabled();
   });
 });

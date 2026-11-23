@@ -1,4 +1,4 @@
-import type { Agent, DmAccess, RunnerProgram, SessionDefaults } from "@dodok/shared";
+import type { Agent, DmAccess, RunnerBotDefinition, RunnerProgram, SessionDefaults } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
 import { api, apiBytes } from "@/api/http";
@@ -20,13 +20,15 @@ export type CreateOpenClawAgentInput = {
  */
 export type CreateRunnerAgentInput = {
   provider: "runner";
-  runnerProjectId: string;
   program: RunnerProgram;
   handle: string;
   name: string;
-  basePrompt?: string;
   dmAccess?: DmAccess;
-};
+} & (
+  | { runnerProjectId: string; basePrompt?: string }
+  /** 봇(러너 봇 스펙 B2) — 프로젝트 대신 러너와 정의. 기본 지시는 없다(정의가 그 자리) */
+  | { runnerTokenId: string; bot: RunnerBotDefinition }
+);
 export type CreateAgentInput = CreateOpenClawAgentInput | CreateRunnerAgentInput;
 /** `basePrompt: null` 은 지운다 */
 export type AgentPatch = {
@@ -41,6 +43,8 @@ export type AgentPatch = {
    * 싣지 않는다 — 서버가 400 으로 거절한다(러너 일반화 계획 판정 PR10)
    */
   sessionDefaults?: Partial<SessionDefaults>;
+  /** 봇 정의 — 네 칸 통째로(봇만, 그 연결의 주인·admin 이상). 바꾸면 그 봇의 세션이 새로 열린다(러너 봇 스펙 B10) */
+  bot?: RunnerBotDefinition;
 };
 /** archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다) */
 export type DiscoveredAgent = {
