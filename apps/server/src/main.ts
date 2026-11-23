@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
+import { BlobStoreCheckError } from "./modules/attachments/blob-store";
 import { startRunState } from "./modules/ops/health";
 import { installProcessHandlers } from "./process-handlers";
 import { dataDirErrorMessage, isBundled, unwritableDataPath } from "./runtime";
@@ -26,16 +27,24 @@ enterSourceRoot(isBundled());
 
 const config = loadConfig();
 // 스택 없이 한 줄로 끝낸다 — 사람이 docker compose logs 에서 바로 읽고 고치게
+// S3 모드면 첨부 디렉터리를 보지도 만들지도 않는다
 const unwritable = unwritableDataPath({
   dataDir: config.DATA_DIR,
   dbPath: config.dbPath,
-  attachmentsDir: config.attachmentsDir,
+  ...(config.attachmentsStorage === "s3" ? {} : { attachmentsDir: config.attachmentsDir }),
 });
 if (unwritable) {
   console.error(dataDirErrorMessage(unwritable));
   process.exit(1);
 }
-const app = await createApp(config);
+const app = await createApp(config).catch((err: unknown) => {
+  // 첨부 저장소(S3)에 닿지 않으면 한 줄로 끝낸다 — 문구에 키·시크릿이 없다(blob-store.ts). 나머지 부팅 오류는 그대로 던진다
+  if (err instanceof BlobStoreCheckError) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  throw err;
+});
 // 부팅 중(createApp 안) 예외는 처리기가 없어 Node 기본대로 죽는다 — 표지도 아직 안 썼으니 다음 부팅이 unclean 으로 보지 않는다
 const runState = startRunState(config.DATA_DIR, app.ops, app.logger);
 app.setPreviousClean(runState.previousClean);

@@ -46,6 +46,85 @@ describe("main 진입점", () => {
   });
 });
 
+describe("main 진입점 — S3 모드 부팅 확인(S3 스펙 S3)", () => {
+  it("첨부 저장소 확인(check)이 실패하면 키·시크릿 없는 한 줄을 찍고 exit(1)", async () => {
+    vi.resetModules();
+    const { BlobStoreCheckError } = await import("../src/modules/attachments/blob-store");
+    const unwritable = vi.fn(() => null);
+    vi.doMock("../src/runtime", () => ({
+      isBundled: () => true,
+      unwritableDataPath: unwritable,
+      dataDirErrorMessage: () => "",
+    }));
+    vi.doMock("../src/config", () => ({
+      loadConfig: () => ({
+        DATA_DIR: "/nowhere",
+        dbPath: "/nowhere/db",
+        attachmentsDir: "/nowhere/a",
+        attachmentsStorage: "s3",
+        HOST: "127.0.0.1",
+        PORT: 0,
+      }),
+    }));
+    vi.doMock("../src/app", () => ({
+      createApp: async () => {
+        throw new BlobStoreCheckError(
+          "설정 오류: 첨부 저장소(S3)에 닿을 수 없다 — HeadBucket NotFound (HTTP 404)",
+        );
+      },
+    }));
+    vi.doMock("../src/modules/attachments/blob-store", () => ({ BlobStoreCheckError }));
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(import("../src/main")).rejects.toThrow("exit 1");
+      expect(error).toHaveBeenCalledWith(
+        "설정 오류: 첨부 저장소(S3)에 닿을 수 없다 — HeadBucket NotFound (HTTP 404)",
+      );
+      // S3 모드는 첨부 디렉터리를 쓰기 검사에 넣지 않는다
+      expect(unwritable).toHaveBeenCalledWith({ dataDir: "/nowhere", dbPath: "/nowhere/db" });
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+      vi.doUnmock("../src/runtime");
+      vi.doUnmock("../src/config");
+      vi.doUnmock("../src/app");
+      vi.doUnmock("../src/modules/attachments/blob-store");
+    }
+  });
+
+  it("그 밖의 부팅 오류는 그대로 던진다(exit 하지 않는다)", async () => {
+    vi.resetModules();
+    vi.doMock("../src/runtime", () => ({
+      isBundled: () => true,
+      unwritableDataPath: () => null,
+      dataDirErrorMessage: () => "",
+    }));
+    vi.doMock("../src/config", () => ({
+      loadConfig: () => ({ DATA_DIR: "/nowhere", dbPath: "/nowhere/db", attachmentsDir: "/nowhere/a" }),
+    }));
+    vi.doMock("../src/app", () => ({
+      createApp: async () => {
+        throw new Error("db broken");
+      },
+    }));
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+    try {
+      await expect(import("../src/main")).rejects.toThrow("db broken");
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      exit.mockRestore();
+      vi.doUnmock("../src/runtime");
+      vi.doUnmock("../src/config");
+      vi.doUnmock("../src/app");
+    }
+  });
+});
+
 describe("enterSourceRoot — 소스 실행의 cwd 옮기기", () => {
   function tree(withEnv: boolean) {
     const root = mkdtempSync(join(tmpdir(), "dodok-main-cwd-"));

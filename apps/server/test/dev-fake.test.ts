@@ -145,6 +145,26 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
   });
 
+  it("첨부 저장소 env(ATTACHMENTS_STORAGE·S3_*)만 골라 넘긴다 — 빈 값·다른 운영 env 는 넘기지 않는다", () => {
+    const opts = devFakeCliOptions(
+      {
+        ATTACHMENTS_STORAGE: "s3",
+        S3_BUCKET: "dodok",
+        S3_PREFIX: "",
+        S3_FORCE_PATH_STYLE: "true",
+        LOCAL_AUTH_TOKEN: "from-shell",
+        ATTACHMENTS_DIR: "/elsewhere",
+      },
+      [],
+    );
+    expect(opts.attachmentsEnv).toEqual({
+      ATTACHMENTS_STORAGE: "s3",
+      S3_BUCKET: "dodok",
+      S3_FORCE_PATH_STYLE: "true",
+    });
+    expect(devFakeCliOptions({}, []).attachmentsEnv).toEqual({});
+  });
+
   it("로그 레벨은 LOG_LEVEL(debug 로 푸시 건너뜀 줄을 본다), 없거나 비었으면 info, 모르는 이름이면 시작하지 않는다", () => {
     expect(devFakeCliOptions({ LOG_LEVEL: "debug" }, []).logLevel).toBe("debug");
     expect(devFakeCliOptions({}, []).logLevel).toBe("info");

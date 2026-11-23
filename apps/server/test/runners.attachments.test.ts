@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
+import { createLocalBlobStore } from "../src/modules/attachments/blob-store";
 import { findReadable, uploadAttachment } from "../src/modules/attachments/service";
 import { createChannel } from "../src/modules/channels/service";
 import { newTestDb } from "./helpers/db";
@@ -32,11 +33,15 @@ describe("findReadable 러너 — 자기 업로드는 러너(bridge)가 올린 �
     // 실제로는 사용자 id(Better Auth)와 토큰 id(uuidv7)가 겹치지 않는다 — 방어 겹이 혼자 서 있게 일부러 같은 글자로 만든다
     const tokenId = userId;
     const human = await uploadAttachment(
-      { db, dir },
+      { db, store: createLocalBlobStore(dir) },
       { channelId, uploader: { type: "user", userId }, bytes: makePng(2, 2) },
     );
     expect(
-      findReadable({ db, dir }, human.id, { type: "runner", tokenId, mayRead: () => false }),
+      findReadable({ db, store: createLocalBlobStore(dir) }, human.id, {
+        type: "runner",
+        tokenId,
+        mayRead: () => false,
+      }),
     ).toBeUndefined();
   });
 });

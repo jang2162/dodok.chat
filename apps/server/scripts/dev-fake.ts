@@ -432,7 +432,16 @@ export type DevFakeOptions = {
   pushSend?: AppDeps["pushSend"];
   /** 끊김 사건 임계(기본 운영과 같은 DISCONNECT_EVENT_MS) — 브라우저 검증이 60초를 기다리지 않게 줄인다 */
   disconnectEventMs?: number;
+  /**
+   * 첨부 저장소 설정(ATTACHMENTS_STORAGE·S3_* — 운영 이름 그대로 loadConfig 에 넘긴다). 없으면 기본 local(data/attachments).
+   * 임시 S3 호환 저장소로 S3 모드를 손으로 볼 때 쓴다
+   */
+  attachmentsEnv?: Record<string, string>;
 };
+
+/** 셸 env 에서 dev:fake 가 운영 설정으로 넘기는 첨부 저장소 이름들 — 나머지 운영 env 는 읽지 않는다(머리 주석) */
+const DEV_FAKE_ATTACHMENT_ENV =
+  /^(ATTACHMENTS_STORAGE|S3_(ENDPOINT|REGION|BUCKET|PREFIX|ACCESS_KEY_ID|SECRET_ACCESS_KEY|FORCE_PATH_STYLE))$/;
 
 const DEV_FAKE_LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const;
 type DevFakeLogLevel = (typeof DEV_FAKE_LOG_LEVELS)[number];
@@ -472,6 +481,12 @@ export function devFakeCliOptions(
     keep: argv.includes("--keep"),
     disconnectEventMs: disconnectMsFromEnv(env.DODOK_DEVFAKE_DISCONNECT_MS),
     logLevel: logLevelFromEnv(env.LOG_LEVEL),
+    attachmentsEnv: Object.fromEntries(
+      Object.entries(env).filter(
+        (e): e is [string, string] =>
+          DEV_FAKE_ATTACHMENT_ENV.test(e[0]) && typeof e[1] === "string" && e[1] !== "",
+      ),
+    ),
   };
 }
 export type DevFake = {
@@ -1600,7 +1615,7 @@ function ensureDevFakeAgents(app: App): void {
  * DM 은 「살아 있는 채널」로 치지 않는다 — 보관할 길이 없어, 치면 채널을 모두 보관해도 씨앗이 다시 생기지 않는다.
  * 씨앗을 만들었으면 true — 같은 시작이 DM 씨앗도 둔다(`ensureDevFakeDm`)
  */
-async function ensureDevFakeSessions(app: App, attachmentsDir: string): Promise<boolean> {
+async function ensureDevFakeSessions(app: App): Promise<boolean> {
   const { db, workspaceId, ownerUserId } = app;
   const live = db
     .select({ id: channels.id })
@@ -1647,7 +1662,7 @@ async function ensureDevFakeSessions(app: App, attachmentsDir: string): Promise<
     createdBy: { type: "user", id: ownerUserId },
     createdAt: new Date(),
   });
-  const files = await uploadSeedFiles(app, attachmentsDir, channel.id, ownerUserId, DEV_FAKE_CHANNEL_FILES);
+  const files = await uploadSeedFiles(app, channel.id, ownerUserId, DEV_FAKE_CHANNEL_FILES);
   seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.", files);
   return true;
 }
@@ -1655,7 +1670,6 @@ async function ensureDevFakeSessions(app: App, attachmentsDir: string): Promise<
 /** 씨앗 첨부를 사람 업로드 경로(`uploadAttachment`)로 올리고 id 를 그 순서로 돌려준다 — 묶기는 메시지 저장이 한다 */
 async function uploadSeedFiles(
   app: App,
-  dir: string,
   channelId: string,
   userId: string,
   files: readonly FakeFile[],
@@ -1663,7 +1677,7 @@ async function uploadSeedFiles(
   const ids: string[] = [];
   for (const f of files) {
     const a = await uploadAttachment(
-      { db: app.db, dir, locks: app.blobLocks },
+      { db: app.db, store: app.blobStore, locks: app.blobLocks },
       { channelId, uploader: { type: "user", userId }, bytes: f.bytes, nameHint: f.name, mimeHint: f.mime },
     );
     ids.push(a.id);
@@ -1680,10 +1694,7 @@ async function uploadSeedFiles(
  * 닿은 DB 는 그대로 뜬다(플러그인 갈래와 같다). 새 DB 에서 답이 안 오면 던진다 — DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로
  * 오인하지 않게
  */
-async function ensureDevFakeDm(
-  app: App,
-  opts: { keep: boolean; officeConnected: boolean; attachmentsDir: string },
-): Promise<void> {
+async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected: boolean }): Promise<void> {
   const { db, workspaceId } = app;
   if (opts.keep) {
     app.logger.warn("dev:fake dm seed skipped — --keep keeps the inherited DB as it is");
@@ -1727,7 +1738,7 @@ async function ensureDevFakeDm(
       userId: mia.id,
       role: "member",
       bodyMd: DEV_FAKE_DM_TEXT,
-      attachments: await uploadSeedFiles(app, opts.attachmentsDir, channel.id, mia.id, [DEV_FAKE_DM_FILE]),
+      attachments: await uploadSeedFiles(app, channel.id, mia.id, [DEV_FAKE_DM_FILE]),
     });
   await seedDevFakeDirects(app, { miaId: mia.id, agentId: agent.id });
 }
@@ -1935,6 +1946,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       LOG_LEVEL: opts.logLevel ?? "info",
       LOCAL_AUTH_TOKEN: DEV_FAKE_LOCAL_TOKEN,
       BETTER_AUTH_SECRET: DEV_FAKE_SECRET,
+      ...opts.attachmentsEnv,
     });
     const seedDb = createDb(config.dbPath);
     try {
@@ -1956,7 +1968,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     claimDevFakeGateways(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
-    const seeded = await ensureDevFakeSessions(app, config.attachmentsDir);
+    const seeded = await ensureDevFakeSessions(app);
     const live: App = app;
     /** 훅의 gatewayId 로 짝을 고른다 — 사무실·집이 아니면 undefined(400) */
     const pairOf = (gatewayId: string) => pairs.find((p) => p.spec.id === gatewayId);
@@ -2225,7 +2237,6 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       await ensureDevFakeDm(app, {
         keep: opts.keep === true,
         officeConnected: pairs.some((p) => p.spec.id === DEV_FAKE_OFFICE_GATEWAY_ID && p.plugin),
-        attachmentsDir: config.attachmentsDir,
       });
     return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {

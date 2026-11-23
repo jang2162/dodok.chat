@@ -13,7 +13,6 @@ import {
   RUNNER_ATTACHMENTS_PATH,
 } from "@dodok/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { open } from "node:fs/promises";
 import { validateHeaderValue } from "node:http";
 import { z } from "zod";
 import type { Auth } from "../../auth";
@@ -33,6 +32,7 @@ import {
   uploadAttachment,
 } from "./service";
 import { listFiles } from "./list";
+import type { BlobStore } from "./blob-store";
 import type { BlobLocks } from "./store";
 
 /** locks 는 정리 타이머와 같은 객체여야 한다(app.ts 가 하나를 만들어 둘에 준다) */
@@ -40,7 +40,8 @@ export type AttachmentRouteContext = {
   auth: Auth;
   db: Db;
   workspaceId: string;
-  dir: string;
+  /** 첨부 블롭 저장소(로컬·S3) — 정리 타이머와 같은 객체 */
+  store: BlobStore;
   /**
    * 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401. 통과면 그 토큰의 Gateway 로 올린 첨부를 표시하고, GET 은 그
    * Gateway 의 범위만 준다(멀티 Gateway 스펙 「브리지 첨부 범위」 절 — 범위 밖은 없는 id 와 같은 404)
@@ -119,35 +120,32 @@ function blobHeaders(a: Attachment, forceDownload: boolean): Record<string, stri
 }
 
 /**
- * 파일을 열어 보고(없으면 404 — 정리와 스친 행) 스트림으로 보낸다. 연 파일의 실제 크기가 저장값과 다르면(디스크 손상·손 조작)
- * 틀린 content-length 로 보내다 끊기지 않게 500 으로 떨어진다. 스트림은 autoClose 라 다 보내거나, 요청이 끊겨 Fastify 가
- * destroy 하면 fd 를 닫는다
+ * 블롭을 열어 보고(없으면 404 — 정리와 스친 행) 스트림으로 보낸다. 연 블롭의 실제 크기가 저장값과 다르면(디스크 손상·손 조작)
+ * 틀린 content-length 로 보내다 끊기지 않게 500 으로 떨어진다. 다 보내기 전에 요청이 끊기면(또는 Fastify 가 스트림 오류로 응답을
+ * 끊으면) close() 로 파일 핸들·S3 응답 소켓을 놓는다
  */
 async function sendBlob(
   reply: FastifyReply,
+  store: BlobStore,
   found: NonNullable<ReturnType<typeof findReadable>>,
   forceDownload: boolean,
 ) {
-  const { attachment: a, path } = found;
+  const { attachment: a, sha } = found;
   const headers = blobHeaders(a, forceDownload);
-  const handle = await open(path, "r").catch((err: NodeJS.ErrnoException) => {
-    if (err.code === "ENOENT") throw apiError("NOT_FOUND", "attachment not found");
-    throw err;
-  });
-  try {
-    const { size } = await handle.stat();
-    if (size !== a.size) {
-      // 로그에는 id·크기만 — 블롭 경로는 남기지 않는다
-      const error = apiError("INTERNAL", "internal error");
-      error.cause = { attachmentId: a.id, storedSize: a.size, blobSize: size };
-      throw error;
-    }
-    reply.headers({ ...headers, "content-length": String(size) });
-  } catch (err) {
-    await handle.close();
-    throw err;
+  const opened = await store.open(sha);
+  if (!opened) throw apiError("NOT_FOUND", "attachment not found");
+  if (opened.size !== a.size) {
+    opened.close();
+    // 로그에는 id·크기만 — 블롭 경로·키는 남기지 않는다
+    const error = apiError("INTERNAL", "internal error");
+    error.cause = { attachmentId: a.id, storedSize: a.size, blobSize: opened.size };
+    throw error;
   }
-  return reply.send(handle.createReadStream());
+  reply.headers({ ...headers, "content-length": String(opened.size) });
+  // Fastify 의 sendStream 도 응답이 끝나면(끊김 포함, send 전에 이미 끊긴 것도) 본문을 destroy 한다 — 이 줄은 Fastify 가 본문을
+  // 놓치는 경로(onSend 훅이 본문을 바꾸는 등)를 위한 이중 안전이다. 동작은 attachments.routes.test.ts 「S3 내려받기 — 끊김」이 지킨다
+  reply.raw.once("close", () => opened.close());
+  return reply.send(opened.stream);
 }
 
 export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: AttachmentRouteContext): void {
@@ -161,7 +159,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
         throw sizeLimitError(request.routeOptions.bodyLimit ?? 0, 413);
       throw error;
     });
-    const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
+    const deps: AttachmentDeps = { db: ctx.db, store: ctx.store, locks: ctx.locks };
     const session = requireSession(ctx);
     const verified = new WeakMap<FastifyRequest, unknown>();
     const bridge = requireAgentToken({
@@ -216,7 +214,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
       const user = sessionUser(request);
       const found = findReadable(deps, id, { type: "user", userId: user.id, workspaceId: user.workspaceId });
       if (!found) throw apiError("NOT_FOUND", "attachment not found");
-      return sendBlob(reply, found, download === "1");
+      return sendBlob(reply, ctx.store, found, download === "1");
     });
 
     // 에이전트 쪽 경로 둘 — 브리지(플러그인)와 러너가 같은 규칙(20 MiB·매직 바이트·디스크 여유 507). 러너가 올린 파일도
@@ -291,7 +289,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
         const { id } = parseParams(IdParams, request.params);
         const found = findReadable(deps, id, viewer(request));
         if (!found) throw apiError("NOT_FOUND", "attachment not found");
-        return sendBlob(reply, found, true);
+        return sendBlob(reply, ctx.store, found, true);
       });
     }
   });

@@ -22,7 +22,8 @@ import {
   sweepAttachments,
   uploadAttachment,
 } from "../../src/modules/attachments/service";
-import { blobPath, sha256Of } from "../../src/modules/attachments/store";
+import { localBlobPath as blobPath } from "../../src/modules/attachments/blob-store";
+import { sha256Of } from "../../src/modules/attachments/store";
 import { createAgentMessage } from "../../src/modules/messages/service";
 import { prepareInboundMedia } from "../../../../packages/openclaw-plugin/src/inbound-media";
 import { createScenario } from "../fakes/scenario";
@@ -60,7 +61,7 @@ describe("통합 시나리오 11 — 첨부", () => {
 
   const depsOf = (l: LiveApp): AttachmentDeps => ({
     db: l.app.db,
-    dir: join(l.dir, "attachments"),
+    store: l.app.blobStore,
     locks: l.app.blobLocks,
   });
 
@@ -434,8 +435,8 @@ describe("통합 시나리오 11 — 첨부", () => {
       .all()
       .map((r) => r.id);
     expect(ids).toEqual([kept.id]);
-    expect(existsSync(blobPath(deps.dir, sha256Of(lonelyPng)))).toBe(false);
-    expect(existsSync(blobPath(deps.dir, sha256Of(sharedPng)))).toBe(true);
+    expect(existsSync(blobPath(join(l.dir, "attachments"), sha256Of(lonelyPng)))).toBe(false);
+    expect(existsSync(blobPath(join(l.dir, "attachments"), sha256Of(sharedPng)))).toBe(true);
     const got = await humanGet(l, kept.id);
     expect(got.statusCode).toBe(200);
     expect(got.rawPayload.equals(sharedPng)).toBe(true);

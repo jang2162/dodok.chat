@@ -344,7 +344,7 @@ src/
 │  │                      SECURITY_HEADERS(nosniff·Referrer-Policy·CSP)를 onSend 로 모든 응답에, HSTS 는 APP_ORIGIN 이 https 일 때만. index.html 이 없으면 error 한 줄 뒤 끈다
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
-│  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 디스크 블롭(`<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>`, 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
+│  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 블롭(`BlobStore`(blob-store.ts) — 로컬 `<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>` 또는 S3 `<S3_PREFIX><sha 앞 2자>/<sha256>`(s3-store.ts), 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
 │  │                      sniff.ts(순수: 매직 바이트 → kind·mime, 이미지면 image-size 로 가로·세로 — EXIF 회전 5~8 은 바꿔서, 못 읽으면 file. SVG 는 늘 file) ·
 │  │                      store.ts(sha256·블롭 쓰기(임시 파일 → rename)·지우기, sha 별 잠금 BlobLocks — 업로드와 정리가 같은 잠금을 지난다) ·
 │  │                      service.ts(올리기(사람은 판별이 image 면 5 MB·그 밖 20 MiB, 브리지 파일 20 MiB)·잡기 claimUser/claimBridge·묶기·읽기 권한 findReadable·정리 sweepAttachments —
@@ -1290,7 +1290,10 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/docker-deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
 | `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·VAPID 키 `vapid.json`·Gateway 마다 Ed25519 디바이스 아이덴티티와 디바이스 토큰 `gateways/<Gateway id>/`(`device.json`·`device-tokens.json`)) |
 | `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
-| `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
+| `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). `local` 모드에서만 쓰고 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
+| `ATTACHMENTS_STORAGE` | `local` | 첨부 블롭 저장소 `local`\|`s3`(`modules/attachments/blob-store.ts`·`s3-store.ts`). 바꿔도 이미 있는 블롭은 옮기지 않는다. 배포 절차는 `docs/guides/docker-deploy.md` 「S3 저장소」 |
+| `S3_REGION` · `S3_BUCKET` · `S3_ACCESS_KEY_ID` · `S3_SECRET_ACCESS_KEY` | — (`s3` 모드 필수) | 리전·버킷·접근 키. 하나라도 없으면 그 이름만 든 설정 오류(값은 싣지 않는다). 부팅 때 `HeadBucket` 으로 닿는지 보고, 안 닿으면 부팅 실패(`BlobStoreCheckError` — main 이 한 줄로 끝낸다) |
+| `S3_ENDPOINT` · `S3_PREFIX` · `S3_FORCE_PATH_STYLE` | AWS 기본 · `""` · `false` | S3 호환 엔드포인트·키 접두사(객체 키 `<S3_PREFIX><sha 앞 2자>/<sha>`)·경로 방식 주소. `dev:fake` 도 셸의 `ATTACHMENTS_STORAGE`·`S3_*` 만은 넘겨받는다(손 확인용) |
 | `LOG_LEVEL` | `info` | `fatal`~`trace` (pino, 토큰 키는 redact) |
 | `DODOK_WORKSPACE_NAME` | `dodok` | 부팅 때 워크스페이스가 없으면 이 이름으로 만든다 |
 | `OWNER_HANDLE` | `owner` | owner 핸들 |
