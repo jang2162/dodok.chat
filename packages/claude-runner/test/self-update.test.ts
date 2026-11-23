@@ -54,6 +54,8 @@ function harness(over: Partial<SelfUpdateOptions> = {}, npm?: Runner) {
     env: { PATH: "/usr/bin", DODOK_RUNNER_TOKEN: "drn_x", ANTHROPIC_API_KEY: "k", HOME: "/h" },
     npm: npm ?? fakeNpm,
     npmPath: "npm",
+    // npm 이 실패했을 때 그 자리에 깔린 판 — 기본은 지금 판 그대로
+    installedVersion: () => "0.8.0",
     // 전역 bin 링크는 패키지 안 main.js 로 풀린다
     realpath: (p) => (p === "/g/bin/dodok-runner" ? ENTRY : p),
     spawn: (...args) => {
@@ -76,11 +78,11 @@ describe("selfUpdate", () => {
   it("성공 — 정확한 판을 전역 설치하고, 연결을 닫은 뒤 같은 argv·env 로 분리된 자식을 띄우고 끝난다", async () => {
     const { opts, calls } = harness();
     expect(await selfUpdate(opts)).toEqual({ ok: true });
+    // prefix 는 진입 파일의 실제 자리에서 — npm 출력은 읽지 않는다
     expect(calls.npm.map((c) => c.args)).toEqual([
-      ["root", "-g"],
-      ["install", "--global", "@dodok/runner@0.9.0"],
+      ["install", "--global", "--prefix", "/g", "@dodok/runner@0.9.0"],
     ]);
-    expect(calls.order).toEqual(["npm root", "npm install", "beforeRestart", "spawn", "exit"]);
+    expect(calls.order).toEqual(["npm install", "beforeRestart", "spawn", "exit"]);
     expect(calls.spawn).toEqual([
       [
         "/usr/bin/node",
@@ -152,7 +154,7 @@ describe("selfUpdate", () => {
       reason: "unsupported",
       message: UNSUPPORTED_MESSAGE,
     });
-    expect(calls.npm.map((c) => c.args[0])).toEqual(["root"]);
+    expect(calls.npm).toEqual([]);
     expect(calls.spawn).toEqual([]);
   });
 
@@ -186,11 +188,32 @@ describe("selfUpdate", () => {
     expect(calls.exit).toEqual([]);
   });
 
-  it("npm 을 찾지 못하면 unsupported", async () => {
-    const { opts } = harness({}, async () => {
+  it("npm 이 0 이 아니게 끝나도 그 자리에 목표 판이 깔렸으면 성공(npm 감싸개의 reshim 실패 — 손 확인 결함)", async () => {
+    const { opts, calls } = harness({ installedVersion: () => "0.9.0" }, async () => {
+      throw new RunFailure(127, "added 1 package\nmise: command not found");
+    });
+    expect(await selfUpdate(opts)).toEqual({ ok: true });
+    expect(calls.order).toEqual(["beforeRestart", "spawn", "exit"]);
+  });
+
+  it("npm 을 찾지 못하면 failed — 다시 띄우지 않는다", async () => {
+    const { opts, calls } = harness({}, async () => {
       throw new RunFailure(null, "spawn npm ENOENT");
     });
-    expect(await selfUpdate(opts)).toMatchObject({ ok: false, reason: "unsupported" });
+    expect(await selfUpdate(opts)).toMatchObject({ ok: false, reason: "failed" });
+    expect(calls.spawn).toEqual([]);
+  });
+
+  it("경로에 UUID 꼴 글자가 있어도 그 prefix 에 설치한다(npm 은 출력에서 그런 글자를 가린다 — 손 확인 결함)", async () => {
+    const prefix = "/tmp/x-4242c930-469c-485e-bd53-b8a948707e30/prefix";
+    const { opts, calls } = harness({
+      realpath: (p) =>
+        p === "/g/bin/dodok-runner" ? `${prefix}/lib/node_modules/@dodok/runner/dist/main.js` : p,
+    });
+    expect(await selfUpdate(opts)).toEqual({ ok: true });
+    expect(calls.npm.map((c) => c.args)).toEqual([
+      ["install", "--global", "--prefix", prefix, "@dodok/runner@0.9.0"],
+    ]);
   });
 });
 
@@ -248,8 +271,7 @@ describe("가짜 npm 실행 파일로 실제 execFile", () => {
     });
     expect(result).toEqual({ ok: true });
     expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
-      "root -g|none|none",
-      "install --global @dodok/runner@0.9.0|none|none",
+      `install --global --prefix ${base} @dodok/runner@0.9.0|none|none`,
     ]);
     expect(spawned).toHaveLength(1);
   });

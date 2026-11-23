@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   compareVersions,
   REMOTE_UPDATE_VERSION_PATTERN,
@@ -81,6 +81,31 @@ function npmErrorCode(output: string): string | null {
   return /npm (?:ERR!|error) code (E[A-Z0-9_]+)/.exec(output)?.[1] ?? null;
 }
 
+/** `<prefix>/lib/node_modules/@dodok/runner/package.json` 의 판 — 읽지 못하면 null */
+export function readInstalledVersion(prefix: string): string | null {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(prefix, "lib", "node_modules", ...RUNNER_PACKAGE.split("/"), "package.json"), "utf8"),
+    ) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/** npm 전역 설치의 꼴 — `<prefix>/lib/node_modules/@dodok/runner/dist/main.js`(macOS·Linux) */
+const GLOBAL_ENTRY = /^(.+)\/lib\/node_modules\/@dodok\/runner\/dist\/main\.js$/;
+
+/** 러너 진입 파일(링크를 푼 자리)이 npm 전역 설치 안이면 그 prefix, 아니면 null */
+export function globalPrefixOf(entry: string | undefined, realpath: (p: string) => string): string | null {
+  if (entry === undefined) return null;
+  try {
+    return GLOBAL_ENTRY.exec(realpath(entry))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type SelfUpdateOptions = {
   version: string;
   /** 지금 이 러너의 판(빌드가 채운 값 — 소스 실행이면 dev) */
@@ -100,6 +125,8 @@ export type SelfUpdateOptions = {
   spawn?: Spawner;
   realpath?: (p: string) => string;
   npmPath?: string;
+  /** prefix 에 깔린 러너 판(없으면 null) — 시험이 바꾼다 */
+  installedVersion?: (prefix: string) => string | null;
   /** 설치가 끝나고 다시 띄우기 직전 — 서버에 ok 를 답하고 연결을 닫는다 */
   beforeRestart?: () => Promise<void>;
   exit?: (code: number) => void;
@@ -129,35 +156,29 @@ export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateR
   const npm = opts.npmPath ?? npmBesideNode(opts.execPath);
   const env = npmEnv(opts.env);
 
-  // 이 러너가 npm 전역 자리(<npm root -g>/@dodok/runner) 안에서 도는가 — 아니면 소스·tgz 압축 풀기 등 다른 설치 방식이다
-  let root: string;
-  try {
-    root = (await run(npm, ["root", "-g"], { env, timeoutMs: 30_000 })).stdout.trim();
-  } catch {
-    return { ok: false, reason: "unsupported", message: `${UNSUPPORTED_MESSAGE} — npm 을 찾지 못했습니다` };
-  }
-  const entry = opts.argv[1];
-  let global = false;
-  try {
-    const packageDir = join(realpath(root), ...RUNNER_PACKAGE.split("/"));
-    global = entry !== undefined && realpath(entry).startsWith(packageDir + sep);
-  } catch {
-    global = false;
-  }
-  if (!global) return { ok: false, reason: "unsupported", message: UNSUPPORTED_MESSAGE };
+  // 이 러너가 npm 전역 자리(<prefix>/lib/node_modules/@dodok/runner) 안에서 도는가 — 아니면 소스·tgz 압축 풀기 등 다른 설치 방식이다.
+  // `npm root -g` 의 출력은 읽지 않는다 — npm 이 UUID 꼴 글자를 `***` 로 가려 그런 글자가 든 경로가 깨진다(손 확인에서 겪었다). 진입 파일의
+  // 실제 자리에서 prefix 를 구해 그 prefix 에 설치한다(같은 자리를 덮는다)
+  const prefix = globalPrefixOf(opts.argv[1], realpath);
+  if (prefix === null) return { ok: false, reason: "unsupported", message: UNSUPPORTED_MESSAGE };
 
   try {
-    await run(npm, ["install", "--global", `${RUNNER_PACKAGE}@${opts.version}`], {
+    await run(npm, ["install", "--global", "--prefix", prefix, `${RUNNER_PACKAGE}@${opts.version}`], {
       env,
       timeoutMs: RUNNER_NPM_INSTALL_TIMEOUT_MS,
     });
   } catch (error) {
-    const code = error instanceof RunFailure ? npmErrorCode(error.output) : null;
-    return {
-      ok: false,
-      reason: "failed",
-      message: `npm 설치에 실패했습니다${code ? `(${code})` : ""} — 그 머신에서 npm i -g ${RUNNER_PACKAGE}@${opts.version} 을 돌려 보세요`,
-    };
+    // npm 을 감싼 실행 파일(mise·asdf 등)은 설치 뒤 단계(reshim)가 실패해도 0 이 아니게 끝난다 — 그 자리에 목표 판이 깔렸으면 성공이다
+    // (손 확인에서 겪었다: 설치는 끝났는데 `mise: command not found` 로 127)
+    const installed = (opts.installedVersion ?? readInstalledVersion)(prefix);
+    if (installed !== opts.version) {
+      const code = error instanceof RunFailure ? npmErrorCode(error.output) : null;
+      return {
+        ok: false,
+        reason: "failed",
+        message: `npm 설치에 실패했습니다${code ? `(${code})` : ""} — 그 머신에서 npm i -g ${RUNNER_PACKAGE}@${opts.version} 을 돌려 보세요`,
+      };
+    }
   }
 
   await opts.beforeRestart?.();
