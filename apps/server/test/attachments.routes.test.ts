@@ -684,7 +684,50 @@ describe("S3 내려받기 — 끊김(S3 스펙 S5)", () => {
     return body;
   }
 
-  it("client abort closes S3 body", async () => {
+  it("GetObject 를 기다리는 사이 클라이언트가 끊으면, 늦게 온 S3 본문도 닫는다", async () => {
+    const bytes = Buffer.alloc(64 * 1024, 5);
+    const a = await uploadBound(bytes);
+    let body: Readable | undefined;
+    s3.body.set(
+      `${sha256Of(bytes).slice(0, 2)}/${sha256Of(bytes)}`,
+      () => (body = slowBody(bytes.subarray(0, 1024))),
+    );
+    // GetObject 만 문이 열릴 때까지 붙잡는다 — 그 사이 요청이 끊긴다
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let getArrived!: () => void;
+    const arrived = new Promise<void>((r) => (getArrived = r));
+    const send = s3.client.send.bind(s3.client);
+    (s3.client as unknown as { send: (c: unknown) => Promise<unknown> }).send = async (command) => {
+      if ((command as { constructor: { name: string } }).constructor.name === "GetObjectCommand") {
+        getArrived();
+        await gate;
+      }
+      return send(command as never);
+    };
+    try {
+      const req = httpRequest({
+        host: "127.0.0.1",
+        port,
+        path: `/api/v1/attachments/${a.id}`,
+        headers: session,
+      });
+      req.on("error", () => {});
+      req.end();
+      await arrived;
+      req.destroy();
+      // 서버가 끊김을 본 뒤에 S3 가 답한다
+      await vi.waitFor(() => expect(req.destroyed).toBe(true));
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      await vi.waitFor(() => expect(body?.destroyed).toBe(true), { timeout: 3000, interval: 20 });
+    } finally {
+      (s3.client as unknown as { send: unknown }).send = send;
+      s3.body.clear();
+    }
+  });
+
+  it("받는 중에 클라이언트가 끊으면 S3 본문을 닫는다", async () => {
     const bytes = Buffer.alloc(64 * 1024, 3);
     const a = await uploadBound(bytes);
     let body: Readable | undefined;

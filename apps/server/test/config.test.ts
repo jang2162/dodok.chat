@@ -99,6 +99,14 @@ describe("loadConfig", () => {
         forcePathStyle: true,
       });
     });
+    it.each([
+      ["dodok", "dodok/"],
+      ["/dodok/", "dodok/"],
+      ["//a/b//", "a/b/"],
+      ["/", ""],
+    ])("S3_PREFIX %j → %j — 앞 / 는 떼고 끝은 / 하나", (raw, want) => {
+      expect(loadConfig({ ...s3Env, S3_PREFIX: raw }).s3?.prefix).toBe(want);
+    });
     it("S3_FORCE_PATH_STYLE 는 true|false 만", () => {
       expect(() => loadConfig({ ...s3Env, S3_FORCE_PATH_STYLE: "yes" })).toThrow(/S3_FORCE_PATH_STYLE/);
     });

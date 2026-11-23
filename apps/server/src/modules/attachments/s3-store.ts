@@ -11,6 +11,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import type { Readable } from "node:stream";
 import type { S3Config } from "../../config";
@@ -38,18 +39,40 @@ function describe(err: unknown): string {
   return status === undefined ? kind : `${kind} (HTTP ${status})`;
 }
 
+/** TCP 연결이 이 안에 서지 않으면 오류 */
+export const S3_CONNECTION_TIMEOUT_MS = 5_000;
+/**
+ * 요청을 보내고 응답 헤더를 받기까지의 상한. SDK 기본은 둘 다 0(무한)이라 멈춘 엔드포인트에서 부팅 check 가 끝나지 않고, 업로드가
+ * sha 잠금을 쥔 채 멈춰 정리 전체가 그 뒤에 묶였다. 헤더를 받은 뒤의 본문(큰 내려받기)에는 걸리지 않는다 — 내려받기 도중 멈춘 본문은
+ * 클라이언트가 끊을 때 닫는다(routes.ts sendBlob). SDK 의 재시도(기본 3회)마다 다시 재므로 한 호출의 최악은 그 곱에 백오프를 더한 것이다
+ */
+export const S3_REQUEST_TIMEOUT_MS = 30_000;
+
+export type S3Timeouts = { connectionTimeout: number; requestTimeout: number };
+
+/** S3Client 설정 — 시험이 타임아웃을 줄여 멈춘 서버에 붙인다 */
+export function s3ClientConfig(
+  cfg: S3Config,
+  timeouts: S3Timeouts = {
+    connectionTimeout: S3_CONNECTION_TIMEOUT_MS,
+    requestTimeout: S3_REQUEST_TIMEOUT_MS,
+  },
+): S3ClientConfig {
+  return {
+    region: cfg.region,
+    ...(cfg.endpoint === undefined ? {} : { endpoint: cfg.endpoint }),
+    forcePathStyle: cfg.forcePathStyle,
+    credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+    // S3 호환 저장소(MinIO·R2 등) 일부가 SDK 기본 체크섬 헤더(CRC32)를 모른다 — 요구될 때만 붙인다
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
+    // NodeHttpHandler 옵션 객체 꼴 — requestTimeout 은 throwOnRequestTimeout 이 없으면 경고만 찍고 계속 기다린다
+    requestHandler: { ...timeouts, throwOnRequestTimeout: true },
+  };
+}
+
 export function createS3BlobStore(cfg: S3Config, client?: S3Client): BlobStore {
-  const s3 =
-    client ??
-    new S3Client({
-      region: cfg.region,
-      ...(cfg.endpoint === undefined ? {} : { endpoint: cfg.endpoint }),
-      forcePathStyle: cfg.forcePathStyle,
-      credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
-      // S3 호환 저장소(MinIO·R2 등) 일부가 SDK 기본 체크섬 헤더(CRC32)를 모른다 — 요구될 때만 붙인다
-      requestChecksumCalculation: "WHEN_REQUIRED",
-      responseChecksumValidation: "WHEN_REQUIRED",
-    });
+  const s3 = client ?? new S3Client(s3ClientConfig(cfg));
   const Bucket = cfg.bucket;
   const keyOf = (sha: string) => `${cfg.prefix}${sha.slice(0, 2)}/${sha}`;
   const fail = (op: string, err: unknown): Error => new Error(`S3 ${op} 실패: ${describe(err)}`);

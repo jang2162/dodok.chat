@@ -25,12 +25,19 @@ const Raw = z.object({
   ATTACHMENTS_DIR: z.string().optional(),
   // 첨부 블롭 저장소(S3 스펙 S1) — local 은 ATTACHMENTS_DIR, s3 는 아래 S3_* 의 버킷. 기존 볼륨 블롭은 옮기지 않는다
   ATTACHMENTS_STORAGE: z.enum(["local", "s3"]).default("local"),
-  // S3 호환 저장소(S2). ENDPOINT 가 없으면 AWS 기본, PREFIX 는 키 앞에 그대로 붙는다(`<PREFIX><sha 앞 2자>/<sha>`).
+  // S3 호환 저장소(S2). ENDPOINT 가 없으면 AWS 기본, PREFIX 는 키 앞에 붙는다(`<PREFIX><sha 앞 2자>/<sha>`) — 앞의 `/` 는 떼고,
+  // 비어 있지 않으면 끝을 `/` 하나로 맞춘다(`dodok`·`/dodok/` → `dodok/`)
   // 키·시크릿은 .env 에만 — 오류 문구·로그에 싣지 않는다
   S3_ENDPOINT: z.url().optional(),
   S3_REGION: z.string().min(1).optional(),
   S3_BUCKET: z.string().min(1).optional(),
-  S3_PREFIX: z.string().default(""),
+  S3_PREFIX: z
+    .string()
+    .default("")
+    .transform((p) => {
+      const trimmed = p.replace(/^\/+/, "").replace(/\/+$/, "");
+      return trimmed === "" ? "" : `${trimmed}/`;
+    }),
   S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),

@@ -7,7 +7,6 @@ import { existsSync } from "node:fs";
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServerConfig } from "../../config";
-import { createS3BlobStore } from "./s3-store";
 
 export type OpenedBlob = {
   size: number;
@@ -116,11 +115,31 @@ export function createLocalBlobStore(dir: string): BlobStore {
   };
 }
 
+/**
+ * S3 저장소를 처음 쓸 때 읽는다 — local 모드 부팅은 S3 SDK 를 적재하지 않는다. 부를 쪽(createApp)이 동기로 받으므로 메서드마다 같은
+ * 적재를 기다린다(번들에서는 esbuild 가 같은 파일 안의 지연 초기화로 바꾼다)
+ */
+function lazyS3BlobStore(s3: NonNullable<ServerConfig["s3"]>): BlobStore {
+  let loaded: Promise<BlobStore> | undefined;
+  const real = () => (loaded ??= import("./s3-store").then((m) => m.createS3BlobStore(s3)));
+  return {
+    kind: "s3",
+    put: async (sha, bytes) => (await real()).put(sha, bytes),
+    open: async (sha) => (await real()).open(sha),
+    remove: async (sha) => (await real()).remove(sha),
+    removeTemp: async (key) => (await real()).removeTemp(key),
+    async *list() {
+      yield* (await real()).list();
+    },
+    check: async () => (await real()).check(),
+  };
+}
+
 /** 설정의 모드(S1)대로 고른다 */
 export function createBlobStore(config: ServerConfig): BlobStore {
   if (config.attachmentsStorage === "s3") {
     if (!config.s3) throw new Error("설정 오류: ATTACHMENTS_STORAGE=s3 인데 S3 설정이 없다");
-    return createS3BlobStore(config.s3);
+    return lazyS3BlobStore(config.s3);
   }
   return createLocalBlobStore(config.attachmentsDir);
 }

@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { S3Client } from "@aws-sdk/client-s3";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config";
 import {
   type BlobEntry,
@@ -11,7 +13,13 @@ import {
   createBlobStore,
   createLocalBlobStore,
 } from "../src/modules/attachments/blob-store";
-import { createS3BlobStore } from "../src/modules/attachments/s3-store";
+import {
+  createS3BlobStore,
+  S3_CONNECTION_TIMEOUT_MS,
+  S3_REQUEST_TIMEOUT_MS,
+  s3ClientConfig,
+} from "../src/modules/attachments/s3-store";
+import { createBlobLocks } from "../src/modules/attachments/store";
 import { testEnv } from "./helpers/env";
 import { MEMORY_S3_CONFIG, type MemoryS3, memoryS3 } from "./helpers/memory-s3";
 
@@ -246,5 +254,132 @@ describe("createBlobStore", () => {
       S3_SECRET_ACCESS_KEY: "secret",
     });
     expect(createBlobStore(s3).kind).toBe("s3");
+  });
+});
+
+/** 접속은 받고 한 바이트도 답하지 않는 엔드포인트 — 멈춘 S3 를 흉내 낸다 */
+async function silentServer(): Promise<{ endpoint: string; close(): Promise<void> }> {
+  const sockets: Socket[] = [];
+  const server: Server = createServer((sock) => {
+    sockets.push(sock);
+    sock.on("error", () => {});
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return {
+    endpoint: `http://127.0.0.1:${port}`,
+    close: async () => {
+      for (const s of sockets) s.destroy();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+describe("S3 BlobStore — 타임아웃(멈춘 엔드포인트)", () => {
+  const short = { connectionTimeout: 200, requestTimeout: 300 };
+  let silent: Awaited<ReturnType<typeof silentServer>> | undefined;
+  afterEach(async () => {
+    await silent?.close();
+    silent = undefined;
+  });
+  async function stalledStore(): Promise<BlobStore> {
+    silent = await silentServer();
+    const cfg = { ...MEMORY_S3_CONFIG, endpoint: silent.endpoint };
+    // 재시도는 1회로 — 상한(요청 타임아웃)이 걸리는지만 본다
+    return createS3BlobStore(cfg, new S3Client({ ...s3ClientConfig(cfg, short), maxAttempts: 1 }));
+  }
+  /** 정해진 시간 안에 끝나는지 — 끝나지 않으면 "hang" */
+  const within = (p: Promise<unknown>, ms = 5_000) =>
+    Promise.race([
+      p.then(
+        () => "resolved" as const,
+        (e: unknown) => e,
+      ),
+      new Promise<"hang">((r) => setTimeout(() => r("hang"), ms)),
+    ]);
+
+  it("기본 설정은 연결 5초·요청(헤더까지) 30초, 넘으면 오류로 던진다", () => {
+    expect(S3_CONNECTION_TIMEOUT_MS).toBe(5_000);
+    expect(S3_REQUEST_TIMEOUT_MS).toBe(30_000);
+    expect(s3ClientConfig(MEMORY_S3_CONFIG).requestHandler).toEqual({
+      connectionTimeout: 5_000,
+      requestTimeout: 30_000,
+      throwOnRequestTimeout: true,
+    });
+  });
+
+  it("부팅 check 는 상한 안에 BlobStoreCheckError 로 끝난다", async () => {
+    const store = await stalledStore();
+    const err = await within(store.check());
+    expect(err).toBeInstanceOf(BlobStoreCheckError);
+    expect((err as Error).message).toMatch(/HeadBucket TimeoutError|HeadBucket ETIMEDOUT/);
+  });
+
+  it.each([
+    ["put", (s: BlobStore) => s.put(sha("t"), bytes("t")), /S3 HeadObject 실패/],
+    ["remove", (s: BlobStore) => s.remove(sha("t")), /S3 DeleteObject 실패/],
+    ["list", (s: BlobStore) => listAll(s), /S3 ListObjectsV2 실패/],
+    ["open", (s: BlobStore) => s.open(sha("t")), /S3 GetObject 실패/],
+  ] as const)("%s 도 상한 안에 오류로 끝난다", async (_name, op, message) => {
+    const store = await stalledStore();
+    const err = await within(op(store));
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(message);
+  });
+
+  it("업로드가 sha 잠금을 쥔 채 멈추지 않는다 — 실패 뒤 같은 sha 의 정리가 잠금을 얻는다", async () => {
+    const store = await stalledStore();
+    const locks = createBlobLocks();
+    const s = sha("lock");
+    const upload = locks.run(s, () => store.put(s, bytes("lock")));
+    const sweep = locks.run(s, async () => "swept");
+    expect(await within(upload)).toBeInstanceOf(Error);
+    expect(await within(sweep)).toBe("resolved");
+    await expect(sweep).resolves.toBe("swept");
+  });
+});
+
+describe("createBlobStore — local 모드는 S3 SDK 를 읽지 않는다", () => {
+  afterEach(() => {
+    vi.doUnmock("@aws-sdk/client-s3");
+    vi.resetModules();
+  });
+
+  it("SDK 적재가 실패해도 local 저장소는 만들고 쓴다", async () => {
+    vi.resetModules();
+    vi.doMock("@aws-sdk/client-s3", () => {
+      throw new Error("S3 SDK 를 읽었다");
+    });
+    const fresh = await import("../src/modules/attachments/blob-store");
+    const dir = mkdtempSync(join(tmpdir(), "dodok-blob-lazy-"));
+    try {
+      const store = fresh.createBlobStore(loadConfig({ ...testEnv, ATTACHMENTS_DIR: dir }));
+      await store.check();
+      await store.put(sha("l"), bytes("l"));
+      expect(store.kind).toBe("local");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("s3 모드는 처음 쓸 때 SDK 를 읽어 실제 저장소에 넘긴다(닫힌 포트 → BlobStoreCheckError)", async () => {
+    const closed = await silentServer();
+    const endpoint = closed.endpoint;
+    await closed.close();
+    const store = createBlobStore(
+      loadConfig({
+        ...testEnv,
+        ATTACHMENTS_STORAGE: "s3",
+        S3_ENDPOINT: endpoint,
+        S3_FORCE_PATH_STYLE: "true",
+        S3_REGION: "us-east-1",
+        S3_BUCKET: "b",
+        S3_ACCESS_KEY_ID: "id",
+        S3_SECRET_ACCESS_KEY: "secret",
+      }),
+    );
+    expect(store.kind).toBe("s3");
+    // 앞 시험의 resetModules 로 s3-store 가 새 blob-store 를 읽어 클래스가 다를 수 있다 — 이름으로 본다
+    await expect(store.check()).rejects.toMatchObject({ name: "BlobStoreCheckError" });
   });
 });

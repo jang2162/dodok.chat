@@ -142,6 +142,8 @@ async function sendBlob(
     throw error;
   }
   reply.headers({ ...headers, "content-length": String(opened.size) });
+  // Fastify 의 sendStream 도 응답이 끝나면(끊김 포함, send 전에 이미 끊긴 것도) 본문을 destroy 한다 — 이 줄은 Fastify 가 본문을
+  // 놓치는 경로(onSend 훅이 본문을 바꾸는 등)를 위한 이중 안전이다. 동작은 attachments.routes.test.ts 「S3 내려받기 — 끊김」이 지킨다
   reply.raw.once("close", () => opened.close());
   return reply.send(opened.stream);
 }
