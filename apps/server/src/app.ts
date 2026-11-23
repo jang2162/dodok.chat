@@ -776,6 +776,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       updateQueue.onRunnersChanged();
     });
     undo.push({ step: "setup-events", run: () => offSetup() });
+    undo.push({ step: "update-queue", run: () => updateQueue.close() });
     const offPromptResync = watchPluginHellos({ db, bus, logger, registry });
     undo.push({ step: "prompt-resync", run: () => offPromptResync() });
     const serverUrl = runnerServerUrl(publicUrl);
@@ -1093,6 +1094,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("run-failures", () => runFailures.close());
       await step("disk", () => disk.close());
       await step("setup-events", () => offSetup());
+      // 업데이트 대기의 미룬 판정 — DB 를 닫기 전에 거둔다
+      await step("update-queue", () => updateQueue.close());
       await step("prompt-resync", () => offPromptResync());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       // 진행 중인 틱이 게시·사건 기록을 끝낸 뒤 ops·orchestrator 를 닫는다

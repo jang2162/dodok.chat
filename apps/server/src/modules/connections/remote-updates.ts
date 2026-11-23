@@ -239,10 +239,26 @@ export function createRunnerUpdateQueue(deps: {
   defer?: (fn: () => void) => void;
 }) {
   const { db, workspaceId } = deps;
+  // 닫힌 뒤(앱 종료 — DB 가 닫힌다)에는 미룬 판정을 돌리지 않는다
+  let closed = false;
+  const timers = new Set<ReturnType<typeof setTimeout>>();
   const defer =
     deps.defer ??
     ((fn: () => void) => {
-      setTimeout(fn, 0).unref?.();
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        fn();
+      }, 0);
+      timer.unref?.();
+      timers.add(timer);
+    });
+  /** 미룬 판정 — 닫혔으면 건너뛰고, 던지면(DB 오류 등) 로그 한 줄로 삼킨다(처리되지 않은 거절을 만들지 않게) */
+  const later = (tokenId: string) =>
+    defer(() => {
+      if (closed) return;
+      check(tokenId).catch((err: unknown) =>
+        deps.logger.warn({ runnerId: tokenId, err }, "queued runner update check failed"),
+      );
     });
   // 같은 러너에 판정이 겹쳐 두 번 보내지 않게 — 비우기(UPDATE … WHERE queued)가 한 번만 이긴다
   const inFlight = new Set<string>();
@@ -262,7 +278,7 @@ export function createRunnerUpdateQueue(deps: {
       .get()?.n ?? 0;
 
   async function check(tokenId: string): Promise<void> {
-    if (inFlight.has(tokenId)) return;
+    if (closed || inFlight.has(tokenId)) return;
     const queued = row(tokenId);
     if (!queued?.at) return;
     if (!deps.connected(tokenId) || openRuns(tokenId) > 0) return;
@@ -299,7 +315,7 @@ export function createRunnerUpdateQueue(deps: {
         .where(and(eq(runnerTokens.id, tokenId), eq(runnerTokens.workspaceId, workspaceId)))
         .run();
       deps.onChanged();
-      defer(() => void check(tokenId));
+      later(tokenId);
     },
     /** 대기를 지운다 — 없었으면 false */
     cancel(tokenId: string): boolean {
@@ -326,8 +342,8 @@ export function createRunnerUpdateQueue(deps: {
     /** 런 하나가 끝났다 — 종료 쓰기 뒤에 그 런의 러너를 판정한다 */
     onRunEnded(runId: string): void {
       const tokenId = getRunConnectionId(db, runId);
-      if (tokenId === null) return;
-      defer(() => void check(tokenId));
+      if (closed || tokenId === null) return;
+      later(tokenId);
     },
     /** 러너가 붙거나 끊겼다(어댑터 setup 이벤트) — 대기가 있는 러너를 모두 판정한다 */
     onRunnersChanged(): void {
@@ -336,7 +352,14 @@ export function createRunnerUpdateQueue(deps: {
         .from(runnerTokens)
         .where(and(eq(runnerTokens.workspaceId, workspaceId), isNotNull(runnerTokens.updateQueuedAt)))
         .all();
-      for (const { id } of pending) defer(() => void check(id));
+      if (closed) return;
+      for (const { id } of pending) later(id);
+    },
+    /** 앱 종료 — 미룬 판정을 거두고 뒤로 오는 판정을 받지 않는다(DB 를 닫기 전에 부른다) */
+    close(): void {
+      closed = true;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
     },
     /** 시험·진단 — 그 러너를 지금 판정한다 */
     check,

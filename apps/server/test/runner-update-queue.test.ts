@@ -153,6 +153,29 @@ describe("업데이트 대기(T16)", () => {
     expect(h.queue.view(h.tokenId)).toBeNull();
   });
 
+  it("닫은 뒤(앱 종료)에는 미룬 판정을 돌리지 않는다 — DB 를 닫은 뒤 쿼리가 나가지 않게", async () => {
+    const h = setup();
+    const warned: string[] = [];
+    const deferred: Array<() => void> = [];
+    const queue = createRunnerUpdateQueue({
+      db: h.db,
+      workspaceId: h.seed.workspaceId,
+      logger: { info: () => {}, warn: (_o: unknown, msg?: string) => void warned.push(msg ?? "") },
+      connected: () => true,
+      start: async () => {},
+      onChanged: () => {},
+      defer: (fn) => void deferred.push(fn),
+    });
+    queue.enqueue(h.tokenId, h.seed.userId);
+    queue.onRunnersChanged();
+    queue.close();
+    h.db.$client.close();
+    while (deferred.length > 0) deferred.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 닫힌 DB 에 쿼리가 나갔다면 check 가 던져 경고가 남는다
+    expect(warned).toEqual([]);
+  });
+
   it("두 번 둬도 시각은 처음 것, 보내기가 실패해도 다시 대기하지 않는다", async () => {
     const h = setup();
     h.openRun();
