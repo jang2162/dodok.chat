@@ -1523,11 +1523,36 @@ describe("봇 MCP — 러너가 다시 판정해 붙인다(러너 봇 2부 스�
     expect(assembleBotMcp(botSpec(BOT, null)).servers).toEqual({});
   });
 
-  it("러너 도구 상한 밖의 자동 허용은 그 서버를 붙이지 않는다", () => {
+  it("러너 도구 상한 밖의 자동 허용만 「묻기」로 내리고 서버는 붙인다(T15)", () => {
     const capped: AppMcpCeiling = { ...HTTP, allowedToolsCeiling: ["mcp__gh__other"] };
     const lines: string[] = [];
-    expect(assembleBotMcp(botSpec(BOT, capped), (l) => lines.push(l)).servers).toEqual({});
-    expect(lines).toContain(`dodok-runner: 런 ${RUN_ID} bot mcp blocked gh toolCeiling(mcp__gh__search)`);
+    const out = assembleBotMcp(botSpec(BOT, capped), (l) => lines.push(l));
+    expect(Object.keys(out.servers)).toEqual(["gh"]);
+    expect(out.allowedTools).toEqual([]);
+    expect(lines).toContain(
+      `dodok-runner: 런 ${RUN_ID} bot mcp gh auto-allow outside ceiling(mcp__gh__search)`,
+    );
+    // 「전부」도 상한에 mcp__gh 가 없으면 전부 허용만 막힌다
+    const all = assembleBotMcp(botSpec({ ...BOT, mcpAutoAllow: { gh: { mode: "all" } } }, capped));
+    expect(Object.keys(all.servers)).toEqual(["gh"]);
+    expect(all.allowedTools).toEqual([]);
+  });
+
+  it("주소는 WHATWG 호스트로도 다시 본다 — 스키마를 지나지 않은 \\·전각 주소도 http 러너는 막는다(T17)", () => {
+    const bot: RunnerRunBot = {
+      ...BOT,
+      mcpServers: {
+        a: { type: "http", url: "http://127.0.0.1\\@example.com/" },
+        b: { type: "http", url: "http://１２７.０.０.１/" },
+        c: { type: "http", url: "http://ⓛocalhost/" },
+        ok: { type: "http", url: "https://api.example.com/mcp" },
+      },
+      mcpAutoAllow: {},
+    };
+    const lines: string[] = [];
+    expect(Object.keys(assembleBotMcp(botSpec(bot), (l) => lines.push(l)).servers)).toEqual(["ok"]);
+    for (const name of ["a", "b", "c"])
+      expect(lines).toContain(`dodok-runner: 런 ${RUN_ID} bot mcp blocked ${name} privateAddress`);
   });
 
   it("runnerControl 켠 봇만 러너 제어 도구 — 이름이 dodok MCP 와 allowedTools 에", async () => {
@@ -1572,6 +1597,9 @@ describe("봇 MCP — 러너가 다시 판정해 붙인다(러너 봇 2부 스�
     expect(isAutoAllowedTool("mcp__gh__delete", ["mcp__gh__search"])).toBe(false);
     expect(isAutoAllowedTool("mcp__gh__delete", ["mcp__gh"])).toBe(true);
     expect(isAutoAllowedTool("mcp__ghx__a", ["mcp__gh"])).toBe(false);
+    // 서버 a 의 「전부」가 서버 a_ 의 도구(mcp__a___x)를 허용하지 않는다
+    expect(isAutoAllowedTool("mcp__a___x", ["mcp__a"])).toBe(false);
+    expect(isAutoAllowedTool("mcp__a__x", ["mcp__a"])).toBe(true);
     expect(preToolDecision("mcp__gh__search", "default", ["mcp__gh__search"])).toBeNull();
     expect(preToolDecision("mcp__gh__delete", "default", ["mcp__gh__search"])).toBe("ask");
     expect(preToolDecision("mcp__gh__delete", "dontAsk", ["mcp__gh__search"])).toBe("deny");

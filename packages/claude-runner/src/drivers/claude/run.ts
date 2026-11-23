@@ -1,6 +1,7 @@
 import {
   appMcpVerdict,
   checkCommand,
+  isPrivateAddress,
   isStdioServer,
   CLAUDE_BUILTIN_ALLOWED,
   COMMAND_BLOCKED_MESSAGE,
@@ -141,9 +142,24 @@ const isSafeTool = (toolName: string): boolean =>
  * 이름만. allowedTools 와 같은 뜻이다(PreToolUse 훅의 ask 가 allowedTools 를 덮지 않게)
  */
 export function isAutoAllowedTool(toolName: string, autoAllowed: readonly string[]): boolean {
+  // 서버 전부(`mcp__a`)는 `mcp__a__<도구>` 만 — 도구 이름 첫 글자가 `_` 면(`mcp__a___x`) 서버 `a_` 의 도구일 수 있어 넣지 않는다
   return autoAllowed.some((name) =>
-    name.split("__").length === 2 ? toolName.startsWith(`${name}__`) : toolName === name,
+    name.split("__").length === 2
+      ? toolName.startsWith(`${name}__`) && !toolName.startsWith(`${name}___`)
+      : toolName === name,
   );
+}
+
+/**
+ * 주소 판정을 WHATWG 호스트로 한 번 더(T17) — shared isPrivateAddress 는 주소 글자를 읽고, CLI 는 WHATWG(fetch)로 연결한다. 스키마가
+ * authority 의 `\`·ASCII 밖 글자를 거절하지만, 둘이 같은 호스트를 보는지 여기서 Node 의 URL 로 다시 본다. 못 읽으면 막는다
+ */
+function privateByWhatwg(url: string): boolean {
+  try {
+    return isPrivateAddress(`http://${new URL(url).hostname}/`);
+  } catch {
+    return true;
+  }
 }
 
 /** SDK mcpServers 에 넣을 봇 MCP 서버 — 받은 꼴(shared McpServerConfig) 그대로의 필드만 */
@@ -172,6 +188,14 @@ export function assembleBotMcp(spec: RunSpec, log?: (line: string) => void): Bot
       );
       continue;
     }
+    if (!isStdioServer(server) && ceiling.appMcp === "http" && privateByWhatwg(server.url)) {
+      log?.(`dodok-runner: 런 ${runId} bot mcp blocked ${name} privateAddress`);
+      continue;
+    }
+    if (verdict.outsideCeiling.length > 0)
+      log?.(
+        `dodok-runner: 런 ${runId} bot mcp ${name} auto-allow outside ceiling(${verdict.outsideCeiling.join(", ")})`,
+      );
     out.servers[name] = isStdioServer(server)
       ? {
           type: "stdio",
