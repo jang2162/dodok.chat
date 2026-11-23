@@ -188,7 +188,9 @@ export function createControlService(deps: ControlDeps): ControlService {
     handler.check?.(ctx, input);
     if (write && p.via === "agent") {
       await confirm(p, tool.name, handler, input);
-      // 허용 때 다시 — 기다리는 사이 강등·비활성화·보관이 있었을 수 있다(결정 7)
+      // 허용 때 다시 — 기다리는 사이 강등·비활성화·보관이 있었을 수 있다(결정 7). 「이 러너 설정 제어」를 웹에서 껐을 수도 있다(T7)
+      if (findRunnerControlTool(tool.name) && !hasRunnerControl(ctx, p))
+        throw apiError("FORBIDDEN", "이 봇의 「이 러너 설정 제어」가 꺼졌습니다");
       authorize(handler, p, roleFor(p, write), raw);
       handler.check?.(ctx, input);
     }

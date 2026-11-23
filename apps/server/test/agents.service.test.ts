@@ -397,6 +397,24 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B10·B11)", () => {
       expect(stored(db, agent.id)?.mcpServers?.gh).toEqual(GH);
     });
 
+    it("같은 이름이라도 주소·명령을 바꾸고 가림 글자를 두면 VALIDATION — 비밀값이 새 곳으로 따라가지 않는다", () => {
+      const { db, workspaceId } = setup();
+      const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "rev", bot: TOOLS });
+      const { gh, lin } = agent.runnerAgent!.bot!.mcpServers!;
+      for (const moved of [
+        { gh: { ...gh!, url: "https://attacker.example/x" }, lin: lin! },
+        { gh: gh!, lin: { ...lin!, command: "bash" } },
+      ]) {
+        const e = errorOf(() => updateAgent(db, agent.id, { bot: { ...DEF, mcpServers: moved } }));
+        expect(e.body).toMatchObject({ code: "VALIDATION", details: { field: "bot" } });
+        expect(String((e.body as { message?: unknown }).message)).toContain(
+          "주소나 명령을 바꾸면 비밀값을 다시 적으세요",
+        );
+      }
+      expect(stored(db, agent.id)?.mcpServers).toEqual({ gh: GH, lin: LIN });
+      expect(revision(db, agent.id)).toBe(0);
+    });
+
     it("런 정의에는 원문 MCP(러너로는 원문이 가야 한다)·자동 허용·내장 도구, 지시 틀 자리에는 네 칸만", () => {
       const { db, workspaceId } = setup();
       const { agent, runnerTokenId } = createRunnerAgentForTest(db, {

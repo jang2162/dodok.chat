@@ -1069,6 +1069,26 @@ describe("러너 제어 도구", () => {
     expect(created.agent.runnerAgent?.bot).toEqual({ purpose: "새 봇", watches: "", does: "", reports: "" });
   });
 
+  it("확인 카드가 떠 있는 사이 「이 러너 설정 제어」를 끄면 허용해도 FORBIDDEN — 쓰기는 나가지 않는다(T7)", async () => {
+    const a = await runnerWith("ctl-off");
+    const mine = await project(a.id, "stay");
+    const on = botRun(a.id);
+    const pending = app.control.call(on.principal, "update_runner_project", {
+      projectId: mine.id,
+      label: "바뀌면 안 됨",
+    });
+    await pendingCard(on.run.id);
+    app.db.update(agents).set({ runnerBot: DEF }).where(eq(agents.id, on.agent.id)).run();
+    await allow(on.run.id);
+    expect(errorOf(await pending)).toMatchObject({ code: "FORBIDDEN" });
+    const listed = (await inject("GET", `/runners/${a.id}/projects`)).json() as {
+      projects: Array<{ id: string; label: string }>;
+    };
+    const kept = listed.projects.find((p) => p.id === mine.id);
+    expect(kept).toBeDefined();
+    expect(kept?.label).not.toBe("바뀌면 안 됨");
+  });
+
   it("자동화 사슬(requested_by null)은 쓰기 거절 — 카드도 없다", async () => {
     const a = await runnerWith("ctl-a4");
     const auto = botRun(a.id, { requestedBy: null });

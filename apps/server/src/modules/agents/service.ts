@@ -437,9 +437,13 @@ function botToStore(incoming: RunnerBotDefinition, stored: RunnerBotDefinition |
   if (incoming.mcpServers !== undefined) {
     const merged = mergeMcpSecrets(incoming.mcpServers, stored?.mcpServers);
     if (!merged.ok)
-      throw apiError("VALIDATION", `MCP 서버 ${merged.server} 의 ${merged.key} 값을 다시 적으세요`, {
-        field: "bot",
-      });
+      throw apiError(
+        "VALIDATION",
+        merged.reason === "moved"
+          ? `MCP 서버 ${merged.server} — 주소나 명령을 바꾸면 비밀값을 다시 적으세요(${merged.key})`
+          : `MCP 서버 ${merged.server} 의 ${merged.key} 값을 다시 적으세요`,
+        { field: "bot" },
+      );
     servers = merged.servers;
   }
   return normalizeBot({
