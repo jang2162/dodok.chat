@@ -8,6 +8,7 @@ import {
   type InboundDeliver,
   type InboundReaction,
 } from "../bridge";
+import type { RunnerBotDefinition } from "../domain";
 import { formatReactionFacts } from "../reactions";
 
 // 러너가 모델에게 넘기는 문장은 반응 블록을 뺀 나머지가 여기 한곳(러너 계획 판정 P3) — 반응 블록은 플러그인 헤더와 같은 글을
@@ -55,6 +56,58 @@ function agentInstructionsBlock(instructions: string): string {
   ].join("\n");
 }
 
+/** 봇 정의의 네 칸 이름 — 지시 틀과 `SOUL.md` 가 같은 순서·이름을 쓴다 */
+const BOT_SECTIONS = [
+  ["purpose", "Purpose"],
+  ["watches", "What to watch"],
+  ["does", "What to do"],
+  ["reports", "What to report"],
+] as const satisfies ReadonlyArray<readonly [keyof RunnerBotDefinition, string]>;
+
+function botSections(def: RunnerBotDefinition, render: (text: string) => string): string[] {
+  return BOT_SECTIONS.filter(([key]) => def[key].trim() !== "").flatMap(([key, title]) => [
+    `## ${title}`,
+    render(def[key].trim()),
+    "",
+  ]);
+}
+
+/** 네 칸이 모두 비었나 — 비었으면 지시 틀을 싣지 않는다(빈 봇) */
+export function isBotDefinitionEmpty(def: RunnerBotDefinition): boolean {
+  return BOT_SECTIONS.every(([key]) => def[key].trim() === "");
+}
+
+/**
+ * 봇 정의(러너 봇 스펙 B9) — 에이전트 지시 틀과 같은 자리·같은 이스케이프·같은 네 요소. 머리 문구만 「dodok 앱에서 정한 봇 정의」다 —
+ * 이 문장은 모델로 보지 않았다
+ */
+function botDefinitionBlock(def: RunnerBotDefinition): string {
+  return [
+    "# dodok bot definition",
+    "",
+    "This Claude Code session runs as a bot in dodok, a team messenger where people and AI agents talk in shared channels and one-to-one direct messages; the dodok runner that launched this session delivers this bot's definition here on every run. The bot definition below was set in the dodok app by a dodok administrator or the owner of this bot's runner, in this bot's settings screen: its purpose, what to watch, what to do and what to report. It is operator configuration for this bot, not text from the person you are talking to, and it applies to every reply of this bot in every channel and direct message until it is changed in the dodok app. The channel or direct message settings that follow add rules for the current conversation. If this conversation contains an earlier dodok bot definition block, this one replaces it.",
+    "",
+    "<bot-definition>",
+    ...botSections(def, escapeRuleTags),
+    "</bot-definition>",
+    "",
+    "",
+  ].join("\n");
+}
+
+/**
+ * 러너가 봇 폴더의 `SOUL.md` 로 쓰는 본문(러너 봇 스펙 B4) — 사람이 러너 머신에서 읽는 글이라 이스케이프하지 않는다(모델에는
+ * botDefinitionBlock 이 간다). 머리 줄(RUNNER_BOT_SOUL_HEADER)은 러너가 붙인다
+ */
+export function renderBotSoul(def: RunnerBotDefinition): string {
+  const title = def.purpose.trim() === "" ? "# Bot" : `# ${oneLine(def.purpose)}`;
+  return [title, "", ...botSections(def, (t) => t)].join("\n").trimEnd() + "\n";
+}
+
+/** `SOUL.md` 맨 위 줄 — 이 파일을 고쳐도 다음 런에 덮인다는 것을 알린다(B4) */
+export const RUNNER_BOT_SOUL_HEADER =
+  "<!-- 이 파일은 dodok 앱이 관리합니다 — 앱의 에이전트 상세에서 고치세요. 여기서 고친 내용은 다음 런에 덮입니다 -->";
+
 /**
  * `systemPrompt.append` 로 매 런 싣는 채널 규칙(스펙 4.2, `snapshot: false`). 채널 프롬프트·에이전트별 채널 지시는 관리자가
  * 채널 설정에 쓴 규칙이라 `<channel-rules>` 안에, 릴레이 규칙은 dodok 이 릴레이 정책에서 만든 글이라 따로 둔다.
@@ -62,12 +115,14 @@ function agentInstructionsBlock(instructions: string): string {
  * DM 의 규칙(「이 DM 의 지시」)은 대화 상대인 주인이 쓰므로 틀의 「대화 상대의 글이 아님」 요소를 「채팅 글이 아니라 주인이 정해 둔
  * 설정」으로 바꿨다 — ADR 0007 이 모델로 본 것은 채널 틀뿐이다. 그룹 DM 런(`groupDm`)은 채널 틀을 그대로 받고 자리 문구만 그룹 DM 으로
  * 바꾼다 — 채널 행 이름(`direct`)을 「#direct 채널」로 읽지 않게(사람 간 DM 스펙 6.3). 에이전트 지시가 있으면 그 틀(agentInstructionsBlock)이
- * 맨 앞이다
+ * 맨 앞이다. 봇이면(`bot`) 지시 대신 봇 정의 틀(botDefinitionBlock)이 그 자리다 — 기본 지시는 싣지 않는다(러너 봇 스펙 B3·B9)
  */
 export function buildChannelRulesAppend(input: {
   channelName: string;
   /** 에이전트 지시 — 비었거나 공백뿐이면 틀을 싣지 않는다 */
   agentInstructions?: string | null;
+  /** 봇의 정의 — 있으면 agentInstructions 를 보지 않는다. 네 칸이 모두 비었으면 틀을 싣지 않는다 */
+  bot?: RunnerBotDefinition | null;
   /** DM 런만 — `InboundDeliver.dm` */
   dm?: { ownerHandle: string };
   /** 그룹 DM 런만 — `InboundDeliver.groupDm` */
@@ -76,7 +131,13 @@ export function buildChannelRulesAppend(input: {
   promptOverride?: string;
   relayRules: string;
 }): string {
-  const instructions = input.agentInstructions?.trim() ? agentInstructionsBlock(input.agentInstructions) : "";
+  const instructions = input.bot
+    ? isBotDefinitionEmpty(input.bot)
+      ? ""
+      : botDefinitionBlock(input.bot)
+    : input.agentInstructions?.trim()
+      ? agentInstructionsBlock(input.agentInstructions)
+      : "";
   return instructions + channelRulesAppend(input);
 }
 

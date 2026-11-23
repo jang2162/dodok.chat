@@ -9,6 +9,8 @@ import {
   RunnerHello,
   RunnerProgram,
   RunnerProjectCheckResult,
+  RunnerCeilingItem,
+  RunnerCommandsList,
   RunnerProjectRef,
   RunnerRelPath,
   RunnerRootId,
@@ -220,6 +222,39 @@ describe("RunnerRunStart", () => {
   it("agent 가 없으면 거절 — 서버가 에이전트 정의를 통째로 싣는다", () => {
     const { agent: _, ...v1 } = START;
     expect(RunnerRunStart.safeParse(v1).success).toBe(false);
+  });
+});
+
+describe("봇 런 — project 대신 bot(러너 봇 스펙 B2·B7)", () => {
+  const { project: _, ...noProject } = AGENT;
+  const BOT = { id: "r-0123456789", soul: "# 리뷰 봇\n" };
+
+  it("bot 만 실으면 받는다, project·bot 둘 다/둘 다 없음은 거절", () => {
+    expect(RunnerRunStart.parse({ ...START, agent: { ...noProject, bot: BOT } }).agent.bot).toEqual(BOT);
+    expect(RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, bot: BOT } }).success).toBe(false);
+    expect(RunnerRunStart.safeParse({ ...START, agent: noProject }).success).toBe(false);
+  });
+
+  it.each([
+    "r-../../etc",
+    "r-0123456789/..",
+    "R-0123456789",
+    "r-012345678",
+    "r-0123456789a",
+    "../r-0123456789",
+    "",
+  ])("봇 id 는 r-hex10 만 — %j 거절", (id) => {
+    expect(RunnerRunStart.safeParse({ ...START, agent: { ...noProject, bot: { ...BOT, id } } }).success).toBe(
+      false,
+    );
+  });
+
+  it("천장 항목 bot·명령 목록 봇 갈래", () => {
+    expect(RunnerCeilingItem.parse("bot")).toBe("bot");
+    expect(RunnerCommandsList.parse({ bot: { id: "r-0123456789" } })).toEqual({
+      bot: { id: "r-0123456789" },
+    });
+    expect(RunnerCommandsList.safeParse({ bot: { id: "../x" } }).success).toBe(false);
   });
 });
 
