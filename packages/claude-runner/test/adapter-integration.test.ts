@@ -169,6 +169,7 @@ function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?
       roots: [{ id: "src", path: realpathSync(workdir), label: "my-repo" }],
       botsDir: join(realpathSync(workdir), ".bots-unused"),
       browse: true,
+      remoteUpdate: true,
       programs: {
         claude: {
           configDir: AGENT.configDir,

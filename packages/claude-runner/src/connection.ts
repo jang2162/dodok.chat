@@ -15,6 +15,8 @@ import {
   RunnerWorktreeRemove,
   RunnerRunAbort,
   RunnerRunStart,
+  RunnerUpdate,
+  type RunnerUpdateResult,
   type RunnerCapability,
   type RunnerClientToServerEvents,
   type RunnerHello,
@@ -81,7 +83,21 @@ export type RunnerConnectionOptions = {
   postAckTimeoutMs?: number;
   /** 시험이 줄인다 — 기본 COMMANDS_LIST_TIMEOUT_MS */
   commandsListTimeoutMs?: number;
+  /**
+   * 원격 업데이트(원격 업데이트 스펙 U3) — main 이 self-update.ts selfUpdate 를 이 러너의 argv·판으로 감싸 넘긴다. 있으면 hello 능력
+   * remoteUpdate 를 싣는다. beforeRestart 는 설치가 끝난 뒤 — 연결이 서버에 ok 를 답하고 끊는다
+   */
+  selfUpdate?: (request: {
+    version: string;
+    enabled: boolean;
+    busy: () => boolean;
+    beforeRestart: () => Promise<void>;
+  }) => Promise<RunnerUpdateResult>;
 };
+
+/** 업데이트 중에 온 run.start 의 run.error — 다시 붙은 러너에서 「다시 실행」하면 된다 */
+export const UPDATING_RUN_MESSAGE = "러너를 업데이트하는 중입니다 — 다시 붙은 뒤 다시 실행하세요";
+export const ALREADY_UPDATING_MESSAGE = "이미 업데이트하는 중입니다";
 
 type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
 
@@ -203,6 +219,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     opts.attachmentsHttp ?? createAttachmentsHttp({ serverUrl: config.serverUrl, token: opts.token });
   // 결정을 기다리는 승인(id 는 toolUseID). 런이 멈추면 그 런의 signal 이 기다림을 거둔다
   const decisions = new Map<string, (outcome: ApprovalOutcome) => void>();
+  // runner.update 를 받아 설치하는 중 — 두 번째 요청은 busy, 새 run.start 는 받지 않는다(Review Focus 4)
+  let updating = false;
 
   /** 설정에 켠 프로그램마다 — 드라이버가 없으면 사유와 함께 못 씀. detect 는 연결마다 다시 한다(그 사이 로그인했을 수 있다) */
   async function detectPrograms(): Promise<RunnerProgramStatus[]> {
@@ -243,7 +261,12 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const helloOf = (programs: RunnerProgramStatus[]): RunnerHello => ({
     runnerProtocol: RUNNER_PROTOCOL,
     ...opts.versions,
-    capabilities: CAPABILITIES,
+    capabilities: [
+      ...CAPABILITIES,
+      // 켜짐·꺼짐을 능력으로 — hello 는 strict 라 최상위 새 키는 옛 서버가 거절한다(shared RunnerCapability 주석)
+      ...(opts.selfUpdate ? (["remoteUpdate"] as const) : []),
+      ...(opts.selfUpdate && !config.remoteUpdate ? (["remoteUpdateOff"] as const) : []),
+    ],
     roots: config.roots.map((r) => ({ id: r.id, label: r.label })),
     browse: config.browse,
     programs,
@@ -428,6 +451,11 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const { agent } = start;
     const runId = start.deliver.runId;
     const emit = emitterFor(runId, generation);
+    if (updating) {
+      ack({ runId, admission: "dispatch" });
+      emit.error("ADAPTER_UNAVAILABLE", UPDATING_RUN_MESSAGE);
+      return;
+    }
     // 거절도 dispatch 뒤 run.error 로 — drop 이면 어댑터가 런을 놓아 오류 카드가 사라진다(리뷰 M1)
     const ceiling = checkCeiling(config, agent, (program) => available.get(program) === true);
     if (!ceiling.ok) {
@@ -540,6 +568,59 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const parsed = RunnerWorktreeRemove.safeParse(payload);
     if (!parsed.success) return ack({ ok: false, reason: "git_failed" });
     void removeWorktree(config, parsed.data).then(ack);
+  });
+
+  // 원격 업데이트(U3) — 판은 shared 스키마로 한 번, selfUpdate 가 한 번 더 본다. 성공이면 ok 를 답하고 끊은 뒤 새 판을 띄우고 끝난다
+  socket.on("runner.update", (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const parsed = RunnerUpdate.safeParse(payload);
+    if (!parsed.success)
+      return reply({ ok: false, reason: "invalid_version", message: "정확한 판(예: 0.9.0)만 받습니다" });
+    if (!opts.selfUpdate)
+      return reply({
+        ok: false,
+        reason: "unsupported",
+        message: "이 러너는 원격 업데이트를 지원하지 않습니다",
+      });
+    if (updating) return reply({ ok: false, reason: "busy", message: ALREADY_UPDATING_MESSAGE });
+    updating = true;
+    const { version } = parsed.data;
+    logger.info(`dodok-runner: 원격 업데이트 요청 — ${version}`);
+    void opts
+      .selfUpdate({
+        version,
+        enabled: config.remoteUpdate,
+        busy: () => scheduler.size() > 0,
+        beforeRestart: async () => {
+          reply({ ok: true });
+          logger.info(
+            `dodok-runner: ${version} 을 설치했습니다 — 새 판으로 다시 띄웁니다. ` +
+              "터미널에서 띄웠으면 이 터미널은 새 러너의 출력을 계속 받지 않을 수 있습니다",
+          );
+          stopped = true;
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = undefined;
+          if (socket.connected) await drained();
+          socket.disconnect();
+        },
+      })
+      .then(
+        (result) => {
+          if (result.ok) return;
+          updating = false;
+          logger.warn(
+            `dodok-runner: 원격 업데이트를 하지 않았습니다(${result.reason}) — ${result.message ?? ""}`,
+          );
+          reply(result);
+        },
+        (error: unknown) => {
+          updating = false;
+          logger.warn(
+            `dodok-runner: 원격 업데이트 실패 — ${error instanceof Error ? error.message : String(error)}`,
+          );
+          reply({ ok: false, reason: "failed", message: "원격 업데이트 중 오류가 났습니다" });
+        },
+      );
   });
 
   socket.on("run.abort", (payload) => {

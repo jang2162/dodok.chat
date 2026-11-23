@@ -62,6 +62,8 @@ describe("loadRunnerConfig", () => {
     expect(warnings).toEqual([]);
     expect(config.maxConcurrentRuns).toBe(3);
     expect(config.browse).toBe(true);
+    // 원격 업데이트는 기본 허용(원격 업데이트 스펙 U1)
+    expect(config.remoteUpdate).toBe(true);
     expect(config.roots).toEqual([{ id: "src", path: "/home/u/src", label: "src" }]);
     expect(config.programs).toEqual({
       claude: {
@@ -71,6 +73,11 @@ describe("loadRunnerConfig", () => {
         allowedToolsCeiling: null,
       },
     });
+  });
+
+  it("remoteUpdate: false 로 원격 업데이트를 끈다 — 불리언이 아니면 거절", () => {
+    expect(load({ ...baseConfig, remoteUpdate: false }).config.remoteUpdate).toBe(false);
+    expect(errorOf(() => load({ ...baseConfig, remoteUpdate: "no" })).message).toContain("remoteUpdate");
   });
 
   it("스펙 2장 예시 설정이 그대로 풀린다", () => {

@@ -379,13 +379,14 @@ export async function runSetupWizard(opts: SetupOptions): Promise<SetupResult> {
       p.print(`1~${PERMISSION_CHOICES.length} 중에서 고르세요.`);
     }
 
-    // 묻지 않는 키 — 지금 설정에 있으면 그대로(maxConcurrentRuns·browse·도구 상한·configDir·executable), 없으면 스키마 기본값을 적는다
+    // 묻지 않는 키 — 지금 설정에 있으면 그대로(maxConcurrentRuns·browse·remoteUpdate·도구 상한·configDir·executable), 없으면 스키마 기본값을 적는다
     const config = {
       serverUrl,
       tokenFile,
       maxConcurrentRuns: prev?.maxConcurrentRuns ?? 3,
       roots,
       browse: prev?.browse ?? true,
+      remoteUpdate: prev?.remoteUpdate ?? true,
       programs: {
         ...prev?.programs,
         claude: {

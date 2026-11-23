@@ -50,6 +50,7 @@ import {
   NO_DRIVER_REASON,
   startRunnerConnection,
   type RunnerConnection,
+  type RunnerConnectionOptions,
 } from "../src/connection";
 import type { ProgramDriver } from "../src/driver";
 import {
@@ -201,6 +202,8 @@ async function setup(
     /** 가짜 SDK 를 붙기 전에 고친다(모델 목록 실패 등) */
     sdk?: (fake: FakeSdk) => void;
     modelsTimeoutMs?: number;
+    remoteUpdate?: boolean;
+    selfUpdate?: RunnerConnectionOptions["selfUpdate"];
   } = {},
 ) {
   const server = await startFakeServer();
@@ -217,6 +220,7 @@ async function setup(
     roots: opts.roots ?? [{ id: "src", path: dirs.root, label: "내 저장소들" }],
     botsDir: join(dirs.base, "bots"),
     browse: opts.browse ?? true,
+    remoteUpdate: opts.remoteUpdate ?? true,
     programs: opts.programs ?? { claude: CLAUDE_CEILING },
   };
   const conn: RunnerConnection = startRunnerConnection({
@@ -247,6 +251,7 @@ async function setup(
     },
     backoff: { minMs: 20, maxMs: 50 },
     ...(opts.stopWaitMs === undefined ? {} : { stopWaitMs: opts.stopWaitMs }),
+    ...(opts.selfUpdate === undefined ? {} : { selfUpdate: opts.selfUpdate }),
   });
   cleanups.push(() => conn.stop());
   return { server, fake, logs, fatal, conn, dirs };
@@ -477,6 +482,7 @@ describe("startRunnerConnection", () => {
         roots: [{ id: "src", path: tempRoot().root, label: "src" }],
         botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
+        remoteUpdate: true,
         programs: { claude: CLAUDE_CEILING },
       },
       token: TOKEN,
@@ -509,6 +515,7 @@ describe("startRunnerConnection", () => {
         roots: [{ id: "src", path: tempRoot().root, label: "src" }],
         botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
+        remoteUpdate: true,
         programs: { claude: CLAUDE_CEILING },
       },
       token: TOKEN,
@@ -1625,5 +1632,127 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
     const got = await driver.detect({ ...CLAUDE_CEILING, executable: "/nope/claude" });
     expect(got.available).toBe(false);
     expect(fake.listModelsCalls).toHaveLength(0);
+  });
+});
+
+describe("원격 업데이트 — runner.update(원격 업데이트 스펙 U1·U3)", () => {
+  type UpdateRequest = Parameters<NonNullable<RunnerConnectionOptions["selfUpdate"]>>[0];
+  const askUpdate = (socket: ServerSocket, version: unknown) =>
+    socket
+      .timeout(2000)
+      .emitWithAck("runner.update", { version } as never)
+      .then((r) => r as unknown);
+
+  it("selfUpdate 가 있으면 hello 능력 remoteUpdate, 설정이 끄면 remoteUpdateOff 도", async () => {
+    const on = await setup({ selfUpdate: async () => ({ ok: true }) });
+    const off = await setup({ selfUpdate: async () => ({ ok: true }), remoteUpdate: false });
+    await waitFor(() => on.server.hellos.length === 1 && off.server.hellos.length === 1);
+    expect(on.server.hellos[0]!.capabilities).toContain("remoteUpdate");
+    expect(on.server.hellos[0]!.capabilities).not.toContain("remoteUpdateOff");
+    expect(off.server.hellos[0]!.capabilities).toEqual(
+      expect.arrayContaining(["remoteUpdate", "remoteUpdateOff"]),
+    );
+  });
+
+  it("설정의 remoteUpdate 를 selfUpdate 에 넘긴다 — 끈 머신의 답은 selfUpdate 의 disabled 그대로", async () => {
+    const requests: UpdateRequest[] = [];
+    const { server } = await setup({
+      remoteUpdate: false,
+      selfUpdate: async (r) => {
+        requests.push(r);
+        return r.enabled ? { ok: true } : { ok: false, reason: "disabled", message: "꺼짐" };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toEqual({
+      ok: false,
+      reason: "disabled",
+      message: "꺼짐",
+    });
+    expect(requests.map((r) => [r.version, r.enabled])).toEqual([["0.9.0", false]]);
+  });
+
+  it("판이 semver 가 아니면 selfUpdate 를 부르지 않고 invalid_version", async () => {
+    let called = 0;
+    const { server } = await setup({ selfUpdate: async () => (called++, { ok: true }) });
+    await waitFor(() => server.hellos.length === 1);
+    for (const v of ["latest", "../x", "file:/x", 1]) {
+      expect(await askUpdate(server.sockets[0]!, v)).toMatchObject({ ok: false, reason: "invalid_version" });
+    }
+    expect(called).toBe(0);
+  });
+
+  it("selfUpdate 가 없는 러너는 unsupported", async () => {
+    const { server } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toMatchObject({ ok: false, reason: "unsupported" });
+  });
+
+  it("busy() 는 도는 런을 센다", async () => {
+    const seen: boolean[] = [];
+    const { server, fake } = await setup({
+      selfUpdate: async (r) => {
+        seen.push(r.busy());
+        return { ok: false, reason: "busy", message: "런이 끝난 뒤 다시 시도하세요" };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script({ hang: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toMatchObject({ ok: false, reason: "busy" });
+    expect(seen).toEqual([true]);
+  });
+
+  // Review Focus 4 — 두 번 눌러도 한 번만 돈다
+  it("설치하는 동안 두 번째 runner.update 는 busy, 새 run.start 는 ADAPTER_UNAVAILABLE — 실패하면 다시 받는다", async () => {
+    let release!: () => void;
+    let calls = 0;
+    const { server, fake } = await setup({
+      selfUpdate: (r) => {
+        calls += 1;
+        if (calls > 1) return Promise.resolve({ ok: false, reason: "failed", message: "둘째" });
+        return new Promise((resolve) => {
+          release = () => resolve({ ok: false, reason: "failed", message: `npm 실패 ${r.version}` });
+        });
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const first = askUpdate(server.sockets[0]!, "0.9.0");
+    await waitFor(() => calls === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toEqual({
+      ok: false,
+      reason: "busy",
+      message: "이미 업데이트하는 중입니다",
+    });
+    const ack = await sendStart(server.sockets[0]!, runStart());
+    expect(ack).toMatchObject({ runId: RUN_ID, admission: "dispatch" });
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toMatchObject({ runId: RUN_ID, code: "ADAPTER_UNAVAILABLE" });
+    expect(fake.calls).toHaveLength(0);
+    release();
+    expect(await first).toEqual({ ok: false, reason: "failed", message: "npm 실패 0.9.0" });
+    expect(calls).toBe(1);
+    // 실패한 뒤에는 다시 받는다
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toEqual({
+      ok: false,
+      reason: "failed",
+      message: "둘째",
+    });
+  });
+
+  it("성공 — beforeRestart 가 ok 를 답하고 연결을 끊는다(다시 붙지 않는다)", async () => {
+    const { server, logs } = await setup({
+      selfUpdate: async (r) => {
+        await r.beforeRestart();
+        return { ok: true };
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(await askUpdate(server.sockets[0]!, "0.9.0")).toEqual({ ok: true });
+    await waitFor(() => server.sockets[0]!.disconnected);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(server.hellos).toHaveLength(1);
+    expect(logs.join("\n")).toContain("새 판으로 다시 띄웁니다");
   });
 });

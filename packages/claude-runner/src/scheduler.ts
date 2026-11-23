@@ -70,6 +70,10 @@ export function createScheduler(max: number) {
       for (const e of queue.splice(0)) e.onDropped?.(reason);
       for (const e of running.values()) e.controller.abort(reason);
     },
+    /** 도는 런과 기다리는 런의 수 — 원격 업데이트가 런이 있으면 거절한다 */
+    size(): number {
+      return running.size + queue.length;
+    },
     /** 도는 런이 하나도 없으면 풀린다 — 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다린다 */
     idle(): Promise<void> {
       if (running.size === 0) return Promise.resolve();

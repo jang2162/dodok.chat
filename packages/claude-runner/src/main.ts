@@ -7,6 +7,7 @@ import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connec
 import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
+import { selfUpdate } from "./self-update";
 import {
   createTerminalPrompter,
   detectClaudeForSetup,
@@ -170,6 +171,16 @@ async function main(): Promise<void> {
     },
     logger,
     onFatal: (code) => process.exit(code),
+    // 원격 업데이트(U3) — 이 프로세스의 판·argv·env 그대로. 새 판은 같은 인자로 다시 뜬다
+    selfUpdate: (request) =>
+      selfUpdate({
+        ...request,
+        currentVersion: RUNNER_VERSION,
+        argv: process.argv,
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        env: process.env,
+      }),
   });
 
   let stopping = false;
