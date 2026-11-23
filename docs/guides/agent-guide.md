@@ -846,6 +846,12 @@ This Claude Code session runs as a bot in dodok, … The bot definition below wa
 - 정의가 바뀌면 그 봇의 세션이 새로 열린다(에이전트 지시가 바뀔 때와 같다).
 - 「지켜볼 것」은 깨우는 장치가 아니다 — 봇은 멘션·자동 응답·자동화(예약·웹훅)로만 깬다.
 - 명령(`/user:…`·`/project:…`)의 `project:` 는 봇 폴더의 `.claude/commands`·`.claude/skills` 다.
+- **봇의 도구** — 사람이 앱(봇 상세의 「도구」)에서 붙인 MCP 서버가 `dodok` 과 나란히 붙는다 — 도구 이름은 `mcp__<서버>__<도구>`. 러너 머신의 설정이 받는 것만 붙는다(기본은 원격 http·sse 만, 로컬·사설 주소 제외 — 막힌 서버는 없는 것과 같다). 사람이 「묻지 않음」으로 고른 도구는 카드 없이 돌고, 나머지는 권한 모드·승인 카드를 지난다. 도구 목록은 세션 중에 바뀌지 않는다 — 사람이 도구를 바꾸면 세션이 새로 열린다.
+- **「이 러너 설정 제어」(`mcp__dodok__runner_status` 등)** — 사람이 켠 봇에만 `mcp__dodok__` 에 열 개가 더 실린다. 대상은 늘 **이 봇이 도는 러너** 하나다(러너 id 를 받지 않는다 — 다른 러너의 프로젝트·에이전트 id 는 `NOT_FOUND`).
+  - 읽기 `runner_status`(라벨·연결·판·최신 판·루트·프로그램 천장·능력·업데이트 대기)·`list_runner_projects`(`archived: true` 면 보관한 것도)·`list_runner_agents`(그 러너의 에이전트·봇 — MCP 헤더·env 값은 `••••`).
+  - 쓰기(시킨 사람의 확인 카드 — 위 「제어 도구」와 같다) `create_runner_project`(`rootId`·`relPath`·`label?` — 러너가 먼저 그 폴더를 확인한다)·`update_runner_project`(`projectId`·`label`)·`archive_runner_project`(`projectId`·`keepFolder?`)·`add_runner_worktree`(`projectId`·`label`·`branch?`·`location?`)·`create_runner_agent`(`handle`·`name`·`program`·`runnerProjectId` + `basePrompt?` 또는 `bot` 네 칸 중 하나)·`set_agent_session_defaults`(`agentId`·`sessionDefaults: {model?, effort?}` — 자기 자신은 `FORBIDDEN`)·`request_runner_update`(결과 `{"message": "예약됨 — 이 러너의 런이 모두 끝나면 업데이트합니다"}` — 러너는 도는 런이 있으면 업데이트를 거절하므로 서버가 이 런을 포함한 그 러너의 런이 모두 끝난 뒤 보낸다).
+  - **권한은 올리지 못한다** — MCP 서버·「묻지 않음」·내장 도구·권한 모드는 입력에 없고(실으면 `VALIDATION`) 사람이 웹에서만 바꾼다. 역할은 그 러너의 주인·admin 이상(시킨 사람 기준), 자동화로 시작한 사슬은 쓰기를 못 한다.
+  - **러너 머신의 설정 파일은 못 바꾼다** — 루트·프로그램·권한 상한·`appMcp`·원격 업데이트 켜기는 러너 머신의 `config.json` 이다. 「루트를 더해 줘」 같은 부탁에는 그 머신에서 설정을 고치고 러너를 다시 띄우라고 답한다.
 
 ### 보내는 것 — 글 답은 최종 답, 카드·파일은 `mcp__dodok__post`
 
