@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,6 +21,7 @@ import {
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   RunnerControlCall,
+  RUNNER_BOT_SOUL_HEADER,
   RunnerCommandsListResult,
   RunnerFsListResult,
   RunnerHello,
@@ -182,6 +192,7 @@ async function setup(
     /** onFatal 이 불린 그 순간을 보려고 — fatal 목록에 넣은 뒤 부른다 */
     onFatal?: (code: number) => void;
     browse?: boolean;
+    roots?: ResolvedRunnerConfig["roots"];
     programs?: ResolvedRunnerConfig["programs"];
     /** 만든 claude 드라이버를 바꿔 끼운다(detect 가 던지는 드라이버 등) */
     driver?: (claude: ProgramDriver) => ProgramDriver;
@@ -203,7 +214,8 @@ async function setup(
   const config: ResolvedRunnerConfig = {
     serverUrl: server.url,
     maxConcurrentRuns: opts.maxConcurrentRuns ?? 3,
-    roots: [{ id: "src", path: dirs.root, label: "내 저장소들" }],
+    roots: opts.roots ?? [{ id: "src", path: dirs.root, label: "내 저장소들" }],
+    botsDir: join(dirs.base, "bots"),
     browse: opts.browse ?? true,
     programs: opts.programs ?? { claude: CLAUDE_CEILING },
   };
@@ -256,7 +268,7 @@ describe("startRunnerConnection", () => {
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
       bundleSha256: null,
-      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees", "commands"],
+      capabilities: ["threads", "interrupt", "approvals", "attachments", "worktrees", "commands", "bots"],
       roots: [{ id: "src", label: "내 저장소들" }],
       browse: true,
       programs: [
@@ -463,6 +475,7 @@ describe("startRunnerConnection", () => {
         serverUrl: server.url,
         maxConcurrentRuns: 1,
         roots: [{ id: "src", path: tempRoot().root, label: "src" }],
+        botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
         programs: { claude: CLAUDE_CEILING },
       },
@@ -494,6 +507,7 @@ describe("startRunnerConnection", () => {
         serverUrl: server.url,
         maxConcurrentRuns: 1,
         roots: [{ id: "src", path: tempRoot().root, label: "src" }],
+        botsDir: join(tmpdir(), "dodok-conn-bots-unused"),
         browse: true,
         programs: { claude: CLAUDE_CEILING },
       },
@@ -838,6 +852,55 @@ describe("startRunnerConnection", () => {
     expect(await ask({ rootId: "src", relPath: "missing" })).toEqual({ ok: false, reason: "not_found" });
     expect(await ask({ rootId: "src", relPath: "../x" })).toEqual({ ok: false, reason: "not_found" });
     expect(await ask({ rootId: "src", relPath: "my-repo" })).toEqual({ ok: false, reason: "failed" });
+  });
+
+  it("봇 런 — 루트가 없어도(roots: []) 봇 폴더에서 돈다, SOUL.md 는 머리 줄 + 정의 [러너 봇 스펙 B1·B4]", async () => {
+    const { server, fake, dirs } = await setup({ roots: [] });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.roots).toEqual([]);
+    fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    const bot = { id: "r-0123456789", soul: "# 리뷰 봇\n\n## Purpose\n리뷰 봇\n" };
+    const ack = await sendStart(server.sockets[0]!, runStart({ agent: { project: undefined, bot } }));
+    expect(ack).toEqual({ runId: RUN_ID, admission: "dispatch" });
+    await waitFor(() => server.finals.length === 1);
+    const folder = join(dirs.base, "bots", bot.id);
+    expect(fake.calls[0]!.options.cwd).toBe(folder);
+    expect(readFileSync(join(folder, "SOUL.md"), "utf8")).toBe(`${RUNNER_BOT_SOUL_HEADER}\n\n${bot.soul}`);
+    expect(server.errors).toEqual([]);
+  });
+
+  it("봇 런 — 봇 자리가 링크면 RUNNER_CEILING(bot), CLI 는 띄우지 않는다 [Review Focus 1]", async () => {
+    const { server, fake, dirs } = await setup();
+    mkdirSync(join(dirs.base, "bots"));
+    symlinkSync(dirs.workdir, join(dirs.base, "bots", "r-0123456789"));
+    await waitFor(() => server.hellos.length === 1);
+    await sendStart(
+      server.sockets[0]!,
+      runStart({ agent: { project: undefined, bot: { id: "r-0123456789", soul: "x" } } }),
+    );
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toMatchObject({ code: "RUNNER_CEILING", message: "bot" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("commands.list 봇 갈래 — 봇 폴더 cwd, 프로젝트 감싸개는 봇 폴더의 .claude/commands 를 잇는다 [B8·B13]", async () => {
+    const { server, fake, dirs } = await setup({ baseEnv: { PATH: "/usr/bin", HOME: "/nonexistent-home" } });
+    const folder = join(dirs.base, "bots", "r-0123456789");
+    mkdirSync(join(folder, ".claude", "commands"), { recursive: true });
+    const linked: string[] = [];
+    fake.commands = async (options) => {
+      for (const p of (options.plugins ?? []) as Array<{ path: string }>) {
+        linked.push(realpathSync(join(p.path, "commands")));
+      }
+      return [];
+    };
+    await waitFor(() => server.hellos.length === 1);
+    const socket = server.sockets[0]!;
+    const ask = (id: string) => socket.timeout(2000).emitWithAck("commands.list", { bot: { id } });
+    expect(await ask("r-0123456789")).toEqual({ ok: true, commands: [] });
+    expect(fake.listCommandsCalls[0]!.cwd).toBe(folder);
+    expect(linked).toEqual([join(folder, ".claude", "commands")]);
+    expect(await ask("../x")).toEqual({ ok: false, reason: "not_found" });
   });
 
   it("fs.list·project.check 왕복 — browse 를 끄면 둘러보기만 FORBIDDEN", async () => {

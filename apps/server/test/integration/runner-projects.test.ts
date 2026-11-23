@@ -113,7 +113,7 @@ describe("러너 프로젝트 끝에서 끝까지 — 완료 기준 1~4", () => 
       hello: HELLO,
       tree: tree(),
       script: (run) => {
-        const { rootId, relPath } = run.start.agent.project;
+        const { rootId, relPath } = run.start.agent.project!;
         workdirs.push(join(secret, rootId, relPath));
         run.tool("Read", { file_path: "README.md" }, "# dodok");
         run.final(`${relPath} 에서 README.md 를 읽었습니다`);

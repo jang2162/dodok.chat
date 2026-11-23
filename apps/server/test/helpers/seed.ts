@@ -1,6 +1,7 @@
 import {
   type Agent,
   dodokSessionKey,
+  type RunnerBotDefinition,
   type RunnerEffort,
   type RunnerPermissionMode,
   type RunnerProgram,
@@ -250,9 +251,25 @@ export function createRunnerAgentForTest(
     permissionMode?: RunnerPermissionMode | null;
     disallowedTools?: string[];
     enabled?: boolean;
+    /** 봇(러너 봇 스펙 B2) — 프로젝트 없이 러너 토큰에 묶는다. 돌려주는 projectId 는 빈 문자열 */
+    bot?: RunnerBotDefinition;
   },
 ): { agent: Agent; runnerTokenId: string; projectId: string } {
   const runnerTokenId = opts.runnerTokenId ?? insertRunnerToken(db, opts.workspaceId);
+  if (opts.bot !== undefined) {
+    const bot = createAgent(db, {
+      workspaceId: opts.workspaceId,
+      provider: "runner",
+      runnerTokenId,
+      bot: opts.bot,
+      program: opts.program ?? "claude",
+      handle: opts.handle,
+      name: opts.name ?? opts.handle,
+      ...(opts.disallowedTools === undefined ? {} : { disallowedTools: opts.disallowedTools }),
+      ...(opts.enabled === undefined ? {} : { enabled: opts.enabled }),
+    });
+    return { agent: bot, runnerTokenId, projectId: "" };
+  }
   const relPath = opts.relPath ?? opts.handle;
   const existing = listProjects(db, runnerTokenId).find(
     (p) => p.archivedAt === null && p.rootId === (opts.rootId ?? "src") && p.relPath === relPath,

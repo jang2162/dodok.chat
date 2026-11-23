@@ -1,4 +1,4 @@
-import type { Agent, SessionDefaults } from "@dodok/shared";
+import { type Agent, BOT_TEMPLATES, type RunnerCapability, type SessionDefaults } from "@dodok/shared";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ import {
   projectPath,
   renderRunnersPage,
   runnerOf,
+  runnerPath,
   runnersRoutes,
 } from "../../../test/runnersServer";
 import { ABOVE_CEILING, CEILING_REFUSED } from "./RunnerAgentForm";
@@ -382,5 +383,176 @@ describe("워크트리의 러너 에이전트 — 경로 줄은 「<부모> · <
       "href",
       `/settings/connection/project/${wt.id}`,
     );
+  });
+});
+
+describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
+  type Hit = { method: string; url: string; body: unknown };
+  const BOTS_CAPS: RunnerCapability[] = [
+    "threads",
+    "interrupt",
+    "approvals",
+    "attachments",
+    "worktrees",
+    "bots",
+  ];
+  const DEF = { purpose: "리뷰 봇", watches: "PR", does: "위험을 짚는다", reports: "요약" };
+
+  /** 러너 상세(맥북)·프로젝트(dodok)를 띄운다 — POST /agents 는 받은 본문을 남기고 201 */
+  function serveRunner(opts: { bots?: boolean } = {}) {
+    const hits: Hit[] = [];
+    const routes = runnersRoutes({
+      runners: [runnerOf(1, { label: "맥북", ...(opts.bots === false ? {} : { capabilities: BOTS_CAPS }) })],
+      projects: [projectOf(1, { label: "dodok", relPath: "dodok" })],
+    });
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      if (method === "POST" && url === "/api/v1/agents") {
+        hits.push({ method, url, body });
+        return json(201, {
+          agent: makeAgent({
+            provider: "runner",
+            providerAgentId: "r-0123456789",
+            handle: "rev",
+            name: "rev",
+          }),
+        });
+      }
+      const hit = routes.handle(method, url, body);
+      if (hit) return hit;
+      if (url === "/api/v1/agents") return json(200, { agents: [] });
+      return json(404, { code: "NOT_FOUND", message: "x" });
+    };
+    vi.stubGlobal("fetch", vi.fn(fetch));
+    return { hits };
+  }
+
+  async function openBotDialog() {
+    renderRunnersPage("admin", undefined, runnerPath());
+    const runner = await screen.findByTestId("runner-detail");
+    await userEvent.click(await within(runner).findByRole("button", { name: "봇 만들기" }));
+    return screen.findByRole("dialog", { name: "봇 만들기" });
+  }
+
+  it("러너 상세의 「봇 만들기」 — 템플릿이 네 칸을 채우고, 본문은 runnerTokenId + bot(프로젝트·지시 없음)", async () => {
+    const { hits } = serveRunner();
+    const dialog = await openBotDialog();
+    expect(within(dialog).queryByRole("textbox", { name: "지시" })).toBeNull();
+    const review = BOT_TEMPLATES.find((t) => t.id === "review")!;
+    await userEvent.click(within(dialog).getByRole("button", { name: review.label }));
+    expect(within(dialog).getByLabelText("목적(한 줄)")).toHaveValue(review.definition.purpose);
+    expect(within(dialog).getByLabelText("할 일")).toHaveValue(review.definition.does);
+    // 빈 봇 템플릿은 비운다
+    await userEvent.click(within(dialog).getByRole("button", { name: "빈 봇" }));
+    expect(within(dialog).getByLabelText("지켜볼 것")).toHaveValue("");
+    await userEvent.click(within(dialog).getByRole("button", { name: review.label }));
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "rev");
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.body).toEqual({
+      provider: "runner",
+      runnerTokenId: runnerOf(1).id,
+      bot: review.definition,
+      program: "claude",
+      handle: "rev",
+      name: "rev",
+      dmAccess: "admins",
+    });
+  });
+
+  it("칸 상한 — 목적 200, 나머지 2000(maxLength)", async () => {
+    serveRunner();
+    const dialog = await openBotDialog();
+    expect(within(dialog).getByLabelText("목적(한 줄)")).toHaveAttribute("maxLength", "200");
+    for (const name of ["지켜볼 것", "할 일", "보고할 것"])
+      expect(within(dialog).getByLabelText(name)).toHaveAttribute("maxLength", "2000");
+  });
+
+  it("능력 bots 가 없는 러너 — 사유 「러너를 업데이트하세요(봇은 0.9.0 부터)」와 함께 만들기·「봇(폴더만)」을 잠근다", async () => {
+    serveRunner({ bots: false });
+    const dialog = await openBotDialog();
+    expect(dialog).toHaveTextContent("러너를 업데이트하세요(봇은 0.9.0 부터)");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "핸들" }), "rev");
+    expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    cleanup();
+    // 프로젝트 상세에서 연 폼 — 「봇(폴더만)」 선택지가 사유와 함께 잠긴다
+    serveRunner({ bots: false });
+    renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    const project = await screen.findByTestId("project-detail");
+    await userEvent.click(within(project).getByRole("button", { name: "에이전트 만들기" }));
+    const form = await screen.findByRole("dialog", { name: "러너 에이전트 만들기" });
+    const place = within(form).getByRole("radiogroup", { name: "자리" });
+    const bot = within(place).getByRole("radio", { name: "봇(폴더만)" });
+    expect(bot).toBeDisabled();
+    expect(bot).toHaveAccessibleDescription("러너를 업데이트하세요(봇은 0.9.0 부터)");
+  });
+
+  it("프로젝트 상세의 폼에서 「봇(폴더만)」을 고르면 지시·프로젝트 대신 네 칸, 본문은 봇 갈래", async () => {
+    const { hits } = serveRunner();
+    renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
+    const project = await screen.findByTestId("project-detail");
+    await userEvent.click(within(project).getByRole("button", { name: "에이전트 만들기" }));
+    const form = await screen.findByRole("dialog", { name: "러너 에이전트 만들기" });
+    expect(within(form).getByRole("textbox", { name: "지시" })).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("radio", { name: "봇(폴더만)" }));
+    expect(within(form).queryByRole("textbox", { name: "지시" })).toBeNull();
+    await userEvent.type(within(form).getByLabelText("목적(한 줄)"), "정리 봇");
+    await userEvent.type(within(form).getByRole("textbox", { name: "핸들" }), "tidy");
+    await userEvent.click(within(form).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(hits).toHaveLength(1));
+    expect(hits[0]?.body).toMatchObject({
+      runnerTokenId: runnerOf(1).id,
+      bot: { purpose: "정리 봇", watches: "", does: "", reports: "" },
+    });
+    expect(hits[0]?.body).not.toHaveProperty("runnerProjectId");
+  });
+
+  /** 맥북의 봇 — admin 이상·주인이면 정의(`runnerAgent.bot`)가 실린다 */
+  function bot(withDefinition = true): Agent {
+    const base = coder({ projectId: null, bot: DEF }, withDefinition);
+    return { ...base, runner: { ...base.runner!, bot: true } };
+  }
+
+  it("상세의 「정의 편집」 — 지시 대신 네 칸, 저장하면 PATCH { bot }", async () => {
+    const server = stubServer({ agents: [bot()], runners: routes() });
+    renderPage(
+      createQueryClient(() => {}),
+      "admin",
+    );
+    const row = await agentDetail();
+    expect(within(row).queryByRole("button", { name: "@coder 지시 편집" })).toBeNull();
+    expect(row).toHaveTextContent("리뷰 봇");
+    await userEvent.click(within(row).getByRole("button", { name: "@coder 봇 정의 편집" }));
+    const doField = within(row).getByLabelText("할 일");
+    await userEvent.clear(doField);
+    await userEvent.type(doField, "테스트를 돌린다");
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() =>
+      expect(server.bodies("PATCH")).toEqual([{ bot: { ...DEF, does: "테스트를 돌린다" } }]),
+    );
+  });
+
+  it("member — 봇임은 경로에 보이고(「› 봇」), 정의 편집·정의 내용은 없다 [Review Focus 5]", async () => {
+    stubServer({ agents: [bot(false)] });
+    renderPage(
+      createQueryClient(() => {}),
+      "member",
+    );
+    const row = await agentDetail();
+    expect(within(row).queryByRole("button", { name: /봇 정의 편집/ })).toBeNull();
+    expect(row).not.toHaveTextContent("리뷰 봇");
+    expect(screen.getByText(/› 봇/)).toBeInTheDocument();
+  });
+
+  it("보관한 봇은 되살린다 — 「프로젝트가 없어 되살릴 수 없습니다」가 아니다", async () => {
+    stubServer({ agents: [{ ...bot(), archivedAt: ARCHIVED_AT }] });
+    renderPage();
+    const row = await agentDetail();
+    expect(row).not.toHaveTextContent(NO_PROJECT_RESTORE);
+    expect(within(row).getByRole("button", { name: "@coder 되살리기" })).toBeInTheDocument();
   });
 });

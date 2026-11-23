@@ -1,8 +1,23 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { CONTROL_TOOLS, renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
+import {
+  CONTROL_TOOLS,
+  renderRunnerPrompt,
+  RUNNER_BOT_SOUL_HEADER,
+  type ErrorCode,
+  type RunEventBody,
+} from "@dodok/shared";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -13,6 +28,7 @@ import {
   runOnce,
   RUNNER_DISALLOWED_TOOLS,
   type RunContext,
+  writeSoul,
 } from "../src/drivers/claude/run";
 import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
 import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
@@ -1370,6 +1386,54 @@ describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", (
       expect(realpathSync(join(cfg, "commands", "user-cmd.md"))).toBe(join(cfg, "commands", "user-cmd.md"));
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("봇 런 — SOUL.md(러너 봇 스펙 B4)", () => {
+  const BOT = { id: "r-0123456789", soul: "# 리뷰 봇\n" };
+  const botStart = () => {
+    const start = runStart({ agent: { project: undefined, bot: BOT } });
+    return { ...start, providerSessionId: start.providerSessionId! };
+  };
+
+  it("런 시작 때 머리 줄 + 정의로 다시 쓴다 — 사람이 고친 내용은 덮인다, 임시 파일은 남지 않는다", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dodok-bot-run-")));
+    try {
+      writeFileSync(join(dir, "SOUL.md"), "사람이 고친 글");
+      const { fake, ctx } = harness();
+      fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+      await runOnce({ ...runSpec(), workdir: dir, start: botStart() }, ctx);
+      expect(fake.calls[0]!.options.cwd).toBe(dir);
+      expect(readFileSync(join(dir, "SOUL.md"), "utf8")).toBe(`${RUNNER_BOT_SOUL_HEADER}\n\n# 리뷰 봇\n`);
+      expect(readdirSync(dir)).toEqual(["SOUL.md"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("프로젝트 런은 SOUL.md 를 쓰지 않는다", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dodok-bot-run-")));
+    try {
+      const { fake, ctx } = harness();
+      fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+      await runOnce({ ...runSpec(), workdir: dir }, ctx);
+      expect(readdirSync(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("SOUL.md 가 링크면 링크 자리를 바꾸고 가리키던 파일에는 쓰지 않는다", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dodok-bot-soul-")));
+    try {
+      writeFileSync(join(dir, "victim.txt"), "원래 글");
+      symlinkSync(join(dir, "victim.txt"), join(dir, "SOUL.md"));
+      await writeSoul(dir, "새 글\n", "run-1");
+      expect(readFileSync(join(dir, "victim.txt"), "utf8")).toBe("원래 글");
+      expect(readFileSync(join(dir, "SOUL.md"), "utf8")).toBe(`${RUNNER_BOT_SOUL_HEADER}\n\n새 글\n`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

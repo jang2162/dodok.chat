@@ -25,6 +25,7 @@ import {
   permissionModeRank,
   type RunEventBody,
   type RunEventType,
+  RUNNER_BOTS_UPDATE_MESSAGE,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
@@ -46,6 +47,7 @@ import {
   RunnerWorktreeCreateResult,
   RunnerWorktreeRemove,
   RunnerWorktreeRemoveResult,
+  type RunnerBotDefinition,
   type RunnerCapability,
   RunnerRunAck,
   type RunnerPermissionMode,
@@ -100,6 +102,11 @@ export type RunnerFrameLimit = {
 export type RunnerAgentDefinition = {
   name: string;
   instructions: string | null;
+  /**
+   * 봇의 정의(러너 봇 스펙 B9) — 있으면 instructions 대신 봇 정의 틀을 싣는다. agent.bot(봇 폴더 id·SOUL.md 본문)과 함께 온다. 능력
+   * bots 가 없는 러너에는 보내지 않는다(B7)
+   */
+  botDefinition?: RunnerBotDefinition;
   /** permissionMode null 은 권한 「기본」 — send 가 그 러너의 hello 상한으로 min(default, 상한)을 채운다(세션 설정 스펙 S5) */
   agent: Omit<RunnerRunAgent, "permissionMode"> & { permissionMode: RunnerPermissionMode | null };
 };
@@ -187,7 +194,7 @@ export interface RunnerAdapter extends AgentAdapter {
    * 그 러너의 그 프로젝트에서 쓸 수 있는 명령(commands.list — 에이전트 명령 스펙 C8). ack 상한 RUNNER_COMMANDS_LIST_TIMEOUT_MS(30초),
    * 오류는 fsList 와 같다. 능력 commands 가 없는 러너에는 부르지 않는다(부르는 쪽이 hasCapability 로 본다)
    */
-  commandsList(tokenId: string, project: RunnerProjectRef): Promise<RunnerCommandsListResult>;
+  commandsList(tokenId: string, req: RunnerCommandsList): Promise<RunnerCommandsListResult>;
   /** 그 토큰으로 지금 붙은 러너가 hello 로 그 능력을 알렸나. 붙어 있지 않으면 false */
   hasCapability(tokenId: string, capability: RunnerCapability): boolean;
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
@@ -1130,11 +1137,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         RunnerWorktreeRemoveResult,
         RUNNER_GIT_ACK_TIMEOUT_MS,
       ),
-    commandsList: (tokenId, project) =>
+    commandsList: (tokenId, req) =>
       askRunner(
         tokenId,
         "commands.list",
-        { project },
+        req,
         RunnerCommandsList,
         RunnerCommandsListResult,
         RUNNER_COMMANDS_LIST_TIMEOUT_MS,
@@ -1176,6 +1183,9 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       if (!runner) throw new AdapterError("ADAPTER_UNAVAILABLE", "the agent's runner is not connected");
       const definition = definitionOf(input.agentId, runner.tokenId, input.conversationId);
       if (!definition) throw new AdapterError("NOT_FOUND", "no runner agent with a project for this runner");
+      // 옛 러너는 project 를 요구한다 — 봇 런을 보내면 형식 오류로 버린다(러너 봇 스펙 B7)
+      if (definition.agent.bot !== undefined && !runner.capabilities.includes("bots"))
+        throw new AdapterError("VALIDATION", RUNNER_BOTS_UPDATE_MESSAGE);
       const ceiling = runner.programs.find((p) => p.program === definition.agent.program)?.ceiling;
       const agent = {
         ...definition.agent,
@@ -1193,6 +1203,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           : { providerSessionId: sendOpts.providerSessionId }),
         channelRulesAppend: buildChannelRulesAppend({
           agentInstructions: definition.instructions,
+          ...(definition.botDefinition === undefined ? {} : { bot: definition.botDefinition }),
           channelName,
           ...(input.dm ? { dm: input.dm } : {}),
           ...(input.groupDm ? { groupDm: true as const } : {}),

@@ -258,14 +258,20 @@ export function fakeWorktreeRemove(
   return { ok: true };
 }
 
-/** 실제 러너 `checkCeiling` 의 순서 root → path → program → permissionMode → allowedTools. 통과면 null */
+/** 실제 러너 `checkCeiling` 의 순서 root → path(봇이면 bot) → program → permissionMode → allowedTools. 통과면 null */
 export function fakeCeilingItem(
   hello: RunnerHello,
   tree: FakeTree,
   agent: RunnerRunAgent,
 ): RunnerCeilingItem | null {
-  const resolved = resolveFake(hello, tree, agent.project);
-  if (!resolved.ok) return resolved.reason === "root_missing" ? "root" : "path";
+  // 봇 런(러너 봇 스펙 B1) — 봇 폴더는 러너가 만든다. 능력 bots 가 없는 러너라면 형식 오류지만 서버가 보내지 않는다(B7)
+  if (agent.bot !== undefined) {
+    if (!hello.capabilities.includes("bots")) return "bot";
+  } else {
+    if (agent.project === undefined) return "path";
+    const resolved = resolveFake(hello, tree, agent.project);
+    if (!resolved.ok) return resolved.reason === "root_missing" ? "root" : "path";
+  }
   const program = hello.programs.find((p) => p.program === agent.program);
   if (!program?.available) return "program";
   if (permissionModeRank(agent.permissionMode) > permissionModeRank(program.ceiling.maxPermissionMode))

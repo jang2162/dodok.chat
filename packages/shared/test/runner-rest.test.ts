@@ -58,6 +58,51 @@ describe("러너 에이전트 본문", () => {
   });
 });
 
+describe("러너 봇 본문(러너 봇 스펙 B2·B3·B12)", () => {
+  const def = { purpose: "리뷰 봇", watches: "PR", does: "읽는다", reports: "요약" };
+  const bot = {
+    provider: "runner",
+    runnerTokenId: ID,
+    program: "claude",
+    handle: "rev",
+    name: "Rev",
+    bot: def,
+  };
+
+  it("러너 토큰 + 정의로 만든다 — 기본 지시는 버린다", () => {
+    const parsed = CreateRunnerAgentBody.parse({ ...bot, basePrompt: "무시" });
+    expect(parsed).toMatchObject({ runnerTokenId: ID, bot: def, enabled: true });
+    expect(parsed).not.toHaveProperty("basePrompt");
+    expect(CreateAgentBody.parse(bot)).toMatchObject({ provider: "runner", bot: def });
+  });
+
+  it("runnerProjectId 와 bot 을 함께 실으면 거절, 러너 토큰 없는 봇도 거절", () => {
+    expect(CreateRunnerAgentBody.safeParse({ ...bot, runnerProjectId: ID }).success).toBe(false);
+    const { runnerTokenId: _, ...noToken } = bot;
+    expect(CreateRunnerAgentBody.safeParse(noToken).success).toBe(false);
+  });
+
+  it("정의 상한 — 목적 200, 나머지 2000(넘으면 거절)", () => {
+    const at = {
+      purpose: "가".repeat(200),
+      watches: "a".repeat(2000),
+      does: "a".repeat(2000),
+      reports: "a".repeat(2000),
+    };
+    expect(CreateRunnerAgentBody.safeParse({ ...bot, bot: at }).success).toBe(true);
+    for (const key of ["purpose", "watches", "does", "reports"] as const) {
+      const over = { ...at, [key]: "a".repeat(key === "purpose" ? 201 : 2001) };
+      expect(CreateRunnerAgentBody.safeParse({ ...bot, bot: over }).success, key).toBe(false);
+      expect(UpdateAgentBody.safeParse({ bot: over }).success, key).toBe(false);
+    }
+  });
+
+  it("정의 수정은 네 칸 통째로 — 빠진 칸은 거절", () => {
+    expect(UpdateAgentBody.parse({ bot: def })).toEqual({ bot: def });
+    expect(UpdateAgentBody.safeParse({ bot: { purpose: "x" } }).success).toBe(false);
+  });
+});
+
 describe("둘러보기 쿼리", () => {
   it("relPath 를 빼면 루트 자신, 루트 밖 꼴은 거절", () => {
     expect(RunnerFsQuery.parse({ rootId: "src" })).toEqual({ rootId: "src", relPath: "" });

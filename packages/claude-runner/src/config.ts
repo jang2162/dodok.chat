@@ -40,7 +40,10 @@ export const RunnerConfig = z.strictObject({
   serverUrl: z.url({ protocol: /^https?$/ }),
   tokenFile: z.string().min(1).optional(),
   maxConcurrentRuns: z.int().min(1).max(16).default(3),
-  roots: z.array(Root).min(1).max(MAX_ROOTS),
+  // 봇만 쓰는 러너는 루트가 없어도 된다(러너 봇 스펙 B1)
+  roots: z.array(Root).min(0).max(MAX_ROOTS),
+  // 봇 폴더 자리 — 없으면 DEFAULT_BOTS_DIR. 봇마다 그 아래 `<봇 id>` 폴더를 러너가 만든다
+  botsDir: z.string().min(1).optional(),
   browse: z.boolean().default(true),
   // 적지 않은 프로그램은 꺼진 것이다
   programs: z.strictObject(
@@ -54,7 +57,11 @@ export type RunnerConfig = z.infer<typeof RunnerConfig>;
 
 /** path 는 realpath — 천장 검사·둘러보기가 이 값과 견준다. label 은 hello 로 서버에 가는 유일한 루트 정보 */
 export type ResolvedRoot = { id: string; path: string; label: string };
-export type ResolvedRunnerConfig = Omit<RunnerConfig, "roots"> & { roots: ResolvedRoot[] };
+/** botsDir 는 홈을 푼 절대 경로 — 아직 없을 수 있다(첫 봇 런이 만든다) */
+export type ResolvedRunnerConfig = Omit<RunnerConfig, "roots" | "botsDir"> & {
+  roots: ResolvedRoot[];
+  botsDir: string;
+};
 
 export type FsLike = {
   readFile(path: string): string;
@@ -84,6 +91,7 @@ function keyPath(path: readonly PropertyKey[]): string {
 }
 
 export const DEFAULT_CONFIG_PATH = "~/.dodok-runner/config.json";
+export const DEFAULT_BOTS_DIR = "~/.dodok-runner/bots";
 
 /** `~`·`~/…` 를 홈으로 풀고 상대 경로는 절대로 — --config 인자와 설정 파일 안 경로가 함께 쓴다 */
 export function expandHome(p: string, home: string): string {
@@ -186,7 +194,13 @@ export function loadRunnerConfig(
     throw new RunnerConfigError("러너 토큰이 없습니다 — tokenFile 또는 env DODOK_RUNNER_TOKEN 에 두세요");
 
   return {
-    config: { ...raw, tokenFile, roots, programs },
+    config: {
+      ...raw,
+      tokenFile,
+      roots,
+      programs,
+      botsDir: expandHome(raw.botsDir ?? DEFAULT_BOTS_DIR, home),
+    },
     token,
     warnings,
   };

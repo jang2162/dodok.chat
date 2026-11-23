@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { Id } from "../common";
-import { Agent, Channel, ChannelMember, RunnerProgram, SessionDefaults, SessionPolicy } from "../domain";
+import {
+  Agent,
+  Channel,
+  ChannelMember,
+  RunnerBotDefinition,
+  RunnerProgram,
+  SessionDefaults,
+  SessionPolicy,
+} from "../domain";
 import { RunnerRunAgent } from "../runner";
 import { isRegistrableAgentId } from "../session-key";
 
@@ -87,26 +95,42 @@ export type CreateOpenClawAgentBody = z.infer<typeof CreateOpenClawAgentBody>;
  * 오류로 런을 소리 없이 버린다(러너 일반화 계획 Task 3 Step 2). 러너 천장(권한·도구 상한·프로그램)과의 대조는 서버 라우트가 붙은
  * 러너의 hello 로 한다
  */
-const RunnerAgentFields = RunnerRunAgent.pick({ disallowedTools: true });
+const RunnerAgentFields = { disallowedTools: RunnerRunAgent.shape.disallowedTools };
+
+/** 러너 에이전트 만들기의 두 갈래가 함께 쓰는 필드 */
+const RunnerAgentCreateFields = Agent.pick({ handle: true, name: true, avatarUrl: true }).extend({
+  provider: z.literal("runner"),
+  program: RunnerProgram,
+  enabled: Agent.shape.enabled.default(true),
+  dmAccess: Agent.shape.dmAccess.unwrap().optional(),
+  disallowedTools: RunnerAgentFields.disallowedTools.optional(),
+});
 
 /**
  * 러너 에이전트 만들기(POST /agents { provider: "runner" }) — 러너 프로젝트 안에서, 그 프로젝트의 러너 토큰에 묶인다.
  * providerAgentId 는 서버가 짓는다. 모델·권한 모드·허용 도구는 받지 않는다(세션 설정 스펙 5.5) — 옛 클라이언트가 보내면 z.object 가
  * 버려 무시된다(400 이 아니다 — 옛 화면이 만들기를 못 하게 되지 않게). 「새 세션 시작값」도 만들 때는 묻지 않는다(S10)
  */
-export const CreateRunnerAgentBody = Agent.pick({
-  handle: true,
-  name: true,
-  avatarUrl: true,
-  basePrompt: true,
-}).extend({
-  provider: z.literal("runner"),
+export const CreateRunnerProjectAgentBody = RunnerAgentCreateFields.extend({
+  basePrompt: Agent.shape.basePrompt,
   runnerProjectId: Id,
-  program: RunnerProgram,
-  enabled: Agent.shape.enabled.default(true),
-  dmAccess: Agent.shape.dmAccess.unwrap().optional(),
-  disallowedTools: RunnerAgentFields.shape.disallowedTools.optional(),
+  bot: z.never().optional(),
 });
+export type CreateRunnerProjectAgentBody = z.infer<typeof CreateRunnerProjectAgentBody>;
+
+/**
+ * 러너 봇 만들기(러너 봇 스펙 B2·B12) — 프로젝트 대신 러너 토큰과 봇 정의. 기본 지시(basePrompt)는 받지 않는다(정의가 그 자리 — B3).
+ * 제어 도구로는 만들지 않는다
+ */
+export const CreateRunnerBotAgentBody = RunnerAgentCreateFields.extend({
+  runnerTokenId: Id,
+  bot: RunnerBotDefinition,
+  runnerProjectId: z.never().optional(),
+});
+export type CreateRunnerBotAgentBody = z.infer<typeof CreateRunnerBotAgentBody>;
+
+/** 프로젝트 갈래·봇 갈래 — 둘을 함께 실으면(runnerProjectId 와 bot) 어느 갈래도 받지 않는다 */
+export const CreateRunnerAgentBody = z.union([CreateRunnerProjectAgentBody, CreateRunnerBotAgentBody]);
 export type CreateRunnerAgentBody = z.infer<typeof CreateRunnerAgentBody>;
 
 /** POST /agents — 서버 라우트는 provider 를 보고 둘 중 하나로 파싱한다(오류가 그 갈래의 필드를 가리키게) */
@@ -117,16 +141,19 @@ export type CreateAgentBody = z.infer<typeof CreateAgentBody>;
  * avatarUrl·basePrompt 는 null 로 지운다. dmAccess 는 REST 에만 — 제어 도구 update_agent 는 뺀다(에이전트 DM 계획 판정 PD13: 채널 안
  * 에이전트가 확인 카드 하나로 DM 범위를 넓히지 못하게). sessionDefaults(새 세션 시작값 — 보낸 필드만, null 은 「기본」)·
  * disallowedTools 는 러너 에이전트만(OpenClaw 에이전트면 VALIDATION), 역시 REST 에만 — 제어 도구는 러너 구성을 바꾸지 못한다(러너
- * 일반화 스펙 6장). 옛 model·permissionMode·allowedTools 는 받지 않는다 — 보내면 버려진다(세션 설정 스펙 5.5)
+ * 일반화 스펙 6장). 옛 model·permissionMode·allowedTools 는 받지 않는다 — 보내면 버려진다(세션 설정 스펙 5.5). bot 은 봇 에이전트만
+ * — 역시 REST 에만
  */
 export const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: true }).partial().extend({
   avatarUrl: Agent.shape.avatarUrl.unwrap().nullable().optional(),
   basePrompt: Agent.shape.basePrompt.unwrap().nullable().optional(),
   dmAccess: Agent.shape.dmAccess.unwrap().optional(),
   sessionDefaults: SessionDefaults.partial().optional(),
-  disallowedTools: RunnerAgentFields.shape.disallowedTools.optional(),
+  disallowedTools: RunnerAgentFields.disallowedTools.optional(),
+  /** 봇 정의 — 봇 에이전트만(아니면 VALIDATION), 네 칸을 통째로 바꾼다(러너 봇 스펙 B3·B10) */
+  bot: RunnerBotDefinition.optional(),
 });
 export type UpdateAgentBody = z.infer<typeof UpdateAgentBody>;
 
 /** 러너 에이전트 정의 필드의 이름 — 제어 도구가 받지 않는 키를 가를 때 쓴다 */
-export const RUNNER_AGENT_FIELDS = ["sessionDefaults", "disallowedTools"] as const;
+export const RUNNER_AGENT_FIELDS = ["sessionDefaults", "disallowedTools", "bot"] as const;

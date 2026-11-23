@@ -11,6 +11,7 @@ import {
   type Run,
   RUNNER_PROGRAM_NAME,
   RunnerCeilingItem,
+  RUNNER_BOTS_UPDATE_MESSAGE,
   type RunnerProgram,
   type RunSignal,
   type RunState,
@@ -1684,10 +1685,14 @@ function runErrorBody(
     case PROVIDER_AUTH:
       return `@${handle} 실행이 실패했습니다: 러너의 ${RUNNER_PROGRAM_NAME[program ?? "claude"]} 로그인을 확인하세요`;
     case RUNNER_CEILING: {
-      // 항목 이름은 러너가 보낸 글이다 — 다섯 이름 밖이면 싣지 않는다(카드에 아무 글이나 오르지 않게)
+      // 항목 이름은 러너가 보낸 글이다 — RunnerCeilingItem 밖이면 싣지 않는다(카드에 아무 글이나 오르지 않게)
       const item = RunnerCeilingItem.safeParse(message);
       return `@${handle} 실행이 실패했습니다: 러너 설정이 이 에이전트를 허용하지 않습니다${item.success ? `(${item.data})` : ""} — 러너 머신의 설정을 확인하세요`;
     }
+    case "ADAPTER_ERROR:VALIDATION":
+      // 능력 bots 가 없는 러너에 봇 런을 보내지 않았다(러너 봇 스펙 B7) — 정해진 글일 때만 싣는다
+      if (message === RUNNER_BOTS_UPDATE_MESSAGE) return `@${handle} 실행이 실패했습니다: ${message}`;
+      return `@${handle} 실행이 실패했습니다: ${code}`;
     default:
       return `@${handle} 실행이 실패했습니다: ${code}`;
   }

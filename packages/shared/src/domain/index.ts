@@ -68,6 +68,19 @@ export const RUNNER_PROGRAM_NAME: Record<RunnerProgram, string> = {
   codex: "Codex",
   opencode: "OpenCode",
 };
+/**
+ * 러너 봇의 정의(러너 봇 스펙 B3) — 목적 한 줄·지켜볼 것·할 일·보고할 것. 봇이면 기본 지시(basePrompt) 대신 이것이 지시 자리에
+ * 렌더되고(B9) 러너가 봇 폴더의 `SOUL.md` 로 쓴다(B4). 빈 칸은 받는다(빈 봇 템플릿)
+ */
+export const RUNNER_BOT_PURPOSE_MAX = 200;
+export const RUNNER_BOT_SECTION_MAX = 2000;
+export const RunnerBotDefinition = z.object({
+  purpose: z.string().max(RUNNER_BOT_PURPOSE_MAX),
+  watches: z.string().max(RUNNER_BOT_SECTION_MAX),
+  does: z.string().max(RUNNER_BOT_SECTION_MAX),
+  reports: z.string().max(RUNNER_BOT_SECTION_MAX),
+});
+export type RunnerBotDefinition = z.infer<typeof RunnerBotDefinition>;
 export const Agent = z.object({
   id: Id,
   workspaceId: Id,
@@ -88,10 +101,17 @@ export const Agent = z.object({
    * 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
    * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다.
    * projectLabel 은 그 에이전트 프로젝트의 표시 이름(워크트리면 `<부모 라벨> · <브랜치>`) — member 도 받으므로 경로는 싣지 않는다.
-   * 프로젝트가 없는 러너 에이전트(0031 이 보관한 옛 행)·이 필드 전 서버면 없다
+   * 프로젝트가 없는 러너 에이전트(0031 이 보관한 옛 행)·이 필드 전 서버면 없다. bot 은 봇 에이전트(러너 봇 스펙 B11)만 true —
+   * member 도 받는다(정의 내용은 runnerAgent.bot 에만)
    */
   runner: z
-    .object({ tokenId: Id, label: z.string(), revoked: z.boolean(), projectLabel: z.string().optional() })
+    .object({
+      tokenId: Id,
+      label: z.string(),
+      revoked: z.boolean(),
+      projectLabel: z.string().optional(),
+      bot: z.literal(true).optional(),
+    })
     .optional(),
   /**
    * OpenClaw 에이전트의 Gateway — REST 에이전트 응답에만, OpenClaw 에이전트에만 키가 있다. null 이면 Gateway 가 지워져 연결이 비었다
@@ -110,12 +130,14 @@ export const Agent = z.object({
   sessionDefaults: SessionDefaults.optional(),
   /**
    * 러너 에이전트의 정의(러너 일반화 스펙 5장) — REST 에이전트 응답에만, 러너 에이전트에만 키가 있다. projectId 가 null 이면 프로젝트가
-   * 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다). 금지 도구는 화면에서 고르지 않지만 이미 값이 있으면 런에 실린다
+   * 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다) — 단 bot 이 있으면 봇이다(러너 봇 스펙 B11, projectId 는 늘 null). 금지 도구는
+   * 화면에서 고르지 않지만 이미 값이 있으면 런에 실린다. bot(정의 내용)은 기본 지시와 같은 사람(admin·연결 주인)에게만
    */
   runnerAgent: z
     .object({
       projectId: Id.nullable(),
       disallowedTools: RunnerToolNames,
+      bot: RunnerBotDefinition.optional(),
     })
     .optional(),
 });

@@ -1,8 +1,9 @@
-import type {
-  Agent,
-  CreateOpenClawAgentBody,
-  CreateRunnerAgentBody,
-  DiscoverAgentsQuery,
+import {
+  type Agent,
+  type CreateOpenClawAgentBody,
+  type CreateRunnerAgentBody,
+  type DiscoverAgentsQuery,
+  RUNNER_BOTS_UPDATE_MESSAGE,
 } from "@dodok/shared";
 import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError } from "../../adapters/types";
@@ -58,7 +59,8 @@ export function registerAgentAndNotify(
 }
 
 /**
- * 러너 에이전트 만들기(러너 일반화 스펙 7장, REST 만 — 제어 도구는 러너 구성을 바꾸지 못한다). 프로젝트가 보관됐으면 붙은 러너를
+ * 러너 에이전트 만들기(러너 일반화 스펙 7장, REST 만 — 제어 도구는 러너 구성을 바꾸지 못한다). 봇 갈래(러너 봇 스펙 B12)는 프로젝트
+ * 대신 러너 토큰 — 그 러너가 붙어 있고 능력 bots 가 있어야 한다. 프로젝트가 보관됐으면 붙은 러너를
  * 묻기 전에 VALIDATION, 그 프로젝트의 러너가 붙어 있어야 하고(아니면 503 — 프로그램 목록이 없다) 프로그램이 그 러너의 천장 안이어야
  * 한다(VALIDATION + 항목 이름). 모델·권한 모드는 만들 때 받지 않는다(세션 설정 스펙 5.5). 런마다 러너가 다시 본다
  */
@@ -68,16 +70,24 @@ export function createRunnerAgentAndNotify(
   workspaceId: string,
   createdBy: string | null,
 ): Agent {
-  const project = getProject(ctx.db, workspaceId, body.runnerProjectId);
-  if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
-  if (project.archivedAt !== null)
-    throw apiError("VALIDATION", "runner project is archived", { field: "runnerProjectId" });
-  assertWithinCeiling(
-    liveRunner(ctx.runners, project.runnerTokenId),
-    body.program,
-    {},
-    { requireAvailable: true },
-  );
+  if (body.bot !== undefined) {
+    // 봇(러너 봇 스펙 B2·B7) — 그 러너가 붙어 있고 능력 bots 가 있어야 한다(옛 러너는 봇 런을 못 받는다)
+    const live = liveRunner(ctx.runners, body.runnerTokenId);
+    if (!ctx.runners?.hasCapability(body.runnerTokenId, "bots"))
+      throw apiError("VALIDATION", RUNNER_BOTS_UPDATE_MESSAGE, { field: "bot" });
+    assertWithinCeiling(live, body.program, {}, { requireAvailable: true });
+  } else {
+    const project = getProject(ctx.db, workspaceId, body.runnerProjectId);
+    if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
+    if (project.archivedAt !== null)
+      throw apiError("VALIDATION", "runner project is archived", { field: "runnerProjectId" });
+    assertWithinCeiling(
+      liveRunner(ctx.runners, project.runnerTokenId),
+      body.program,
+      {},
+      { requireAvailable: true },
+    );
+  }
   const { provider: _, ...rest } = body;
   const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId, createdBy });
   changed(ctx);

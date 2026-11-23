@@ -3,6 +3,7 @@ import {
   AvatarUrl,
   type DmAccess,
   RUNNER_AGENT_FIELDS,
+  RunnerBotDefinition,
   type RunnerProgram,
   RunnerRunAgent,
   SessionDefaults,
@@ -64,10 +65,16 @@ export type CreateOpenClawAgentInput = CreateAgentCommon & {
  */
 export type CreateRunnerAgentInput = CreateAgentCommon & {
   provider: "runner";
-  runnerProjectId: string;
   program: RunnerProgram;
   disallowedTools?: string[];
-};
+} & (
+    | { runnerProjectId: string; runnerTokenId?: undefined; bot?: undefined }
+    /**
+     * 봇(러너 봇 스펙 B2) — 프로젝트 대신 러너 토큰과 정의. 기본 지시(basePrompt)는 저장하지 않는다(정의가 그 자리 — B3). 봇 폴더는
+     * 러너가 providerAgentId 로 만든다(B1)
+     */
+    | { runnerTokenId: string; bot: RunnerBotDefinition; runnerProjectId?: undefined }
+  );
 
 export type CreateAgentInput = CreateOpenClawAgentInput | CreateRunnerAgentInput;
 
@@ -86,6 +93,8 @@ export type AgentPatch = {
    */
   sessionDefaults?: Partial<SessionDefaults>;
   disallowedTools?: string[];
+  /** 봇 정의 — 봇 에이전트만(아니면 VALIDATION). 네 칸 중 하나라도 바뀌면 지시 리비전 +1(러너 봇 스펙 B10) */
+  bot?: RunnerBotDefinition;
 };
 
 /** 계약에 안 맞는 아바타 주소를 이미 알린 에이전트 — 읽을 때마다 같은 경고를 되풀이하지 않게 */
@@ -173,6 +182,7 @@ function toApiAgent(
             label: token.label,
             revoked: token.revokedAt !== null,
             ...(projectLabel === undefined ? {} : { projectLabel }),
+            ...(row.runnerBot === null ? {} : { bot: true as const }),
           },
         }
       : {}),
@@ -184,6 +194,7 @@ function toApiAgent(
           runnerAgent: {
             projectId: row.runnerProjectId,
             disallowedTools: row.disallowedToolsJson,
+            ...(row.runnerBot === null ? {} : { bot: row.runnerBot }),
           },
         }
       : {}),
@@ -377,7 +388,18 @@ function commonValues(input: CreateAgentCommon) {
 const RunnerAgentFields = z.object({
   sessionDefaults: SessionDefaults.partial(),
   disallowedTools: RunnerRunAgent.shape.disallowedTools,
+  bot: RunnerBotDefinition,
 });
+
+/** 봇인가(러너 봇 스펙 B11) — runner_bot 이 있으면. runner_project_id null 만으로는 「옛 것」이다 */
+export const isBotRow = (row: Pick<AgentRow, "runnerBot">): boolean => row.runnerBot !== null;
+
+const sameBot = (a: RunnerBotDefinition | null, b: RunnerBotDefinition): boolean =>
+  a !== null &&
+  a.purpose === b.purpose &&
+  a.watches === b.watches &&
+  a.does === b.does &&
+  a.reports === b.reports;
 
 function invalidRunnerField(error: { issues: Array<{ path: PropertyKey[] }> }) {
   const field = String(error.issues[0]?.path[0] ?? "agent");
@@ -400,6 +422,7 @@ function newRunnerAgentId(tx: DbOrTx, workspaceId: string): string {
 }
 
 function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
+  if (input.bot !== undefined) return createRunnerBot(db, { ...input, bot: input.bot });
   const fields = RunnerAgentFields.pick({ disallowedTools: true }).safeParse({
     disallowedTools: input.disallowedTools ?? [],
   });
@@ -428,6 +451,47 @@ function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
         program: input.program,
         runnerTokenId: project.runnerTokenId,
         runnerProjectId: input.runnerProjectId,
+        disallowedToolsJson: fields.data.disallowedTools,
+      })
+      .returning()
+      .get();
+    return apiAgent(tx, row);
+  });
+}
+
+/**
+ * 봇 만들기(러너 봇 스펙 B2) — 같은 워크스페이스의 폐기하지 않은 러너 토큰에 묶는다. 봇 폴더는 러너가 providerAgentId 로 만든다 —
+ * 서버는 경로를 모른다
+ */
+function createRunnerBot(
+  db: Db,
+  input: CreateRunnerAgentInput & { runnerTokenId: string; bot: RunnerBotDefinition },
+): Agent {
+  const fields = RunnerAgentFields.pick({ disallowedTools: true, bot: true }).safeParse({
+    disallowedTools: input.disallowedTools ?? [],
+    bot: input.bot,
+  });
+  if (!fields.success) throw invalidRunnerField(fields.error);
+  return db.transaction((tx) => {
+    const token = tx
+      .select({ revokedAt: runnerTokens.revokedAt })
+      .from(runnerTokens)
+      .where(and(eq(runnerTokens.id, input.runnerTokenId), eq(runnerTokens.workspaceId, input.workspaceId)))
+      .get();
+    if (!token) throw apiError("VALIDATION", "runner not found", { field: "runnerTokenId" });
+    if (token.revokedAt !== null)
+      throw apiError("VALIDATION", "runner is revoked", { field: "runnerTokenId" });
+    assertHandleFree(tx, input.workspaceId, input.handle);
+    const row = tx
+      .insert(agents)
+      .values({
+        ...commonValues({ ...input, basePrompt: undefined }),
+        provider: "runner",
+        providerAgentId: newRunnerAgentId(tx, input.workspaceId),
+        program: input.program,
+        runnerTokenId: input.runnerTokenId,
+        runnerProjectId: null,
+        runnerBot: fields.data.bot,
         disallowedToolsJson: fields.data.disallowedTools,
       })
       .returning()
@@ -486,6 +550,11 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.avatarUrl !== undefined) set.avatarUrl = patch.avatarUrl;
     if (patch.basePrompt !== undefined) {
+      // 봇은 기본 지시를 쓰지 않는다 — 정의가 그 자리(러너 봇 스펙 B3)
+      if (isBotRow(current) && patch.basePrompt !== null)
+        throw apiError("VALIDATION", "a bot uses its definition instead of instructions", {
+          field: "basePrompt",
+        });
       set.basePrompt = patch.basePrompt;
       // 지시가 실제로 바뀔 때만 — 러너 세션이 이 값으로 새로 열린다(계획 판정 PR2). 빈 지시는 없는 것과 같다
       if ((patch.basePrompt ?? null) !== (current.basePrompt ?? null))
@@ -508,6 +577,16 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
       if (defaults?.effort !== undefined) set.sessionDefaultEffort = defaults.effort;
       if (defaults?.permissionMode !== undefined) set.sessionDefaultPermissionMode = defaults.permissionMode;
       if (fields.data.disallowedTools !== undefined) set.disallowedToolsJson = fields.data.disallowedTools;
+      const bot = fields.data.bot;
+      if (bot !== undefined) {
+        if (!isBotRow(current))
+          throw apiError("VALIDATION", "only bots have a bot definition", { field: "bot" });
+        // 정의가 실제로 바뀔 때만 — 그 봇의 세션이 새 정의로 새로 열린다(B10)
+        if (!sameBot(current.runnerBot, bot)) {
+          set.runnerBot = bot;
+          set.instructionsRevision = (set.instructionsRevision ?? current.instructionsRevision) + 1;
+        }
+      }
     }
     if (Object.keys(set).length === 0) return apiAgent(tx, current);
     const row = tx.update(agents).set(set).where(eq(agents.id, id)).returning().get();
@@ -571,12 +650,17 @@ export function restoreAgent(
 ): { agent: Agent; autoRespondOffChannelIds: string[] } {
   return db.transaction((tx) => {
     const archived = tx
-      .select({ provider: agents.provider, runnerProjectId: agents.runnerProjectId })
+      .select({
+        provider: agents.provider,
+        runnerProjectId: agents.runnerProjectId,
+        runnerBot: agents.runnerBot,
+      })
       .from(agents)
       .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId), isNotNull(agents.archivedAt)))
       .get();
-    // 「보관되지 않은 러너 에이전트는 프로젝트가 있다」(계획 판정 PR4) — 0031 이 보관한 옛 러너 에이전트는 되살리지 않는다
-    if (archived?.provider === "runner" && archived.runnerProjectId === null)
+    // 「보관되지 않은 러너 에이전트는 프로젝트가 있다」(계획 판정 PR4) — 0031 이 보관한 옛 러너 에이전트는 되살리지 않는다. 봇은
+    // 프로젝트 없이 되살린다 — 폴더는 러너에 남아 있다(러너 봇 스펙 B6·B11)
+    if (archived?.provider === "runner" && archived.runnerProjectId === null && !isBotRow(archived))
       throw apiError("VALIDATION", RUNNER_AGENT_WITHOUT_PROJECT, { field: "runnerProjectId" });
     // 보관한 워크트리는 폴더가 지워졌다 — 되살리면 다음 런이 천장 검사 path 로 깨진다(워크트리 스펙 W11)
     if (archived?.runnerProjectId && isArchivedWorktree(tx, archived.runnerProjectId))

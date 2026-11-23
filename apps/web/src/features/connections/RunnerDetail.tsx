@@ -1,7 +1,9 @@
 import { type Agent, type ConnectionsResponse, type RunnerSummary, roleAtLeast } from "@dodok/shared";
 import { useParams } from "@tanstack/react-router";
-import { type RefObject, useRef } from "react";
+import { PlusIcon } from "lucide-react";
+import { type RefObject, useMemo, useRef, useState } from "react";
 import { useAgents } from "@/api/queries";
+import { RunnerAgentForm } from "@/features/agents/RunnerAgentForm";
 import { AddProjectDialog } from "@/features/runners/AddProjectDialog";
 import { ProjectList } from "@/features/runners/ProjectList";
 import { useRunners } from "@/features/runners/queries";
@@ -11,6 +13,8 @@ import { InstallSteps } from "@/features/setup/RunnerSection";
 import { RunnerTokenList } from "@/features/setup/RunnerTokenList";
 import { Section } from "@/features/setup/sections";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/ui/dialog";
 import { AgentLinks } from "./ConnectionTreeList";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
@@ -76,9 +80,57 @@ function ManagedRunner({ id, entry }: { id: string; entry: ListedRunner | undefi
         </div>
         <ProjectList runner={runner} runners={runners.data} afterRemove={afterRemove} />
       </Section>
+      <RunnerBots runner={runner} />
       <UnboundAgents runnerId={runner.id} />
       <OwnerSections runner={runner} heading={heading} />
     </article>
+  );
+}
+
+/**
+ * 「봇 N」(러너 봇 스펙 B2·B11) — 이 러너의 봇과 「봇 만들기」. 봇은 프로젝트 없이 러너가 만든 봇 폴더에서 돈다. 끊기거나 폐기된 러너는
+ * 잠근다(만들기는 붙은 러너에만 — 서버 503). 능력 bots 가 없는 러너는 폼 안에서 사유와 함께 잠근다
+ */
+function RunnerBots({ runner }: { runner: RunnerSummary }) {
+  const agents = useAgents();
+  const [open, setOpen] = useState(false);
+  const all = agents.data ?? [];
+  const takenHandles = useMemo(() => new Set(all.map((a) => a.handle)), [all]);
+  const bots = all.filter(
+    (a) =>
+      a.provider === "runner" && a.runner?.tokenId === runner.id && a.runner.bot && a.archivedAt === null,
+  );
+  const live = runner.connected && !runner.revoked;
+  return (
+    <Section title={`봇 ${bots.length}`} bare>
+      <div>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" disabled={!live}>
+              <PlusIcon />
+              봇 만들기
+            </Button>
+          </DialogTrigger>
+          <DialogContent aria-describedby={undefined} className="max-h-[85svh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>봇 만들기</DialogTitle>
+            </DialogHeader>
+            {open && (
+              <RunnerAgentForm
+                runnerId={runner.id}
+                takenHandles={takenHandles}
+                onCreated={() => setOpen(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+      {bots.length === 0 ? (
+        <p className="text-sm text-muted-foreground">아직 봇이 없습니다.</p>
+      ) : (
+        <AgentLinks agents={bots} />
+      )}
+    </Section>
   );
 }
 
@@ -90,7 +142,9 @@ function UnboundAgents({ runnerId }: { runnerId: string }) {
       a.provider === "runner" &&
       a.runner?.tokenId === runnerId &&
       a.archivedAt === null &&
-      !a.runnerAgent?.projectId,
+      !a.runnerAgent?.projectId &&
+      // 봇은 「봇」 묶음에(러너 봇 스펙 B11) — 이 묶음은 옛 것만
+      !a.runner?.bot,
   );
   if (here.length === 0) return null;
   return (

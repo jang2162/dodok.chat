@@ -1,6 +1,6 @@
 import type { Agent } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon, FolderIcon } from "lucide-react";
+import { BotIcon, ChevronRightIcon, FolderIcon } from "lucide-react";
 import { type Ref, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
@@ -126,16 +126,22 @@ function ConnectionNode({ node, onNavigate }: { node: TreeConnection; onNavigate
       </Link>
     );
   const projects = node.kind === "runner" ? node.projects : [];
+  const bots = node.kind === "runner" ? node.bots : [];
   return (
     <>
       {link}
-      {(projects.length > 0 || node.agents.length > 0) && (
+      {(projects.length > 0 || bots.length > 0 || node.agents.length > 0) && (
         <ul className="ml-3 flex flex-col border-l pl-1">
           {projects.map((p) => (
             <li key={p.id}>
               <ProjectNode project={p} onNavigate={onNavigate} />
             </li>
           ))}
+          {bots.length > 0 && (
+            <li>
+              <BotsNode bots={bots} onNavigate={onNavigate} />
+            </li>
+          )}
           {node.agents.map((leaf) => (
             <li key={leaf.agent.id}>
               <AgentLink leaf={leaf} onNavigate={onNavigate} />
@@ -144,6 +150,25 @@ function ConnectionNode({ node, onNavigate }: { node: TreeConnection; onNavigate
         </ul>
       )}
     </>
+  );
+}
+
+/** 러너 아래 「봇」 묶음(러너 봇 스펙 B11) — 상세가 없는 묶음 제목 한 줄과 그 아래 봇들 */
+function BotsNode({ bots, onNavigate }: { bots: TreeAgent[]; onNavigate: () => void }) {
+  return (
+    <section aria-label="봇">
+      <p className="flex min-h-9 items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
+        <BotIcon aria-hidden className="size-4 shrink-0 opacity-70" />
+        <span>봇</span>
+      </p>
+      <ul className="ml-3 flex flex-col border-l pl-1">
+        {bots.map((leaf) => (
+          <li key={leaf.agent.id}>
+            <AgentLink leaf={leaf} onNavigate={onNavigate} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

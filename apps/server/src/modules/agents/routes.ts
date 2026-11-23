@@ -1,6 +1,8 @@
 import {
   CreateOpenClawAgentBody,
-  CreateRunnerAgentBody,
+  type CreateRunnerAgentBody,
+  CreateRunnerBotAgentBody,
+  CreateRunnerProjectAgentBody,
   DiscoverAgentsQuery,
   Id,
   UpdateAgentBody,
@@ -34,6 +36,7 @@ import {
   isOwner,
   ownerOfAgent,
   projectOwner,
+  runnerOwner,
 } from "../connections/owner";
 import type { Orchestrator } from "../runs/orchestrator";
 import { assertWithinCeiling, type RunnerLiveApi } from "../runners/live";
@@ -128,8 +131,16 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     const { workspaceId, id: userId, role } = sessionUser(request);
     const runner = (request.body as { provider?: unknown } | null)?.provider === "runner";
     if (runner) {
-      const body = parseBody(CreateRunnerAgentBody, request.body);
-      const owner = projectOwner(ctx.db, workspaceId, body.runnerProjectId);
+      // 갈래를 먼저 고른다(러너 봇 스펙 B12) — 합집합으로 파싱하면 오류가 어느 필드인지 잃는다
+      const asBot = Object.hasOwn(request.body as object, "bot");
+      const body: CreateRunnerAgentBody = asBot
+        ? parseBody(CreateRunnerBotAgentBody, request.body)
+        : parseBody(CreateRunnerProjectAgentBody, request.body);
+      // 봇은 그 러너의 주인(러너 봇 스펙 B12)
+      const owner =
+        body.bot !== undefined
+          ? runnerOwner(ctx.db, workspaceId, body.runnerTokenId)
+          : projectOwner(ctx.db, workspaceId, body.runnerProjectId);
       authorizeAgentRegister({ role, ownsConnection: isOwner(owner, userId) });
       return reply.code(201).send({ agent: createRunnerAgentAndNotify(ctx, body, workspaceId, userId) });
     }

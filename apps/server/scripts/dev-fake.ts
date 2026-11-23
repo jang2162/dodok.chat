@@ -346,7 +346,8 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       // 워크트리 능력(워크트리 스펙 5.2) — 이름에 「dirty」가 든 브랜치의 워크트리는 보관(정리)이 dirty 로 409. 제한 러너는 옛 러너처럼
       // 능력이 없다(워크트리 만들기 단추가 「러너를 업데이트하세요」로 잠긴다)
       // 명령(에이전트 명령 C8) — 제한 러너는 옛 러너처럼 모른다(`@에이전트 /…` 가 「업데이트하세요」 줄)
-      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands"],
+      // 봇(러너 봇 스펙 B7) — 제한 러너는 옛 러너처럼 모른다(「봇」 선택지가 「러너를 업데이트하세요(봇은 0.9.0 부터)」로 잠긴다)
+      capabilities: [...fakeRunnerHello().capabilities, "worktrees", "commands", "bots"],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
       // 평소 로그인·설치본 claude — 러너 카드의 「(평소 로그인)」·「(설치본)」을 손으로 본다. 제한 러너는 전용·내장

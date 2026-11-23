@@ -817,6 +817,36 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 러너는 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과, 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)를 에이전트에게 주지 않는다(정본 `packages/claude-runner/src/drivers/claude/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`). 사람에게 고르게 할 때는 카드를 쓴다.
 
+### 봇 — 프로젝트 없이 도는 러너 에이전트
+
+봇은 프로젝트 대신 러너가 만든 **봇 폴더**(`<러너 설정 botsDir>/<봇 id>`, 기본 `~/.dodok-runner/bots/r-…`)에서 돈다 — 그 봇이 든 모든 채널·DM 이 같은 폴더를 작업 디렉터리로 쓴다(봇은 하나의 존재다). 받는 세 자리는 위와 같고, 하나만 다르다 — 시스템 프롬프트 끝의 첫 틀이 에이전트 지시 대신 **봇 정의**다.
+
+```text
+# dodok bot definition
+
+This Claude Code session runs as a bot in dodok, … The bot definition below was set in the dodok app … If this conversation contains an earlier dodok bot definition block, this one replaces it.
+
+<bot-definition>
+## Purpose
+올라온 변경을 읽고 위험한 곳을 먼저 짚어 주는 리뷰 봇
+
+## What to watch
+…
+
+## What to do
+…
+
+## What to report
+…
+</bot-definition>
+```
+
+- 칸은 앱에서 적은 네 칸(목적·지켜볼 것·할 일·보고할 것) 가운데 비지 않은 것만, 이 차례로 온다. 네 칸이 모두 비면 이 틀이 없다. 정의 안의 `<` 는 에이전트 지시처럼 `&lt;` 로 바뀐다.
+- 같은 정의가 봇 폴더의 `SOUL.md` 에도 있다(러너가 런 시작 때 다시 쓴다 — 맨 위 줄 `<!-- 이 파일은 dodok 앱이 관리합니다 … -->`). 지시는 시스템 프롬프트의 틀이 정본이고, `SOUL.md` 를 고쳐도 다음 런에 덮인다.
+- 정의가 바뀌면 그 봇의 세션이 새로 열린다(에이전트 지시가 바뀔 때와 같다).
+- 「지켜볼 것」은 깨우는 장치가 아니다 — 봇은 멘션·자동 응답·자동화(예약·웹훅)로만 깬다.
+- 명령(`/user:…`·`/project:…`)의 `project:` 는 봇 폴더의 `.claude/commands`·`.claude/skills` 다.
+
 ### 보내는 것 — 글 답은 최종 답, 카드·파일은 `mcp__dodok__post`
 
 - **할 말은 최종 답에 쓴다.** 런이 끝날 때의 답(`result`)이 채널 메시지로 남고, 쓰는 동안은 스트리밍 버블로 보인다. OpenClaw 의 `message` 툴과 달리 도구를 쓴 런에서도 최종 답은 **늘** 올라간다. 10만 자(UTF-16 단위)를 넘는 답은 끝이 잘리고 `(길어서 잘렸습니다)` 가 붙는다 — 긴 결과는 파일로 `post` 한다.

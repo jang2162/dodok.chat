@@ -389,6 +389,21 @@ describe("DM 화면", () => {
     },
   );
 
+  it("봇이면 프로젝트 자리에 「봇」 — member 도 안다 [러너 봇 스펙 B11]", async () => {
+    const bot: Agent = {
+      ...DEV,
+      provider: "runner",
+      program: "claude",
+      runner: { tokenId: uid(77), label: "맥북", revoked: false, bot: true },
+    };
+    stubServer({ role: "member", agents: [bot, FIN], dms: [dmOf(dmChannel(), bot)] });
+    renderRoute(`/c/${DM}/s/${A}`);
+    const heading = await within(await screen.findByTestId("dm-header")).findByRole("heading", {
+      name: /Dev 봇/,
+    });
+    expect(within(heading).getByText("러너 · Claude Code · 맥북 · 봇")).toBeInTheDocument();
+  });
+
   it("좁은 머리에서는 제공자 라벨이 이름보다 먼저 줄어든다 — 390px 에서 「dev」가 「d…」로 잘리지 않게", async () => {
     stubServer();
     renderRoute(`/c/${DM}/s/${A}`);

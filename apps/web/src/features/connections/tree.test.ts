@@ -154,3 +154,27 @@ describe("buildConnectionTree", () => {
     expect(parent.agents).toEqual([]);
   });
 });
+
+describe("러너 아래 「봇」(러너 봇 스펙 B11)", () => {
+  it("봇은 runner.bots 에 — 프로젝트 없는 옛 에이전트는 runner.agents 그대로, member(프로젝트 모름)도 같다", () => {
+    const rev = coder({
+      providerAgentId: "r-0123456789",
+      handle: "rev",
+      runner: { tokenId: R1, label: "mia 의 맥북", revoked: false, bot: true },
+    });
+    const legacy = coder({ providerAgentId: "r-old", handle: "old" });
+    const p1 = { id: projectOf(1).id, runnerId: R1, label: "dodok", archived: false };
+    for (const projects of [null, [p1]]) {
+      const tree = buildConnectionTree(
+        base({
+          agents: [rev, legacy],
+          runners: [{ id: R1, label: "mia 의 맥북", state: "연결됨" }],
+          projects,
+        }),
+      );
+      const runner = byId(tree.others, R1) as TreeRunner;
+      expect(runner.bots.map((b) => b.agent.handle)).toEqual(["rev"]);
+      expect(runner.agents.map((a) => a.agent.handle)).toEqual(["old"]);
+    }
+  });
+});

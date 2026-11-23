@@ -706,3 +706,63 @@ describe("보관과 러너", () => {
     await vi.waitFor(() => expect(runner.runStarts).toHaveLength(1));
   });
 });
+
+describe("러너 봇 REST(러너 봇 스펙 B2·B6·B7·B12)", () => {
+  const DEF = { purpose: "리뷰 봇", watches: "", does: "", reports: "" };
+
+  it("붙은 러너(bots)에 봇을 만들고 보관·되살린다 — 옛 러너는 VALIDATION 「러너를 업데이트하세요」, 끊긴 러너는 503", async () => {
+    const { app, archive, restore, headers, inject } = await setup({ runnerAdapter: true });
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const issue = async (label: string) => {
+      const res = await inject("POST", "/api/v1/setup/runner-tokens", { label }, headers);
+      expect(res.statusCode).toBe(201);
+      return { id: res.json().record.id as string, token: res.json().token as string };
+    };
+    const body = (runnerTokenId: string, handle: string) => ({
+      provider: "runner",
+      runnerTokenId,
+      bot: DEF,
+      program: "claude",
+      handle,
+      name: handle,
+    });
+    const fresh = await issue("new");
+    // 붙기 전에는 503
+    expect((await inject("POST", "/api/v1/agents", body(fresh.id, "early"))).statusCode).toBe(503);
+    const runner = await startFakeRunner({
+      url: app.url,
+      token: fresh.token,
+      hello: { capabilities: ["threads", "interrupt", "approvals", "attachments", "bots"] },
+    });
+    runners.push(runner);
+    await vi.waitFor(() => expect(runner.helloResult).toBeDefined());
+    const made = await inject("POST", "/api/v1/agents", body(fresh.id, "rev"));
+    expect(made.statusCode, made.body).toBe(201);
+    const bot = made.json().agent as Agent;
+    expect(bot.runner).toMatchObject({ tokenId: fresh.id, bot: true });
+    expect(bot.runnerAgent).toMatchObject({ projectId: null, bot: DEF });
+    // 프로젝트 갈래와 섞으면 400
+    const mixed = await inject("POST", "/api/v1/agents", {
+      ...body(fresh.id, "mix"),
+      runnerProjectId: fresh.id,
+    });
+    expect(mixed.statusCode).toBe(400);
+
+    expect((await archive(bot.id)).statusCode).toBe(200);
+    const restored = await restore(bot.id);
+    expect(restored.statusCode, restored.body).toBe(200);
+    expect((restored.json().agent as Agent).archivedAt).toBeNull();
+
+    const old = await issue("old");
+    const oldRunner = await startFakeRunner({ url: app.url, token: old.token });
+    runners.push(oldRunner);
+    await vi.waitFor(() => expect(oldRunner.helloResult).toBeDefined());
+    const refused = await inject("POST", "/api/v1/agents", body(old.id, "oldbot"));
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({
+      code: "VALIDATION",
+      message: "러너를 업데이트하세요(봇은 0.9.0 부터)",
+      details: { field: "bot" },
+    });
+  });
+});

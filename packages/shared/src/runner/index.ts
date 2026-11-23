@@ -20,6 +20,7 @@ import { RunEvent } from "../events";
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
 
 export * from "./prompt";
+export * from "./bot-templates";
 export { permissionModeRank, RUNNER_PERMISSION_MODES, RunnerPermissionMode, RunnerProgram };
 
 export const RUNNER_NAMESPACE = "/runner";
@@ -36,8 +37,13 @@ export const RunnerCapability = z.enum([
   "attachments",
   "worktrees",
   "commands",
+  // 봇(러너 봇 스펙 B7) — run.start.agent.bot·commands.list 의 bot 갈래를 받는다. 없는 러너에는 봇 런을 보내지 않는다
+  "bots",
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
+
+/** 능력 `bots` 가 없는 러너 — 봇 만들기 잠금 사유와 봇 런의 run_error 가 같은 글(러너 봇 스펙 B7) */
+export const RUNNER_BOTS_UPDATE_MESSAGE = "러너를 업데이트하세요(봇은 0.9.0 부터)";
 
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
 export const RunnerRunAck = z.object({
@@ -267,19 +273,40 @@ export const RunnerHelloResult = z.discriminatedUnion("ok", [
 ]);
 export type RunnerHelloResult = z.infer<typeof RunnerHelloResult>;
 
-/** 서버가 정한 에이전트 정의 — 러너는 런마다 천장(로컬 설정)과 견주고 넘으면 RUNNER_CEILING 으로 거절한다 */
-export const RunnerRunAgent = z.object({
-  program: RunnerProgram,
-  project: RunnerProjectRef,
-  /** null 이면 프로그램 기본 모델 */
-  model: z.string().min(1).max(128).nullable(),
-  permissionMode: RunnerPermissionMode,
-  /** null·없음이면 프로그램 기본. 옛 서버는 싣지 않는다 — strict 가 아니라 옛 러너는 이 키를 버린다 */
-  effort: RunnerEffort.nullable().optional(),
-  /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본). 서버는 늘 null 을 보낸다 — 옛 러너가 이 키를 요구한다 */
-  allowedTools: RunnerToolNames.nullable(),
-  disallowedTools: RunnerToolNames,
-});
+/**
+ * 봇 id — 그 봇 에이전트의 providerAgentId(서버가 짓는 `r-` + 소문자 hex 10, 러너 봇 스펙 B1). 러너가 `botsDir/<id>` 를 런 자리로
+ * 쓰므로 이 꼴만 받는다(`..`·`/` 가 들어갈 자리가 없다). 러너는 이 검사를 믿지 않고 realpath 로 다시 본다
+ */
+export const RUNNER_BOT_ID_PATTERN = /^r-[0-9a-f]{10}$/;
+export const RunnerBotId = z.string().regex(RUNNER_BOT_ID_PATTERN, "bot id must match r-[0-9a-f]{10}");
+export type RunnerBotId = z.infer<typeof RunnerBotId>;
+
+/** 봇 런의 자리 — soul 은 러너가 봇 폴더의 `SOUL.md` 로 쓰는 본문(서버 `renderBotSoul`). 지시는 서버가 channelRulesAppend 에 넣는다(B9) */
+export const RunnerRunBot = z.object({ id: RunnerBotId, soul: z.string().max(16_000) });
+export type RunnerRunBot = z.infer<typeof RunnerRunBot>;
+
+/**
+ * 서버가 정한 에이전트 정의 — 러너는 런마다 천장(로컬 설정)과 견주고 넘으면 RUNNER_CEILING 으로 거절한다. 자리는 project·bot 중
+ * 정확히 하나(러너 봇 스펙 B2). 옛 러너는 project 를 요구한다 — 서버는 능력 `bots` 가 없는 러너에 봇 런을 보내지 않는다(B7).
+ * refine 이 붙어 `.pick` 을 못 쓴다 — 필드 스키마는 `.shape` 로 꺼낸다
+ */
+export const RunnerRunAgent = z
+  .object({
+    program: RunnerProgram,
+    project: RunnerProjectRef.optional(),
+    bot: RunnerRunBot.optional(),
+    /** null 이면 프로그램 기본 모델 */
+    model: z.string().min(1).max(128).nullable(),
+    permissionMode: RunnerPermissionMode,
+    /** null·없음이면 프로그램 기본. 옛 서버는 싣지 않는다 — strict 가 아니라 옛 러너는 이 키를 버린다 */
+    effort: RunnerEffort.nullable().optional(),
+    /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본). 서버는 늘 null 을 보낸다 — 옛 러너가 이 키를 요구한다 */
+    allowedTools: RunnerToolNames.nullable(),
+    disallowedTools: RunnerToolNames,
+  })
+  .refine((a) => (a.project === undefined) !== (a.bot === undefined), {
+    message: "agent needs exactly one of project or bot",
+  });
 export type RunnerRunAgent = z.infer<typeof RunnerRunAgent>;
 
 /**
@@ -382,15 +409,19 @@ export const RunnerWorktreeRemoveResult = z.discriminatedUnion("ok", [
 export type RunnerWorktreeRemoveResult = z.infer<typeof RunnerWorktreeRemoveResult>;
 
 /** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
-export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools"]);
+export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools", "bot"]);
 export type RunnerCeilingItem = z.infer<typeof RunnerCeilingItem>;
 
-// ── 명령 목록(에이전트 명령 스펙 C8) — 서버 → 러너 ack 요청. 프로젝트마다 묻는다(프로젝트 명령이 cwd 마다 다르다)
+// ── 명령 목록(에이전트 명령 스펙 C8) — 서버 → 러너 ack 요청. 프로젝트마다 묻는다(프로젝트 명령이 cwd 마다 다르다). 봇은 그 봇
+// 폴더로 묻는다(러너 봇 스펙 B13 — 능력 `bots` 인 러너에만)
 
 /** 러너 명령 목록 ack 상한 — 프롬프트 없는 query 를 열고 supportedCommands() 를 받는 시간 */
 export const RUNNER_COMMANDS_LIST_TIMEOUT_MS = 30_000;
 
-export const RunnerCommandsList = z.object({ project: RunnerProjectRef });
+export const RunnerCommandsList = z.union([
+  z.object({ project: RunnerProjectRef }),
+  z.object({ bot: z.object({ id: RunnerBotId }) }),
+]);
 export type RunnerCommandsList = z.infer<typeof RunnerCommandsList>;
 
 export const RunnerCommandsListResult = z.discriminatedUnion("ok", [
