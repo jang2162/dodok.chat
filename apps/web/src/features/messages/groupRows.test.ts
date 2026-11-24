@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT, APPROVAL, APPROVAL2, approval, msg, RUN, RUN2, USER } from "../../../test/fixtures";
+import { computeBundles } from "./bundles";
 import { groupRows, type Row } from "./groupRows";
 import { emptyTimeline, type PendingMessage, type Timeline } from "./timeline";
 
@@ -347,5 +348,67 @@ describe("groupRows 「새 메시지」 구분선", () => {
   it("다 불러온 목록(hasOlder 아님)이면 맨 앞이 entryReadSeq + 1 보다 뒤여도 자리가 정해졌다", () => {
     const rows = withUnread([theirs(5), theirs(6, "2027-01-15T08:00:10Z")], 3);
     expect(kinds(rows)).toEqual(["divider", "unread", "message", "message"]);
+  });
+});
+
+describe("groupRows 답 묶음", () => {
+  const FIN = "01a00000-0000-7000-8000-000000000012";
+  const root = msg(1, at("2027-01-15T08:00:00Z"));
+  const reply = (seq: number, agentId: string, runId: string, iso: string) =>
+    msg(seq, {
+      ...at(iso),
+      authorType: "agent",
+      authorId: agentId,
+      runId,
+      runRoot: { runId, agentId, rootMessageId: root.id },
+    });
+  const a = reply(2, AGENT, RUN, "2027-01-15T08:00:10Z");
+  const b = reply(3, FIN, RUN2, "2027-01-15T08:00:20Z");
+  const after = msg(4, at("2027-01-15T08:01:00Z"));
+  const bundles = computeBundles([root, a, b, after], []);
+
+  it("묶음에 든 메시지는 행에서 빠지고 루트 뒤에 bundle 행", () => {
+    const rows = groupRows(timeline({ items: [root, a, b, after] }), [], [], TZ, { bundles });
+    expect(rows.map((r) => r.key)).toEqual([
+      "date:2027-01-15",
+      `msg:${root.id}`,
+      `bundle:${root.id}`,
+      `msg:${after.id}`,
+    ]);
+    // 묶음 행은 앞뒤 묶음을 끊는다 — 뒤 사람 글은 루트와 같은 작성자여도 머리
+    expect(heads(rows)).toEqual([true, true]);
+  });
+
+  it("묶음 런의 버블은 맨 아래 bubble 행으로 그리지 않는다", () => {
+    const live = computeBundles(
+      [root, a],
+      [{ runId: RUN2, agentId: FIN, rootMessageId: root.id, status: "streaming" }],
+    );
+    const rows = groupRows(timeline({ items: [root, a] }), [RUN2, "other-run"], [], TZ, { bundles: live });
+    expect(rows.filter((r) => r.kind === "bubble").map((r) => r.key)).toEqual(["run:other-run"]);
+  });
+
+  it("묶음 안 메시지는 새 메시지 구분선을 세우지 않는다", () => {
+    const mine = { ...root, authorId: USER };
+    const rows = groupRows(timeline({ items: [mine, a, b, after] }), [], [], TZ, {
+      bundles,
+      entryReadSeq: 1,
+      me: USER,
+      // after 는 다른 사람 글이어야 구분선이 선다
+    });
+    expect(kinds(rows)).not.toContain("unread");
+    const other = msg(4, { ...at("2027-01-15T08:01:00Z"), authorId: "00000000-0000-4000-8000-0000000000aa" });
+    const rows2 = groupRows(timeline({ items: [mine, a, b, other] }), [], [], TZ, {
+      bundles: computeBundles([mine, a, b, other], []),
+      entryReadSeq: 1,
+      me: USER,
+    });
+    expect(rows2.map((r) => r.key)).toEqual([
+      "date:2027-01-15",
+      `msg:${root.id}`,
+      `bundle:${root.id}`,
+      "unread",
+      `msg:${other.id}`,
+    ]);
   });
 });

@@ -93,6 +93,39 @@ describe("useRunStore", () => {
   });
 });
 
+describe("런의 루트(답 묶음 설계)", () => {
+  const [ROOT, TRIGGER] = [id(600), id(601)];
+  beforeEach(() => useRunStore.getState().reset());
+
+  it("reduceState 는 rootMessageId·triggerMessageId 를 담고 빠진 상태에도 잊지 않는다", () => {
+    const v = reduceState(undefined, state({ rootMessageId: ROOT, triggerMessageId: TRIGGER }), 1);
+    expect(v).toMatchObject({ rootMessageId: ROOT, triggerMessageId: TRIGGER });
+    const later = reduceState(v, state({ status: "done" }), 2);
+    expect(later).toMatchObject({ rootMessageId: ROOT, triggerMessageId: TRIGGER });
+  });
+
+  it("roots 는 remove 뒤에도 런의 루트와 마지막 상태를 남긴다 — reset 에서만 비운다", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ id: R1, rootMessageId: ROOT, triggerMessageId: TRIGGER }));
+    s.applyState(state({ id: R2 }));
+    useRunStore.getState().applyState(state({ id: R1, status: "done" }));
+    useRunStore.getState().remove(R1);
+    expect(useRunStore.getState().roots[R1]).toEqual({
+      runId: R1,
+      agentId: A1,
+      channelId: C1,
+      conversationId: C1,
+      rootMessageId: ROOT,
+      triggerMessageId: TRIGGER,
+      status: "done",
+    });
+    // 루트를 모르는 런(옛 서버)은 남기지 않는다
+    expect(useRunStore.getState().roots[R2]).toBeUndefined();
+    useRunStore.getState().reset();
+    expect(useRunStore.getState().roots).toEqual({});
+  });
+});
+
 describe("런의 스레드 소속(판정 R3′)", () => {
   const ROOT = id(500);
   const started = (sessionKey: string) =>
