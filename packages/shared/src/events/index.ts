@@ -41,6 +41,10 @@ export const RunEvent = z.discriminatedUnion("type", [
   ev("TEXT_MESSAGE_CONTENT", { messageId: z.string(), delta: z.string().min(1) }),
   ev("TEXT_MESSAGE_REPLACE", { messageId: z.string(), text: z.string() }), // dodok 확장
   ev("TEXT_MESSAGE_END", { messageId: z.string() }),
+  // 추론(AG-UI 이름) — 화면 표시용. thinking 이 비거나 요약만 오는 모델은 START/END 만 온다
+  ev("REASONING_MESSAGE_START", { messageId: z.string() }),
+  ev("REASONING_MESSAGE_CONTENT", { messageId: z.string(), delta: z.string().min(1) }),
+  ev("REASONING_MESSAGE_END", { messageId: z.string() }),
   // 툴
   ev("TOOL_CALL_START", {
     toolCallId: z.string(),
