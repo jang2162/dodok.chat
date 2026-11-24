@@ -181,7 +181,7 @@ export interface AgentAdapter {
   supports(
     providerAgentId: string,
     connectionId: ConnectionId | null,
-    capability: "threads" | "commands",
+    capability: "threads" | "commands" | "threadUpdates",
   ): boolean;
   /** ok:false 는 throw AdapterError(code) */
   send(input: InboundDeliver, opts: SendOptions): Promise<AdapterSendResult>;

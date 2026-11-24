@@ -17,6 +17,7 @@ export const BridgeCapability = z.enum([
   "control", // 제어 도구를 등록하고 control.call 을 보낸다 — 없는 플러그인에는 서버가 아무것도 바꾸지 않는다
   "commands", // InboundDeliver.command 를 Gateway 명령으로 넘긴다 — 없는 플러그인에는 서버가 명령을 보내지 않는다(에이전트 명령 C7)
   "remoteUpdate", // plugin.update 에 답한다 — 없는 플러그인에는 단추 대신 설치 한 줄(원격 업데이트 스펙 U8)
+  "threadUpdates", // InboundContext.threadUpdates 를 헤더에 그린다 — 없는 플러그인에는 싣지도 커서를 올리지도 않는다(스레드 소식 T5)
 ]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 
@@ -68,6 +69,28 @@ export const InboundReaction = z.object({
 });
 export type InboundReaction = z.infer<typeof InboundReaction>;
 
+/** 한 런에 싣는 스레드 소식의 스레드 수 상한(InboundContext.threadUpdates) — 서버 thread-updates/service 가 이 값으로 자른다 */
+export const INBOUND_THREAD_UPDATES_MAX = 5;
+/** 스레드 소식 하나에 싣는 최근 답글 수의 상한 */
+export const THREAD_UPDATE_REPLIES_MAX = 3;
+/** 스레드 소식 답글 본문의 길이 상한 — 서버가 이 안으로 자른다 */
+export const THREAD_UPDATE_REPLY_TEXT_MAX = 300;
+
+/**
+ * 지난 턴 뒤 그 대화의 스레드 하나에 새로 달린 답글 — 문구는 formatThreadUpdates 가 만든다. 루트 본문은 발췌만 싣고(rootId 로
+ * 제어 도구가 그 스레드를 읽는다), 답글은 마지막 THREAD_UPDATE_REPLIES_MAX 개와 새 답글 총수
+ */
+export const InboundThreadUpdate = z.object({
+  rootId: Id,
+  rootExcerpt: z.string().max(REACTION_EXCERPT_MAX),
+  newReplies: z.int().min(1),
+  recent: z
+    .array(InboundContextMessage.extend({ text: z.string().max(THREAD_UPDATE_REPLY_TEXT_MAX) }))
+    .min(1)
+    .max(THREAD_UPDATE_REPLIES_MAX),
+});
+export type InboundThreadUpdate = z.infer<typeof InboundThreadUpdate>;
+
 export const InboundContext = z.object({
   recentMessages: z.array(InboundContextMessage).max(20), // 스레드 런이면 비어 있다 — 채널 대화는 스레드에 싣지 않는다
   /** 스레드 런만. 루트 본문은 서버가 4,000자에서 자른다 */
@@ -96,6 +119,12 @@ export const InboundContext = z.object({
   /** 지난 턴 뒤 이 에이전트의 메시지에 달린 리액션 — 최근 INBOUND_REACTIONS_MAX 개. 없으면 키가 없다 */
   reactions: z.array(InboundReaction).max(INBOUND_REACTIONS_MAX).optional(),
   reactionsOmitted: z.int().min(1).optional(), // 상한 밖으로 밀린 수
+  /**
+   * 대화 세션 런만 — 지난 턴 뒤 이 대화의 스레드들에 새로 달린 답글(스레드 소식 스펙). 새 답글이 가장 늦게 달린 스레드부터
+   * INBOUND_THREAD_UPDATES_MAX 개, 배열 순서는 마지막 답글 오름차순. 없으면 키가 없다. 선택 필드라 옛 플러그인은 버리고 받는다
+   */
+  threadUpdates: z.array(InboundThreadUpdate).max(INBOUND_THREAD_UPDATES_MAX).optional(),
+  threadUpdatesOmitted: z.int().min(1).optional(), // 상한 밖으로 밀린 스레드 수
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 
