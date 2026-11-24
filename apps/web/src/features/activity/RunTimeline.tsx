@@ -179,7 +179,9 @@ function ApprovalLine({ row, toolNames }: { row: ApprovalRow; toolNames: Map<str
       <span className="min-w-0 flex-1 px-1 pt-0.5">
         <span className="font-medium">{row.title}</span>
         {tool && <span className="block text-xs text-muted-foreground">{tool}</span>}
-        {outcome === undefined && <span className="block text-xs text-warning">{APPROVAL_PENDING_HINT}</span>}
+        {outcome === undefined && (
+          <span className="block text-xs text-foreground">{APPROVAL_PENDING_HINT}</span>
+        )}
       </span>
       {outcome !== undefined && (
         <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{outcome}</span>

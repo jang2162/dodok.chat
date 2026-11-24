@@ -53,24 +53,32 @@ function ActivityBody({ channelId }: { channelId: string }) {
     void refetchRuns();
   }, [settledKey, refetchRuns]);
 
-  /**
-   * 펼침 — 손댄 카드는 그 선택(`toggled`), 손대지 않은 카드는 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
-   * 펼친 카드만). 끝난 런이 스토어에서 빠져도 목록에 남으므로(`useSettledRuns`) 펼친 카드가 접히거나 다른 런으로 넘어가지 않는다(D2)
-   */
   /** 거르기 — 수는 전체에서 세고, 고른 칩에 맞는 카드만 그린다. 펼침은 거르기와 따로 기억한다(거르기를 바꿔도 펼친 채) */
   const [filter, setFilter] = useState<RunFilter>("all");
   const counts = useMemo(() => countRuns(runs), [runs]);
   const visible = useMemo(() => filterRuns(runs, filter), [runs, filter]);
 
+  /**
+   * 펼침 — 사람이 아직 어떤 카드도 펴거나 접지 않았으면 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
+   * 펼친 카드만). 새 런이 오면 그 기본 펼침이 새 런으로 옮긴다. 한 번이라도 손댔으면(`toggled` 가 비지 않음) 그때 펼쳐 있던
+   * 기본 카드를 `toggled` 에 적어 두고 그 뒤 온 런은 접힌 채로 둔다 — 보던 카드가 새 런에 밀려 접히지 않게. 채널을 옮기면
+   * `key={channelId}` 로 「손대지 않음」에 돌아간다. 끝난 런이 스토어에서 빠져도 목록에 남으므로(`useSettledRuns`) 펼친 카드가
+   * 접히거나 다른 런으로 넘어가지 않는다(D2)
+   */
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const latestId = runs[0]?.id;
   const isExpanded = useCallback(
-    (runId: string) => toggled.get(runId) ?? runId === latestId,
+    (runId: string) => toggled.get(runId) ?? (toggled.size === 0 && runId === latestId),
     [toggled, latestId],
   );
   const toggle = useCallback(
     (runId: string) =>
-      setToggled((prev) => new Map(prev).set(runId, !(prev.get(runId) ?? runId === latestId))),
+      setToggled((prev) => {
+        const next = new Map(prev);
+        // 처음 손대는 순간 — 그때의 기본 펼침을 사람의 선택으로 굳힌다
+        if (prev.size === 0 && latestId !== undefined) next.set(latestId, true);
+        return next.set(runId, !(next.get(runId) ?? false));
+      }),
     [latestId],
   );
 

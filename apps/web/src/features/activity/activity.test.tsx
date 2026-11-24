@@ -1,6 +1,6 @@
 import type { Agent, ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -36,6 +36,7 @@ import { stubScrollLayout } from "../../../test/scrollLayout";
 import { channelOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
 import { RunCards } from "./RunCard";
+import { APPROVAL_PENDING_HINT } from "./RunTimeline";
 import type { ActivityRun } from "./timeline";
 
 // 활동 패널은 실시간 run.event 를 소켓에서 곧바로 받는다 — 테스트는 가짜 소켓을 끼운다
@@ -217,6 +218,61 @@ it("진행 중 런은 새 이벤트가 오면 끝에 붙는다", async () => {
   const rows = await within(aside).findByRole("list", { name: "활동 기록" });
   await waitFor(() => expect(within(rows).getAllByRole("listitem")).toHaveLength(2));
   expect(within(rows).getAllByRole("listitem").at(-1)).toHaveTextContent("Bash");
+});
+
+/**
+ * 진행 중 타임라인은 끝에 붙어 따라가고, 위로 올려 읽는 사람은 끌어내리지 않는다. jsdom 은 배치를 계산하지 않으므로
+ * 이 타임라인 상자 하나에만 높이(행마다 40px, 보이는 높이 100px)와 스크롤 위치를 흉내 낸다
+ */
+it("진행 중 타임라인은 끝을 따라가고, 위로 올린 사람은 끌어내리지 않는다", async () => {
+  stubServer({ runs: [runOf(RUN, { status: "tool", endedAt: undefined })], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  const box = timelineBox(card(aside, RUN)) as HTMLElement;
+  let top = 0;
+  const height = () => box.querySelectorAll("li").length * 40;
+  const maxTop = () => Math.max(0, height() - 100);
+  Object.defineProperties(box, {
+    scrollHeight: { configurable: true, get: height },
+    clientHeight: { configurable: true, get: () => 100 },
+    scrollTop: {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = Math.min(Math.max(0, v), maxTop());
+      },
+    },
+  });
+  let seq = 6;
+  const addTool = async (name: string) => {
+    const before = box.querySelectorAll("li").length;
+    act(() => {
+      fake.serverEmit("run.event", {
+        event: runEvent({ type: "TOOL_CALL_START", seq: seq++, toolCallId: `f${seq}`, toolCallName: name }),
+      });
+    });
+    await waitFor(() => expect(box.querySelectorAll("li")).toHaveLength(before + 1));
+  };
+
+  // 끝에 붙어 있으면 새 행을 따라 내려간다
+  await addTool("Bash");
+  await addTool("Grep");
+  await addTool("Glob");
+  expect(maxTop()).toBeGreaterThan(0);
+  expect(top).toBe(maxTop());
+
+  // 위로 올려 읽는 중이면 새 행이 와도 그 자리에 둔다
+  top = 0;
+  fireEvent.scroll(box);
+  await addTool("Edit");
+  expect(top).toBe(0);
+
+  // 다시 끝으로 내리면 또 따라간다
+  top = maxTop();
+  fireEvent.scroll(box);
+  await addTool("Write");
+  expect(top).toBe(maxTop());
 });
 
 it("다른 런의 실시간 이벤트는 섞이지 않는다", async () => {
@@ -546,6 +602,10 @@ it("승인 레코드가 이벤트에 없는 toolCallId·제목을 메운다", as
   expect(toolRow("Read")).not.toHaveTextContent("승인");
   expect(within(list).getByText("쓰기 허락")).toBeInTheDocument();
   expect(within(list).queryByText("이벤트가 아는 제목")).not.toBeInTheDocument();
+  // 아직 답하지 않은 승인은 위 카드를 가리킨다 — 경고색(--warning)은 글자에 쓰지 않는다(대비 4.5:1 미달). 색은 아이콘·테두리만
+  const hint = within(list).getByText(APPROVAL_PENDING_HINT);
+  expect(hint).not.toHaveClass("text-warning");
+  expect(hint.closest('[data-slot="approval-row"]')?.querySelector("svg")).toHaveClass("text-warning");
 });
 
 it("승인·오류·단계 행도 타임라인에 그려진다", async () => {
@@ -810,6 +870,36 @@ it("실패로 거른 채 비면 「실패한 런이 없습니다.」, 승인 카
   expect(box.compareDocumentPosition(within(aside).getByRole("group", { name: "런 거르기" }))).toBe(
     Node.DOCUMENT_POSITION_FOLLOWING,
   );
+});
+
+it("아무 카드도 손대지 않았으면 새 런이 올 때 기본 펼침이 새 런으로 옮긴다 — 앞 카드는 접힌다", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: "@dev 런, 완료" });
+  expect(openRuns(aside)).toEqual([RUN]);
+
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" })));
+  await waitFor(() => expect(runIds(aside)).toEqual([RUN2, RUN]));
+  expect(openRuns(aside)).toEqual([RUN2]);
+});
+
+it("한 번이라도 펼침을 바꿨으면 새 런은 접힌 채로 오고, 보던 카드는 펼친 채다", async () => {
+  // 런 id 는 시간순(UUIDv7)이라 큰 쪽이 최근 런이다
+  const LATEST = uid(140);
+  const NEWER = uid(141);
+  stubServer({ runs: [runOf(LATEST), runOf(RUN)], events: { [LATEST]: TOOL_EVENTS, [RUN]: OTHER_RUN } });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await waitFor(() => expect(runIds(aside)).toEqual([LATEST, RUN]));
+  expect(openRuns(aside)).toEqual([LATEST]);
+  // 옛 런을 손으로 편다 — 기본으로 펼쳐 있던 최근 런도 그대로 펼친 채
+  await userEvent.click(within(card(aside, RUN)).getByRole("button", { name: /@dev/ }));
+  expect(openRuns(aside)).toEqual([LATEST, RUN]);
+
+  act(() => useRunStore.getState().applyState(runState({ id: NEWER, status: "streaming" })));
+  await waitFor(() => expect(runIds(aside)).toEqual([NEWER, LATEST, RUN]));
+  expect(openRuns(aside)).toEqual([LATEST, RUN]);
 });
 
 it("거르기를 고른 채 새 런이 오면 — 맞으면 나타나고 수가 늘고, 맞지 않으면 그 칩의 수만 는다", async () => {
