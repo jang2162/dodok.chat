@@ -162,6 +162,8 @@ export type MessagePage = { messages: Message[]; hasMore: boolean; hasMoreAfter?
 
 /** 스레드 요약에 싣는 에이전트 수 상한(ThreadSummary.agentIds) */
 const THREAD_SUMMARY_AGENTS = 10;
+/** 스레드 요약에 싣는 참여자 수 상한(ThreadSummary.participants) */
+const THREAD_SUMMARY_PARTICIPANTS = 10;
 
 /** threadSummary 는 싣지 않는다 — 집계 질의가 필요해 클라이언트 경로(hydrateForClient)가 붙인다 */
 export function rowToMessage(row: MessageRow): Message {
@@ -233,17 +235,17 @@ export function withInteractions(db: DbOrTx, msgs: Message[]): Message[] {
  * (답글 저장이 방금 계산해 보낸 message.updated). 답글이 없는 루트는 그대로다.
  */
 export function withThreadSummaries(db: DbOrTx, msgs: Message[]): Message[] {
-  const byChannel = new Map<string, string[]>();
+  const byChannel = new Map<string, Message[]>();
   for (const m of msgs) {
     if (m.threadRootId !== undefined || m.threadSummary !== undefined) continue;
-    const ids = byChannel.get(m.channelId);
-    if (ids) ids.push(m.id);
-    else byChannel.set(m.channelId, [m.id]);
+    const roots = byChannel.get(m.channelId);
+    if (roots) roots.push(m);
+    else byChannel.set(m.channelId, [m]);
   }
   if (byChannel.size === 0) return msgs;
   const summaries = new Map<string, ThreadSummary>();
-  for (const [channelId, rootIds] of byChannel) {
-    for (const [rootId, summary] of summarizeThreads(db, channelId, rootIds)) summaries.set(rootId, summary);
+  for (const [channelId, roots] of byChannel) {
+    for (const [rootId, summary] of summarizeThreads(db, channelId, roots)) summaries.set(rootId, summary);
   }
   return msgs.map((m) => {
     const summary = summaries.get(m.id);
@@ -303,19 +305,30 @@ export function threadRootsOf(db: DbOrTx, channelId: string, page: Message[]): M
 /** 루트의 스레드 요약. 답글이 없거나 루트가 없으면 undefined */
 export function threadSummaryOf(db: DbOrTx, rootId: string): ThreadSummary | undefined {
   const root = db
-    .select({ channelId: messages.channelId })
+    .select({ channelId: messages.channelId, authorType: messages.authorType, authorId: messages.authorId })
     .from(messages)
     .where(eq(messages.id, rootId))
     .get();
   if (!root) return undefined;
-  return summarizeThreads(db, root.channelId, [rootId]).get(rootId);
+  return summarizeThreads(db, root.channelId, [
+    { id: rootId, authorType: root.authorType, authorId: root.authorId ?? undefined },
+  ]).get(rootId);
 }
+
+type ThreadRootAuthor = { id: string; authorType: string; authorId?: string | undefined };
 
 /**
  * (루트, 작성자)별로 묶은 한 번의 질의를 루트별로 합친다. count 는 시스템 메시지를 포함한 모든 답글,
  * agentIds 는 가장 최근에 답한 에이전트부터 최대 10. channel_id 조건은 (channel_id, thread_root_id, seq) 인덱스를 타려고 둔다.
+ * participants 는 사람·에이전트 답글 작성자를 최근 순으로, 답글을 안 쓴 루트 작성자는 맨 뒤 — 루트 작성자는 호출자가 이미 가진
+ * 루트에서 받는다(질의를 늘리지 않게).
  */
-function summarizeThreads(db: DbOrTx, channelId: string, rootIds: string[]): Map<string, ThreadSummary> {
+function summarizeThreads(
+  db: DbOrTx,
+  channelId: string,
+  roots: ThreadRootAuthor[],
+): Map<string, ThreadSummary> {
+  const rootIds = roots.map((r) => r.id);
   const rows = db
     .select({
       rootId: messages.threadRootId,
@@ -336,17 +349,34 @@ function summarizeThreads(db: DbOrTx, channelId: string, rootIds: string[]): Map
     if (group) group.push(r);
     else byRoot.set(r.rootId, [r]);
   }
+  const rootAuthors = new Map(roots.map((r) => [r.id, r]));
   const out = new Map<string, ThreadSummary>();
   for (const [rootId, group] of byRoot) {
-    const agentIds = group
-      .filter((r) => r.authorType === "agent" && r.authorId !== null)
-      .sort((a, b) => b.lastSeq - a.lastSeq)
+    const recent = group
+      .filter((r) => (r.authorType === "agent" || r.authorType === "user") && r.authorId !== null)
+      .sort((a, b) => b.lastSeq - a.lastSeq);
+    const agentIds = recent
+      .filter((r) => r.authorType === "agent")
       .slice(0, THREAD_SUMMARY_AGENTS)
       .map((r) => r.authorId as string);
+    const participants = recent.map((r) => ({
+      kind: r.authorType as "user" | "agent",
+      id: r.authorId as string,
+    }));
+    const root = rootAuthors.get(rootId);
+    if (
+      root &&
+      (root.authorType === "user" || root.authorType === "agent") &&
+      root.authorId !== undefined &&
+      !participants.some((p) => p.kind === root.authorType && p.id === root.authorId)
+    ) {
+      participants.push({ kind: root.authorType, id: root.authorId });
+    }
     out.set(rootId, {
       count: group.reduce((sum, r) => sum + r.count, 0),
       lastAt: new Date(Math.max(...group.map((r) => r.lastAt))).toISOString(),
       agentIds,
+      participants: participants.slice(0, THREAD_SUMMARY_PARTICIPANTS),
     });
   }
   return out;
@@ -763,7 +793,9 @@ function updatedRoot(tx: DbOrTx, message: Message): Message | undefined {
   if (message.threadRootId === undefined) return undefined;
   const row = tx.select().from(messages).where(eq(messages.id, message.threadRootId)).get();
   if (!row) return undefined;
-  const summary = summarizeThreads(tx, row.channelId, [row.id]).get(row.id);
+  const summary = summarizeThreads(tx, row.channelId, [
+    { id: row.id, authorType: row.authorType, authorId: row.authorId ?? undefined },
+  ]).get(row.id);
   return summary ? { ...rowToMessage(row), threadSummary: summary } : rowToMessage(row);
 }
 

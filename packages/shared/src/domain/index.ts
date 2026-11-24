@@ -391,6 +391,14 @@ export const ThreadSummary = z.object({
   count: z.int().min(1),
   lastAt: IsoDateTime,
   agentIds: z.array(Id).max(10),
+  /**
+   * 사람·에이전트 작성자를 섞어 최근에 쓴 순, 같은 작성자는 한 번. 루트 작성자는 답글을 안 썼으면 맨 뒤(10 안에 들 때만).
+   * system·automation 은 넣지 않는다. 옛 서버는 싣지 않는다 — 웹은 없으면 agentIds 로 대신 그린다
+   */
+  participants: z
+    .array(z.object({ kind: z.enum(["user", "agent"]), id: Id }))
+    .max(10)
+    .optional(),
 });
 export type ThreadSummary = z.infer<typeof ThreadSummary>;
 

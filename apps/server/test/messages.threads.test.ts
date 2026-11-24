@@ -10,6 +10,7 @@ import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import {
   createAgentMessage,
+  createAutomationMessage,
   createSystemMessage,
   createUserMessage,
   getMessage,
@@ -97,7 +98,12 @@ describe("스레드 답글 저장·요약", () => {
     t.order.length = 0;
     const r1 = t.human("질문", { threadRootId: root.id });
     expect(t.order).toEqual([`created:${r1.id}`, `updated:${root.id}`]);
-    expect(t.updated.at(-1)?.threadSummary).toEqual({ count: 1, lastAt: r1.createdAt, agentIds: [] });
+    expect(t.updated.at(-1)?.threadSummary).toEqual({
+      count: 1,
+      lastAt: r1.createdAt,
+      agentIds: [],
+      participants: [{ kind: "user", id: t.userId }],
+    });
 
     t.agentSays(dev.id, "dev 답", root.id);
     t.agentSays(fin.id, "fin 답", root.id);
@@ -107,6 +113,11 @@ describe("스레드 답글 저장·요약", () => {
       count: 4,
       lastAt: last.createdAt,
       agentIds: [dev.id, fin.id],
+      participants: [
+        { kind: "agent", id: dev.id },
+        { kind: "agent", id: fin.id },
+        { kind: "user", id: t.userId },
+      ],
     });
     expect(t.updated.at(-1)).toMatchObject({ id: root.id, threadSummary: { count: 4 } });
     expect(Message.parse(t.updated.at(-1)).threadSummary?.count).toBe(4);
@@ -135,6 +146,124 @@ describe("스레드 답글 저장·요약", () => {
     expect(summary?.agentIds).toHaveLength(10);
     expect(summary?.agentIds).not.toContain(agents[0]?.id);
     expect(summary?.agentIds[0]).toBe(agents[10]?.id);
+  });
+
+  function person(t: ReturnType<typeof setup>, handle: string): string {
+    const id = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id,
+        workspaceId: t.workspaceId,
+        handle,
+        displayName: handle,
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    t.db
+      .insert(memberships)
+      .values({ id: uuid(), workspaceId: t.workspaceId, userId: id, role: "member" })
+      .run();
+    return id;
+  }
+  const personSays = (t: ReturnType<typeof setup>, authorId: string, bodyMd: string, threadRootId: string) =>
+    createUserMessage(t.db, t.bus, {
+      conversationId: channelConversation(t.db, t.channel.id),
+      authorId,
+      bodyMd,
+      clientMsgId: `p-${uuid()}`,
+      threadRootId,
+    });
+
+  it("summary participants are recent-first, deduped, root author last", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const mia = person(t, "mia");
+    const root = t.human("루트");
+    t.agentSays(dev.id, "dev 답", root.id);
+    personSays(t, mia, "mia 답", root.id);
+    t.agentSays(dev.id, "dev 또", root.id);
+    expect(threadSummaryOf(t.db, root.id)?.participants).toEqual([
+      { kind: "agent", id: dev.id },
+      { kind: "user", id: mia },
+      { kind: "user", id: t.userId },
+    ]);
+    // 사람이 마지막이면 사람이 맨 앞 — 종류가 아니라 시각 순
+    personSays(t, mia, "mia 또", root.id);
+    expect(threadSummaryOf(t.db, root.id)?.participants?.slice(0, 2)).toEqual([
+      { kind: "user", id: mia },
+      { kind: "agent", id: dev.id },
+    ]);
+  });
+
+  it("participants — automation 루트 작성자는 넣지 않는다", () => {
+    const t = setup();
+    const root = createAutomationMessage(t.db, t.bus, {
+      conversationId: channelConversation(t.db, t.channel.id),
+      automationId: uuid(),
+      bodyMd: "자동화 글",
+    });
+    t.human("사람 답", { threadRootId: root.id });
+    expect(threadSummaryOf(t.db, root.id)?.participants).toEqual([{ kind: "user", id: t.userId }]);
+  });
+
+  it("root author who also replied appears once at reply position", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const root = t.human("루트");
+    t.human("내 답", { threadRootId: root.id });
+    t.agentSays(dev.id, "dev 답", root.id);
+    expect(threadSummaryOf(t.db, root.id)?.participants).toEqual([
+      { kind: "agent", id: dev.id },
+      { kind: "user", id: t.userId },
+    ]);
+  });
+
+  it("participants — 에이전트 루트 작성자도 맨 뒤, system 답글은 넣지 않는다", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const root = t.agentSays(dev.id, "에이전트 루트");
+    t.human("사람 답", { threadRootId: root.id });
+    createSystemMessage(t.db, t.bus, {
+      conversationId: channelConversation(t.db, t.channel.id),
+      kind: "run_error",
+      bodyMd: "실패",
+      threadRootId: root.id,
+    });
+    expect(threadSummaryOf(t.db, root.id)?.participants).toEqual([
+      { kind: "user", id: t.userId },
+      { kind: "agent", id: dev.id },
+    ]);
+  });
+
+  it("root author in participants — live updatedRoot and timeline read", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const root = t.human("루트");
+    t.updated.length = 0;
+    t.agentSays(dev.id, "dev 답", root.id);
+    const expected = [
+      { kind: "agent", id: dev.id },
+      { kind: "user", id: t.userId },
+    ];
+    // 실시간 경로 — 답글 저장이 보내는 루트 message.updated(updatedRoot)
+    expect(t.updated.at(-1)).toMatchObject({ id: root.id });
+    expect(t.updated.at(-1)?.threadSummary?.participants).toEqual(expected);
+    // 목록 경로 — 타임라인 읽기(withThreadSummaries)
+    const page = listMessages(t.db, t.channel.id, { limit: 50 });
+    expect(page.messages.find((m) => m.id === root.id)?.threadSummary?.participants).toEqual(expected);
+  });
+
+  it("participants 는 최대 10 — 답글 작성자로 차면 루트 작성자는 빠진다", () => {
+    const t = setup();
+    const root = t.human("루트");
+    const agents = Array.from({ length: 10 }, (_, i) => t.agent(`a${i}`));
+    for (const a of agents) t.agentSays(a.id, "답", root.id);
+    const participants = threadSummaryOf(t.db, root.id)?.participants;
+    expect(participants).toHaveLength(10);
+    expect(participants?.[0]).toEqual({ kind: "agent", id: agents[9]?.id });
+    expect(participants).not.toContainEqual({ kind: "user", id: t.userId });
   });
 
   it("답글이 없으면 threadSummaryOf 는 undefined, 루트에 threadSummary 를 싣지 않는다", () => {
