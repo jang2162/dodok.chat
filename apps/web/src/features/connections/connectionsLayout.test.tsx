@@ -209,3 +209,118 @@ describe("좁은 화면", () => {
     expect(within(header).getByRole("link", { name: "설정" })).toHaveAttribute("href", "/settings");
   });
 });
+
+describe("트리 꼴(연결 재설계 스펙 목표 1)", () => {
+  const memberConnections = () =>
+    stubConnection({
+      role: "member",
+      meId: ME_ID,
+      agents: [dev(), coder()],
+      connections: {
+        gateways: [
+          {
+            id: TEST_GATEWAY.id,
+            name: "사무실",
+            enabled: true,
+            approved: true,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+          {
+            id: OWN_GW,
+            name: "mia 집",
+            enabled: true,
+            approved: false,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+        ],
+        runners: [
+          {
+            id: R1,
+            label: "mia 의 맥북",
+            connected: true,
+            revoked: false,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+          {
+            id: R2,
+            label: "옛 러너",
+            connected: false,
+            revoked: true,
+            owner: { id: OTHER_ID, name: "주인" },
+          },
+        ],
+        projects: [],
+      },
+    });
+
+  it("Gateway·러너를 개수 있는 묶음 머리로 가르고, 상태는 점 + 글(강조색 배지 없음)", async () => {
+    memberConnections();
+    renderConnectionRoute();
+    const nav = await treeNav();
+    const gateways = await within(nav).findByRole("region", { name: "GATEWAY 2" });
+    const runners = within(nav).getByRole("region", { name: "러너 2" });
+    const office = within(gateways).getByRole("link", { name: /사무실.*연결됨/ });
+    expect(office.querySelector('[data-state="success"]')).not.toBeNull();
+    expect(within(runners).getByRole("link", { name: /mia 의 맥북.*연결됨/ })).toBeInTheDocument();
+    expect(nav.querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
+  it("승인 대기 Gateway 는 주황 점, 폐기된 러너는 회색 점 — 글이 함께", async () => {
+    memberConnections();
+    renderConnectionRoute();
+    const nav = await treeNav();
+    const pending = await within(nav).findByRole("link", { name: /mia 집.*승인 대기/ });
+    expect(pending.querySelector('[data-state="warning"]')).not.toBeNull();
+    const revoked = within(nav).getByRole("link", { name: /옛 러너.*폐기됨/ });
+    expect(revoked.querySelector('[data-state="muted"]')).not.toBeNull();
+  });
+
+  it("러너 에이전트 줄에 프로그램 배지, 에이전트는 이니셜 아바타", async () => {
+    memberConnections();
+    renderConnectionRoute();
+    const nav = await treeNav();
+    const coderLink = await within(nav).findByRole("link", { name: /Coder/ });
+    expect(within(coderLink).getByRole("img", { name: "Claude Code" })).toHaveTextContent("CC");
+    const devLink = within(nav).getByRole("link", { name: /Dev/ });
+    expect(within(devLink).queryByRole("img", { name: "Claude Code" })).toBeNull();
+    expect(devLink.querySelector('[data-kind="agent"]')).not.toBeNull();
+  });
+
+  it("접으면 줄 끝에 「에이전트 N」 요약, 펼치면 다시 줄", async () => {
+    memberConnections();
+    renderConnectionRoute();
+    const nav = await treeNav();
+    await within(nav).findByRole("link", { name: /Dev/ });
+    const toggle = within(nav).getByRole("button", { name: "사무실 접기" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(toggle);
+    expect(within(nav).queryByRole("link", { name: /Dev/ })).toBeNull();
+    expect(within(nav).getByRole("link", { name: /사무실.*에이전트 1/ })).toBeInTheDocument();
+    await userEvent.click(within(nav).getByRole("button", { name: "사무실 펼치기" }));
+    expect(within(nav).getByRole("link", { name: /Dev/ })).toBeInTheDocument();
+  });
+
+  it("검색칸 — 못 찾으면 안내, 비우면 원래 트리와 접힘 상태", async () => {
+    memberConnections();
+    renderConnectionRoute();
+    const nav = await treeNav();
+    await within(nav).findByRole("link", { name: /Coder/ });
+    await userEvent.click(within(nav).getByRole("button", { name: "사무실 접기" }));
+    const before = within(nav).getAllByRole("link").length;
+    const search = screen.getByRole("searchbox", { name: "연결·에이전트 찾기" });
+    await userEvent.type(search, "zzz");
+    expect(within(nav).getByText("찾는 연결·에이전트가 없습니다")).toBeInTheDocument();
+    expect(within(nav).queryAllByRole("link")).toHaveLength(0);
+    await userEvent.clear(search);
+    await userEvent.type(search, "dev");
+    // 찾는 동안은 접힌 연결도 펼쳐 맞는 에이전트를 보인다
+    expect(within(nav).getByRole("link", { name: /Dev/ })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: /Coder/ })).toBeNull();
+    await userEvent.clear(search);
+    expect(within(nav).getAllByRole("link")).toHaveLength(before);
+    expect(within(nav).getByRole("button", { name: "사무실 펼치기" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+});

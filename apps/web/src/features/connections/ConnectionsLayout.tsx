@@ -1,10 +1,11 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { PlusIcon } from "lucide-react";
+import { PlusIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { roleAtLeast } from "@dodok/shared";
 import { useRole } from "@/api/queries";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
 import { ConnectionTreeList } from "./ConnectionTreeList";
 import { CONNECTION_DETAIL_SCROLL_ID, ConnectionsContext, type ConnectionsCtx } from "./context";
 import { DetailPending } from "./NotFoundDetail";
@@ -22,6 +23,7 @@ export function ConnectionsLayout() {
   const rendered = useRouterState({ select: (s) => s.matches.at(-1)?.pathname });
   const atIndex = rendered === BASE || rendered === `${BASE}/`;
   const [notice, setNotice] = useState("");
+  const [query, setQuery] = useState("");
   const focusDetail = useRef(false);
   const [focusTarget, setFocusTarget] = useState<"archived" | "add" | undefined>();
   const ctx = useMemo<ConnectionsCtx>(
@@ -46,12 +48,17 @@ export function ConnectionsLayout() {
 
   const list = (
     <div className="flex flex-col gap-4">
-      <ListHeader addRef={addLink} />
+      <ListHeader addRef={addLink} query={query} onQuery={setQuery} />
       <p aria-live="polite" className="px-2 text-sm text-muted-foreground empty:hidden">
         {notice}
       </p>
       {tree.tree ? (
-        <ConnectionTreeList tree={tree.tree} onNavigate={onNavigate} archivedToggleRef={archivedToggle} />
+        <ConnectionTreeList
+          tree={tree.tree}
+          query={query}
+          onNavigate={onNavigate}
+          archivedToggleRef={archivedToggle}
+        />
       ) : (
         <div className="px-2">
           <DetailPending failed={tree.error} retry={tree.refetch} />
@@ -68,7 +75,7 @@ export function ConnectionsLayout() {
         </section>
       ) : (
         <section data-testid="page-connection" className="flex min-h-0 min-w-0 flex-1">
-          <div data-testid="connection-tree" className="w-72 shrink-0 overflow-y-auto border-r p-3">
+          <div data-testid="connection-tree" className="w-[300px] shrink-0 overflow-y-auto border-r p-3">
             {list}
           </div>
           <div
@@ -85,7 +92,15 @@ export function ConnectionsLayout() {
   );
 }
 
-function ListHeader({ addRef }: { addRef: React.Ref<HTMLAnchorElement> }) {
+function ListHeader({
+  addRef,
+  query,
+  onQuery,
+}: {
+  addRef: React.Ref<HTMLAnchorElement>;
+  query: string;
+  onQuery: (query: string) => void;
+}) {
   // 연결 추가는 멤버 누구나 — member 가 만든 Gateway 는 admin 이 승인할 때까지 접속하지 않는다(연결 탭 통합 스펙 5.2·5.4)
   const canAdd = roleAtLeast(useRole(), "member");
   return (
@@ -100,6 +115,21 @@ function ListHeader({ addRef }: { addRef: React.Ref<HTMLAnchorElement> }) {
             </Link>
           </Button>
         )}
+      </div>
+      {/* 이름·핸들로 트리를 거른다(연결 재설계 스펙 목표 1) — 찾는 동안은 접힌 연결도 펼친다 */}
+      <div className="relative">
+        <SearchIcon
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          type="search"
+          aria-label="연결·에이전트 찾기"
+          placeholder="연결·에이전트 찾기"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          className="h-8 pl-8"
+        />
       </div>
     </header>
   );
