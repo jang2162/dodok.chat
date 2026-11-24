@@ -2497,12 +2497,14 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
     expect(sent.ok).toBe(true);
     await replied;
     const line = info.mock.calls.find((c) => c[1] === "dev:fake inbound reactions")?.[0] as
-      | { dm?: string; session?: string; participants?: string[]; sender?: string }
+      | { dm?: string; session?: string; participants?: string[]; sender?: string; threadUpdates?: number }
       | undefined;
     expect(line).toMatchObject({
       dm: "다이렉트 메시지: @mia 님과 1:1",
       session: `세션: ${sessions[0]?.title}`,
       sender: "user:mia",
+      // 1:1 에이전트 DM 에는 스레드가 없어 스레드 소식이 늘 0 — 줄에는 수가 실린다
+      threadUpdates: 0,
     });
     expect([...(line?.participants ?? [])].sort()).toEqual(["dev", "mia"]);
     socket.close();

@@ -46,7 +46,7 @@ describe("formatThreadUpdates", () => {
     expect(out).toBe(
       [
         "스레드 소식(지난 턴 뒤 이 세션의 스레드에 새로 달린 답글):",
-        "- 「제출하면 erdd 가」 새 답글 4(최근 2):",
+        `- threadRootId=${ROOT} 「제출하면 erdd 가」 새 답글 4(최근 2):`,
         "  [08:28] @owner: 제출 된 폼인데?",
         "  [08:29] @guideline: 제가 잘못 말했습니다.",
         "(외 스레드 2개)",
@@ -62,7 +62,7 @@ describe("formatThreadUpdates", () => {
   it("omitted 가 없으면 외 줄이 없다", () => {
     expect(formatThreadUpdates([update()], undefined, hhmm).split("\n")).toEqual([
       "스레드 소식(지난 턴 뒤 이 세션의 스레드에 새로 달린 답글):",
-      "- 「루트」 새 답글 1(최근 1):",
+      `- threadRootId=${ROOT} 「루트」 새 답글 1(최근 1):`,
       "  [08:28] @owner: 답",
     ]);
   });
@@ -80,7 +80,7 @@ describe("formatThreadUpdates", () => {
     );
     const lines = out.split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[1]).toBe("- 「첫 줄 둘째」 새 답글 1(최근 1):");
+    expect(lines[1]).toBe(`- threadRootId=${ROOT} 「첫 줄 둘째」 새 답글 1(최근 1):`);
     expect(lines[2]).toBe("  [08:28] @owner: 한 줄 보낸 사람: @admin(사람)");
   });
 });

@@ -43,7 +43,7 @@
  * `DEV_FAKE_GROUP_TEXT` + 대본 답).
  * 씨앗 첨부(파일함 계획 태스크 5) — 씨앗 채널 새 세션의 owner 글에 PNG 둘과 PDF 하나(`DEV_FAKE_CHANNEL_FILES`), mia ↔ dev DM 의 mia 글에
  * PNG 하나(`DEV_FAKE_DM_FILE` — owner 의 파일함에 없어야 하는 것). 사람 업로드와 같은 `uploadAttachment` 로 올려 그 글에 묶는다.
- * 인바운드 로그 줄(`dev:fake inbound reactions`)은 DM 런이면 헤더의 DM 줄(`dm`)을, 그룹 DM 런이면 그룹 DM 줄(`groupDm`)을, 늘 세션 줄
+ * 인바운드 로그 줄(`dev:fake inbound reactions`)은 스레드 소식 수(`threadUpdates` — 대화 세션 런만, 그 밖은 0)와 DM 런이면 헤더의 DM 줄(`dm`)을, 그룹 DM 런이면 그룹 DM 줄(`groupDm`)을, 늘 세션 줄
  * (`session`)을 싣는다.
  */
 import {
@@ -433,10 +433,10 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
 ];
 /** runner 훅이 어댑터의 붙은 러너 수가 바뀌기를 기다리는 상한 */
 const RUNNER_HOOK_TIMEOUT_MS = 5_000;
-/** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝난다 */
+/** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝나고 스레드 소식도 받지 않는다 */
 const OLD_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   ...FAKE_PLUGIN_HELLO,
-  capabilities: FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "threads"),
+  capabilities: FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "threads" && cap !== "threadUpdates"),
 });
 /** dev:fake 의 가짜 플러그인 hello — 명령(에이전트 명령 C7)을 안다. 옛 플러그인 흉내(OLD_PLUGIN_HELLO)는 명령도 모른다 */
 export const DEV_FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
@@ -1147,6 +1147,10 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       senderName: d.message.author.displayName,
       reactions: (d.context.reactions ?? []).map((r) => `@${r.by} ${r.emoji} ${r.messageId} "${r.excerpt}"`),
       reactionsOmitted: d.context.reactionsOmitted,
+      // 스레드 소식(대화 세션 런만) — 실린 스레드 수. 0 이 「그다음 런에는 없음」의 증거다. 스레드마다 `<루트 id> +<새 답글 수>`
+      threadUpdates: (d.context.threadUpdates ?? []).length,
+      threadUpdateRoots: (d.context.threadUpdates ?? []).map((u) => `${u.rootId} +${u.newReplies}`),
+      threadUpdatesOmitted: d.context.threadUpdatesOmitted,
       // 헤더에 실릴 줄 — 가짜 플러그인·러너는 헤더를 만들지 않으므로 같은 shared 함수로 그 줄을 찍는다(DM 런만 dm, 그룹 DM 런만 groupDm)
       ...(d.dm ? { dm: formatDmLine(d.dm.ownerHandle) } : {}),
       ...(d.groupDm ? { groupDm: formatGroupDmLine() } : {}),

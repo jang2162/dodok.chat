@@ -81,7 +81,7 @@ const SDK_VERSION = typeof __OPENCLAW_SDK_VERSION__ === "string" ? __OPENCLAW_SD
 const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 /**
  * hello 로 서버에 알리는 능력. `threads` 가 없으면 서버는 스레드 런을 PLUGIN_OUTDATED 로 끝내고(스펙 3.2), `control` 이 없으면
- * control.call 을 FORBIDDEN 으로 거절한다(제어 도구 — control-tools.ts)
+ * control.call 을 FORBIDDEN 으로 거절한다(제어 도구 — control-tools.ts). `threadUpdates` 가 없으면 서버는 스레드 소식을 싣지 않는다
  */
 export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
   "run_id_in_outbound",
@@ -90,6 +90,7 @@ export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
   "control",
   "commands",
   "remoteUpdate",
+  "threadUpdates",
 ];
 
 /**

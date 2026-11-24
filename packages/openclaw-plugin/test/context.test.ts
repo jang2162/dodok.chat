@@ -1,4 +1,9 @@
-import { formatReactionFacts, type InboundDeliver, type InboundReaction } from "@dodok/shared";
+import {
+  formatReactionFacts,
+  type InboundDeliver,
+  type InboundReaction,
+  type InboundThreadUpdate,
+} from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { buildInboundText, channelPromptContext, formatInboundContext } from "../src/context";
 
@@ -216,6 +221,96 @@ describe("formatInboundContext 리액션", () => {
     expect(formatInboundContext(withReactions(undefined), { timeZone: "Asia/Seoul" })).toBe(base);
     expect(formatInboundContext(withReactions([], 2), { timeZone: "Asia/Seoul" })).toBe(base);
     expect(base).not.toContain("반응(");
+  });
+});
+
+describe("formatInboundContext 스레드 소식", () => {
+  const UPDATES: InboundThreadUpdate[] = [
+    {
+      rootId: "01a09fc9-d204-7551-89d6-38544d07a1bb",
+      rootExcerpt: "pick 폼 제출",
+      newReplies: 4,
+      recent: [
+        {
+          author: { type: "user", handle: "jang", displayName: "장병현" },
+          text: "제출 된 폼인데?",
+          ts: "2026-09-14T00:28:00Z",
+        },
+        {
+          author: { type: "agent", handle: "researcher", displayName: "Researcher" },
+          text: "제가 잘못 말했습니다.",
+          ts: "2026-09-14T00:29:00Z",
+        },
+      ],
+    },
+  ];
+  const REACTIONS: InboundReaction[] = [
+    {
+      messageId: "01a09fc9-d204-7551-89d6-38544d07a110",
+      excerpt: "재현 조건",
+      emoji: "👍",
+      by: "jang",
+      at: "2026-09-14T00:15:00Z",
+    },
+  ];
+
+  it("「최근 대화」 절 다음, 반응 줄 앞에 「스레드 소식」 절 (Asia/Seoul 시각)", () => {
+    const lines = formatInboundContext(
+      {
+        ...deliver,
+        context: {
+          ...deliver.context,
+          threadUpdates: UPDATES,
+          threadUpdatesOmitted: 2,
+          reactions: REACTIONS,
+        },
+      },
+      { timeZone: "Asia/Seoul" },
+    ).split("\n");
+    const recent = lines.indexOf("[09:13] @planner: 재현 조건을 모아보죠");
+    const facts = formatReactionFacts(REACTIONS).split("\n");
+    expect(lines.slice(recent + 1, recent + 6)).toEqual([
+      "스레드 소식(지난 턴 뒤 이 세션의 스레드에 새로 달린 답글):",
+      "- threadRootId=01a09fc9-d204-7551-89d6-38544d07a1bb 「pick 폼 제출」 새 답글 4(최근 2):",
+      "  [09:28] @jang: 제출 된 폼인데?",
+      "  [09:29] @researcher: 제가 잘못 말했습니다.",
+      "(외 스레드 2개)",
+    ]);
+    expect(lines.slice(recent + 6, recent + 6 + facts.length)).toEqual(facts);
+    expect(lines.at(-1)).toBe("---");
+  });
+
+  it("없거나 빈 배열이면 헤더가 이전과 글자까지 같다", () => {
+    const base = formatInboundContext(deliver, { timeZone: "Asia/Seoul" });
+    expect(
+      formatInboundContext(
+        { ...deliver, context: { ...deliver.context, threadUpdates: [], threadUpdatesOmitted: 1 } },
+        { timeZone: "Asia/Seoul" },
+      ),
+    ).toBe(base);
+    expect(base).not.toContain("스레드 소식");
+  });
+
+  it("스레드 런 delivery 에 threadUpdates 가 있어도(계약 위반) 싣지 않는다", () => {
+    const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+    const out = formatInboundContext({
+      ...deliver,
+      threadId: ROOT,
+      context: {
+        ...deliver.context,
+        recentMessages: [],
+        thread: {
+          root: {
+            author: { type: "user", handle: "jang", displayName: "장병현" },
+            text: "루트",
+            ts: "2026-09-14T00:10:00Z",
+          },
+          recentMessages: [],
+        },
+        threadUpdates: UPDATES,
+      },
+    });
+    expect(out).not.toContain("스레드 소식");
   });
 });
 
