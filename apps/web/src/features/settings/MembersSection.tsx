@@ -227,15 +227,15 @@ function PersonMemberRow({
         destructive
         returnFocus={removeRef}
         onConfirm={() =>
-          remove.mutate(
-            { memberType: "user", memberId: member.memberId },
-            {
-              onSuccess: () => {
-                setRemoving(false);
-                onRemoved();
-              },
-            },
-          )
+          // mutate 의 콜백이 아니라 mutateAsync().then — 캐시 갱신으로 이 줄이 먼저 언마운트되면 mutate 콜백은 불리지 않아
+          // 초점이 body 로 떨어진다(docs/guides/browser-verification.md 「초점 이동은 …」). 실패는 전역 토스트, 대화상자는 남는다
+          void remove
+            .mutateAsync({ memberType: "user", memberId: member.memberId })
+            .then(() => {
+              setRemoving(false);
+              onRemoved();
+            })
+            .catch(() => {})
         }
       />
     </li>
