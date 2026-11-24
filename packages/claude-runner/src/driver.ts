@@ -1,6 +1,7 @@
 import type {
   AgentCommand,
   AppMcpCeiling,
+  BackgroundTask,
   RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
@@ -51,6 +52,18 @@ export interface ProgramDriver {
    * 연결이 failed 로 답한다
    */
   listCommands?(args: { workdir: string; configDir?: string; signal: AbortSignal }): Promise<AgentCommand[]>;
+  /**
+   * 백그라운드 작업(백그라운드 작업 스펙 5.2·5.5) — 런보다 오래 사는 작업을 쥐는 드라이버만. 있으면 연결이 hello 에 능력
+   * backgroundTasks 를 싣는다
+   */
+  background?: {
+    /** 화면의 「종료」 — 없는 세션·작업이면 false */
+    stopTask(sessionKey: string, taskId: string): Promise<boolean>;
+    /** 세션 닫기·보관 — 도는 턴을 멈추고 작업을 모두 끈 채 프로세스를 닫는다 */
+    release(sessionKey: string): void;
+    /** 작업이 남은 세션마다 지금 목록 — 다시 붙은 뒤 한 번씩 보낸다 */
+    held(): Array<{ sessionKey: string; tasks: BackgroundTask[] }>;
+  };
 }
 
 /** hello 의 programs[].capabilities — 드라이버가 할 수 있는 것만 */

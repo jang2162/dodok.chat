@@ -19,6 +19,8 @@ import type {
  * - `{ hang }` close() 가 불릴 때까지 멈춘다(interrupt 에 반응하지 않는 CLI)
  * - `{ exit }` 입력이 닫히기를 기다리지 않고 곧바로 끝난다(result 없이 프로세스가 끝남)
  * - `{ sleep }` 그만큼 쉬었다가 뒤의 메시지를 흘린다(interrupt 뒤 턴을 닫는 데 걸리는 시간)
+ * - `{ waitInput }` 다음 사용자 입력을 기다렸다가 `prompts` 에 적고 뒤를 흘린다(붙든 프로세스의 다음 턴). 입력이 닫히면 끝난다
+ * - `{ waitStopTask }` 그 작업의 stopTask() 를 기다렸다가 then 을 흘린다(끈 작업의 알림)
  * - `{ callTool }` dodok MCP 서버의 그 도구 handler 를 부르고 결과를 `toolResults` 에 적는다(CLI 가 SDK MCP 도구를 부름)
  * - `{ askPermission }` options.canUseTool 을 부르고 결과를 `permissions` 에 적는다. 콜백 signal 은 interrupt·close 에
  *   끊긴다(실제 SDK 는 CLI 의 control_cancel_request 를 받아 끊는다 — ADR 0007 4.2). `lateCancel` 이면 close 에만 끊긴다
@@ -31,6 +33,8 @@ export type ScriptStep =
   | { hang: true }
   | { exit: true }
   | { sleep: number }
+  | { waitInput: true }
+  | { waitStopTask: string; then: SdkMessage[] }
   | { callTool: { name: string; input: unknown } }
   | {
       askPermission: {
@@ -47,6 +51,12 @@ export type FakePermission = Awaited<ReturnType<CanUseTool>>;
 export type FakeCall = {
   options: SdkOptions;
   prompt: SdkUserMessage | undefined;
+  /** 받은 사용자 입력 전부 — 첫 것이 prompt */
+  prompts: SdkUserMessage[];
+  /** 붙든 프로세스 제어(setModel·setPermissionMode·applyFlagSettings·setMcpServers·stopTask) — 부른 차례 */
+  controls: Array<{ method: string; arg: unknown }>;
+  /** 입력을 받은 순간마다 그때까지의 controls 수 — 설정을 턴 전에 바꿨는지 본다 */
+  controlsAtPrompt: number[];
   interrupts: number;
   closes: number;
   /** 대본을 다 흘린 뒤 입력(stdin)이 닫혔는가 — 러너가 런의 끝에서 입력을 닫아야 CLI 가 끝난다 */
@@ -180,6 +190,9 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
     const call: FakeCall = {
       options: args.options,
       prompt: undefined,
+      prompts: [],
+      controls: [],
+      controlsAtPrompt: [],
       interrupts: 0,
       closes: 0,
       inputClosed: false,
@@ -202,13 +215,25 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
     let onClose: (() => void) | undefined;
     let closed = false;
     const closedSignal = new Promise<void>((resolve) => (onClose = resolve));
+    const stopWaiters = new Map<string, () => void>();
 
     const input = args.prompt[Symbol.asyncIterator]();
     const eagerFirst = opts.eagerInput ? input.next() : undefined;
     async function* run(): AsyncGenerator<SdkMessage> {
       const first = await (eagerFirst ?? input.next());
-      if (!first.done) call.prompt = first.value;
-      const rest = input.next().then(() => void (inputEnded = true));
+      if (!first.done) {
+        call.prompt = first.value;
+        call.prompts.push(first.value);
+        call.controlsAtPrompt.push(call.controls.length);
+      }
+      // 다음 입력 — 값이면 waitInput 이 받고, 끝(done)이면 입력이 닫혔다
+      let pending = first.done ? Promise.resolve(first) : input.next();
+      const watch = (p: Promise<IteratorResult<SdkUserMessage>>) =>
+        p.then((r) => {
+          if (r.done) inputEnded = true;
+          return r;
+        });
+      let next = watch(pending);
       try {
         for (const step of steps) {
           if (closed) return;
@@ -216,6 +241,22 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
           if ("exit" in step) return;
           if ("sleep" in step) {
             await new Promise((r) => setTimeout(r, step.sleep));
+            continue;
+          }
+          if ("waitInput" in step) {
+            const r = await Promise.race([next, closedSignal.then(() => undefined)]);
+            if (!r || r.done) return;
+            call.prompts.push(r.value);
+            call.controlsAtPrompt.push(call.controls.length);
+            pending = input.next();
+            next = watch(pending);
+            continue;
+          }
+          if ("waitStopTask" in step) {
+            const stopped = new Promise<void>((resolve) => stopWaiters.set(step.waitStopTask, resolve));
+            await Promise.race([stopped, closedSignal]);
+            if (closed) return;
+            for (const m of step.then) yield m;
             continue;
           }
           if ("hang" in step) {
@@ -261,8 +302,14 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
           if ((step as { type?: string }).type === "result" && inputEnded) call.inputEndedBeforeResult = true;
           yield step as SdkMessage;
         }
-        // 실제 CLI 는 stdin 이 닫혀야 끝난다 — 러너가 입력을 닫지 않으면 여기서 멈춘다
-        await Promise.race([rest, closedSignal]);
+        // 실제 CLI 는 stdin 이 닫혀야 끝난다 — 러너가 입력을 닫지 않으면 여기서 멈춘다. 대본 밖의 입력은 적고 계속 기다린다
+        for (;;) {
+          const r = await Promise.race([next, closedSignal.then(() => undefined)]);
+          if (!r || r.done) break;
+          call.prompts.push(r.value);
+          pending = input.next();
+          next = watch(pending);
+        }
         call.inputClosed = !closed;
       } finally {
         call.finished = true;
@@ -293,6 +340,19 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
       supportedCommands: async () => {
         call.supportedCommandsCalls += 1;
         return fake.commands(args.options);
+      },
+      setModel: async (model) => void call.controls.push({ method: "setModel", arg: model }),
+      setPermissionMode: async (mode) => void call.controls.push({ method: "setPermissionMode", arg: mode }),
+      applyFlagSettings: async (settings) =>
+        void call.controls.push({ method: "applyFlagSettings", arg: settings }),
+      setMcpServers: async (servers) => {
+        call.controls.push({ method: "setMcpServers", arg: servers });
+        return {};
+      },
+      stopTask: async (taskId) => {
+        call.controls.push({ method: "stopTask", arg: taskId });
+        stopWaiters.get(taskId)?.();
+        stopWaiters.delete(taskId);
       },
     };
   }

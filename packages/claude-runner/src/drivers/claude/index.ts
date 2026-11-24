@@ -20,6 +20,7 @@ import {
   resolveClaudeExecutable,
 } from "./executable";
 import { createCommandWrappers } from "./command-wrappers";
+import type { BackgroundHooks, SessionProcess } from "./session-process";
 import {
   CLAUDE_CODE_LABEL,
   type ClaudeRunSpec,
@@ -50,6 +51,11 @@ export type ClaudeDriverOptions = {
   logger?: { info(msg: string): void };
   /** 모델 목록을 받는 query 의 cwd — 러너의 첫 루트(작성기 칩 스펙 C10). 없으면 러너 프로세스의 cwd */
   modelsCwd?: string;
+  /**
+   * 백그라운드 작업(백그라운드 작업 스펙 5.2) — 연결이 채운다(추가 응답 청하기·작업 목록·자리). 없으면 작업이 남아도 첫 result 에서
+   * CLI 를 닫는다(지금 동작)
+   */
+  hooks?: BackgroundHooks;
 };
 
 /**
@@ -148,6 +154,9 @@ function durationText(ms: number): string {
 export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   // 세션별 마지막 누적 비용 — 드라이버(러너 프로세스) 메모리에만 있다
   const costs = new Map<string, number>();
+  // 세션 키 → 도는·붙든 CLI 프로세스(run.ts 가 넣고 프로세스가 끝나면 뺀다)
+  const sessions = new Map<string, SessionProcess>();
+  const hooks = opts.hooks;
   const isExecutable = opts.isExecutable ?? isExecutableFile;
   const readVersion = opts.readVersion ?? readClaudeVersion;
   const now = opts.now ?? Date.now;
@@ -318,7 +327,31 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         signal,
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
         ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
+        ...(hooks ? { background: { hooks, sessions } } : {}),
       });
     },
+    ...(hooks
+      ? {
+          background: {
+            async stopTask(sessionKey: string, taskId: string) {
+              const sp = sessions.get(sessionKey);
+              if (!sp || !sp.tracker.has(taskId)) return false;
+              try {
+                await sp.query().stopTask(taskId);
+                return true;
+              } catch {
+                return false;
+              }
+            },
+            release(sessionKey: string) {
+              sessions.get(sessionKey)?.release();
+            },
+            held: () =>
+              [...sessions.values()]
+                .filter((sp) => sp.tracker.size() > 0)
+                .map((sp) => ({ sessionKey: sp.sessionKey, tasks: sp.tracker.list() })),
+          },
+        }
+      : {}),
   };
 }
