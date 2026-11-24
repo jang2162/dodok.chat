@@ -28,6 +28,7 @@ import {
 } from "../../../test/shellApi";
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
+import { PanelTabs } from "./PanelTabs";
 
 afterEach(() => {
   useWireStatus.getState().setStatus("idle");
@@ -377,6 +378,43 @@ describe("Banners", () => {
 
     setWire("connected");
     expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+  });
+});
+
+describe("PanelTabs 머리", () => {
+  /** 라우트 없이 틀만 — 링크는 라우터 맥락만 있으면 그린다 */
+  function renderPanel(props: Partial<Parameters<typeof PanelTabs>[0]> = {}) {
+    stubMedia(false);
+    const queryClient: QueryClient = createQueryClient(() => {});
+    const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: ["/"] }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterContextProvider router={router}>
+          <PanelTabs channelId="a" conversationId="a" active="settings" {...props}>
+            <p>내용</p>
+          </PanelTabs>
+        </RouterContextProvider>
+      </QueryClientProvider>,
+    );
+    return screen.getByTestId("page-channel-panel");
+  }
+
+  it("제목 줄 없이 탭 한 줄 + 닫기 — 제목은 스크린 리더용으로만 남아 패널의 이름이다", () => {
+    const panel = renderPanel();
+    expect(screen.getByRole("complementary", { name: "채널 설정" })).toBe(panel);
+    expect(within(panel).getByRole("heading", { name: "채널 설정" })).toHaveClass("sr-only");
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    // 닫기는 탭과 같은 줄이다
+    expect(tabs.parentElement).toContainElement(within(panel).getByRole("link", { name: "설정 닫기" }));
+    expect(panel).toHaveClass("w-[384px]");
+  });
+
+  it("badges — 수가 있으면 탭 이름에 붙고, 0·없음이면 그리지 않는다", () => {
+    const panel = renderPanel({ badges: { activity: 2, files: 0 } });
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(within(tabs).getByRole("link", { name: "활동, 승인 대기 2" })).toBeInTheDocument();
+    expect(within(tabs).getByRole("link", { name: "파일" })).toBeInTheDocument();
+    expect(within(tabs).getByRole("link", { name: "설정" })).toBeInTheDocument();
   });
 });
 

@@ -41,7 +41,12 @@ describe("패널", () => {
     const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
     const panel = await screen.findByTestId("page-channel-panel");
     expect(screen.getByTestId("page-channel")).toContainElement(panel);
-    expect(within(panel).getByRole("heading", { name: "채널 설정" })).toBeInTheDocument();
+    // 보이는 제목 줄은 없다 — 제목은 패널(aside)의 이름으로만 남는다
+    expect(within(panel).getByRole("heading", { name: "채널 설정" })).toHaveClass("sr-only");
+    expect(screen.getByRole("complementary", { name: "채널 설정" })).toBe(panel);
+    const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
+    expect(within(tabs).getByRole("link", { name: "설정" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "활동" })).not.toHaveAttribute("aria-current");
     for (const name of ["기본", "채널 프롬프트", "릴레이 정책", "멤버"]) {
       expect(await within(panel).findByRole("region", { name })).toBeInTheDocument();
     }
