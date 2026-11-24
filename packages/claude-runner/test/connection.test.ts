@@ -33,6 +33,9 @@ import {
   RunnerRunEvent,
   RunnerRunFinal,
   RunnerRunSession,
+  RunnerTasksUpdate,
+  type RunnerFollowupRequest,
+  type RunnerFollowupResult,
   RunnerWorktreeCreateResult,
   RunnerWorktreeRemoveResult,
   type RunnerClientToServerEvents,
@@ -45,6 +48,8 @@ import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "../src/config";
 import {
+  type BackgroundHooksSlot,
+  createBackgroundHooksSlot,
   createRunBridge,
   invalidFields,
   NO_DRIVER_REASON,
@@ -84,6 +89,10 @@ type FakeServer = {
   approvals: RunnerApprovalRequested[];
   withdrawn: RunnerApprovalWithdrawn[];
   controls: RunnerControlCall[];
+  tasksUpdates: RunnerTasksUpdate[];
+  followups: RunnerFollowupRequest[];
+  /** run.followup 에 답하는 법 — 없으면 답하지 않는다(시간 초과) */
+  onFollowup?: (req: RunnerFollowupRequest, ack: (r: RunnerFollowupResult) => void) => void;
   /** control.call 에 답하는 법 — 없으면 곧바로 ok */
   onControl?: (socket: ServerSocket, ack: (r: ControlResult) => void) => void;
   postAck: RunnerOutboundAck;
@@ -111,6 +120,8 @@ async function startFakeServer(): Promise<FakeServer> {
     approvals: [],
     withdrawn: [],
     controls: [],
+    tasksUpdates: [],
+    followups: [],
     postAck: { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" },
     sockets: [],
     helloResult: { ok: true, serverVersion: "test" },
@@ -143,6 +154,11 @@ async function startFakeServer(): Promise<FakeServer> {
     });
     socket.on("approval.requested", (p) => void server.approvals.push(RunnerApprovalRequested.parse(p)));
     socket.on("approval.withdrawn", (p) => void server.withdrawn.push(RunnerApprovalWithdrawn.parse(p)));
+    socket.on("tasks.update", (p) => void server.tasksUpdates.push(RunnerTasksUpdate.parse(p)));
+    socket.on("run.followup", (p, ack) => {
+      server.followups.push(p);
+      server.onFollowup?.(p, ack);
+    });
     socket.on("control.call", (p, ack) => {
       server.controls.push(RunnerControlCall.parse(p));
       if (server.onControl) server.onControl(socket, ack);
@@ -207,6 +223,10 @@ async function setup(
     appMcp?: "off" | "http" | "all";
     appMcpCommands?: string[];
     selfUpdate?: RunnerConnectionOptions["selfUpdate"];
+    /** 백그라운드 작업 훅 자리를 드라이버와 연결에 넘긴다 */
+    background?: boolean;
+    tasksThrottleMs?: number;
+    followupAckTimeoutMs?: number;
   } = {},
 ) {
   const server = await startFakeServer();
@@ -228,9 +248,13 @@ async function setup(
     ...(opts.appMcpCommands === undefined ? {} : { appMcpCommands: opts.appMcpCommands }),
     programs: opts.programs ?? { claude: CLAUDE_CEILING },
   };
+  const slot: BackgroundHooksSlot | undefined = opts.background ? createBackgroundHooksSlot() : undefined;
   const conn: RunnerConnection = startRunnerConnection({
     config,
     token: opts.token ?? TOKEN,
+    ...(slot ? { background: slot } : {}),
+    ...(opts.tasksThrottleMs === undefined ? {} : { tasksThrottleMs: opts.tasksThrottleMs }),
+    ...(opts.followupAckTimeoutMs === undefined ? {} : { followupAckTimeoutMs: opts.followupAckTimeoutMs }),
     drivers: [
       (opts.driver ?? ((d) => d))(
         createClaudeDriver({
@@ -240,6 +264,7 @@ async function setup(
           closeGraceMs: 30,
           modelsCwd: dirs.root,
           ...(opts.modelsTimeoutMs === undefined ? {} : { modelsTimeoutMs: opts.modelsTimeoutMs }),
+          ...(slot ? { hooks: slot.hooks } : {}),
           logger: { info: (m) => logs.push(m) },
         }),
       ),
@@ -259,7 +284,7 @@ async function setup(
     ...(opts.selfUpdate === undefined ? {} : { selfUpdate: opts.selfUpdate }),
   });
   cleanups.push(() => conn.stop());
-  return { server, fake, logs, fatal, conn, dirs };
+  return { server, fake, logs, fatal, conn, dirs, slot };
 }
 
 const sendStart = (socket: ServerSocket, start: ReturnType<typeof runStart>) =>
@@ -1871,5 +1896,157 @@ describe("원격 업데이트 — runner.update(원격 업데이트 스펙 U1·U
       reason: "busy",
       message: "둘째",
     });
+  });
+});
+
+describe("백그라운드 작업 프레임(백그라운드 작업 스펙 5.3·5.4)", () => {
+  const TASK = {
+    taskId: "b1",
+    kind: "shell" as const,
+    description: "pnpm dev",
+    startedAt: "2026-11-24T00:00:00.000Z",
+    originRunId: RUN_ID,
+  };
+  const heldScript = () => [
+    script.init(),
+    script.tasksChanged([{ task_id: "b1", task_type: "local_bash", description: "pnpm dev" }]),
+    script.taskStarted("b1", { description: "pnpm dev" }),
+    ...script.textTurn("msg_1", ["띄웠어요"]),
+  ];
+
+  it("announces backgroundTasks", async () => {
+    const on = await setup({ background: true });
+    await waitFor(() => on.server.hellos.length === 1);
+    expect(on.server.hellos[0]!.capabilities).toContain("backgroundTasks");
+    const off = await setup();
+    await waitFor(() => off.server.hellos.length === 1);
+    expect(off.server.hellos[0]!.capabilities).not.toContain("backgroundTasks");
+  });
+
+  it("throttles tasks.update to once per second per session", async () => {
+    const { server, slot } = await setup({ background: true, tasksThrottleMs: 80 });
+    await waitFor(() => server.hellos.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const hooks = slot!.hooks;
+    hooks.tasksChanged("k1", [TASK]);
+    hooks.tasksChanged("k1", [TASK, { ...TASK, taskId: "b2" }]);
+    hooks.tasksChanged("k1", []);
+    hooks.tasksChanged("k2", [TASK]);
+    await waitFor(() => server.tasksUpdates.length === 2);
+    expect(server.tasksUpdates).toEqual([
+      { sessionKey: "k1", tasks: [TASK] },
+      { sessionKey: "k2", tasks: [TASK] },
+    ]);
+    // 묶는 동안 온 것은 마지막 값 하나로
+    await waitFor(() => server.tasksUpdates.length === 3);
+    expect(server.tasksUpdates[2]).toEqual({ sessionKey: "k1", tasks: [] });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(server.tasksUpdates).toHaveLength(3);
+  });
+
+  it("resends tasks after reconnect", async () => {
+    const { server, fake } = await setup({ background: true, tasksThrottleMs: 10 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...heldScript(), { waitInput: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    await waitFor(() => server.tasksUpdates.length >= 1);
+    const key = runStart().deliver.sessionKey;
+    expect(server.tasksUpdates.at(-1)).toMatchObject({ sessionKey: key, tasks: [{ taskId: "b1" }] });
+    const before = server.tasksUpdates.length;
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    await waitFor(() => server.tasksUpdates.length === before + 1);
+    expect(server.tasksUpdates.at(-1)).toMatchObject({
+      sessionKey: key,
+      tasks: [{ taskId: "b1", originRunId: RUN_ID }],
+    });
+    // CLI 는 끊김을 넘어 살아 있다
+    expect(fake.calls[0]!.finished).toBe(false);
+  });
+
+  it("answers task.stop from the driver", async () => {
+    const { server, fake } = await setup({ background: true, tasksThrottleMs: 10 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...heldScript(), {
+      waitStopTask: "b1",
+      emit: [
+        script.taskUpdated("b1", { status: "killed" }),
+        script.taskNotification("b1", "stopped"),
+        script.tasksChanged([]),
+      ],
+    });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    const key = runStart().deliver.sessionKey;
+    const stop = (taskId: string, sessionKey = key) =>
+      server.sockets[0]!.timeout(2000).emitWithAck("task.stop", { sessionKey, taskId });
+    expect(await stop("nope")).toEqual({ ok: false });
+    expect(await stop("b1")).toEqual({ ok: true });
+    expect(fake.calls[0]!.controls).toEqual([{ method: "stopTask", arg: "b1" }]);
+    await waitFor(() => fake.calls[0]!.finished);
+    await waitFor(() => server.tasksUpdates.at(-1)?.tasks.length === 0);
+  });
+
+  it("session.release closes the held process", async () => {
+    const { server, fake } = await setup({ background: true, tasksThrottleMs: 10 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...heldScript(), { waitInput: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    server.sockets[0]!.emit("session.release", { sessionKey: runStart().deliver.sessionKey });
+    await waitFor(() => fake.calls[0]!.finished);
+    expect(fake.calls[0]!.inputClosed).toBe(true);
+  });
+
+  it("followup times out to unknown", async () => {
+    const { server, slot } = await setup({ background: true, followupAckTimeoutMs: 40 });
+    await waitFor(() => server.hellos.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const req = { sessionKey: "k1", originRunId: RUN_ID, taskIds: ["b1"] };
+    expect(await slot!.hooks.requestFollowup(req)).toEqual({ ok: false, reason: "unknown" });
+    expect(server.followups).toEqual([req]);
+    server.onFollowup = (_p, ack) => ack({ ok: false, reason: "archived" });
+    expect(await slot!.hooks.requestFollowup(req)).toEqual({ ok: false, reason: "archived" });
+  });
+
+  it("a follow-up turn flows to the server under the new run id", async () => {
+    const { server, fake } = await setup({ background: true, tasksThrottleMs: 10 });
+    await waitFor(() => server.hellos.length === 1);
+    const FOLLOW = "0192f000-0000-7000-8000-00000000f001";
+    server.onFollowup = (req, ack) =>
+      ack({
+        ok: true,
+        runId: FOLLOW,
+        deliver: { ...runStart().deliver, kind: "background", runId: FOLLOW },
+      });
+    fake.script(
+      ...heldScript(),
+      { sleep: 10 },
+      script.taskNotification("b1", "completed"),
+      script.tasksChanged([]),
+      script.init(),
+      ...script.textTurn("msg_f", ["끝났어요"]),
+      { waitInput: true },
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 2);
+    expect(server.followups).toEqual([
+      { sessionKey: runStart().deliver.sessionKey, originRunId: RUN_ID, taskIds: ["b1"] },
+    ]);
+    expect(server.finals[1]).toMatchObject({ runId: FOLLOW, text: "끝났어요" });
+    expect(server.events.filter((e) => e.runId === FOLLOW).length).toBeGreaterThan(0);
+    await waitFor(() => fake.calls[0]!.finished);
+  });
+
+  it("a queued ack carries heldSlots while held processes fill the runner", async () => {
+    const { server, fake } = await setup({ background: true, maxConcurrentRuns: 1 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...heldScript(), { waitInput: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    const other = runStart({ runId: RUN_2, sessionId: SESSION_2, agentId: "other" });
+    const ack = await sendStart(server.sockets[0]!, other);
+    expect(ack).toEqual({ runId: RUN_2, admission: "dispatch", queuedPosition: 1, heldSlots: 1 });
   });
 });

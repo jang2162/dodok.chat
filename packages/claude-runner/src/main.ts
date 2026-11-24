@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
 import { DEFAULT_CONFIG_PATH, loadRunnerConfig, resolveConfigPath, RunnerConfigError } from "./config";
-import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connection";
+import {
+  createBackgroundHooksSlot,
+  startRunnerConnection,
+  STOP_WAIT_MS,
+  type RunnerLogger,
+} from "./connection";
 import { createClaudeDriver } from "./drivers/claude";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
@@ -167,14 +172,18 @@ async function main(): Promise<void> {
       `프로그램 ${Object.keys(config.programs).join(", ") || "없음"} · 동시 ${config.maxConcurrentRuns}`,
   );
 
+  // 백그라운드 작업(백그라운드 작업 스펙 5.2) — 드라이버가 먼저 자리를 받고 연결이 잇는다
+  const background = createBackgroundHooksSlot();
   const connection = startRunnerConnection({
     config,
     token,
+    background,
     drivers: [
       createClaudeDriver({
         sdk: realSdk,
         claudeCodeVersion: CLAUDE_CODE_VERSION,
         logger,
+        hooks: background.hooks,
         // 모델 목록을 받는 query 의 cwd — 첫 루트(작성기 칩 스펙 C10). 봇만 쓰는 러너는 루트가 없다 — 그때는 cwd 없이 묻는다
         ...(config.roots[0] ? { modelsCwd: config.roots[0].path } : {}),
       }),

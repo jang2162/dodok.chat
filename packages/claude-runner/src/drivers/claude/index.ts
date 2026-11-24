@@ -20,7 +20,8 @@ import {
   resolveClaudeExecutable,
 } from "./executable";
 import { createCommandWrappers } from "./command-wrappers";
-import type { BackgroundHooks, SessionProcess } from "./session-process";
+import type { BackgroundHooks } from "../../driver";
+import type { SessionProcess } from "./session-process";
 import {
   CLAUDE_CODE_LABEL,
   type ClaudeRunSpec,

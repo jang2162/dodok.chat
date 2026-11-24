@@ -16,7 +16,11 @@ import {
   RunnerWorktreeRemove,
   RunnerRunAbort,
   RunnerRunStart,
+  RunnerFollowupResult,
+  RunnerSessionRelease,
+  RunnerTaskStop,
   RunnerUpdate,
+  type BackgroundTask,
   type RunnerUpdateResult,
   type RunnerCapability,
   type RunnerClientToServerEvents,
@@ -29,7 +33,7 @@ import { io, type Socket } from "socket.io-client";
 import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
 import { checkCeiling, resolveBot, resolveProject } from "./ceiling";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "./config";
-import { capabilityList, type ProgramDriver, type RunSpec } from "./driver";
+import { type BackgroundHooks, capabilityList, type ProgramDriver, type RunSpec } from "./driver";
 import { checkProject, listDirectory } from "./fs-browse";
 import { createWorktree, removeWorktree } from "./worktrees";
 import { createScheduler } from "./scheduler";
@@ -61,6 +65,10 @@ const HELLO_TIMEOUT_MS = 15_000;
 const POST_ACK_TIMEOUT_MS = 30_000;
 // 재접속 백오프 1초~30초(Global Constraints)
 const DEFAULT_BACKOFF = { minMs: 1000, maxMs: 30_000 };
+/** tasks.update 를 세션마다 묶는 간격(백그라운드 작업 스펙 9장 — 초당 한 번) */
+export const TASKS_THROTTLE_MS = 1000;
+/** run.followup ack 상한 — 넘으면 거절로 본다(그 턴은 interrupt) */
+export const FOLLOWUP_ACK_TIMEOUT_MS = 10_000;
 /** 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다리는 상한 — 런 쪽 close 유예(ABORT_CLOSE_MS)와 같다 */
 export const STOP_WAIT_MS = 5000;
 const STOP_SETTLE_MS = 50;
@@ -70,6 +78,31 @@ const STOP_SETTLE_MS = 50;
 const SERVER_DISCONNECT = "io server disconnect";
 const SERVER_DISCONNECT_MESSAGE =
   "서버가 이 러너 연결을 끊었습니다 — 같은 토큰으로 다른 러너가 붙었거나 토큰이 폐기됐습니다";
+
+/**
+ * 드라이버가 받을 백그라운드 훅 자리 — 드라이버는 연결보다 먼저 만들어지므로(main) 자리를 먼저 넘기고 연결이 bind 로 잇는다. 잇기 전의
+ * 부름은 끊겨 있는 것과 같다(추가 응답은 unknown, 목록은 버린다)
+ */
+export type BackgroundHooksSlot = { hooks: BackgroundHooks; bind(impl: BackgroundHooks): void };
+
+export function createBackgroundHooksSlot(): BackgroundHooksSlot {
+  let impl: BackgroundHooks | undefined;
+  return {
+    hooks: {
+      requestFollowup: (req) =>
+        impl ? impl.requestFollowup(req) : Promise.resolve({ ok: false, reason: "unknown" }),
+      openFollowup: (run) => {
+        if (!impl) throw new Error("background hooks are not bound");
+        return impl.openFollowup(run);
+      },
+      tasksChanged: (key, tasks) => impl?.tasksChanged(key, tasks),
+      held: (key, holding) => impl?.held(key, holding),
+    },
+    bind: (next) => {
+      impl = next;
+    },
+  };
+}
 
 export type RunnerConnectionOptions = {
   config: ResolvedRunnerConfig;
@@ -87,6 +120,14 @@ export type RunnerConnectionOptions = {
   postAckTimeoutMs?: number;
   /** 시험이 줄인다 — 기본 COMMANDS_LIST_TIMEOUT_MS */
   commandsListTimeoutMs?: number;
+  /**
+   * 백그라운드 작업(백그라운드 작업 스펙 5.3·5.4) — 드라이버에 넘긴 훅 자리. 있고 background 가 있는 드라이버가 있으면 hello 능력
+   * backgroundTasks 를 싣고 tasks.update·run.followup 을 내며 task.stop·session.release 를 받는다
+   */
+  background?: BackgroundHooksSlot;
+  /** 시험이 줄인다 — 기본 TASKS_THROTTLE_MS·FOLLOWUP_ACK_TIMEOUT_MS */
+  tasksThrottleMs?: number;
+  followupAckTimeoutMs?: number;
   /**
    * 원격 업데이트(원격 업데이트 스펙 U3) — main 이 self-update.ts selfUpdate 를 이 러너의 argv·판으로 감싸 넘긴다. 있으면 hello 능력
    * remoteUpdate 를 싣는다. beforeRestart 는 설치가 끝난 뒤 — 연결이 서버에 ok 를 답하고 끊는다
@@ -225,6 +266,51 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const decisions = new Map<string, (outcome: ApprovalOutcome) => void>();
   // runner.update 를 받아 설치하는 중 — 두 번째 요청은 busy, 새 run.start 는 받지 않는다(Review Focus 4)
   let updating = false;
+  // 백그라운드 작업 — 훅 자리가 있고 작업을 쥐는 드라이버가 있을 때만(옛 동작은 그대로)
+  const backgroundDriver = opts.background ? opts.drivers.find((d) => d.background) : undefined;
+  const background = backgroundDriver?.background;
+  // 이 연결 세대에서 hello 가 받아들여졌나 — 그 전에는 tasks.update 를 내지 않는다(붙은 뒤 held() 로 한꺼번에)
+  let ready = false;
+  // 추가 응답 런 → 중지(run.abort·끊김)
+  const followups = new Map<string, AbortController>();
+  const tasksThrottleMs = opts.tasksThrottleMs ?? TASKS_THROTTLE_MS;
+  const taskSends = new Map<
+    string,
+    { last: number; timer?: ReturnType<typeof setTimeout>; pending?: BackgroundTask[] }
+  >();
+
+  function sendTasks(sessionKey: string, tasks: BackgroundTask[]): void {
+    if (socket.connected && ready) socket.emit("tasks.update", { sessionKey, tasks });
+  }
+
+  // 세션마다 tasksThrottleMs 에 한 번 — 묶는 동안 온 것은 마지막 값만(바꿔 끼우는 값이라 사이 값은 필요 없다)
+  function tasksChanged(sessionKey: string, tasks: BackgroundTask[]): void {
+    const now = Date.now();
+    let st = taskSends.get(sessionKey);
+    if (!st) {
+      st = { last: 0 };
+      taskSends.set(sessionKey, st);
+    }
+    if (st.timer) {
+      st.pending = tasks;
+      return;
+    }
+    const wait = st.last + tasksThrottleMs - now;
+    if (wait <= 0) {
+      st.last = now;
+      sendTasks(sessionKey, tasks);
+      return;
+    }
+    st.pending = tasks;
+    const state = st;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      state.last = Date.now();
+      const pending = state.pending;
+      state.pending = undefined;
+      if (pending) sendTasks(sessionKey, pending);
+    }, wait);
+  }
 
   /** 설정에 켠 프로그램마다 — 드라이버가 없으면 사유와 함께 못 씀. detect 는 연결마다 다시 한다(그 사이 로그인했을 수 있다) */
   async function detectPrograms(): Promise<RunnerProgramStatus[]> {
@@ -273,6 +359,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       // 켜짐·꺼짐을 능력으로 — hello 는 strict 라 최상위 새 키는 옛 서버가 거절한다(shared RunnerCapability 주석)
       ...(opts.selfUpdate ? (["remoteUpdate"] as const) : []),
       ...(opts.selfUpdate && !config.remoteUpdate ? (["remoteUpdateOff"] as const) : []),
+      ...(background ? (["backgroundTasks"] as const) : []),
     ],
     roots: config.roots.map((r) => ({ id: r.id, label: r.label })),
     browse: config.browse,
@@ -322,6 +409,9 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
    */
   async function settleRuns(): Promise<void> {
     scheduler.abortAll(RUNNER_SHUTDOWN_STOP_REASON);
+    for (const controller of followups.values()) controller.abort(RUNNER_SHUTDOWN_STOP_REASON);
+    // 붙든 프로세스도 닫는다 — 러너가 끝나면 어차피 CLI 와 그 작업이 함께 끝난다(스펙 5.6). 서버가 「끝나지 못했습니다」를 남긴다
+    for (const h of background?.held() ?? []) background?.release(h.sessionKey);
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       scheduler.idle(),
@@ -395,6 +485,18 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         }
         attempt = 0;
         logger.info(`dodok-runner: 연결됨(서버 ${result.serverVersion})`);
+        ready = true;
+        // 끊긴 사이에도 CLI 와 작업은 살아 있다 — 붙은 뒤 세션마다 지금 목록을 한 번 보낸다(스펙 5.4)
+        for (const h of background?.held() ?? []) {
+          const st = taskSends.get(h.sessionKey);
+          if (st) {
+            if (st.timer) clearTimeout(st.timer);
+            st.timer = undefined;
+            st.pending = undefined;
+          }
+          taskSends.set(h.sessionKey, { last: Date.now() });
+          sendTasks(h.sessionKey, h.tasks);
+        }
       } catch (error) {
         if (stopped) return;
         logger.warn(`dodok-runner: hello 실패 — ${error instanceof Error ? error.message : String(error)}`);
@@ -421,8 +523,10 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
 
   socket.on("disconnect", (reason) => {
     // 서버와 끊기면 도는 런을 곧바로 멈춘다(스펙 4.5, Review Focus 1) — 서버는 그 런을 ADAPTER_UNAVAILABLE 로 닫고,
-    // 「다시 실행」은 다시 붙은 뒤 같은 세션을 이어 간다
+    // 「다시 실행」은 다시 붙은 뒤 같은 세션을 이어 간다. 추가 응답 런도 같다 — 붙든 프로세스와 작업은 남는다
+    ready = false;
     scheduler.abortAll();
+    for (const controller of followups.values()) controller.abort();
     if (stopped) return;
     if (reason === SERVER_DISCONNECT) {
       // hello 거절은 거절 ack 와 끊김이 같은 TCP 조각으로 와서 ws 가 둘을 한 틱에 내보낸다 — ack 를 받은 hello 의 이어짐은
@@ -502,6 +606,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       },
       // 대기열에서 중지된 런 — 어댑터가 dispatch 뒤 추적하던 런을 놓게 final 로 닫는다(판정 R1)
       (reason) => sink.final(abortedFinal(undefined, reason)),
+      // 붙든 세션이면 그 프로세스의 자리를 이어 쓴다(자리를 더 쓰지 않는다)
+      start.deliver.sessionKey,
     );
     if ("busy" in submitted) {
       ack({ runId, admission: "dispatch" });
@@ -644,7 +750,62 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
 
   socket.on("run.abort", (payload) => {
     const parsed = RunnerRunAbort.safeParse(payload);
-    if (parsed.success) scheduler.abort(parsed.data.runId);
+    if (!parsed.success) return;
+    scheduler.abort(parsed.data.runId);
+    followups.get(parsed.data.runId)?.abort();
+  });
+
+  // 화면의 「종료」(백그라운드 작업 스펙 5.5) — 끈 결과는 tasks.update 로 돌아간다
+  socket.on("task.stop", (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const parsed = RunnerTaskStop.safeParse(payload);
+    if (!parsed.success || !background) return reply({ ok: false });
+    void background.stopTask(parsed.data.sessionKey, parsed.data.taskId).then(
+      (ok) => reply({ ok }),
+      () => reply({ ok: false }),
+    );
+  });
+
+  // 세션 닫기·보관·내보내기 — 그 세션의 작업을 모두 끄고 붙든 프로세스를 닫는다
+  socket.on("session.release", (payload) => {
+    const parsed = RunnerSessionRelease.safeParse(payload);
+    if (parsed.success) background?.release(parsed.data.sessionKey);
+  });
+
+  opts.background?.bind({
+    async requestFollowup(req) {
+      if (!socket.connected || !ready) return { ok: false, reason: "unknown" };
+      try {
+        const raw: unknown = await socket
+          .timeout(opts.followupAckTimeoutMs ?? FOLLOWUP_ACK_TIMEOUT_MS)
+          .emitWithAck("run.followup", req);
+        const parsed = RunnerFollowupResult.safeParse(raw);
+        return parsed.success ? parsed.data : { ok: false, reason: "unknown" };
+      } catch {
+        return { ok: false, reason: "unknown" };
+      }
+    },
+    openFollowup({ runId, workdir }) {
+      const controller = new AbortController();
+      followups.set(runId, controller);
+      if (!socket.connected) controller.abort();
+      const sink = createRunSink({
+        workdir,
+        emit: emitterFor(runId, generation),
+        bridge: bridgeFor(generation),
+      });
+      logger.info(`dodok-runner: 추가 응답 런 시작 ${runId}`);
+      return {
+        sink,
+        signal: controller.signal,
+        close: () => {
+          followups.delete(runId);
+          logger.info(`dodok-runner: 추가 응답 런 끝 ${runId}`);
+        },
+      };
+    },
+    tasksChanged,
+    held: (sessionKey, holding) => (holding ? scheduler.hold(sessionKey) : scheduler.unhold(sessionKey)),
   });
 
   // 기한이 지나면 서버가 deny + reason expired 를 보낸다(판정 P5). 모르는 id(이미 거둔 승인)는 버린다
@@ -667,6 +828,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     /** 도는 런에 interrupt 를 걸고, 그 런들이 final 을 낼 때까지(최대 stopWaitMs) 기다린 뒤 끊는다 */
     async stop(): Promise<void> {
       stopped = true;
+      for (const st of taskSends.values()) if (st.timer) clearTimeout(st.timer);
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
       await settleRuns();

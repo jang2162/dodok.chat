@@ -39,12 +39,8 @@ import type {
   SdkSlashCommand,
   SdkUserMessage,
 } from "./sdk";
-import {
-  type BackgroundHooks,
-  createSessionProcess,
-  type RunBinding,
-  type SessionProcess,
-} from "./session-process";
+import type { BackgroundHooks } from "../../driver";
+import { createSessionProcess, type RunBinding, type SessionProcess } from "./session-process";
 import { createStreamMapper, isAuthFailureText } from "./stream-map";
 
 /** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) */

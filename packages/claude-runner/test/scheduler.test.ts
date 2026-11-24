@@ -129,4 +129,68 @@ describe("createScheduler", () => {
     await tick();
     expect(idle).toBe(true);
   });
+
+  describe("붙든 프로세스의 자리(백그라운드 작업 스펙 5.2·D7)", () => {
+    it("a held session uses a slot", async () => {
+      const s = createScheduler(2);
+      s.hold("k0");
+      const a = deferredJob();
+      const b = deferredJob();
+      expect(s.submit("r1", "s1", a.run)).toEqual({});
+      expect(s.submit("r2", "s2", b.run)).toEqual({ queuedPosition: 1, heldSlots: 1 });
+      expect(s.heldCount()).toBe(1);
+      s.unhold("k0");
+      await tick();
+      expect(b.started).toBe(true);
+      expect(s.heldCount()).toBe(0);
+    });
+
+    it("submit into a held session does not take another slot", async () => {
+      const s = createScheduler(1);
+      s.hold("k0");
+      const held = deferredJob();
+      const other = deferredJob();
+      expect(s.submit("r1", "s0", held.run, undefined, "k0")).toEqual({});
+      expect(held.started).toBe(true);
+      expect(s.submit("r2", "s2", other.run)).toEqual({ queuedPosition: 1, heldSlots: 1 });
+      held.finish();
+      await tick();
+      // 붙든 프로세스가 아직 자리를 쥐고 있다
+      expect(other.started).toBe(false);
+      s.unhold("k0");
+      await tick();
+      expect(other.started).toBe(true);
+    });
+
+    it("a run that starts holding keeps one slot, not two, after it ends", async () => {
+      const s = createScheduler(2);
+      const first = deferredJob();
+      s.submit("r1", "s0", first.run, undefined, "k0");
+      s.hold("k0"); // 런의 끝에서 붙든다
+      first.finish();
+      await tick();
+      const a = deferredJob();
+      expect(s.submit("r2", "s2", a.run)).toEqual({});
+      const b = deferredJob();
+      expect(s.submit("r3", "s3", b.run)).toEqual({ queuedPosition: 1, heldSlots: 1 });
+    });
+
+    it("queued ack carries heldSlots", () => {
+      const s = createScheduler(1);
+      s.submit("r0", "s0", deferredJob().run);
+      expect(s.submit("r1", "s1", deferredJob().run)).toEqual({ queuedPosition: 1 });
+      s.hold("k9");
+      s.hold("k8");
+      expect(s.submit("r2", "s2", deferredJob().run)).toEqual({ queuedPosition: 2, heldSlots: 2 });
+    });
+
+    it("size excludes held sessions", () => {
+      const s = createScheduler(3);
+      s.hold("k0");
+      s.hold("k1");
+      expect(s.size()).toBe(0);
+      s.submit("r0", "s0", deferredJob().run);
+      expect(s.size()).toBe(1);
+    });
+  });
 });

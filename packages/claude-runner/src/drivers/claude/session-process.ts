@@ -1,9 +1,5 @@
-import type {
-  BackgroundTask,
-  InboundDeliver,
-  RunnerFollowupRequest,
-  RunnerFollowupResult,
-} from "@dodok/shared";
+import type { InboundDeliver, RunnerFollowupRequest, RunnerFollowupResult } from "@dodok/shared";
+import type { BackgroundHooks } from "../../driver";
 import type { createPoster } from "../../post-tool";
 import type { RunSink } from "../../sink";
 import type { AlwaysAllowed } from "./approvals";
@@ -24,19 +20,8 @@ import { createTaskTracker, type TaskNotice, type TaskTracker } from "./tasks";
 /** 알림 뒤 CLI 가 턴을 열기를 기다리는 시간 — 실측은 약 10ms(ADR 5.11 시나리오 1). 넘으면 턴이 없는 것으로 보고 닫기를 다시 본다 */
 export const SELF_TURN_WAIT_MS = 10_000;
 
-/** 추가 응답 런 하나 — 연결이 그 런 id 로 sink 와 중지 signal 을 만든다 */
-export type FollowupRun = { sink: RunSink; signal: AbortSignal; close(): void };
-
-export type BackgroundHooks = {
-  /** CLI 가 작업 알림 뒤 스스로 연 턴 — 서버에 추가 응답 런을 청한다 */
-  requestFollowup(req: RunnerFollowupRequest): Promise<RunnerFollowupResult>;
-  /** 서버가 만든 추가 응답 런의 sink(run.* 프레임을 그 런 id 로)·signal(run.abort) — 턴이 끝나면 close */
-  openFollowup(run: { runId: string; deliver: InboundDeliver; workdir: string }): FollowupRun;
-  /** 그 세션의 작업 전체가 바뀌었다(바꿔 끼우는 값) — 연결이 세션마다 1초로 묶어 tasks.update 로 낸다 */
-  tasksChanged(sessionKey: string, tasks: BackgroundTask[]): void;
-  /** 그 세션의 프로세스를 붙들기 시작했다·놓았다 — 스케줄러 자리 */
-  held(sessionKey: string, holding: boolean): void;
-};
+// 훅 계약은 프로그램 공통(driver.ts) — 연결이 채운다
+export type { BackgroundHooks, FollowupRun } from "../../driver";
 
 /** 지금 턴의 런 — 도구·승인·훅이 이 값을 읽는다 */
 export type RunBinding = {
