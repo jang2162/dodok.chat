@@ -11,13 +11,17 @@ import {
   type InboundDeliver,
   type OutboundMessage,
   type ProviderApproval,
+  type RunnerFollowupRequest,
+  type RunnerFollowupResult,
   type RunnerPermissionMode,
+  type RunnerTasksUpdate,
 } from "@dodok/shared";
 import { createRunnerAdapter, type RunnerAdapter } from "@dodok/runner-adapter";
 import { Server } from "socket.io";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AttachmentsHttp } from "../src/attachments-http";
 import {
+  createBackgroundHooksSlot,
   startRunnerConnection,
   type RunnerConnection,
   type RunnerConnectionOptions,
@@ -56,7 +60,14 @@ type ServerSide = {
 };
 
 let n = 0;
-async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Promise<ServerSide> {
+async function startServer(
+  port = 0,
+  opts: {
+    approvalTtlMs?: number;
+    followup?: (req: RunnerFollowupRequest) => Promise<RunnerFollowupResult>;
+    tasks?: Array<RunnerTasksUpdate | { disconnected: true }>;
+  } = {},
+): Promise<ServerSide> {
   const http = createServer();
   const io = new Server(http, { transports: ["websocket"] });
   await new Promise<void>((resolve) => http.listen(port, "127.0.0.1", resolve));
@@ -113,6 +124,12 @@ async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Pro
       onLimited: () => {},
     },
     ...(opts.approvalTtlMs === undefined ? {} : { approvalTtlMs: opts.approvalTtlMs }),
+    ...(opts.followup
+      ? { onFollowup: (_id: string, req: RunnerFollowupRequest) => opts.followup!(req) }
+      : {}),
+    ...(opts.tasks
+      ? { onTasks: (_id: string, u: RunnerTasksUpdate | { disconnected: true }) => void opts.tasks!.push(u) }
+      : {}),
   });
   adapter.onEvent((e) => events.push(e));
   await adapter.connect();
@@ -165,8 +182,11 @@ function startRunner(
     appMcp?: "off" | "http" | "all";
     appMcpCommands?: string[];
     maxPermissionMode?: RunnerPermissionMode;
+    /** 백그라운드 작업 훅 자리를 드라이버·연결에 넘긴다 */
+    background?: boolean;
   } = {},
 ) {
+  const slot = opts.background ? createBackgroundHooksSlot() : undefined;
   const fatal: number[] = [];
   const logs: string[] = [];
   const uploads: string[] = [];
@@ -208,12 +228,14 @@ function startRunner(
       },
     },
     token: TOKEN,
+    ...(slot ? { background: slot, tasksThrottleMs: 10 } : {}),
     drivers: [
       createClaudeDriver({
         sdk: fake,
         claudeCodeVersion: "2.1.283",
         baseEnv: { PATH: "/usr/bin" },
         closeGraceMs: 30,
+        ...(slot ? { hooks: slot.hooks } : {}),
       }),
     ],
     versions: { runnerVersion: "0.0.0", sdkVersion: "0.3.283", bundleSha256: null },
@@ -653,5 +675,57 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     await new Promise((r) => setTimeout(r, 80));
     expect(a.conn.connected).toBe(false);
     expect(server.adapter.status().runners.connected).toBe(1);
+  });
+
+  it("held process follow-up flows through the real adapter", async () => {
+    const FOLLOW = "0192f000-0000-7000-8000-00000000f101";
+    const tasks: Array<RunnerTasksUpdate | { disconnected: true }> = [];
+    const requests: RunnerFollowupRequest[] = [];
+    const server = await startServer(0, {
+      tasks,
+      followup: async (req) => {
+        requests.push(req);
+        return {
+          ok: true,
+          runId: FOLLOW,
+          deliver: { ...deliver(FOLLOW), kind: "background", threadId: deliver(RUN_1).message!.id },
+        };
+      },
+    });
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    startRunner(server, fake, { background: true });
+    await ready(server);
+    fake.script(
+      script.init(),
+      script.tasksChanged([{ task_id: "b1", task_type: "local_bash", description: "sleep 3" }]),
+      script.taskStarted("b1", { description: "sleep 3" }),
+      ...script.textTurn("msg_1", ["띄웠어요 — 끝나면 알려 드릴게요"]),
+      { sleep: 20 },
+      script.taskUpdated("b1", { status: "completed" }),
+      script.taskNotification("b1", "completed"),
+      script.tasksChanged([]),
+      script.init(),
+      ...script.textTurn("msg_f", ["끝났습니다"]),
+      { waitInput: true },
+    );
+    await server.adapter.send(deliver(RUN_1), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
+    await waitFor(() => server.outbound.some((o) => o.message.runId === FOLLOW), "추가 응답 최종 답");
+    expect(requests).toEqual([
+      { sessionKey: dodokSessionKey("coder", CHANNEL_ID), originRunId: RUN_1, taskIds: ["b1"] },
+    ]);
+    expect(server.outbound.map((o) => [o.message.runId, o.message.text])).toEqual([
+      [RUN_1, "띄웠어요 — 끝나면 알려 드릴게요"],
+      [FOLLOW, "끝났습니다"],
+    ]);
+    expect(runEvents(server, FOLLOW).some((e) => e.type === "TEXT_MESSAGE_CONTENT")).toBe(true);
+    expect(signals(server, FOLLOW)).toContain("gateway_final");
+    // 작업 줄은 생겼다 사라졌다
+    await waitFor(() => tasks.length >= 2, "작업 목록");
+    expect(tasks[0]).toMatchObject({ tasks: [{ taskId: "b1", originRunId: RUN_1, kind: "shell" }] });
+    expect(tasks.at(-1)).toMatchObject({ tasks: [] });
+    // 작업이 비어 CLI 를 닫았다 — 프로세스는 하나
+    await waitFor(() => fake.calls[0]!.finished, "CLI 종료");
+    expect(fake.calls).toHaveLength(1);
   });
 });

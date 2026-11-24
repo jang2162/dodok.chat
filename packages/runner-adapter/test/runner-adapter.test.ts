@@ -15,7 +15,10 @@ import {
   RUNNER_COMMANDS_LIST_TIMEOUT_MS,
   type RunEventBody,
   type RunnerControlCall,
+  type RunnerFollowupRequest,
+  type RunnerFollowupResult,
   type RunnerPermissionMode,
+  type RunnerTasksUpdate,
 } from "@dodok/shared";
 import { Server } from "socket.io";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -80,6 +83,8 @@ type Harness = {
   definitionConversations: Array<string | undefined>;
   /** onControlCall 이 받은 것 — [연결 id, 호출] */
   controlCalls: Array<[string, RunnerControlCall]>;
+  /** onTasks 가 받은 것 — [연결 id, 갱신] */
+  tasks: Array<[string, RunnerTasksUpdate | { disconnected: true }]>;
   runner(token: string): Promise<FakeRunner>;
 };
 
@@ -111,6 +116,8 @@ async function setup(
     owners?: Record<string, string | null>;
     /** 서버의 제어 도구 처리 — 기본은 받은 호출을 그대로 data 로 돌려준다. null 이면 옵션을 주지 않는다 */
     control?: RunnerAdapterOptions["onControlCall"] | null;
+    /** 서버의 추가 응답 런 만들기(백그라운드 작업 스펙 5.5) — 없으면 옵션을 주지 않는다 */
+    followup?: RunnerAdapterOptions["onFollowup"];
   } = {},
 ): Promise<Harness> {
   // 가짜 시계로 10분을 건너뛰어도 Socket.IO 하트비트가 끊지 않게 핑 간격을 늘린다
@@ -134,6 +141,7 @@ async function setup(
   const definitionCalls: Array<[string, string]> = [];
   const definitionConversations: Array<string | undefined> = [];
   const controlCalls: Array<[string, RunnerControlCall]> = [];
+  const tasks: Harness["tasks"] = [];
   const control =
     opts.control === null
       ? undefined
@@ -170,6 +178,8 @@ async function setup(
             return control(connectionId, call);
           },
         }),
+    onTasks: (connectionId, update) => void tasks.push([connectionId, update]),
+    ...(opts.followup ? { onFollowup: opts.followup } : {}),
     agentDefinition: (agentId, tokenId, conversationId) => {
       definitionCalls.push([agentId, tokenId]);
       definitionConversations.push(conversationId);
@@ -218,6 +228,7 @@ async function setup(
       });
     },
     controlCalls,
+    tasks,
     async runner(token) {
       const r = await connectRunner(url, token);
       runners.push(r);
@@ -2517,6 +2528,8 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
       "approval.requested": "control",
       "approval.withdrawn": "control",
       "control.call": "control",
+      "tasks.update": "events",
+      "run.followup": "control",
     });
   });
 
@@ -2730,5 +2743,170 @@ describe("commands.list — 서버 → 러너 ack 요청(에이전트 명령 스
     expect((await rejection(h.adapter.commandsList(RUNNER_A_CONNECTION, { project: PROJECT }))).code).toBe(
       "INTERNAL",
     );
+  });
+});
+
+describe("백그라운드 작업 프레임(백그라운드 작업 스펙 5.3·5.5)", () => {
+  const BG_HELLO = { capabilities: ["threads", "interrupt", "approvals", "backgroundTasks"] };
+  const TASK = {
+    taskId: "b1",
+    kind: "shell" as const,
+    description: "pnpm dev",
+    startedAt: "2026-09-27T00:00:00.000Z",
+    originRunId: "01a09fc9-d204-7551-89d6-38544d07a199",
+  };
+  const followupOf = (r: FakeRunner, req: RunnerFollowupRequest): Promise<RunnerFollowupResult> =>
+    r.socket.timeout(2000).emitWithAck("run.followup", req);
+
+  it("followup registers a started run that accepts events", async () => {
+    const FOLLOW = randomUUID();
+    const calls: Array<[string, RunnerFollowupRequest]> = [];
+    const h = await setup({
+      followup: async (connectionId, req) => {
+        calls.push([connectionId, req]);
+        return { ok: true, runId: FOLLOW, deliver: deliver({ kind: "background", runId: FOLLOW }) };
+      },
+    });
+    const r = await readyRunner(h, TOKEN_A, BG_HELLO);
+    const origin = await startRun(h, r);
+    const req = { sessionKey: origin.sessionKey, originRunId: origin.runId, taskIds: ["b1"] };
+    const result = await followupOf(r, req);
+    expect(result).toMatchObject({ ok: true, runId: FOLLOW, deliver: { kind: "background" } });
+    expect(calls).toEqual([[RUNNER_A_CONNECTION, req]]);
+    const text: RunEventBody = { type: "TEXT_MESSAGE_CONTENT", runId: FOLLOW, messageId: "m", delta: "끝" };
+    r.send("run.event", { runId: FOLLOW, event: text });
+    r.send("run.event", {
+      runId: FOLLOW,
+      event: { type: "SUBAGENT_STARTED", runId: FOLLOW, subagentRunId: randomUUID(), label: "Explore" },
+    });
+    await until(() => runEvents(h, FOLLOW).length === 2, "follow-up events");
+    // 서버가 이미 「도는 중」으로 만든 런이다 — gateway_started 를 다시 내지 않는다
+    expect(signals(h, FOLLOW)).toEqual(["text_delta"]);
+    r.send("run.final", { runId: FOLLOW, text: "다 끝났어요", stopReason: "end_turn", costKind: "api" });
+    await until(() => h.outbound.some((m) => m.runId === FOLLOW), "follow-up final");
+  });
+
+  it("followup rejection keeps no track", async () => {
+    const h = await setup({ followup: async () => ({ ok: false, reason: "closed" }) });
+    const r = await readyRunner(h, TOKEN_A, BG_HELLO);
+    const origin = await startRun(h, r);
+    const ghost = randomUUID();
+    expect(
+      await followupOf(r, { sessionKey: origin.sessionKey, originRunId: origin.runId, taskIds: ["b1"] }),
+    ).toEqual({ ok: false, reason: "closed" });
+    r.send("run.event", { runId: ghost, event: { type: "STEP_STARTED", runId: ghost, stepName: "x" } });
+    await until(() => h.logs.some((l) => l.msg === "runner frame for a run it does not own — dropped"));
+    expect(runEvents(h, ghost)).toEqual([]);
+  });
+
+  it("followup without the capability or a server handler answers unknown", async () => {
+    const h = await setup();
+    const plain = await readyRunner(h, TOKEN_A);
+    const req = { sessionKey: dodokSessionKey("coder", CH), originRunId: randomUUID(), taskIds: ["b1"] };
+    expect(await followupOf(plain, req)).toEqual({ ok: false, reason: "unknown" });
+    const capable = await readyRunner(h, TOKEN_B, BG_HELLO);
+    expect(await followupOf(capable, req)).toEqual({ ok: false, reason: "unknown" });
+    expect(await followupOf(capable, { ...req, taskIds: [] } as never)).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+  });
+
+  it("tasks.update reaches onTasks", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_A, BG_HELLO);
+    const update = { sessionKey: dodokSessionKey("coder", CH), tasks: [TASK] };
+    r.send("tasks.update", update);
+    r.send("tasks.update", { sessionKey: "not-a-session-key", tasks: [TASK] });
+    r.send("tasks.update", { sessionKey: update.sessionKey, tasks: [{ ...TASK, kind: "cron" }] });
+    r.send("tasks.update", { ...update, tasks: [] });
+    await until(() => h.tasks.length === 2, "tasks");
+    expect(h.tasks).toEqual([
+      [RUNNER_A_CONNECTION, update],
+      [RUNNER_A_CONNECTION, { ...update, tasks: [] }],
+    ]);
+    // 능력이 없는 러너의 목록은 버린다
+    const plain = await readyRunner(h, TOKEN_B);
+    plain.send("tasks.update", update);
+    r.send("tasks.update", update);
+    await until(() => h.tasks.length === 3, "tasks after plain");
+    expect(h.tasks.every(([id]) => id === RUNNER_A_CONNECTION)).toBe(true);
+  });
+
+  it("drop reports disconnected tasks", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_A, BG_HELLO);
+    r.close();
+    await until(() => h.tasks.length === 1, "disconnected");
+    expect(h.tasks).toEqual([[RUNNER_A_CONNECTION, { disconnected: true }]]);
+  });
+
+  it("stopTask acks false for a runner without the capability", async () => {
+    const h = await setup();
+    const plain = await readyRunner(h, TOKEN_A);
+    const stops: unknown[] = [];
+    plain.socket.on("task.stop", (p: unknown, ack: (r: unknown) => void) => {
+      stops.push(p);
+      ack({ ok: true });
+    });
+    const key = dodokSessionKey("coder", CH);
+    expect(await h.adapter.stopTask(RUNNER_A_CONNECTION, key, "b1")).toBe(false);
+    expect(stops).toEqual([]);
+    expect(await h.adapter.stopTask(RUNNER_B_CONNECTION, key, "b1")).toBe(false);
+    const capable = await readyRunner(h, TOKEN_B, BG_HELLO);
+    capable.socket.on("task.stop", (p: unknown, ack: (r: unknown) => void) => {
+      stops.push(p);
+      ack({ ok: (p as { taskId: string }).taskId === "b1" });
+    });
+    expect(await h.adapter.stopTask(RUNNER_B_CONNECTION, key, "b1")).toBe(true);
+    expect(await h.adapter.stopTask(RUNNER_B_CONNECTION, key, "b2")).toBe(false);
+    expect(stops).toEqual([
+      { sessionKey: key, taskId: "b1" },
+      { sessionKey: key, taskId: "b2" },
+    ]);
+  });
+
+  it("releaseSession goes only to a runner with the capability", async () => {
+    const h = await setup();
+    const plain = await readyRunner(h, TOKEN_A);
+    const capable = await readyRunner(h, TOKEN_B, BG_HELLO);
+    const got: Array<[string, unknown]> = [];
+    plain.socket.on("session.release", (p: unknown) => got.push(["a", p]));
+    capable.socket.on("session.release", (p: unknown) => got.push(["b", p]));
+    const key = dodokSessionKey("coder", CH);
+    h.adapter.releaseSession(RUNNER_A_CONNECTION, key);
+    h.adapter.releaseSession(RUNNER_B_CONNECTION, key);
+    await until(() => got.length === 1, "release");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(got).toEqual([["b", { sessionKey: key }]]);
+  });
+
+  it("subagent events of a run pass through", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    const sub = randomUUID();
+    const events: RunEventBody[] = [
+      { type: "SUBAGENT_STARTED", runId, subagentRunId: sub, label: "Explore" },
+      { type: "SUBAGENT_ERROR", runId, subagentRunId: sub, message: "실패" },
+      { type: "SUBAGENT_FINISHED", runId, subagentRunId: sub },
+    ];
+    for (const event of events) r.send("run.event", { runId, event });
+    await until(() => runEvents(h, runId).length === 3, "subagent events");
+    expect(runEvents(h, runId)).toEqual(events);
+  });
+
+  it("a queued run.start carries heldSlots into RUN_QUEUED", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_A, BG_HELLO);
+    r.onRunStart = (p) => ({
+      runId: p.deliver.runId,
+      admission: "dispatch",
+      queuedPosition: 1,
+      heldSlots: 2,
+    });
+    const { runId } = await startRun(h, r);
+    await until(() => runEvents(h, runId).length === 1, "queued");
+    expect(runEvents(h, runId)).toEqual([{ type: "RUN_QUEUED", runId, position: 1, heldSlots: 2 }]);
   });
 });
