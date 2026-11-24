@@ -237,6 +237,24 @@ describe("스레드 답글 저장·요약", () => {
     ]);
   });
 
+  it("root author in participants — live updatedRoot and timeline read", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const root = t.human("루트");
+    t.updated.length = 0;
+    t.agentSays(dev.id, "dev 답", root.id);
+    const expected = [
+      { kind: "agent", id: dev.id },
+      { kind: "user", id: t.userId },
+    ];
+    // 실시간 경로 — 답글 저장이 보내는 루트 message.updated(updatedRoot)
+    expect(t.updated.at(-1)).toMatchObject({ id: root.id });
+    expect(t.updated.at(-1)?.threadSummary?.participants).toEqual(expected);
+    // 목록 경로 — 타임라인 읽기(withThreadSummaries)
+    const page = listMessages(t.db, t.channel.id, { limit: 50 });
+    expect(page.messages.find((m) => m.id === root.id)?.threadSummary?.participants).toEqual(expected);
+  });
+
   it("participants 는 최대 10 — 답글 작성자로 차면 루트 작성자는 빠진다", () => {
     const t = setup();
     const root = t.human("루트");
