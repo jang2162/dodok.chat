@@ -263,6 +263,9 @@ export const agentSessions = sqliteTable(
     threadRootId: text("thread_root_id"), // 스레드 하위 세션이면 그 루트 메시지 id, 채널 세션은 null
     // 이 시각 뒤에 달린 리액션만 다음 런에 싣는다. null 이면 실을 것이 없는 것으로 읽는다 — 옛 리액션을 한꺼번에 싣는 쪽으로 틀리지 않게
     reactionsSeenAt: ts("reactions_seen_at"),
+    // 대화 세션만 — 이 시각 뒤에 그 대화의 스레드에 달린 답글을 다음 런의 「스레드 소식」에 싣는다(리액션 커서와 범위가 달라 따로 둔다).
+    // null 이면 싣지 않고 지금으로 채운다. 스레드 세션 행에도 열은 있지만 쓰지 않는다
+    threadRepliesSeenAt: ts("thread_replies_seen_at"),
   },
   (t) => [
     uniqueIndex("agent_sessions_conversation_agent_thread").on(t.conversationId, t.agentId, t.threadRootId),

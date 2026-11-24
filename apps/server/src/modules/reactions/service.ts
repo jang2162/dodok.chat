@@ -216,7 +216,7 @@ export function pendingReactionsFor(db: DbOrTx, q: PendingReactionsQuery): Pendi
  * 메시지 본문의 읽는 글 앞쪽 EXCERPT_MAX 안 — 글자(코드 포인트) 단위로 채워 서로게이트 쌍을 가르지 않는다. 멘션은 @핸들로 풀고
  * 마크다운 표시는 걷는다(검색 스니펫과 같은 변환)
  */
-function excerptOf(bodyMd: string, handleOf: HandleOf): string {
+export function excerptOf(bodyMd: string, handleOf: HandleOf): string {
   const glyphs = readableGlyphs(bodyMd, handleOf, readableWindow(bodyMd, 0, 0));
   let out = "";
   for (const g of glyphs) {
@@ -227,7 +227,7 @@ function excerptOf(bodyMd: string, handleOf: HandleOf): string {
 }
 
 /** "a:<id>"·"u:<id>" 키 → 핸들. 질의 한 번씩(에이전트·사람) — 멘션이 없으면 질의하지 않는다 */
-function mentionHandles(db: DbOrTx, keys: string[]): HandleOf {
+export function mentionHandles(db: DbOrTx, keys: string[]): HandleOf {
   const agentIds = [...new Set(keys.filter((k) => k.startsWith("a:")).map((k) => k.slice(2)))];
   const userIds = [...new Set(keys.filter((k) => k.startsWith("u:")).map((k) => k.slice(2)))];
   const byKey = new Map<string, string>();
