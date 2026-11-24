@@ -1,13 +1,14 @@
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { cn } from "@/lib/utils";
 import { useChannelRuns } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, useRunStore } from "@/features/runs/runStore";
 import { Notice } from "./Notice";
 import { RunCards } from "./RunCard";
-import { freezeDurations, mergeRuns } from "./timeline";
+import { countRuns, filterRuns, freezeDurations, mergeRuns, RUN_FILTERS, type RunFilter } from "./timeline";
 import { useSettledRuns } from "./useSettledRuns";
 
 /**
@@ -56,6 +57,11 @@ function ActivityBody({ channelId }: { channelId: string }) {
    * 펼침 — 손댄 카드는 그 선택(`toggled`), 손대지 않은 카드는 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
    * 펼친 카드만). 끝난 런이 스토어에서 빠져도 목록에 남으므로(`useSettledRuns`) 펼친 카드가 접히거나 다른 런으로 넘어가지 않는다(D2)
    */
+  /** 거르기 — 수는 전체에서 세고, 고른 칩에 맞는 카드만 그린다. 펼침은 거르기와 따로 기억한다(거르기를 바꿔도 펼친 채) */
+  const [filter, setFilter] = useState<RunFilter>("all");
+  const counts = useMemo(() => countRuns(runs), [runs]);
+  const visible = useMemo(() => filterRuns(runs, filter), [runs, filter]);
+
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const latestId = runs[0]?.id;
   const isExpanded = useCallback(
@@ -102,10 +108,66 @@ function ActivityBody({ channelId }: { channelId: string }) {
        * 잠깐 끊긴 사이에 진행 중인 런이 화면에서 사라지면 「멈춘 것」처럼 보인다
        */}
       {runs.length > 0 ? (
-        <RunCards runs={runs} isExpanded={isExpanded} onToggle={toggle} approval={approvalOf} />
+        <>
+          <FilterChips value={filter} counts={counts} onChange={setFilter} />
+          {visible.length > 0 ? (
+            <RunCards runs={visible} isExpanded={isExpanded} onToggle={toggle} approval={approvalOf} />
+          ) : (
+            <Notice>{EMPTY[filter]}</Notice>
+          )}
+        </>
       ) : (
         !rest.isError && <Notice>{rest.isPending ? "불러오는 중…" : "아직 실행 기록이 없습니다."}</Notice>
       )}
+    </div>
+  );
+}
+
+const FILTER_LABEL: Record<RunFilter, string> = {
+  all: "전체",
+  running: "진행 중",
+  approval: "승인 대기",
+  failed: "실패",
+};
+const EMPTY: Record<RunFilter, string> = {
+  all: "아직 실행 기록이 없습니다.",
+  running: "진행 중인 런이 없습니다.",
+  approval: "승인을 기다리는 런이 없습니다.",
+  failed: "실패한 런이 없습니다.",
+};
+
+/** 거르기 칩 — 고른 칩만 `aria-pressed`. 수는 늘 전체에서 센 것이라 거른 채로도 다른 칩의 수가 는다 */
+function FilterChips({
+  value,
+  counts,
+  onChange,
+}: {
+  value: RunFilter;
+  counts: Record<RunFilter, number>;
+  onChange: (f: RunFilter) => void;
+}) {
+  return (
+    <div role="group" aria-label="런 거르기" className="flex shrink-0 flex-wrap gap-1.5 border-b px-3 py-2">
+      {RUN_FILTERS.map((f) => {
+        const pressed = f === value;
+        return (
+          <button
+            key={f}
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => onChange(f)}
+            className={cn(
+              "rounded-full border px-2.5 py-0.5 text-xs",
+              "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+              pressed
+                ? "border-primary bg-primary/12 font-medium text-primary"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {FILTER_LABEL[f]} <span className="tabular-nums">{counts[f]}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

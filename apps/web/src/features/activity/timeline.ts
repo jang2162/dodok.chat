@@ -467,3 +467,31 @@ export function runSummaryLabel(summary: RunSummary): string | undefined {
   if (summary.answers > 0) parts.push(`답 ${summary.answers}`);
   return parts.length === 0 ? undefined : parts.join(" · ");
 }
+
+/** 활동 거르기(재설계 스펙 「정한 것」) — 전체 · 진행 중 · 승인 대기 · 실패 */
+export type RunFilter = "all" | "running" | "approval" | "failed";
+export const RUN_FILTERS: readonly RunFilter[] = ["all", "running", "approval", "failed"];
+
+/**
+ * 진행 중 = 끝나지 않은 모든 상태(`finalizing` 포함), 승인 대기 = `awaiting_approval`, 실패 = `error`.
+ * 사람이 멈춘 `aborted` 는 실패가 아니다 — 전체에만 든다
+ */
+const MATCHES: Record<RunFilter, (status: RunStatus) => boolean> = {
+  all: () => true,
+  running: (s) => s !== "done" && s !== "error" && s !== "aborted",
+  approval: (s) => s === "awaiting_approval",
+  failed: (s) => s === "error",
+};
+
+/** 거른 런(순서 유지). 전체는 받은 배열 그대로 */
+export function filterRuns<R extends { status: RunStatus }>(runs: readonly R[], f: RunFilter): readonly R[] {
+  if (f === "all") return runs;
+  return runs.filter((r) => MATCHES[f](r.status));
+}
+
+/** 칩마다 수 — 거르기와 상관없이 전체에서 센다 */
+export function countRuns(runs: readonly { status: RunStatus }[]): Record<RunFilter, number> {
+  const counts: Record<RunFilter, number> = { all: 0, running: 0, approval: 0, failed: 0 };
+  for (const run of runs) for (const f of RUN_FILTERS) if (MATCHES[f](run.status)) counts[f] += 1;
+  return counts;
+}

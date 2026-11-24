@@ -727,6 +727,143 @@ it("펼친 카드마다 그 런의 이벤트만 그린다", async () => {
   expect(openRuns(aside)).toEqual([RUN2, RUN]);
 });
 
+it("처음엔 가장 최근 런만 펼치고, 접힌 카드는 이벤트를 부르지 않는다 — 펼칠 때 한 번", async () => {
+  const OLD = uid(100);
+  const { calls } = stubServer({
+    runs: [runOf(RUN2), runOf(RUN), runOf(OLD)],
+    events: { [RUN2]: TOOL_EVENTS, [RUN]: OTHER_RUN, [OLD]: [] },
+  });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  const eventCalls = (id: string) => calls.filter((c) => c === `GET /api/v1/runs/${id}/events`).length;
+  expect(openRuns(aside)).toEqual([RUN2]);
+  expect(eventCalls(RUN2)).toBe(1);
+  expect(eventCalls(RUN)).toBe(0);
+  expect(eventCalls(OLD)).toBe(0);
+
+  await userEvent.click(within(card(aside, RUN)).getByRole("button", { name: /@dev/ }));
+  await within(card(aside, RUN)).findByText("옛도구");
+  expect(eventCalls(RUN)).toBe(1);
+  expect(eventCalls(OLD)).toBe(0);
+});
+
+const chip = (aside: HTMLElement, name: string) =>
+  within(within(aside).getByRole("group", { name: "런 거르기" })).getByRole("button", {
+    name: new RegExp(`^${name} \\d+$`),
+  });
+
+it("거르기 칩은 「전체 N · 진행 중 N · 승인 대기 N · 실패 N」 — 고른 칩만 aria-pressed, 비면 거르기마다 문구", async () => {
+  const FAILED = uid(120);
+  const ABORTED = uid(121);
+  stubServer({
+    runs: [
+      runOf(ABORTED, { status: "aborted" }),
+      runOf(FAILED, { status: "error" }),
+      runOf(RUN2, { status: "tool", endedAt: undefined }),
+      runOf(RUN),
+    ],
+  });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findAllByRole("region", { name: /^@dev 런/ });
+  expect(chip(aside, "전체")).toHaveTextContent("전체 4");
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 1");
+  expect(chip(aside, "승인 대기")).toHaveTextContent("승인 대기 0");
+  expect(chip(aside, "실패")).toHaveTextContent("실패 1");
+  expect(chip(aside, "전체")).toHaveAttribute("aria-pressed", "true");
+  expect(chip(aside, "실패")).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.click(chip(aside, "실패"));
+  expect(chip(aside, "실패")).toHaveAttribute("aria-pressed", "true");
+  expect(chip(aside, "전체")).toHaveAttribute("aria-pressed", "false");
+  expect(runIds(aside)).toEqual([FAILED]);
+  // 수는 거르기와 상관없이 전체에서 센다
+  expect(chip(aside, "전체")).toHaveTextContent("전체 4");
+
+  await userEvent.click(chip(aside, "진행 중"));
+  expect(runIds(aside)).toEqual([RUN2]);
+
+  await userEvent.click(chip(aside, "승인 대기"));
+  expect(runIds(aside)).toEqual([]);
+  expect(within(aside).getByText("승인을 기다리는 런이 없습니다.")).toBeInTheDocument();
+
+  // 멈춘 런(aborted)은 실패가 아니다 — 전체에만
+  await userEvent.click(chip(aside, "전체"));
+  expect(runIds(aside)).toEqual([FAILED, ABORTED, RUN2, RUN].sort().reverse());
+});
+
+it("실패로 거른 채 비면 「실패한 런이 없습니다.」, 승인 카드는 거르기와 무관하게 맨 위", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  await userEvent.click(chip(aside, "실패"));
+  expect(within(aside).getByText("실패한 런이 없습니다.")).toBeInTheDocument();
+
+  act(() => useApprovalStore.getState().apply(approval()));
+  const box = await waitFor(() => {
+    const el = aside.querySelector('[data-slot="approval-card"]');
+    if (!el) throw new Error("승인 카드가 없다");
+    return el;
+  });
+  expect(box.compareDocumentPosition(within(aside).getByRole("group", { name: "런 거르기" }))).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+});
+
+it("거르기를 고른 채 새 런이 오면 — 맞으면 나타나고 수가 늘고, 맞지 않으면 그 칩의 수만 는다", async () => {
+  stubServer({ runs: [runOf(RUN, { status: "error" })] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: "@dev 런, 실패" });
+  await userEvent.click(chip(aside, "실패"));
+
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" })));
+  await waitFor(() => expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 1"));
+  expect(chip(aside, "전체")).toHaveTextContent("전체 2");
+  expect(chip(aside, "실패")).toHaveTextContent("실패 1");
+  expect(runIds(aside)).toEqual([RUN]);
+
+  const THIRD = uid(130);
+  act(() => useRunStore.getState().applyState(runState({ id: THIRD, status: "error" })));
+  await waitFor(() => expect(chip(aside, "실패")).toHaveTextContent("실패 2"));
+  expect(runIds(aside)).toEqual([THIRD, RUN]);
+});
+
+it("「승인 대기」로 거른 채 승인이 끝나면 그 런은 빠지고 펼친 다른 카드는 그대로, 비면 「승인을 기다리는 런이 없습니다.」", async () => {
+  const B = uid(131);
+  stubServer({ runs: [], events: { [RUN2]: TOOL_EVENTS, [B]: OTHER_RUN } });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("아직 실행 기록이 없습니다.");
+  act(() => {
+    useRunStore.getState().applyState(runState({ id: RUN2, status: "awaiting_approval" }));
+    useRunStore.getState().applyState(runState({ id: B, status: "awaiting_approval" }));
+  });
+  await within(aside).findAllByRole("region", { name: "@dev 런, 승인 대기" });
+  await userEvent.click(chip(aside, "승인 대기"));
+  expect(runIds(aside)).toEqual([B, RUN2]);
+  // 가장 최근 런(B)은 기본으로 펼쳐 있고, RUN2 도 손으로 편다
+  await userEvent.click(within(card(aside, RUN2)).getByRole("button", { name: /@dev/ }));
+  await within(card(aside, RUN2)).findByText("Read");
+  await userEvent.click(within(aside).getByRole("button", { name: "Read 자세히" }));
+  expect(openRuns(aside)).toEqual([B, RUN2]);
+
+  // B 의 승인이 끝나 도구로 돌아갔다 — 목록에서 빠진다. RUN2 는 펼친 채, 펼친 도구 줄도 그대로
+  const before = timelineBox(card(aside, RUN2));
+  act(() => useRunStore.getState().applyState(runState({ id: B, status: "tool" })));
+  await waitFor(() => expect(runIds(aside)).toEqual([RUN2]));
+  expect(openRuns(aside)).toEqual([RUN2]);
+  expect(timelineBox(card(aside, RUN2))).toBe(before);
+  expect(within(aside).getByRole("button", { name: "Read 자세히" })).toHaveAttribute("aria-expanded", "true");
+  expect(chip(aside, "승인 대기")).toHaveTextContent("승인 대기 1");
+
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "done" })));
+  expect(await within(aside).findByText("승인을 기다리는 런이 없습니다.")).toBeInTheDocument();
+  expect(runIds(aside)).toEqual([]);
+});
+
 const CODER = agentOf(uid(12), "coder", { provider: "runner", program: "claude" });
 
 it("러너 에이전트 런 카드에는 프로그램 배지, OpenClaw 에이전트는 없고, 모르는 에이전트는 「알 수 없는 에이전트」", async () => {
@@ -995,6 +1132,10 @@ it("채널을 옮기면 선택도 목록도 옮겨 간 채널 것으로 새로 �
   // 이 채널에서 끝난 런을 기억한 채로 옮긴다 — 그 기억이 옮겨 간 채널 목록에 섞이면 안 된다
   end();
   expect(runIds(aside)).toContain(RUN2);
+  // 펼침·거르기도 이 채널 것이다 — 옛 런을 손으로 펴고 「실패」로 거른 채 옮긴다
+  await userEvent.click(within(card(aside, RUN)).getByRole("button", { name: /@dev/ }));
+  await userEvent.click(chip(aside, "실패"));
+  expect(within(aside).getByText("실패한 런이 없습니다.")).toBeInTheDocument();
 
   await act(() =>
     router.navigate({
@@ -1009,6 +1150,7 @@ it("채널을 옮기면 선택도 목록도 옮겨 간 채널 것으로 새로 �
   expect(moved).toBe(aside);
   expect(runIds(moved)).toEqual([OTHER_CH_RUN]);
   expect(openRuns(moved)).toEqual([OTHER_CH_RUN]);
+  expect(chip(moved, "전체")).toHaveAttribute("aria-pressed", "true");
 });
 
 /**
