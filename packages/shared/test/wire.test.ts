@@ -3,6 +3,7 @@ import {
   AdapterStatus,
   ApprovalResolve,
   ChannelSubscribe,
+  ChannelSubscribeResult,
   ComponentInteract,
   MessageSend,
   RunEventsReplay,
@@ -97,5 +98,25 @@ describe("AdapterStatus — provider 판별 유니온(러너 계획 판정 P7)",
     expect(
       AdapterStatus.safeParse({ provider: "claude", runners: { connected: 1, tokens: 1 } }).success,
     ).toBe(false);
+  });
+  it("subscribe result defaults tasks to []", () => {
+    const base = { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [] };
+    expect(ChannelSubscribeResult.parse(base).tasks).toEqual([]);
+    const tasks = [
+      {
+        conversationId: ID,
+        runnerConnected: false,
+        tasks: [
+          {
+            taskId: "b1",
+            kind: "shell",
+            description: "pnpm dev",
+            startedAt: "2026-11-24T00:00:00.000Z",
+            originRunId: ID,
+          },
+        ],
+      },
+    ];
+    expect(ChannelSubscribeResult.parse({ ...base, tasks }).tasks).toEqual(tasks);
   });
 });

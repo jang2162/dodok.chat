@@ -243,6 +243,8 @@ export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameB
   "approval.requested": "control",
   "approval.withdrawn": "control",
   "control.call": "control",
+  "tasks.update": "events",
+  "run.followup": "control",
 };
 
 /**

@@ -314,7 +314,7 @@ describe("Message", () => {
 });
 
 describe("Run", () => {
-  it("상태 8종, 트리거 6종", () => {
+  it("상태 8종, 트리거 7종", () => {
     expect(RunStatus.options).toEqual([
       "queued",
       "streaming",
@@ -332,6 +332,7 @@ describe("Run", () => {
       "interaction",
       "continue",
       "command",
+      "background",
     ]);
   });
   it("hasCanonical 기본값 false", () => {

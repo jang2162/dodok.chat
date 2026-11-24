@@ -292,6 +292,7 @@ describe("결과로 가기(around)로 갈아 끼운 뒤의 wire 이벤트", () =
     catchUp.mockRestore();
     fake.onAck("channel.subscribe", () =>
       ok<ChannelSubscribeResult>({
+        tasks: [],
         messages: [msg(47), reply(48)],
         hasMore: false,
         latestSeq: 48,
@@ -534,6 +535,7 @@ describe("런 이벤트", () => {
     let answer: (r: Result<unknown>) => void = () => {};
     fake.onAck("channel.subscribe", () =>
       ok<ChannelSubscribeResult>({
+        tasks: [],
         messages: [],
         hasMore: false,
         latestSeq: 0,
@@ -559,6 +561,7 @@ describe("런 이벤트", () => {
     let answer: (r: Result<unknown>) => void = () => {};
     fake.onAck("channel.subscribe", () =>
       ok<ChannelSubscribeResult>({
+        tasks: [],
         messages: [],
         hasMore: false,
         latestSeq: 0,

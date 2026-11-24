@@ -4,6 +4,8 @@ import { InboundDeliver, OutboundMessage } from "../bridge";
 import type { ControlResult, RunnerControlCall } from "../control";
 import {
   ApprovalDecision,
+  BACKGROUND_TASKS_MAX,
+  BackgroundTask,
   permissionModeRank,
   RUNNER_PERMISSION_MODES,
   RunnerContextBreakdown,
@@ -50,6 +52,9 @@ export const RunnerCapability = z.enum([
   "runnerControl",
   "remoteUpdate",
   "remoteUpdateOff",
+  // 백그라운드 작업(백그라운드 작업 스펙 6장) — tasks.update·run.followup 을 내고 task.stop·session.release 를 받는다. 없는 러너에는
+  // 서버가 새 프레임을 보내지 않는다(옛 러너는 첫 result 에서 CLI 를 닫는 지금 동작 그대로)
+  "backgroundTasks",
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
@@ -64,6 +69,8 @@ export const RunnerRunAck = z.object({
   runId: Id,
   admission: z.enum(["dispatch", "drop"]),
   queuedPosition: z.int().min(1).optional(),
+  /** 기다리는 까닭이 붙든 프로세스일 때 그 수(백그라운드 작업 스펙 D7) — 어댑터가 RUN_QUEUED.heldSlots 로 싣는다 */
+  heldSlots: z.int().min(0).optional(),
   reason: z.string().optional(),
 });
 export type RunnerRunAck = z.infer<typeof RunnerRunAck>;
@@ -172,6 +179,40 @@ export const RunnerApprovalResolve = z.object({
 });
 export type RunnerApprovalResolve = z.infer<typeof RunnerApprovalResolve>;
 
+// ── 백그라운드 작업(백그라운드 작업 스펙 5.3·5.4·5.5) — 능력 backgroundTasks 인 러너만
+
+/** 러너 → 서버. 그 세션 프로세스의 작업 전체(바꿔 끼우는 값) — 프로세스가 닫히면 빈 목록 */
+export const RunnerTasksUpdate = z.object({
+  sessionKey: z.string(),
+  tasks: z.array(BackgroundTask).max(BACKGROUND_TASKS_MAX),
+});
+export type RunnerTasksUpdate = z.infer<typeof RunnerTasksUpdate>;
+
+/** 러너 → 서버(ack). CLI 가 작업 알림 뒤 스스로 연 턴에 서버의 추가 응답 런을 청한다 */
+export const RunnerFollowupRequest = z.object({
+  sessionKey: z.string(),
+  originRunId: Id,
+  taskIds: z.array(z.string().min(1).max(128)).min(1).max(BACKGROUND_TASKS_MAX),
+});
+export type RunnerFollowupRequest = z.infer<typeof RunnerFollowupRequest>;
+
+/** 거절이면 러너는 그 턴을 interrupt 하고 모은 메시지를 버린다 — 거절 알림은 서버가 스레드에 남긴다 */
+export const RunnerFollowupResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), runId: Id, deliver: InboundDeliver }),
+  z.object({ ok: z.literal(false), reason: z.enum(["limit", "archived", "inactive", "closed", "unknown"]) }),
+]);
+export type RunnerFollowupResult = z.infer<typeof RunnerFollowupResult>;
+
+/** 서버 → 러너(ack). 화면의 「종료」 — 끈 결과는 tasks.update 로 돌아온다 */
+export const RunnerTaskStop = z.object({ sessionKey: z.string(), taskId: z.string().min(1).max(128) });
+export type RunnerTaskStop = z.infer<typeof RunnerTaskStop>;
+export const RunnerTaskStopResult = z.object({ ok: z.boolean() });
+export type RunnerTaskStopResult = z.infer<typeof RunnerTaskStopResult>;
+
+/** 서버 → 러너. 세션 닫기·보관·내보내기 — 그 세션의 작업을 모두 끄고 붙든 프로세스를 닫는다 */
+export const RunnerSessionRelease = z.object({ sessionKey: z.string() });
+export type RunnerSessionRelease = z.infer<typeof RunnerSessionRelease>;
+
 export interface RunnerClientToServerEvents {
   hello: (p: RunnerHello, ack: (r: RunnerHelloResult) => void) => void;
   "run.session": (p: RunnerRunSession) => void;
@@ -182,6 +223,8 @@ export interface RunnerClientToServerEvents {
   "approval.requested": (p: RunnerApprovalRequested) => void;
   "approval.withdrawn": (p: RunnerApprovalWithdrawn) => void;
   "control.call": (p: RunnerControlCall, ack: (r: ControlResult) => void) => void;
+  "tasks.update": (p: RunnerTasksUpdate) => void;
+  "run.followup": (p: RunnerFollowupRequest, ack: (r: RunnerFollowupResult) => void) => void;
 }
 
 export interface RunnerServerToClientEvents {
@@ -194,6 +237,8 @@ export interface RunnerServerToClientEvents {
   "worktree.remove": (p: RunnerWorktreeRemove, ack: (r: RunnerWorktreeRemoveResult) => void) => void;
   "commands.list": (p: RunnerCommandsList, ack: (r: RunnerCommandsListResult) => void) => void;
   "runner.update": (p: RunnerUpdate, ack: (r: RunnerUpdateResult) => void) => void;
+  "task.stop": (p: RunnerTaskStop, ack: (r: RunnerTaskStopResult) => void) => void;
+  "session.release": (p: RunnerSessionRelease) => void;
 }
 
 // ── 원격 업데이트(원격 업데이트 스펙 U3) — 서버 → 러너 ack 요청. 러너는 npm 의 그 판(지금보다 높은 정확한 semver)을 자기 전역 자리에

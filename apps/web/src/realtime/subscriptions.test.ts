@@ -36,6 +36,7 @@ import {
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 const subscribed = (messages: Message[], over: Partial<ChannelSubscribeResult> = {}) =>
   ok<ChannelSubscribeResult>({
+    tasks: [],
     messages,
     hasMore: false,
     latestSeq: messages.reduce((n, m) => Math.max(n, m.seq), 0),

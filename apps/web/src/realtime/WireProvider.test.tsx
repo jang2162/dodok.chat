@@ -256,6 +256,7 @@ it("useChannelSubscription: 마운트하면 들어가고, 채널이 바뀌거나
   if (!fake) throw new Error("no socket");
   fake.onAck("channel.subscribe", () =>
     ok<ChannelSubscribeResult>({
+      tasks: [],
       messages: [],
       hasMore: false,
       latestSeq: 0,
