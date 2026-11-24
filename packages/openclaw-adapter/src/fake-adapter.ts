@@ -383,7 +383,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   supports(
     _providerAgentId: string,
     connectionId: ConnectionId | null,
-    capability: "threads" | "commands",
+    capability: "threads" | "commands" | "threadUpdates",
   ): boolean {
     this.calls.connections.supports.push(connectionId);
     const detail: AdapterSetupDetail = this.currentSetupDetail;

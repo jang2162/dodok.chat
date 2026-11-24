@@ -1210,11 +1210,14 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     sessionKeyFor: dodokSessionKey,
 
     // 러너 능력(threads 등)은 그 에이전트가 묶인 러너 토큰의 연결이 hello 로 알린 것. 러너가 없으면 오케스트레이터가 옛 러너로
-    // 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게 true
+    // 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게 true. 스레드 소식은 서버가 만드는 턴 사실(buildTurnFacts)에 실려 옛 러너도
+    // 받으므로 늘 true(스레드 소식 T5)
     supports: (_providerAgentId, connectionId, capability) =>
-      (connectionId === null ? undefined : registry.byToken(connectionId))?.capabilities.includes(
+      capability === "threadUpdates" ||
+      ((connectionId === null ? undefined : registry.byToken(connectionId))?.capabilities.includes(
         capability,
-      ) ?? true,
+      ) ??
+        true),
 
     async send(input, sendOpts) {
       if (closed) throw new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed");
@@ -1277,6 +1280,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           ...(input.dm ? { dm: input.dm } : {}),
           ...(input.groupDm ? { groupDm: true as const } : {}),
           thread: input.threadId !== undefined,
+          threadUpdates: input.context.threadUpdates,
+          threadUpdatesOmitted: input.context.threadUpdatesOmitted,
           reactions: input.context.reactions,
           reactionsOmitted: input.context.reactionsOmitted,
         }),
