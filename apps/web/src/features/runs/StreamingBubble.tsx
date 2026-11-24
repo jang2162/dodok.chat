@@ -82,7 +82,13 @@ function BubbleActivity({ runId, hasText, live }: { runId: string; hasText: bool
   const summary = useMemo(() => summarizeActivity(rows, events), [rows, events]);
   const [manual, setManual] = useState<boolean>();
   return (
-    <InlineActivity rows={rows} summary={summary} live={live} open={manual ?? !hasText} onOpenChange={setManual} />
+    <InlineActivity
+      rows={rows}
+      summary={summary}
+      live={live}
+      open={manual ?? !hasText}
+      onOpenChange={setManual}
+    />
   );
 }
 

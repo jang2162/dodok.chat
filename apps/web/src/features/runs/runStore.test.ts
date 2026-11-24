@@ -178,7 +178,8 @@ describe("런의 스레드 소속(판정 R3′)", () => {
 });
 
 describe("활동 기록(응답 안의 활동)", () => {
-  const tool = (seq: number) => ev({ type: "TOOL_CALL_START", seq, toolCallId: `t${seq}`, toolCallName: "Read" });
+  const tool = (seq: number) =>
+    ev({ type: "TOOL_CALL_START", seq, toolCallId: `t${seq}`, toolCallName: "Read" });
   beforeEach(() => useRunStore.getState().reset());
 
   it("대기로 처음 본 런은 처음부터 본 것(complete) — 행이 되는 이벤트만 모은다", () => {

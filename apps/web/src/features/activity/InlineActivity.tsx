@@ -153,7 +153,10 @@ export function MessageActivity({ runId }: { runId: string }) {
   const activity = useRunActivity(runId, { enabled: open });
   const { events } = activity;
   const rows = useMemo(() => (events ? toActivityRows(events) : undefined), [events]);
-  const summary = useMemo(() => (rows && events ? summarizeActivity(rows, events) : undefined), [rows, events]);
+  const summary = useMemo(
+    () => (rows && events ? summarizeActivity(rows, events) : undefined),
+    [rows, events],
+  );
 
   let notice: ReactNode;
   if (activity.status === "error") {
@@ -168,9 +171,7 @@ export function MessageActivity({ runId }: { runId: string }) {
     notice = <InlineNotice>활동 기록이 없습니다.</InlineNotice>;
   }
 
-  return (
-    <InlineActivity rows={rows} summary={summary} open={open} onOpenChange={setOpen} notice={notice} />
-  );
+  return <InlineActivity rows={rows} summary={summary} open={open} onOpenChange={setOpen} notice={notice} />;
 }
 
 function InlineNotice({
