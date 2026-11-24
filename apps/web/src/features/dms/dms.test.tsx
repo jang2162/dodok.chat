@@ -186,6 +186,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   wire.socket = undefined;
   useWireStatus.getState().setStatus("idle");
+  // 승인은 모듈 스토어다 — 한 시험이 남긴 미해결 승인이 뒤 시험의 패널 머리 배지(「활동, 승인 대기 N」)로 새지 않게
+  useApprovalStore.getState().reset();
 });
 
 const dmNav = () => screen.findByRole("navigation", { name: "다이렉트 메시지" });
