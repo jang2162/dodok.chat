@@ -243,7 +243,7 @@ describe("연결 탭 — 트리·에이전트 상세·Gateway 상세", () => {
     });
     const { router } = renderRoute(`/settings/connection/agent/${DEV_AGENT.id}`);
     const page = await screen.findByTestId("page-connection");
-    await within(page).findByRole("switch", { name: "@dev 사용" });
+    await within(page).findByRole("switch", { name: "에이전트 켜짐" });
     await within(page).findByRole("navigation", { name: "연결 목록" });
     expect(unnamed()).toEqual(NONE);
 

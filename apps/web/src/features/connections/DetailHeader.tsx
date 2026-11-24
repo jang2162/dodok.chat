@@ -11,6 +11,7 @@ import type { StateTone } from "./tree";
  */
 export function DetailHeader({
   icon,
+  leading,
   title,
   state,
   facts,
@@ -23,6 +24,8 @@ export function DetailHeader({
   meta,
 }: {
   icon?: ReactNode;
+  /** 머리 왼쪽 큰 칸(에이전트의 큰 아바타) — 주면 제목·값 줄·덧붙인 줄이 그 오른쪽에 쌓인다 */
+  leading?: ReactNode;
   title: string;
   state?: { tone: StateTone; label: string };
   facts?: ReactNode[];
@@ -45,8 +48,8 @@ export function DetailHeader({
     heading.current?.focus();
   }, [focusDetail, heading, title]);
   const shown = (facts ?? []).filter((f) => f !== null && f !== undefined && f !== false && f !== "");
-  return (
-    <header className="flex flex-col gap-1.5">
+  const body = (
+    <>
       <div className="flex flex-wrap items-center gap-2">
         {icon && (
           <span
@@ -81,6 +84,13 @@ export function DetailHeader({
       )}
       {meta && <div className="text-sm text-muted-foreground">{meta}</div>}
       {children}
+    </>
+  );
+  if (!leading) return <header className="flex flex-col gap-1.5">{body}</header>;
+  return (
+    <header className="flex items-start gap-4">
+      <div className="shrink-0">{leading}</div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">{body}</div>
     </header>
   );
 }

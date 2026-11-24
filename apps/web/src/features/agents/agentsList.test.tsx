@@ -32,7 +32,7 @@ describe("에이전트 상세", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Dev 에이전트" })).toBeInTheDocument();
     expect(screen.getByText("dev")).toBeInTheDocument();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "@dev 사용" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "에이전트 켜짐" })).toBeChecked();
     expect(screen.getByTestId("page-connection")).toBeInTheDocument();
     const nav = await treeNav();
     expect(within(nav).getByRole("link", { name: /Dev 에이전트/ })).toHaveAttribute("aria-current", "page");
@@ -43,7 +43,7 @@ describe("에이전트 상세", () => {
     const b = fin();
     stubServer({ agents: [b] });
     renderPage(undefined, "owner", agentPath(b));
-    expect(await screen.findByRole("switch", { name: "@fin 사용" })).not.toBeChecked();
+    expect(await screen.findByRole("switch", { name: "에이전트 켜짐" })).not.toBeChecked();
     expect(screen.getByRole("heading", { level: 1, name: "Fin 에이전트" }).parentElement).toHaveTextContent(
       "꺼짐",
     );
@@ -94,29 +94,40 @@ describe("에이전트 상세", () => {
       await screen.findByText(`@${agent.handle}`);
       return screen.getByTestId("agent-detail");
     };
-    expect(await body(agents[1] as Agent)).toHaveTextContent("Claude Code · 러너 맥북");
+    // 머리의 칩 줄 — 프로그램 칩과 러너 링크(연결 재설계 스펙 목표 3)
+    const bound = await body(agents[1] as Agent);
+    expect(
+      within(within(bound).getByRole("banner")).getByRole("img", { name: "Claude Code" }),
+    ).toBeInTheDocument();
+    expect(within(bound).getByRole("link", { name: "러너 맥북" })).toHaveAttribute(
+      "href",
+      `/settings/connection/runner/${t(1)}`,
+    );
     const revoked = await body(agents[2] as Agent);
     expect(revoked).toHaveTextContent(
-      "Claude Code · 러너 옛 노트북 — 토큰이 폐기돼 맡을 러너가 없습니다. 그 러너 화면에서 프로젝트를 다른 러너로 옮기세요",
+      "러너 옛 노트북 — 토큰이 폐기돼 맡을 러너가 없습니다. 그 러너 화면에서 프로젝트를 다른 러너로 옮기세요",
     );
     expect(within(revoked).getByRole("link", { name: "그 러너 화면" })).toHaveAttribute(
       "href",
       `/settings/connection/runner/${t(2)}`,
     );
-    expect(await body(agents[3] as Agent)).toHaveTextContent("Claude Code · 맡을 러너가 없습니다");
+    const lost = await body(agents[3] as Agent);
+    expect(lost).toHaveTextContent("Claude Code");
+    expect(lost).toHaveTextContent("맡을 러너가 없습니다");
     expect(await body(agents[0] as Agent)).not.toHaveTextContent("러너");
   });
 
-  it("머리 아래 경로 — OpenClaw 는 「<Gateway> · OpenClaw」, 러너는 「<러너> · <프로그램>」, 연결 이름은 그 상세 링크", async () => {
+  it("머리 아래 칩 줄 — OpenClaw 는 「OpenClaw · Gateway <이름>」, 러너는 「<프로그램> · 러너 <이름>」, 연결은 그 상세 링크", async () => {
     const d = dev();
     stubServer({ agents: [d] });
     renderPage(undefined, "member", agentPath(d));
-    const gateway = await screen.findByRole("link", { name: "사무실" });
+    const gateway = await screen.findByRole("link", { name: "Gateway 사무실" });
     expect(gateway).toHaveAttribute(
       "href",
       "/settings/connection/gateway/01a00000-0000-7000-8000-0000000000a1",
     );
-    expect(gateway.closest("p")).toHaveTextContent("사무실 · OpenClaw");
+    // 칩 줄 — 「OpenClaw」 칩 옆에 그 Gateway 링크
+    expect(gateway.closest("p")).toHaveTextContent("OpenClawGateway 사무실");
     cleanup();
     const coder: Agent = {
       ...fin(),
@@ -129,8 +140,8 @@ describe("에이전트 상세", () => {
     };
     stubServer({ agents: [coder] });
     renderPage(undefined, "member", agentPath(coder));
-    const runner = await screen.findByRole("link", { name: "맥북" });
-    expect(runner.closest("p")).toHaveTextContent("맥북 · Claude Code");
+    const runner = await screen.findByRole("link", { name: "러너 맥북" });
+    expect(runner.closest("p")).toHaveTextContent("CCClaude Code러너 맥북");
   });
 
   it("사용 스위치를 끄면 요청 중엔 잠그고, PATCH { enabled: false } 응답으로 캐시를 고친다 — 다시 불러오지 않는다", async () => {
@@ -144,7 +155,7 @@ describe("에이전트 상세", () => {
       },
     });
     const qc = renderPage(undefined, "owner", agentPath(agent));
-    const sw = await screen.findByRole("switch", { name: "@dev 사용" });
+    const sw = await screen.findByRole("switch", { name: "에이전트 켜짐" });
     await userEvent.click(sw);
     await waitFor(() => expect(sw).toBeDisabled());
     expect(sw).toBeChecked(); // 낙관적 갱신은 하지 않는다
@@ -161,7 +172,7 @@ describe("에이전트 상세", () => {
     const agent = dev();
     stubServer({ agents: [agent], patch: () => apiErr(404, "NOT_FOUND", "agent not found") });
     renderPage(undefined, "owner", agentPath(agent));
-    const sw = await screen.findByRole("switch", { name: "@dev 사용" });
+    const sw = await screen.findByRole("switch", { name: "에이전트 켜짐" });
     await userEvent.click(sw);
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("agent not found"));
     expect(toastError).toHaveBeenCalledTimes(1);
@@ -182,7 +193,7 @@ describe("에이전트 상세", () => {
     const agent = dev();
     const server = stubServer({ agents: [agent] });
     const qc = renderPage(undefined, "owner", agentPath(agent));
-    await screen.findByRole("switch", { name: "@dev 사용" });
+    await screen.findByRole("switch", { name: "에이전트 켜짐" });
     server.state.splice(0, 1);
     await qc.invalidateQueries({ queryKey: qk.agents });
     expect(await screen.findByText("이 에이전트를 찾을 수 없습니다")).toBeInTheDocument();
@@ -243,7 +254,7 @@ describe("메모(OpenClaw 에이전트의 basePrompt — 에이전트에게 전�
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "@dev 메모" })).not.toBeInTheDocument());
     expect(screen.getByText("새 프롬프트")).toBeInTheDocument();
-    expect(screen.getByText("메모(에이전트에게 전달되지 않음)")).toBeInTheDocument();
+    expect(screen.getByText("메모 — 에이전트에게 전달되지 않음")).toBeInTheDocument();
     expect(screen.queryByText(/기본 프롬프트/)).toBeNull();
     // 편집칸이 사라져도 초점은 body 로 떨어지지 않고 다시 편집 버튼으로
     expect(screen.getByRole("button", { name: "@dev 메모 편집" })).toHaveFocus();
@@ -277,7 +288,7 @@ describe("member 가 보는 에이전트 화면(팀 스펙 2·6장)", () => {
     renderPage(undefined, "member", agentPath(agent));
     expect(await (await inDetail()).findByText("@dev")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "에이전트 가져오기" })).toBeNull();
-    expect(screen.getByRole("switch", { name: "@dev 사용" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "에이전트 켜짐" })).toBeDisabled();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "@dev 메모 편집" })).toBeNull();
     expect(screen.getByText("관리자만 바꿀 수 있습니다")).toBeInTheDocument();

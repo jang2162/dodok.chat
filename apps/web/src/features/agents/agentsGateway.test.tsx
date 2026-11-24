@@ -256,3 +256,19 @@ describe("에이전트 가져오기 — 그 Gateway 상세에 고정", () => {
     ]);
   });
 });
+
+describe("OpenClaw 에이전트 상세의 카드(연결 재설계 스펙 목표 3)", () => {
+  it("「실행」 카드가 없고, 「프로필」 카드에 「메모 — 에이전트에게 전달되지 않음」, 「관리」에 Gateway 옮기기·삭제", async () => {
+    const office = mainOffice();
+    stubServer({ agents: [office], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage(undefined, "owner", agentPath(office));
+    const detail = await agentDetail();
+    expect(within(detail).queryByRole("region", { name: "실행" })).toBeNull();
+    const profile = within(detail).getByRole("region", { name: "프로필" });
+    expect(profile).toHaveTextContent("메모 — 에이전트에게 전달되지 않음");
+    expect(within(detail).getByRole("banner")).toHaveTextContent("OpenClaw");
+    const manage = within(detail).getByRole("region", { name: "관리" });
+    expect(within(manage).getByRole("button", { name: "@main-office Gateway 옮기기" })).toBeInTheDocument();
+    expect(within(manage).getByRole("button", { name: "@main-office 삭제" })).toBeInTheDocument();
+  });
+});
