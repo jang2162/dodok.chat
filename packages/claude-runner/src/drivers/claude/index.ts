@@ -70,7 +70,8 @@ const MODELS_MAX = 32;
  * 자르고, 계약에 맞지 않는 줄(빈 value·모르는 effort)은 그 줄만 뺀다. 노력치는 「안 받음」(빈 목록 — 웹은 「기본」만, 스펙 5.4)과
  * 「모름」(다섯 단계)을 목록 전체로 가른다: CLI 는 effort 를 받는 모델에 supportsEffort·supportedEffortLevels 를 함께 싣고 안 받는
  * 모델에는 둘 다 뺀다(false 를 싣지 않는다 — 2.1.283·2.1.323 에서 확인). 그래서 어느 줄이든 두 키를 실었으면 키 없는 줄은 「안 받음」,
- * 어떤 줄도 싣지 않았으면 effort 를 모르는 판이라 모두 「모름」
+ * 어떤 줄도 싣지 않았으면 effort 를 모르는 판이라 모두 「모름」. default 줄에는 resolvedLabel(「기본」이 지금 도는 모델 — 채널 UI·권한
+ * 모드 스펙 2장)도 싣는다 — resolvedModelLabel
  */
 export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
   const knowsEffort = list.some(
@@ -82,13 +83,35 @@ export function toModelOptions(list: SdkModelInfo[]): RunnerModelOption[] {
     return m?.supportsEffort === true || !knowsEffort ? RUNNER_EFFORTS : [];
   };
   return list.slice(0, MODELS_MAX).flatMap((m) => {
+    const resolvedLabel = m?.value === DEFAULT_MODEL_VALUE ? resolvedModelLabel(m, list) : undefined;
     const row = RunnerModelOption.safeParse({
       value: m?.value,
       displayName: typeof m?.displayName === "string" ? m.displayName.slice(0, 80) : m?.displayName,
       efforts: [...effortsOf(m)],
+      ...(resolvedLabel === undefined ? {} : { resolvedLabel }),
     });
     return row.success ? [row.data] : [];
   });
+}
+
+const DEFAULT_MODEL_VALUE = "default";
+
+/**
+ * default 줄이 가리키는 모델의 표시 이름 — 그 줄의 resolvedModel 을 value 나 resolvedModel 로 가진 다른 줄의 displayName(실제 CLI
+ * 2.1.283: default 의 resolvedModel `claude-opus-5-5[1m]` 이 `opus[1m]` 줄 「Opus (1M context)」의 resolvedModel 과 같다). 그런 줄이
+ * 없으면 resolvedModel 글자 그대로, resolvedModel 이 없으면(옛 CLI) 싣지 않는다 — description 은 가격·설명이 섞인 긴 글이라 쓰지 않는다.
+ * 80자로 자른다
+ */
+function resolvedModelLabel(row: SdkModelInfo, list: readonly SdkModelInfo[]): string | undefined {
+  const target = row.resolvedModel;
+  if (typeof target !== "string" || target === "") return undefined;
+  const match = list.find(
+    (m) =>
+      m !== row && m?.value !== DEFAULT_MODEL_VALUE && (m?.value === target || m?.resolvedModel === target),
+  );
+  const label =
+    typeof match?.displayName === "string" && match.displayName !== "" ? match.displayName : target;
+  return label.slice(0, 80);
 }
 
 /**

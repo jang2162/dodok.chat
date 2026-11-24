@@ -479,6 +479,11 @@ export const RunnerModelOption = z.object({
   value: z.string().min(1).max(128),
   displayName: z.string().max(80),
   efforts: z.array(RunnerEffort).max(5),
+  /**
+   * default 줄에만 — 「기본」이 지금 도는 모델의 표시 이름(채널 UI·권한 모드 스펙 2장). 화면은 「기본 · <이것>」. 옛 러너는 싣지 않는다
+   * (화면은 「기본」 그대로)
+   */
+  resolvedLabel: z.string().max(80).optional(),
 });
 export type RunnerModelOption = z.infer<typeof RunnerModelOption>;
 
