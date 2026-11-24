@@ -852,6 +852,8 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 | 루트·작업 파일 | 루트 `<스크래치>/roots/src` 안에 `proj-a`(커밋 하나 있는 git 저장소)·`proj-b`(일반 디렉터리), 루트 밖 `<스크래치>/outside/elsewhere`. `proj-a` 안 `hx-out.txt`, 루트 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
 | 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port <포트> --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표(백그라운드 대본 `HX-BG-*`·`HX-SUB-SLOW` 는 ADR 0007 「백그라운드 작업과 붙든 프로세스」 스파이크에 쓴다). 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
 
+CLI 작업 디렉터리(`cwd`)는 홈 밖에 둔다 — `HOME`·`CLAUDE_CONFIG_DIR` 을 스크래치로 해도 CLI 는 `cwd` 조상 디렉터리의 `CLAUDE.md`·`.claude/`·`.mcp.json` 을 읽는다(ADR 0007 5.11).
+
 ```json
 {
   "serverUrl": "http://127.0.0.1:<서버 포트>",
