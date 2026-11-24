@@ -488,3 +488,56 @@ describe("createStreamMapper — 답 글의 호스트 경로 가림(리뷰 I4)",
     });
   });
 });
+
+describe("createStreamMapper — 서브에이전트 작업(백그라운드 작업 스펙 5.4)", () => {
+  const SUB = "0192f000-0000-7000-8000-0000000000aa";
+  const mapperWithIds = (mask?: PathMasker) => {
+    let n = 0;
+    return createStreamMapper(() => 1000, {
+      runId: RUN,
+      mask,
+      newId: () => `${SUB.slice(0, -1)}${n++}`,
+    });
+  };
+
+  it("maps a local_agent task to SUBAGENT_STARTED/FINISHED", () => {
+    const m = mapperWithIds(createPathMasker(["/home/u/repo"]));
+    const out = [
+      script.taskStarted("a1", { task_type: "local_agent", subagent_type: "Explore", description: "찾기" }),
+      script.taskStarted("b1"), // 셸은 서브에이전트 줄이 아니다
+      script.taskStarted("a2", { task_type: "local_agent", description: "둘째" }),
+      script.taskNotification("b1", "completed"),
+      script.taskNotification("a1", "completed"),
+      script.taskNotification("a2", "failed", { summary: `/home/u/repo/x 실패 ${"z".repeat(400)}` }),
+      script.taskNotification("a9", "completed"), // 이 런에서 시작하지 않은 작업
+    ].flatMap((x) => events(m.map(x)));
+    expect(out).toEqual([
+      { type: "SUBAGENT_STARTED", runId: RUN, subagentRunId: `${SUB.slice(0, -1)}0`, label: "Explore" },
+      { type: "SUBAGENT_STARTED", runId: RUN, subagentRunId: `${SUB.slice(0, -1)}1`, label: "둘째" },
+      { type: "SUBAGENT_FINISHED", runId: RUN, subagentRunId: `${SUB.slice(0, -1)}0` },
+      {
+        type: "SUBAGENT_ERROR",
+        runId: RUN,
+        subagentRunId: `${SUB.slice(0, -1)}1`,
+        message: expect.stringMatching(/^x 실패 z+$/),
+      },
+    ]);
+    const err = out[3] as { message: string };
+    expect(err.message.length).toBe(300);
+    for (const e of out) expect(RunEventBodySchema.safeParse(e).success).toBe(true);
+  });
+
+  it("keeps parent_tool_use_id streams out of the bubble", () => {
+    const m = mapperWithIds();
+    const sub = <T extends object>(x: T) => ({ ...x, parent_tool_use_id: "toolu_task" }) as T;
+    const out = [
+      script.taskStarted("a1", { task_type: "local_agent", subagent_type: "Explore" }),
+      sub(script.messageStart("msg_sub")),
+      sub(script.blockStart(0, { type: "text", text: "" })),
+      sub(script.textDelta(0, "속")),
+      sub(script.messageStop()),
+      script.taskNotification("a1", "completed"),
+    ].flatMap((x) => events(m.map(x)));
+    expect(out.map((e) => e?.type)).toEqual(["SUBAGENT_STARTED", "SUBAGENT_FINISHED"]);
+  });
+});

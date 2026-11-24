@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ErrorCode, RunEventBody } from "@dodok/shared";
 import { NO_MASK, type PathMasker } from "../../mask";
 import { ABORTED_STOP_REASON } from "../../sink";
@@ -12,6 +13,8 @@ import type { SdkMessage } from "./sdk";
 // - 답 글 델타는 마지막 공백 뒤 꼬리를 쥐었다가 다음 델타·블록 끝에서 가려 낸다 — 델타 둘에 걸친 경로를 가리려면
 //   이어 붙여야 한다(mask.ts safeCut)
 // - 서브에이전트 안(parent_tool_use_id 가 있는) 스트림은 본 답 버블에 섞이지 않게 버린다
+// - 서브에이전트 작업(task_started local_agent)은 SUBAGENT_STARTED, 그 끝 알림은 SUBAGENT_FINISHED·SUBAGENT_ERROR 로 — 이 런이 도는
+//   동안만이다(매퍼는 런마다 새로 만든다). 런이 끝난 뒤의 작업 상태는 tasks.update 로만 간다(백그라운드 작업 스펙 5.4)
 // - thinking 블록은 REASONING_MESSAGE_*(id 는 「API 메시지 id:thinking:블록 인덱스」)로 — 글은 답 글처럼 꼬리를 쥐었다
 //   가려 낸다. 빈 델타·signature_delta·redacted_thinking 은 내지 않는다(요약이 비면 START/END 만 간다)
 
@@ -20,6 +23,8 @@ export { ABORTED_STOP_REASON };
 /** 도구 결과는 OpenClaw 경로(openclaw-adapter gateway/events.ts TOOL_RESULT_MAX)와 같은 길이로 자른다 */
 export const TOOL_RESULT_MAX = 2000;
 const ERROR_MESSAGE_MAX = 2000;
+/** SUBAGENT_ERROR 의 글 — 알림 summary 는 서브에이전트의 마지막 글 전체라 앞만 싣는다 */
+const SUBAGENT_ERROR_MAX = 300;
 
 /** 그 프롬프트 턴의 result — 런 비용(costUsd)은 세션 누적값의 차이라 run.ts 가 계산한다 */
 export type RunnerRunFinalBody = {
@@ -79,6 +84,13 @@ type Loose = {
     cache_read_input_tokens?: number | null;
   };
   errors?: string[];
+  // system/task_*
+  task_id?: string;
+  task_type?: string;
+  description?: string;
+  subagent_type?: string;
+  status?: string;
+  summary?: string;
   modelUsage?: Record<string, { contextWindow?: number } | undefined>;
 };
 
@@ -141,7 +153,8 @@ function finalOf(r: Loose, text: string, stopReason: string, last: LastCall = {}
 export function createStreamMapper(
   now: () => number,
   /** command — 명령 런(에이전트 명령 C13·C17). 모델 없이 끝난 result(num_turns 0)도 런의 끝이다 */
-  opts: { runId: string; mask?: PathMasker; command?: boolean },
+  /** newId — SUBAGENT_* 의 subagentRunId(시험이 바꿔 끼운다) */
+  opts: { runId: string; mask?: PathMasker; command?: boolean; newId?: () => string },
 ): { map(m: SdkMessage): MapItem[]; markInterrupted(stopReason?: string): void } {
   const { runId } = opts;
   const mask = opts.mask ?? NO_MASK;
@@ -153,6 +166,9 @@ export function createStreamMapper(
   let interruptStopReason = ABORTED_STOP_REASON;
   let authFailed = false;
   let lastCall: LastCall = {};
+  // 서브에이전트 작업 id → 그 런 이벤트의 subagentRunId
+  const subagents = new Map<string, string>();
+  const newId = opts.newId ?? randomUUID;
 
   const errorItem = (code: ErrorCode, message: string): MapItem => ({
     error: { code, message: mask(message).slice(0, ERROR_MESSAGE_MAX) },
@@ -297,6 +313,35 @@ export function createStreamMapper(
     return out;
   }
 
+  function mapTask(x: Loose): MapItem[] {
+    if (!x.task_id) return [];
+    if (x.subtype === "task_started" && x.task_type === "local_agent") {
+      if (subagents.has(x.task_id)) return [];
+      const subagentRunId = newId();
+      subagents.set(x.task_id, subagentRunId);
+      const label = x.subagent_type || x.description;
+      return [
+        {
+          event: {
+            type: "SUBAGENT_STARTED",
+            runId,
+            subagentRunId,
+            ...(label ? { label: mask(label).slice(0, 200) } : {}),
+          },
+        },
+      ];
+    }
+    if (x.subtype === "task_notification") {
+      const subagentRunId = subagents.get(x.task_id);
+      if (!subagentRunId) return [];
+      subagents.delete(x.task_id);
+      if (x.status === "completed") return [{ event: { type: "SUBAGENT_FINISHED", runId, subagentRunId } }];
+      const message = mask(x.summary || x.status || "error").slice(0, SUBAGENT_ERROR_MAX);
+      return [{ event: { type: "SUBAGENT_ERROR", runId, subagentRunId, message } }];
+    }
+    return [];
+  }
+
   function mapResult(r: Loose): MapItem[] {
     // resume 직후 앞 프로세스의 백그라운드 셸 알림과 함께 프롬프트와 무관한 빈 result 가 먼저 온다(ADR 0007 4.3) —
     // 런의 끝으로 읽으면 답이 비고 진짜 턴이 버려진다. 명령 런은 다르다 — CLI 가 모델 없이 처리한 명령(`/context`·`/compact`)은
@@ -341,6 +386,8 @@ export function createStreamMapper(
           return [];
         case "result":
           return mapResult(x);
+        case "system":
+          return x.subtype === "task_started" || x.subtype === "task_notification" ? mapTask(x) : [];
         default:
           // system/*(thinking_tokens·status·init…)·tool_progress·rate_limit_event 등은 버린다(스펙 4.3)
           return [];

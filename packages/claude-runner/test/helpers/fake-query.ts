@@ -397,6 +397,45 @@ export const script = {
       errors,
       ...extra,
     }),
+  // 작업 메시지(ADR 0007 5.11) — 셸은 local_bash, 서브에이전트는 local_agent
+  tasksChanged: (
+    tasks: Array<{ task_id: string; task_type: string; description: string; ambient?: boolean }>,
+  ) => sdkMsg({ type: "system", subtype: "background_tasks_changed", tasks }),
+  taskStarted: (task_id: string, extra: Record<string, unknown> = {}) =>
+    sdkMsg({
+      type: "system",
+      subtype: "task_started",
+      task_id,
+      description: "sleep 3 && echo done",
+      task_type: "local_bash",
+      is_backgrounded: true,
+      ...extra,
+    }),
+  taskProgress: (task_id: string, extra: Record<string, unknown> = {}) =>
+    sdkMsg({
+      type: "system",
+      subtype: "task_progress",
+      task_id,
+      description: "",
+      usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+      ...extra,
+    }),
+  taskUpdated: (task_id: string, patch: Record<string, unknown>) =>
+    sdkMsg({ type: "system", subtype: "task_updated", task_id, patch }),
+  taskNotification: (
+    task_id: string,
+    status: "completed" | "failed" | "stopped" = "completed",
+    extra: Record<string, unknown> = {},
+  ) =>
+    sdkMsg({
+      type: "system",
+      subtype: "task_notification",
+      task_id,
+      status,
+      output_file: `/private/tmp/claude-501/x/tasks/${task_id}.output`,
+      summary: "done",
+      ...extra,
+    }),
   /** 텍스트 답 한 턴 — message_start 부터 result 까지 */
   textTurn: (
     messageId: string,
