@@ -50,6 +50,11 @@ import {
 } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import { advanceReactionCursor, type PendingReactions, pendingReactionsFor } from "../reactions/service";
+import {
+  advanceThreadRepliesCursor,
+  type PendingThreadUpdates,
+  pendingThreadUpdatesFor,
+} from "../thread-updates/service";
 import type { UploadedBy } from "../attachments/service";
 import { blockedCommandReason, commandOfMessage, type RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
@@ -275,6 +280,19 @@ function withReactionFacts(inbound: InboundDeliver, pending: PendingReactions): 
       ...inbound.context,
       reactions: pending.reactions,
       ...(pending.omitted === undefined ? {} : { reactionsOmitted: pending.omitted }),
+    },
+  };
+}
+
+/** 아직 안 알린 스레드 소식을 인바운드 맥락에 싣는다 — 없으면 그대로(키를 만들지 않는다) */
+function withThreadUpdates(inbound: InboundDeliver, pending: PendingThreadUpdates): InboundDeliver {
+  if (pending.updates.length === 0) return inbound;
+  return {
+    ...inbound,
+    context: {
+      ...inbound.context,
+      threadUpdates: pending.updates,
+      ...(pending.omitted === undefined ? {} : { threadUpdatesOmitted: pending.omitted }),
     },
   };
 }
@@ -987,7 +1005,24 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         threadRootId: run.threadRootId ?? null,
         since: reactionsSince,
       });
-      const withReactions = withReactionFacts(built, reactions);
+      // 스레드 소식(스레드 소식 스펙 6장) — 대화 세션 런이고 그 연결이 threadUpdates 를 알렸을 때만 고른다. 고르지 않은 런(스레드 런·
+      // 옛 플러그인)은 커서도 건드리지 않는다 — 플러그인을 올린 뒤 첫 턴에 그동안 쌓인 것이 상한 안에서 실린다. 커서는 반응처럼 갱신
+      // 판정 뒤에 다시 읽는다
+      const threadUpdatesSince =
+        run.threadRootId === undefined && supportsThreadUpdates(adapter, run.agentId, connectionId)
+          ? { since: getSessionRow(db, session.id)?.threadRepliesSeenAt ?? null }
+          : undefined;
+      const threadUpdates =
+        threadUpdatesSince === undefined
+          ? undefined
+          : pendingThreadUpdatesFor(db, {
+              conversationId: run.conversationId,
+              since: threadUpdatesSince.since,
+            });
+      const withReactions = withReactionFacts(
+        threadUpdates === undefined ? built : withThreadUpdates(built, threadUpdates),
+        reactions,
+      );
       // 명령 런은 명령을 싣는다 — 받는 쪽이 머리말 없이 `/<name>[ <args>]` 만 넘긴다(에이전트 명령 스펙 5.3·5.4)
       const command = run.triggerKind === "command" ? commandOf(run) : undefined;
       if (run.triggerKind === "command" && command === undefined) {
@@ -1053,6 +1088,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       // 옛 리액션을 한꺼번에 싣지 않게(리액션 스펙 「`agent_sessions.reactions_seen_at`」 절)
       const reactionCursor = reactions.latestAt ?? (reactionsSince === null ? now() : undefined);
       if (reactionCursor !== undefined) advanceReactionCursor(db, session.id, reactionCursor);
+      // 스레드 답글 커서도 같은 자리·같은 규칙 — 고려한 답글(밀린 스레드 것까지)의 가장 늦은 시각, null 이던 커서는 지금으로
+      if (threadUpdates !== undefined && threadUpdatesSince !== undefined) {
+        const threadCursor =
+          threadUpdates.latestAt ?? (threadUpdatesSince.since === null ? now() : undefined);
+        if (threadCursor !== undefined) advanceThreadRepliesCursor(db, session.id, threadCursor);
+      }
       // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다.
       // 보낸 연결(저장값 ?? 에이전트의 지금 연결)이 아니라 저장값과 견준다 — 기다리는 사이 에이전트가 묶이면 둘이 같아도 저장값은 비어 있다
       const patch: store.RunRowPatch = {};
@@ -1112,6 +1153,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
     return providerAgentId !== undefined && !adapter.supports(providerAgentId, connectionId, "threads");
+  }
+
+  /** 그 에이전트를 맡은 쪽이 스레드 소식을 그리는가 — 모르면(플러그인이 안 붙음·에이전트 행 없음) 싣지 않는다 */
+  function supportsThreadUpdates(
+    adapter: AgentAdapter,
+    agentId: string,
+    connectionId: string | null,
+  ): boolean {
+    const providerAgentId = getAgent(db, agentId)?.providerAgentId;
+    return providerAgentId !== undefined && adapter.supports(providerAgentId, connectionId, "threadUpdates");
   }
 
   /** OpenClaw 연결에 지금 붙은 플러그인이 없어(또는 연결이 없어) 그 능력을 단정할 수 없다 — 러너는 어댑터 supports 가 가른다 */

@@ -9,6 +9,7 @@ import {
   type ControlResult,
   dodokSessionKey,
   formatReactionFacts,
+  formatThreadUpdates,
   type InboundDeliver,
   OutboundMessage,
   type ProviderApproval,
@@ -539,6 +540,14 @@ describe("러너 여러 대", () => {
     expect(h.adapter.supports("writer", RUNNER_B_CONNECTION, "threads")).toBe(false);
   });
 
+  it("supports: threadUpdates 는 러너가 알리지 않아도 true — 턴 사실은 서버가 만든다(옛 러너도 받는다)", async () => {
+    const h = await setup();
+    const b = await h.runner(TOKEN_B);
+    await b.hello({ capabilities: ["interrupt"] });
+    expect(h.adapter.supports("writer", RUNNER_B_CONNECTION, "threadUpdates")).toBe(true);
+    expect(h.adapter.supports("coder", null, "threadUpdates")).toBe(true);
+  });
+
   it("supports: 그 에이전트를 가진 러너가 없으면 true — 옛 러너로 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게", async () => {
     const h = await setup();
     expect(h.adapter.supports("coder", RUNNER_A_CONNECTION, "threads")).toBe(true);
@@ -703,6 +712,51 @@ describe("send", () => {
     const start = r.runStarts.find((s) => s.deliver.runId === withReactions.runId);
     expect(start?.turnFacts).toBe(`${base}\n${formatReactionFacts(reactions, 2)}`);
     expect(start?.turnFacts).toContain("(외 2개)");
+  });
+
+  it("context.threadUpdates 가 있으면 turnFacts 에 「스레드 소식」 블록이 반응 앞에 붙는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const plain = deliver();
+    await h.adapter.send(plain, { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === plain.runId), "run.start");
+    const base = r.runStarts[0]?.turnFacts ?? "";
+    expect(base).not.toContain("스레드 소식");
+
+    const threadUpdates = [
+      {
+        rootId: randomUUID(),
+        rootExcerpt: "pick 폼",
+        newReplies: 2,
+        recent: [
+          {
+            author: { type: "user" as const, handle: "mia", displayName: "Mia" },
+            text: "이미 제출됐어요",
+            ts: "2026-09-27T00:02:00.000Z",
+          },
+        ],
+      },
+    ];
+    const reactions = [
+      {
+        messageId: randomUUID(),
+        excerpt: "결과",
+        emoji: "👍" as const,
+        by: "mia",
+        at: "2026-09-27T00:01:00.000Z",
+      },
+    ];
+    const base2 = deliver();
+    const withUpdates = {
+      ...base2,
+      context: { ...base2.context, threadUpdates, threadUpdatesOmitted: 1, reactions },
+    };
+    await h.adapter.send(withUpdates, { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === withUpdates.runId), "run.start 2");
+    const start = r.runStarts.find((s) => s.deliver.runId === withUpdates.runId);
+    const block = formatThreadUpdates(threadUpdates, 1, (iso) => iso.slice(11, 16));
+    expect(start?.turnFacts).toBe(`${base}\n${block}\n${formatReactionFacts(reactions)}`);
+    expect(start?.turnFacts).toContain("  [00:02] @mia: 이미 제출됐어요");
   });
 
   it("그 에이전트의 러너가 붙어 있지 않으면 ADAPTER_UNAVAILABLE", async () => {

@@ -7,9 +7,11 @@ import {
   type InboundContext,
   type InboundDeliver,
   type InboundReaction,
+  type InboundThreadUpdate,
 } from "../bridge";
 import type { RunnerBotDefinition } from "../domain";
 import { formatReactionFacts } from "../reactions";
+import { formatThreadUpdates } from "../thread-updates";
 
 // 러너가 모델에게 넘기는 문장은 반응 블록을 뺀 나머지가 여기 한곳(러너 계획 판정 P3) — 반응 블록은 플러그인 헤더와 같은 글을
 // 쓰려고 shared `reactions` 의 `formatReactionFacts` 가 만든다. 채널 규칙 틀은 ADR 0007 4.5 「채널 규칙 틀」을 그대로 옮겼다 —
@@ -214,6 +216,9 @@ export function buildTurnFacts(input: {
   relayDepth?: number;
   reactions?: readonly InboundReaction[];
   reactionsOmitted?: number;
+  /** 대화 세션 런만 — `InboundContext.threadUpdates` */
+  threadUpdates?: readonly InboundThreadUpdate[];
+  threadUpdatesOmitted?: number;
 }): string {
   const sessionInvite = formatSessionInviteLine(input.participants);
   const lines = [
@@ -235,6 +240,8 @@ export function buildTurnFacts(input: {
   if (input.relayDepth !== undefined && input.relayDepth > 0) {
     lines.push(`릴레이: 다른 에이전트의 @멘션으로 이어받은 턴입니다(깊이 ${input.relayDepth}).`);
   }
+  const threadFacts = formatThreadUpdates(input.threadUpdates ?? [], input.threadUpdatesOmitted, hhmm);
+  if (threadFacts) lines.push(threadFacts);
   const reactionFacts = formatReactionFacts(input.reactions ?? [], input.reactionsOmitted);
   if (reactionFacts) lines.push(reactionFacts);
   return lines.join("\n");

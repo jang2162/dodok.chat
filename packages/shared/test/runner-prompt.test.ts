@@ -8,6 +8,7 @@ import {
   renderRunnerPrompt,
   type InboundDeliver,
   type InboundReaction,
+  type InboundThreadUpdate,
 } from "../src";
 
 const RELAY = "다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요.";
@@ -573,6 +574,57 @@ describe("buildTurnFacts — 리액션", () => {
         participants: PARTICIPANTS,
         reactions: [],
         reactionsOmitted: 3,
+      }),
+    ).toBe(base);
+  });
+});
+
+describe("buildTurnFacts — 스레드 소식", () => {
+  const REACTIONS: InboundReaction[] = [
+    { messageId: ROOT, excerpt: "재현 조건", emoji: "👍", by: "mia", at: "2026-09-14T00:15:00Z" },
+  ];
+  const UPDATES: InboundThreadUpdate[] = [
+    {
+      rootId: ROOT,
+      rootExcerpt: "재현 조건",
+      newReplies: 2,
+      recent: [
+        {
+          author: { type: "user", handle: "mia", displayName: "Mia" },
+          text: "고쳤어요",
+          ts: "2026-09-14T00:20:00Z",
+        },
+      ],
+    },
+  ];
+
+  it("스레드 소식은 반응 앞에, 시각은 UTC HH:MM", () => {
+    const base = buildTurnFacts({ conversationTitle: TITLE, participants: PARTICIPANTS });
+    const text = buildTurnFacts({
+      conversationTitle: TITLE,
+      participants: PARTICIPANTS,
+      threadUpdates: UPDATES,
+      threadUpdatesOmitted: 1,
+      reactions: REACTIONS,
+    });
+    const lines = text.split("\n");
+    const head = lines.indexOf("스레드 소식(지난 턴 뒤 이 세션의 스레드에 새로 달린 답글):");
+    const react = lines.findIndex((l) => l.startsWith("반응("));
+    expect(head).toBeGreaterThan(0);
+    expect(head).toBeLessThan(react);
+    expect(lines).toContain("  [00:20] @mia: 고쳤어요");
+    expect(lines).toContain("(외 스레드 1개)");
+    expect(text.startsWith(`${base}\n스레드 소식(`)).toBe(true);
+  });
+
+  it("없거나 빈 배열이면 이전과 같다", () => {
+    const base = buildTurnFacts({ conversationTitle: TITLE, participants: PARTICIPANTS });
+    expect(
+      buildTurnFacts({
+        conversationTitle: TITLE,
+        participants: PARTICIPANTS,
+        threadUpdates: [],
+        threadUpdatesOmitted: 2,
       }),
     ).toBe(base);
   });

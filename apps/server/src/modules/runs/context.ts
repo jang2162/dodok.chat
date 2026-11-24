@@ -276,7 +276,7 @@ function threadRootRow(db: DbOrTx, run: Run) {
 }
 
 /** max UTF-16 단위에서 자른다 — 서러게이트 쌍 가운데서 끊기면 앞 반쪽도 버린다 */
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const last = cut.charCodeAt(cut.length - 1);
@@ -293,7 +293,7 @@ export function attachmentPlaceholder(atts: readonly Attachment[]): string {
   return parts.join(" ");
 }
 
-function withPlaceholder(text: string, atts: readonly Attachment[]): string {
+export function withPlaceholder(text: string, atts: readonly Attachment[]): string {
   const placeholder = attachmentPlaceholder(atts);
   if (!placeholder) return text;
   return text ? `${text}\n${placeholder}` : placeholder;
@@ -330,7 +330,7 @@ function relayRulesFor(
  * 자동화 글은 system:automation 꼴로 보낸다 — 플러그인·러너가 이미 다루는 보낸 사람 꼴이라 그쪽을 바꾸지 않는다(자동화 스펙 결정 9).
  * 자동화를 지웠으면 이름 없이 「자동화」(메시지는 남는다)
  */
-function resolveAuthors(db: DbOrTx, refs: AuthorRef[]): (ref: AuthorRef) => InboundAuthor {
+export function resolveAuthors(db: DbOrTx, refs: AuthorRef[]): (ref: AuthorRef) => InboundAuthor {
   const idsOf = (type: string) => [
     ...new Set(refs.flatMap((r) => (r.authorType === type && r.authorId ? [r.authorId] : []))),
   ];

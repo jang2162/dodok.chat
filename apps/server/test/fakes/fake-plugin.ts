@@ -94,7 +94,7 @@ export const FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   version: "0.0.0-fake",
   sdkVersion: "2026.9.4",
   gatewayVersion: "2026.9.4",
-  capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound", "threads"],
+  capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound", "threads", "threadUpdates"],
 });
 
 export const FAKE_PLUGIN_AGENTS = [{ agentId: "dev", name: "dev" }, { agentId: "fin" }];

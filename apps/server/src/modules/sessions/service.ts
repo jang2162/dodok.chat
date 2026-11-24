@@ -69,6 +69,8 @@ export function ensureSession(
             input.threadRootId === undefined
               ? now
               : earlier(now, channelSessionCursor(tx, input.conversationId, input.agentId)),
+          // 새 세션은 그 전 스레드 답글을 받지 않는다(스레드 소식 스펙 5장). 스레드 세션 행은 이 열을 쓰지 않는다
+          threadRepliesSeenAt: now,
         })
         .returning()
         .get();
@@ -148,7 +150,7 @@ export function ensureProviderSessionId(db: Db, sessionId: string): string {
  * 올랐으면 세션을 새로 연다: 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID, 세션 id 를 스스로 짓는 프로그램은 id 없이
  * 새로 연다) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」).
  * 채널 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
- * 리액션 커서도 지금으로 올린다 — 새 세션은 옛 메시지를 모른다.
+ * 리액션 커서·스레드 답글 커서도 지금으로 올린다 — 새 세션은 옛 메시지를 모른다.
  * 버린 대화가 있었을 때만 true — 세션 id 가 아직 없으면 리비전만 맞춘다. 한 트랜잭션이라 같은 리비전 변화에 두 번 true 가 없다
  */
 export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
@@ -180,6 +182,7 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
         instructionsRevisionAtStart: instructionsRevision,
         lastSyncedAt: now,
         reactionsSeenAt: now,
+        threadRepliesSeenAt: now,
       })
       .where(eq(agentSessions.id, sessionId))
       .run();

@@ -5,6 +5,7 @@ import {
   formatReactionFacts,
   formatSessionInviteLine,
   formatSessionLine,
+  formatThreadUpdates,
   type InboundDeliver,
 } from "@dodok/shared";
 
@@ -46,9 +47,18 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
       lines.push("스레드 최근:");
       for (const m of thread.recentMessages) lines.push(line(m));
     }
-  } else if (d.context.recentMessages.length > 0) {
-    lines.push("최근 대화:");
-    for (const m of d.context.recentMessages) lines.push(line(m));
+  } else {
+    if (d.context.recentMessages.length > 0) {
+      lines.push("최근 대화:");
+      for (const m of d.context.recentMessages) lines.push(line(m));
+    }
+    // 스레드 소식은 대화 세션 런만 — 스레드 세션에는 서버가 싣지 않고, 실려 와도 여기서 한 번 더 막는다
+    const threadUpdates = formatThreadUpdates(
+      d.context.threadUpdates ?? [],
+      d.context.threadUpdatesOmitted,
+      (iso) => hhmm(iso, tz),
+    );
+    if (threadUpdates) lines.push(threadUpdates);
   }
   const reactionFacts = formatReactionFacts(d.context.reactions ?? [], d.context.reactionsOmitted);
   if (reactionFacts) lines.push(reactionFacts);
