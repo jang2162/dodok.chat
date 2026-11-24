@@ -13,7 +13,7 @@ export type BundleLane = {
   messageIds: string[];
   /** 그 런의 run_error(seq 순) */
   systemIds: string[];
-  /** 저장소에 있으면 그 상태, 없으면(지난 기록) 메시지로 짐작: 에이전트 글 있음 → done, run_error 만 → error */
+  /** 저장소 → 루트 글의 rootRuns → 메시지로 짐작(에이전트 글 있음 → done, run_error 만 → error) 순 */
   status: RunState["status"];
   firstSeq?: number;
 };
@@ -45,7 +45,7 @@ type Draft = {
 };
 
 /**
- * 타임라인 + 런 저장소 → 묶음(루트 id → 묶음). 판정은 실제 런으로 한다(설계 「정한 것」, 사용자 결정): 루트가 불러온 `items` 에 있는 사람
+ * 타임라인 + 런 저장소 → 묶음(루트 id → 묶음). 줄은 저장소 런·루트 글의 rootRuns·메시지의 runRoot 를 합쳐 세운다. 판정은 실제 런으로 한다(설계 「정한 것」, 사용자 결정): 루트가 불러온 `items` 에 있는 사람
  * 최상위 글이고, `rootMessageId` 가 그 글인 런의 에이전트가 서로 다른 2명 이상(진행 중 런 포함). 멘션 수는 보지 않는다.
  * 같은 런이 저장소와 메시지 양쪽에 있으면 저장소 상태가 이긴다
  */
@@ -63,6 +63,14 @@ export function computeBundles(items: readonly Message[], runs: readonly BundleR
   };
   const storeRuns = new Map(runs.map((r) => [r.runId, r]));
   for (const r of runs) draftOf(r.runId, r.agentId, r.rootMessageId, r.triggerMessageId).status = r.status;
+  // 루트 글의 rootRuns(서버가 새로 불러올 때 싣는다) — 메시지 없이 중지·실패한 런도 줄이 선다. 저장소에 있는 런은 저장소가 이긴다
+  for (const m of items) {
+    if (!m.rootRuns || !canRoot(m)) continue;
+    for (const r of m.rootRuns) {
+      if (storeRuns.has(r.runId)) continue;
+      draftOf(r.runId, r.agentId, m.id, r.triggerMessageId).status = r.status;
+    }
+  }
   for (const m of items) {
     const runId =
       m.authorType === "agent"

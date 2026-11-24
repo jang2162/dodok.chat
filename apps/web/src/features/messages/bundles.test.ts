@@ -93,6 +93,23 @@ describe("computeBundles", () => {
     ]);
   });
 
+  it("저장소에 없고 메시지도 없는 aborted 런은 루트 글의 rootRuns 로 줄이 되어 묶음을 지킨다", () => {
+    const withRuns = msg(1, {
+      rootRuns: [
+        { runId: RA, agentId: AGENT, status: "done", triggerMessageId: R },
+        { runId: RB, agentId: FIN, status: "aborted", triggerMessageId: R },
+      ],
+    });
+    const lanes = computeBundles([withRuns, reply(2, AGENT, RA)], []).get(R)?.lanes ?? [];
+    expect(lanes.map((l) => [l.runId, l.status, l.messageIds.length])).toEqual([
+      [RA, "done", 1],
+      [RB, "aborted", 0],
+    ]);
+    // 저장소 상태가 rootRuns 를 이긴다
+    const live = computeBundles([withRuns, reply(2, AGENT, RA)], [run({ runId: RB, agentId: FIN })]);
+    expect(live.get(R)?.lanes.find((l) => l.runId === RB)?.status).toBe("streaming");
+  });
+
   it("run_error 만 남은 런은 error 줄", () => {
     const err = runError(3, FIN, RB);
     const lane = computeBundles([root, reply(2, AGENT, RA), err], []).get(R)?.lanes[1];
