@@ -394,6 +394,19 @@ export const ThreadSummary = z.object({
 });
 export type ThreadSummary = z.infer<typeof ThreadSummary>;
 
+/**
+ * 메시지를 낸 런과 그 런이 시작된 루트 글 — 웹이 여러 에이전트 답을 루트 아래 묶을 때 쓴다(답 묶음 설계).
+ * 서버가 에이전트 메시지(runId)와 run_error 시스템 메시지(systemMeta.runId)에만 runs 와 맞춰 붙인다. 옛 서버면 없다
+ */
+export const MessageRunRoot = z.object({
+  runId: Id,
+  agentId: Id,
+  rootMessageId: Id,
+  /** 런을 부른 글 — 릴레이면 부른 에이전트의 글. interaction 런이면 없다 */
+  triggerMessageId: Id.optional(),
+});
+export type MessageRunRoot = z.infer<typeof MessageRunRoot>;
+
 export const Message = z.object({
   id: Id,
   channelId: Id,
@@ -425,6 +438,7 @@ export const Message = z.object({
   threadRootId: Id.optional(), // 스레드 답글이면 그 루트. 스레드 안의 스레드는 없다 — 루트만 가리킨다
   threadSummary: ThreadSummary.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
+  runRoot: MessageRunRoot.optional(),
   clientMsgId: z.string().max(64).optional(), // 사용자 전송 멱등 키
   externalId: z.string().max(128).optional(), // 브리지 outboundId
   createdAt: IsoDateTime,
@@ -545,6 +559,10 @@ export const RunState = Run.pick({
   error: true,
   startedAt: true,
   endedAt: true,
+}).extend({
+  // 선택 — Run 에서는 rootMessageId 가 필수라 pick 하면 옛 서버의 run.state 가 거부된다(답 묶음 설계)
+  rootMessageId: Id.optional(),
+  triggerMessageId: Id.optional(),
 });
 export type RunState = z.infer<typeof RunState>;
 
