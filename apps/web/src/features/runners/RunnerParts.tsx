@@ -88,7 +88,10 @@ function ProgramRow({
           <span className={dim ? "font-medium text-muted-foreground" : "font-medium"}>{name}</span>{" "}
           <span className="text-muted-foreground">
             {state === "unsupported"
-              ? "이 러너 판은 아직 모릅니다"
+              ? // hello 에 실린 프로그램이면 러너는 그 프로그램을 안다 — 드라이버가 없다는 사유만 아래에 둔다
+                status
+                ? null
+                : "이 러너 판은 아직 모릅니다"
               : status && state !== "not-installed"
                 ? summaryOf(status)
                 : null}

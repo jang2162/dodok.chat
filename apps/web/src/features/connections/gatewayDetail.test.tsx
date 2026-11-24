@@ -114,6 +114,21 @@ describe("머리·메뉴·카드(연결 재설계 스펙 목표 2·3)", () => {
     expect(await within(gw).findByRole("group", { name: "「사무실」 Gateway 삭제" })).toBeInTheDocument();
   });
 
+  it("확인 줄이 열려 있으면 「⋯」는 메뉴가 닫힌 동안만 그 줄을 aria-controls 로 가리킨다 — 열린 동안은 메뉴", async () => {
+    stubSetupServer();
+    renderConnection();
+    const gw = await detail();
+    const trigger = within(gw).getByRole("button", { name: "사무실 더 보기" });
+    await userEvent.click(within(await openMenu(gw)).getByRole("menuitem", { name: "삭제" }));
+    const confirm = await within(gw).findByRole("group", { name: "「사무실」 Gateway 삭제" });
+    expect(confirm.id).not.toBe("");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(trigger).toHaveAttribute("aria-controls", confirm.id);
+    const menu = await openMenu(gw);
+    expect(menu.id).not.toBe("");
+    expect(trigger).toHaveAttribute("aria-controls", menu.id);
+  });
+
   it("카드 셋 — 상태(Gateway·플러그인 칸)·에이전트·브리지 토큰, 브리지 토큰 머리 동작 「새 토큰 발급」", async () => {
     stubSetupServer();
     renderConnection();

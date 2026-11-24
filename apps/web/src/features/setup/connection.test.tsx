@@ -5,6 +5,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { makeAgent } from "../../../test/agentsPage";
 import { ME, TEST_GATEWAY } from "../../../test/shellApi";
 import {
   PUBLIC_URL,
@@ -38,16 +39,29 @@ const installBox = async () =>
 
 describe("권한", () => {
   it("관리할 수 없는 사람(남의 Gateway 의 member)은 머리(이름·상태)와 에이전트만 — 플러그인·브리지 토큰이 없고 setup API 를 부르지 않는다", async () => {
-    const server = stubSetupServer();
+    // 다른 Gateway 의 에이전트를 섞는다 — 카드는 이 Gateway 의 것만 센다
+    const server = stubSetupServer({
+      agents: [
+        makeAgent({ providerAgentId: "dev", handle: "dev", name: "Dev 에이전트" }),
+        makeAgent({
+          providerAgentId: "main",
+          handle: "main",
+          name: "Main 에이전트",
+          gateway: { id: "0190a000-0000-7000-8000-00000000beef", name: "집" },
+        }),
+      ],
+    });
     renderConnection({ ...ME, role: "member" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
     const agents = await within(gw).findByRole("region", { name: "에이전트" });
-    // 개수는 카드 머리의 제목 옆 — 이 Gateway 의 에이전트 0
+    await within(agents).findByText("Dev 에이전트");
+    expect(within(agents).queryByText("Main 에이전트")).not.toBeInTheDocument();
+    // 개수는 카드 머리의 제목 옆 — 이 Gateway 의 에이전트 1
     expect(
       within(agents).getByRole("heading", { level: 2, name: "에이전트" }).nextElementSibling,
-    ).toHaveTextContent(/^0$/);
+    ).toHaveTextContent(/^1$/);
     expect(screen.queryByRole("region", { name: "플러그인" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "브리지 토큰" })).not.toBeInTheDocument();
     expect(gw).not.toHaveTextContent("wss://");

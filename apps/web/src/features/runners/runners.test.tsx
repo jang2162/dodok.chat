@@ -1,5 +1,6 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { RUNNER_NO_DRIVER_REASON } from "@dodok/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeAgent } from "../../../test/agentsPage";
 import {
@@ -119,6 +120,35 @@ describe("러너 카드", () => {
     expect(codex).not.toHaveTextContent("권한 상한");
     const opencode = within(programs).getByRole("listitem", { name: "OpenCode" });
     expect(within(opencode).getByText("지원 예정")).toHaveAttribute("data-tone", "muted");
+    expect(opencode).toHaveTextContent("이 러너 판은 아직 모릅니다");
+  });
+
+  it("프로그램 줄 — hello 에 드라이버 없음 사유로 실린 프로그램은 「지원 예정」과 사유만(「이 러너 판은 아직 모릅니다」·설치 방법 없음)", async () => {
+    stub({
+      runners: [
+        runnerOf(1, {
+          label: "맥북",
+          programs: [
+            programOf(),
+            programOf({
+              program: "codex",
+              available: false,
+              auth: "unknown",
+              reason: RUNNER_NO_DRIVER_REASON,
+            }),
+          ],
+        }),
+      ],
+    });
+    renderRunnersPage();
+    const programs = within(await card("맥북")).getByRole("region", { name: "에이전트 프로그램" });
+    const codex = within(programs).getByRole("listitem", { name: "Codex" });
+    expect(within(codex).getByText("지원 예정")).toHaveAttribute("data-tone", "muted");
+    expect(within(codex).getByText(RUNNER_NO_DRIVER_REASON)).toBeInTheDocument();
+    expect(codex).not.toHaveTextContent("이 러너 판은 아직 모릅니다");
+    expect(within(codex).queryByText("설치 방법")).not.toBeInTheDocument();
+    // hello 에 없는 프로그램만 「이 러너 판은 아직 모릅니다」
+    const opencode = within(programs).getByRole("listitem", { name: "OpenCode" });
     expect(opencode).toHaveTextContent("이 러너 판은 아직 모릅니다");
   });
 
