@@ -20,6 +20,9 @@ import {
 const MEMBER = { ...ME, role: "member" };
 const LOCKED = "관리자만 바꿀 수 있습니다";
 const region = (name: string) => screen.findByRole("region", { name });
+/** 패널 아래 저장 막대 — 바뀐 칸이 있을 때만 있다 */
+const saveBar = () => screen.getByRole("region", { name: "저장하지 않은 변경" });
+const saveBarButton = () => within(saveBar()).getByRole("button", { name: /^저장/ });
 /** 「멤버」 칸의 「초대」를 눌러 연 대화상자 */
 async function openInvite() {
   const invite = within(await membersSection()).getByRole("button", { name: "초대" });
@@ -72,7 +75,7 @@ describe("member 의 채널 설정", () => {
     expect(name).toBeEnabled();
     await userEvent.clear(name);
     await userEvent.type(name, "잡담");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     await waitFor(() => expect(server.writes()).toHaveLength(1));
     expect(server.writes()[0]?.body).toEqual({ name: "잡담", topic: null });
   });
@@ -126,8 +129,11 @@ describe("member 의 채널 설정", () => {
     stubSettingsServer({ me: { ...ME, role: "admin" }, members: members([DEV]) });
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
-    expect(within(section).getByRole("textbox", { name: "채널 프롬프트" })).toBeEnabled();
-    expect(within(section).getByRole("button", { name: "저장" })).toBeInTheDocument();
+    const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
+    expect(box).toBeEnabled();
+    // 고치면 저장 막대에 든다
+    await userEvent.type(box, "짧게");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
     expect(screen.queryByText(LOCKED)).toBeNull();
     const list = await agentList();
     expect(await within(list).findByRole("button", { name: "@dev 채널 프롬프트 편집" })).toBeInTheDocument();
@@ -155,7 +161,7 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
     await userEvent.clear(box);
     await userEvent.type(box, "새 지시");
     role = "member"; // 그 사이 owner 가 역할을 내렸다
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" }));
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(await within(section).findByText(LOCKED)).toBeInTheDocument();
@@ -183,10 +189,67 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
     await userEvent.clear(turns);
     await userEvent.type(turns, "7");
     role = "member";
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(await within(section).findByText(LOCKED)).toBeInTheDocument();
     expect(within(section).getByRole("textbox", { name: "턴 상한" })).toBeDisabled();
     expect(within(section).getByRole("textbox", { name: "턴 상한" })).toHaveValue("3");
     expect(server.writes()).toHaveLength(1);
+  });
+});
+
+describe("저장 막대와 역할", () => {
+  it("member: 잠긴 섹션은 막대에 들지 않는다 — 이름만 고치면 「바뀐 항목 1개」, 저장은 기본 PATCH 하나", async () => {
+    const server = stubSettingsServer({ me: MEMBER, channel: { prompt: "짧게 답해" } });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    await userEvent.type(within(basic).getByRole("textbox", { name: "이름" }), "-2");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+    await userEvent.click(saveBarButton());
+    await waitFor(() =>
+      expect(server.writes().map((c) => c.body)).toEqual([{ name: "general-2", topic: null }]),
+    );
+  });
+
+  it("고치던 중 강등되면(403 → me 다시) 그 섹션 초안은 빠지고 서버 값 — 막대에는 남은 것만", async () => {
+    let role = "admin";
+    const server = stubSettingsServer({
+      me: { ...ME, role: "admin" },
+      channel: { prompt: "원래 지시", relayPolicy: { maxRelayTurns: 3, allowPairs: "all" } },
+      override: ({ method, url, body }) => {
+        if (url === "/api/v1/auth/me") return new Response(JSON.stringify({ ...ME, role }), { status: 200 });
+        // 서버는 관리 칸(프롬프트·릴레이 정책)을 막는다
+        if (method === "PATCH" && (body?.prompt !== undefined || body?.relayPolicy !== undefined))
+          return apiErr(403, "FORBIDDEN", "channel field requires admin");
+        return undefined;
+      },
+    });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    const prompt = await region("채널 프롬프트");
+    const relay = await region("릴레이 정책");
+    await userEvent.clear(within(prompt).getByRole("textbox", { name: "채널 프롬프트" }));
+    await userEvent.type(within(prompt).getByRole("textbox", { name: "채널 프롬프트" }), "새 지시");
+    const turns = within(relay).getByRole("textbox", { name: "턴 상한" });
+    await userEvent.clear(turns);
+    await userEvent.type(turns, "5");
+    await userEvent.type(within(basic).getByRole("textbox", { name: "이름" }), "-2");
+    expect(within(saveBar()).getByText("바뀐 항목 3개")).toBeInTheDocument();
+    role = "member";
+    await userEvent.click(saveBarButton());
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" }));
+    expect(await within(prompt).findByText(LOCKED)).toBeInTheDocument();
+    expect(within(prompt).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("원래 지시");
+    expect(await within(relay).findByText(LOCKED)).toBeInTheDocument();
+    expect(within(relay).getByRole("textbox", { name: "턴 상한" })).toHaveValue("3");
+    // 기본은 저장됐고, 잠긴 두 섹션은 막대에서 빠졌다
+    expect(await within(basic).findByRole("status")).toHaveTextContent("저장했습니다");
+    await waitFor(() => expect(screen.queryByText(/바뀐 항목/)).not.toBeInTheDocument());
+    // 잠기기 전에 막대가 차례로 보낸 셋 — 403 토스트는 한 줄(같은 id)
+    expect(server.writes().map((c) => Object.keys(c.body ?? {}))).toEqual([
+      ["name", "topic"],
+      ["prompt"],
+      ["relayPolicy"],
+    ]);
   });
 });

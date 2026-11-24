@@ -594,10 +594,12 @@ describe("채널 설정 「세션」 칸", () => {
     );
     renderRoute(`/c/${CH}/s/${A}/settings`);
     const region = await section();
-    const managersOnly = within(region).getByRole("radio", { name: "세션 관리자만" });
-    expect(within(region).getByRole("radio", { name: "누구나" })).toBeChecked();
+    // 세그먼트 — 누르는 즉시 저장(저장 막대에 들지 않는다)
+    const policy = within(region).getByRole("group", { name: "새 세션을 만들 수 있는 사람" });
+    const managersOnly = within(policy).getByRole("button", { name: "세션 관리자만" });
+    expect(within(policy).getByRole("button", { name: "누구나" })).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(managersOnly);
-    await waitFor(() => expect(managersOnly).toBeChecked());
+    await waitFor(() => expect(managersOnly).toHaveAttribute("aria-pressed", "true"));
     expect(server.writes()).toEqual([
       { method: "PATCH", url: `/api/v1/channels/${CH}`, body: { sessionPolicy: { create: "managers" } } },
     ]);
@@ -632,11 +634,12 @@ describe("채널 설정 「세션」 칸", () => {
     renderRoute(`/c/${CH}/s/${A}/settings`);
     const region = await section();
     expect(within(region).getByText("관리자만 바꿀 수 있습니다")).toBeInTheDocument();
-    const managersOnly = within(region).getByRole("radio", { name: "세션 관리자만" });
-    expect(managersOnly).toBeChecked();
+    const policy = within(region).getByRole("group", { name: "새 세션을 만들 수 있는 사람" });
+    const managersOnly = within(policy).getByRole("button", { name: "세션 관리자만" });
+    expect(managersOnly).toHaveAttribute("aria-pressed", "true");
     expect(managersOnly).toBeDisabled();
-    expect(within(region).getByRole("radio", { name: "누구나" })).toBeDisabled();
-    await userEvent.click(within(region).getByRole("radio", { name: "누구나" }));
+    expect(within(policy).getByRole("button", { name: "누구나" })).toBeDisabled();
+    await userEvent.click(within(policy).getByRole("button", { name: "누구나" }));
     expect(
       within(await within(region).findByRole("list", { name: "세션 관리자" })).getByText("@owner — 주인"),
     ).toBeInTheDocument();

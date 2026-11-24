@@ -200,7 +200,9 @@ describe("채널 설정 패널 「채널 보관」", () => {
   it("admin: 확인 문구 → 연속 클릭에도 한 번 보내고 화면이 읽기 전용으로", async () => {
     server.role = "admin";
     renderRoute(`/c/${CH}/s/${CH}/settings`);
+    // 맨 아래 접힌 줄 — 펼친 뒤 「이 채널 보관」
     await userEvent.click(await screen.findByRole("button", { name: "채널 보관" }));
+    await userEvent.click(await screen.findByRole("button", { name: "이 채널 보관" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("#general 을 보관합니다.")).toBeInTheDocument();
     const confirm = within(dialog).getByRole("button", { name: "보관" });
@@ -236,8 +238,9 @@ describe("보관을 모르는 탭의 설정 저장", () => {
     server.live = [];
     server.archived = [{ ...LIVE, archivedAt: ARCHIVED_AT }, OLD];
     await userEvent.type(name, "-x");
-    const basic = screen.getByRole("region", { name: "기본" });
-    await userEvent.click(within(basic).getByRole("button", { name: "저장" }));
+    // 저장은 패널 아래 저장 막대 하나
+    const bar = screen.getByRole("region", { name: "저장하지 않은 변경" });
+    await userEvent.click(within(bar).getByRole("button", { name: "저장" }));
 
     expect(await screen.findByTestId("channel-settings-archived")).toBeInTheDocument();
     await waitFor(() => expect(composerBox()).toBeNull());

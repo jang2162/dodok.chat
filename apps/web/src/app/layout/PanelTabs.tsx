@@ -1,5 +1,13 @@
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
-import { FolderIcon, XIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  FolderIcon,
+  type LucideIcon,
+  MessagesSquareIcon,
+  SlidersHorizontalIcon,
+  UserIcon,
+  XIcon,
+} from "lucide-react";
 import { type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ThreadOpener } from "@/features/threads/threadOpener";
@@ -22,6 +30,8 @@ const TABS = [
     title: "채널 설정",
     to: "/c/$channelId/s/$conversationId/settings",
     scroll: true,
+    icon: SlidersHorizontalIcon,
+    badge: "새 항목",
   },
   {
     id: "activity",
@@ -29,6 +39,8 @@ const TABS = [
     title: "활동",
     to: "/c/$channelId/s/$conversationId/activity",
     scroll: false,
+    icon: ActivityIcon,
+    badge: "승인 대기",
   },
   {
     id: "files",
@@ -36,6 +48,8 @@ const TABS = [
     title: "파일",
     to: "/c/$channelId/s/$conversationId/files",
     scroll: true,
+    icon: FolderIcon,
+    badge: "새 항목",
   },
   {
     id: "thread",
@@ -43,6 +57,8 @@ const TABS = [
     title: "스레드",
     to: "/c/$channelId/s/$conversationId/t/$rootId",
     scroll: false,
+    icon: MessagesSquareIcon,
+    badge: "새 항목",
   },
   // 프로필은 연 동안에만 머리에 있다 — 누구의 것인지(`kind`·`id`)는 주소에서 온다(프로필 스펙 3.1)
   {
@@ -51,6 +67,8 @@ const TABS = [
     title: "프로필",
     to: "/c/$channelId/s/$conversationId/p/$kind/$id",
     scroll: true,
+    icon: UserIcon,
+    badge: "새 항목",
   },
 ] as const satisfies ReadonlyArray<{
   id: PanelTab;
@@ -58,6 +76,9 @@ const TABS = [
   title: string;
   to: string;
   scroll: boolean;
+  icon: LucideIcon;
+  /** 머리 배지(`badges`)의 수가 무엇을 세는지 — 탭 이름 뒤에 붙는다(「활동, 승인 대기 2」) */
+  badge: string;
 }>;
 
 const tabOf = (id: PanelTab) => TABS.find((t) => t.id === id) ?? TABS[0];
@@ -76,8 +97,9 @@ export function usePanelTab(): PanelTab | undefined {
 }
 
 /**
- * 채널 오른쪽 패널의 바깥 틀(설계 5.1). 넓은 화면은 오른쪽 360px 패널, 좁은 화면(`useIsNarrow`)은 전체 화면 시트
- * (스펙 2.4). 머리에 탭 둘(설정·활동)과 닫기가 있고 내용은 `children` — 설정 패널·활동 패널이 같은 틀을 쓴다.
+ * 채널 오른쪽 패널의 바깥 틀(설계 5.1). 넓은 화면은 오른쪽 384px 패널, 좁은 화면(`useIsNarrow`)은 전체 화면 시트
+ * (스펙 2.4). 머리는 한 줄 — 탭(세그먼트 꼴)과 닫기. 지금 탭의 제목은 보이지 않게 남겨 패널의 이름으로 쓴다(패널 재설계 스펙 목표 5).
+ * 내용은 `children` — 설정 패널·활동 패널이 같은 틀을 쓴다.
  *
  * 라우트 컴포넌트(설정·활동)가 아니라 그 **부모**(ChannelPage)가 그린다 — 탭을 옮겨도 머리의 링크가
  * 언마운트되지 않아야 초점이 `<body>` 로 떨어지지 않는다(브라우저 검증 D3). 탭 내용만 `<Outlet/>` 으로 바뀐다.
@@ -97,6 +119,7 @@ export function PanelTabs({
   openerRef,
   threadOpenerRef,
   only,
+  badges,
 }: {
   channelId: string;
   /** 보고 있는 세션 — 탭을 옮기거나 닫아도 그 세션에 머문다(채널 머리·설정·활동은 채널 단위 그대로) */
@@ -113,6 +136,8 @@ export function PanelTabs({
   threadOpenerRef?: RefObject<ThreadOpener | null>;
   /** 머리에 둘 탭(없으면 전부) — 에이전트 DM 은 설정·스레드가 없다(에이전트 DM 계획 판정 PD2) */
   only?: readonly PanelTab[];
+  /** 탭 머리의 수(활동이면 승인 대기 수) — 0 이나 없음이면 그리지 않는다 */
+  badges?: Partial<Record<PanelTab, number>>;
 }) {
   const narrow = useIsNarrow();
   const navigate = useNavigate();
@@ -191,18 +216,20 @@ export function PanelTabs({
               target.focus();
             }}
           >
-            <div className="flex h-14 shrink-0 items-center border-b px-4 pr-12">
-              <SheetTitle>{tab.title}</SheetTitle>
+            {/* 닫기는 시트의 것(오른쪽 위 「닫기」)이라 그 자리를 비워 둔다 */}
+            <div className="flex h-12 shrink-0 items-center border-b pr-12 pl-2">
+              <SheetTitle className="sr-only">{tab.title}</SheetTitle>
+              <TabBar
+                ref={tabsRef}
+                channelId={channelId}
+                conversationId={conversationId}
+                rootId={rootId}
+                profile={profile}
+                active={active}
+                only={only}
+                badges={badges}
+              />
             </div>
-            <TabBar
-              ref={tabsRef}
-              channelId={channelId}
-              conversationId={conversationId}
-              rootId={rootId}
-              profile={profile}
-              active={active}
-              only={only}
-            />
             <div ref={slot} className={bodyClass} />
           </SheetContent>
         </Sheet>
@@ -216,13 +243,22 @@ export function PanelTabs({
         data-testid="page-channel-panel"
         data-panel-tab={active}
         aria-labelledby={titleId}
-        className="flex w-[360px] shrink-0 flex-col border-l"
+        className="flex w-[384px] shrink-0 flex-col border-l"
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-          <h2 id={titleId} className="font-semibold">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-2">
+          <h2 id={titleId} className="sr-only">
             {tab.title}
           </h2>
-          <Button asChild variant="ghost" size="icon-sm">
+          <TabBar
+            channelId={channelId}
+            conversationId={conversationId}
+            rootId={rootId}
+            profile={profile}
+            active={active}
+            only={only}
+            badges={badges}
+          />
+          <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
             {/*
              * 이 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(D3·D13·D14 와 같은 부류). 패널이 내려가기
              * **전에** 헤더의 「채널 설정」 링크로 옮긴다 — 좁은 화면 시트가 닫힐 때 돌려주는 자리와 같다(D14).
@@ -243,21 +279,16 @@ export function PanelTabs({
             </Link>
           </Button>
         </div>
-        <TabBar
-          channelId={channelId}
-          conversationId={conversationId}
-          rootId={rootId}
-          profile={profile}
-          active={active}
-          only={only}
-        />
         <div ref={slot} className={bodyClass} />
       </aside>
     </>
   );
 }
 
-/** 탭 머리. 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다. 스레드 탭은 연 스레드가 있을 때만 */
+/**
+ * 탭 머리 — 세그먼트 꼴(아이콘 + 글). 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다.
+ * 스레드·프로필 탭은 연 것이 있을 때만. 배지 수는 보이는 숫자와 따로 접근 이름에 붙인다(「활동, 승인 대기 2」)
+ */
 function TabBar({
   channelId,
   conversationId,
@@ -265,6 +296,7 @@ function TabBar({
   profile,
   active,
   only,
+  badges,
   ref,
 }: {
   channelId: string;
@@ -273,54 +305,57 @@ function TabBar({
   profile?: { kind: string; id: string };
   active: PanelTab;
   only?: readonly PanelTab[];
+  badges?: Partial<Record<PanelTab, number>>;
   ref?: RefObject<HTMLElement | null>;
 }) {
-  const className = (id: PanelTab) =>
-    cn(
-      "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-      id === active
-        ? "border-primary text-foreground"
-        : "border-transparent text-muted-foreground hover:text-foreground",
-    );
+  const shown = TABS.filter(
+    (tab) =>
+      (only === undefined || only.includes(tab.id)) &&
+      (tab.id !== "profile" || profile !== undefined) &&
+      (tab.id !== "thread" || rootId !== undefined),
+  );
   return (
-    <nav ref={ref} aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
-      {TABS.filter((tab) => only === undefined || only.includes(tab.id)).map((tab) =>
-        tab.id === "profile" ? (
-          profile !== undefined && (
-            <Link
-              key={tab.id}
-              data-tab-id={tab.id}
-              to={tab.to}
-              params={{ channelId, conversationId, ...profile }}
-              className={className(tab.id)}
-            >
-              {tab.label}
-            </Link>
-          )
-        ) : tab.id === "thread" ? (
-          rootId !== undefined && (
-            <Link
-              key={tab.id}
-              data-tab-id={tab.id}
-              to={tab.to}
-              params={{ channelId, conversationId, rootId }}
-              className={className(tab.id)}
-            >
-              {tab.label}
-            </Link>
-          )
-        ) : (
+    <nav
+      ref={ref}
+      aria-label="패널 탭"
+      className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-md bg-muted p-0.5"
+    >
+      {shown.map((tab) => {
+        const Icon = tab.icon;
+        const count = badges?.[tab.id] ?? 0;
+        return (
           <Link
             key={tab.id}
             data-tab-id={tab.id}
             to={tab.to}
-            params={{ channelId, conversationId }}
-            className={className(tab.id)}
+            params={{
+              channelId,
+              conversationId,
+              ...(tab.id === "thread" ? { rootId } : {}),
+              ...(tab.id === "profile" ? profile : {}),
+            }}
+            aria-label={count > 0 ? `${tab.label}, ${tab.badge} ${count}` : undefined}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-sm px-2.5 py-1 text-sm font-medium whitespace-nowrap transition-colors",
+              "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              tab.id === active
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground",
+            )}
           >
+            <Icon aria-hidden="true" className="size-3.5" />
             {tab.label}
+            {count > 0 && (
+              <span
+                aria-hidden="true"
+                className="min-w-4 rounded-full bg-[color-mix(in_oklch,var(--warning)_30%,transparent)] px-1 text-center text-xs leading-4 text-foreground tabular-nums"
+              >
+                {count}
+              </span>
+            )}
           </Link>
-        ),
-      )}
+        );
+      })}
     </nav>
   );
 }
