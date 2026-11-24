@@ -715,7 +715,8 @@ function resetKeyOf(row: Row): unknown {
 /** groupRows 는 갱신마다 행 객체를 새로 만든다 — 내용(메시지·보내는 중 항목의 정체성, 머리 여부)이 같으면 다시 그리지 않는다 */
 function sameRow(a: Row, b: Row): boolean {
   if (a.kind !== b.kind || a.key !== b.key) return false;
-  if (a.kind === "message" && b.kind === "message") return a.message === b.message && a.head === b.head;
+  if (a.kind === "message" && b.kind === "message")
+    return a.message === b.message && a.head === b.head && a.activity === b.activity;
   if (a.kind === "pending" && b.kind === "pending") return a.pending === b.pending;
   // 구분선(날짜)·버블(runId)·승인(approvalId)은 key 에 다 들어 있다 — 카드 안은 저마다 스토어를 구독한다
   return true;
@@ -731,7 +732,7 @@ const RowView = memo(
         return row.message.kind === "system" ? (
           <SystemCard message={row.message} />
         ) : (
-          <MessageItem message={row.message} head={row.head} inThread={inThread} />
+          <MessageItem message={row.message} head={row.head} inThread={inThread} activity={row.activity} />
         );
       case "pending":
         return <PendingItem pending={row.pending} />;

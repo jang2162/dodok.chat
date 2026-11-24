@@ -44,7 +44,21 @@ export type ApprovalRow = {
   reason?: ApprovalReason;
 };
 export type ErrorRow = { kind: "error"; key: string; message: string };
-export type ActivityRow = ToolRow | StepRow | SubagentRow | ApprovalRow | ErrorRow;
+/**
+ * 추론 한 덩이(START~END). 글은 델타를 이은 것 — START/END 만 오는 모델(요약·빈 thinking)이면 빈 글이다.
+ * `truncated` 는 서버가 런의 추론 저장 상한에 닿아 뒤를 버렸다는 표시(`CUSTOM reasoning_truncated`)
+ */
+export type ReasoningRow = {
+  kind: "reasoning";
+  key: string;
+  text: string;
+  state: "running" | "done";
+  truncated?: boolean;
+};
+export type ActivityRow = ToolRow | StepRow | SubagentRow | ApprovalRow | ErrorRow | ReasoningRow;
+
+/** 서버가 런의 추론 저장 상한에 닿았을 때 남기는 CUSTOM 이름(server orchestrator `REASONING_TRUNCATED_EVENT`) */
+export const REASONING_TRUNCATED = "reasoning_truncated";
 
 /**
  * 승인 레코드에서 화면이 쓰는 값만. 타임라인 이벤트 `APPROVAL_REQUESTED` 의 `toolCallId` 는 실물 프레임 도착
@@ -71,10 +85,14 @@ const TIMELINE_TYPES: ReadonlySet<RunEvent["type"]> = new Set([
   "APPROVAL_REQUESTED",
   "APPROVAL_RESOLVED",
   "RUN_ERROR",
+  "REASONING_MESSAGE_START",
+  "REASONING_MESSAGE_CONTENT",
+  "REASONING_MESSAGE_END",
 ] satisfies ReadonlyArray<RunEvent["type"]>);
 
-/** 이 이벤트가 타임라인 행에 쓰이는가 — `toActivityRows` 가 버릴 것을 미리 거른다 */
-export const isTimelineEvent = (event: RunEvent): boolean => TIMELINE_TYPES.has(event.type);
+/** 이 이벤트가 타임라인 행에 쓰이는가 — `toActivityRows` 가 버릴 것을 미리 거른다. CUSTOM 은 추론 잘림 표시만 */
+export const isTimelineEvent = (event: RunEvent): boolean =>
+  TIMELINE_TYPES.has(event.type) || (event.type === "CUSTOM" && event.name === REASONING_TRUNCATED);
 
 /** 행이 되는 것만 남긴다. 버릴 것이 없으면 받은 배열을 그대로 돌려준다 */
 export function keepTimelineEvents(events: readonly RunEvent[]): readonly RunEvent[] {
@@ -96,6 +114,9 @@ export function toActivityRows(
   const openSteps = new Map<string, StepRow>();
   const subagents = new Map<string, SubagentRow>();
   const approvals = new Map<string, ApprovalRow>();
+  /** 아직 안 닫힌 추론 — 같은 messageId 가 END 뒤에 다시 오면 새 덩이다(그 자리, 시간 순) */
+  const openReasoning = new Map<string, ReasoningRow>();
+  let lastReasoning: ReasoningRow | undefined;
 
   const add = <R extends ActivityRow>(row: R): R => {
     rows.push(row);
@@ -140,8 +161,34 @@ export function toActivityRows(
     return row;
   };
 
+  const reasoning = (messageId: string, seq: number): ReasoningRow => {
+    const found = openReasoning.get(messageId);
+    if (found) return found;
+    const row = add<ReasoningRow>({ kind: "reasoning", key: `reasoning:${seq}`, text: "", state: "running" });
+    openReasoning.set(messageId, row);
+    lastReasoning = row;
+    return row;
+  };
+
   for (const event of events) {
     switch (event.type) {
+      case "REASONING_MESSAGE_START":
+        reasoning(event.messageId, event.seq);
+        break;
+      case "REASONING_MESSAGE_CONTENT": {
+        const row = reasoning(event.messageId, event.seq);
+        row.text += event.delta;
+        break;
+      }
+      case "REASONING_MESSAGE_END": {
+        reasoning(event.messageId, event.seq).state = "done";
+        openReasoning.delete(event.messageId);
+        break;
+      }
+      case "CUSTOM":
+        // 상한에 닿은 덩이는 표시 바로 앞의 추론이다 — 서버가 잘린 글을 먼저 내보낸 뒤 표시를 남긴다
+        if (event.name === REASONING_TRUNCATED && lastReasoning) lastReasoning.truncated = true;
+        break;
       case "TOOL_CALL_START": {
         const row = tool(event.toolCallId);
         if (row.name === UNKNOWN_TOOL) row.name = event.toolCallName;
@@ -212,7 +259,7 @@ export function toActivityRows(
         add<ErrorRow>({ kind: "error", key: `error:${event.seq}`, message: event.message });
         break;
       default:
-        // 텍스트 델타·런 수명(RUN_QUEUED·STARTED·FINISHED·ABORTED·STATE_SNAPSHOT)·CUSTOM 은 행이 아니다.
+        // 텍스트 델타·런 수명(RUN_QUEUED·STARTED·FINISHED·ABORTED·STATE_SNAPSHOT)은 행이 아니다.
         // 런의 끝(중지·완료)은 목록·머리의 상태 배지가 보인다
         break;
     }
@@ -239,6 +286,44 @@ export function approvalOutcomeLabel(row: Pick<ApprovalRow, "decision" | "reason
       if (row.decision === undefined) return undefined;
       return row.decision === "deny" ? "거절됨" : "허용됨";
   }
+}
+
+/** 응답 안 활동의 요약 줄(스펙 「모양」) — 추론이 있었는가, 도구 수, 걸린 시간 */
+export type ActivitySummary = { reasoning: boolean; tools: number; durationMs?: number };
+
+/**
+ * 행 → 요약. 걸린 시간은 활동 이벤트(행이 되는 것)의 첫 ts ~ 마지막 ts 다 — 답 글 사이에 도구가 끼어도 활동만 잰다.
+ * 아직 도는 행이 있으면(흐르는 중) 시간은 빼고, 1초가 안 되면 뺀다
+ */
+export function summarizeActivity(
+  rows: readonly ActivityRow[],
+  events: readonly RunEvent[] = [],
+): ActivitySummary {
+  const summary: ActivitySummary = {
+    reasoning: rows.some((r) => r.kind === "reasoning"),
+    tools: rows.filter((r) => r.kind === "tool").length,
+  };
+  if (rows.some((r) => (r.kind === "tool" || r.kind === "reasoning") && r.state === "running"))
+    return summary;
+  let first: number | undefined;
+  let last: number | undefined;
+  for (const e of events) {
+    if (!isTimelineEvent(e)) continue;
+    const t = Date.parse(e.ts);
+    if (first === undefined || t < first) first = t;
+    if (last === undefined || t > last) last = t;
+  }
+  if (first !== undefined && last !== undefined && last - first >= 1000) summary.durationMs = last - first;
+  return summary;
+}
+
+/** 요약 줄의 글 — `활동 · 추론 · 도구 4 · 12초`. 없는 것은 빠진다. `summary` 가 없으면(아직 안 받음) 「활동」만 */
+export function activitySummaryLabel(summary: ActivitySummary | undefined): string {
+  const parts = ["활동"];
+  if (summary?.reasoning) parts.push("추론");
+  if (summary && summary.tools > 0) parts.push(`도구 ${summary.tools}`);
+  if (summary?.durationMs !== undefined) parts.push(`${Math.round(summary.durationMs / 1000)}초`);
+  return parts.join(" · ");
 }
 
 /** 툴 호출 id → 툴 이름. 승인 행이 가리키는 툴을 찾는 데 쓴다(Ruling 2 의 이음) */

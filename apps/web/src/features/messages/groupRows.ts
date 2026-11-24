@@ -4,7 +4,8 @@ import type { PendingMessage, Timeline } from "./timeline";
 /** 메시지 목록의 한 행. key 는 가상 목록이 스크롤 위치를 붙드는 기준이라 같은 항목이면 늘 같아야 한다 */
 export type Row =
   | { kind: "divider"; key: string; date: string }
-  | { kind: "message"; key: string; message: Message; head: boolean }
+  /** `activity` — 이 메시지에 활동 요약 줄을 붙인다(그 런의 메시지 가운데 이 목록에서 가장 앞 것 하나만) */
+  | { kind: "message"; key: string; message: Message; head: boolean; activity: boolean }
   | { kind: "pending"; key: string; pending: PendingMessage }
   | { kind: "bubble"; key: string; runId: string }
   | { kind: "approval"; key: string; approvalId: string }
@@ -103,6 +104,8 @@ export function groupRows(
   let prev: Message | undefined;
   let prevDay: string | undefined;
   let unreadPlaced = !unreadSettled(timeline, opts);
+  // 한 런이 메시지를 여럿 낼 수 있다(러너의 게시 + 마지막 답 등) — 요약 줄은 seq 가 가장 작은 것(가진 범위에서) 하나에만
+  const activityRuns = new Set<string>();
   for (const message of timeline.items) {
     // 이 메시지보다 먼저 만들어진 확정 승인을 여기에 끼운다 — 승인 행은 시스템 카드처럼 묶음을 끊는다(prev 를 버린다)
     for (let a = settled[next]; a && placedAt(a) <= message.createdAt; a = settled[next]) {
@@ -121,7 +124,10 @@ export function groupRows(
       unreadPlaced = true;
     }
     const head = newDay || startsUnread || prev === undefined || !continues(prev, message);
-    rows.push({ kind: "message", key: `msg:${message.id}`, message, head });
+    const runId = message.authorType === "agent" ? message.runId : undefined;
+    const activity = runId !== undefined && !activityRuns.has(runId);
+    if (runId !== undefined) activityRuns.add(runId);
+    rows.push({ kind: "message", key: `msg:${message.id}`, message, head, activity });
     prev = message;
     prevDay = day;
   }

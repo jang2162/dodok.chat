@@ -2,6 +2,7 @@ import type { RunEvent } from "@dodok/shared";
 import { BotIcon, LayersIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { useRunEvents } from "@/api/queries";
+import { ReasoningLine } from "./InlineActivity";
 import { Notice } from "./Notice";
 import {
   type ActivityRow,
@@ -111,6 +112,8 @@ function Row({
       return <ApprovalLine row={row} toolNames={toolNames} />;
     case "error":
       return <ErrorLine row={row} />;
+    case "reasoning":
+      return <ReasoningLine row={row} />;
   }
 }
 

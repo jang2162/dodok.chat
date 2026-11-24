@@ -10,7 +10,7 @@ import { updateTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { agentColorVar } from "@/theme/agentColor";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { AGENT, CH, msg, RUN, runState, textDelta } from "../../../test/fixtures";
+import { AGENT, CH, msg, RUN, runEvent, runState, textDelta } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { useRunStore } from "./runStore";
@@ -274,5 +274,51 @@ describe("MessageList 와 함께", () => {
     expect(screen.queryByText("답을 쓰는 중")).toBeNull();
     expect(useRunStore.getState().runs[RUN]).toBeUndefined();
     await waitFor(() => expect(atEnd()).toBe(true));
+  });
+});
+
+describe("StreamingBubble 활동", () => {
+  const event = (e: Record<string, unknown>) =>
+    act(() => useRunStore.getState().applyEvent(runEvent({ runId: RUN, ...e })));
+  const toolStart = (seq: number) =>
+    event({ type: "TOOL_CALL_START", seq, toolCallId: `t${seq}`, toolCallName: "Bash" });
+  const summary = () => screen.queryByRole("button", { name: /^활동/ });
+
+  it("도구 이벤트가 오면 펼친 활동 블록, 진행 중 도구 줄에 진행 표시 — 첫 텍스트 델타가 오면 접힌다", () => {
+    run({ status: "tool" });
+    renderWithClient(<StreamingBubble runId={RUN} />);
+    expect(summary()).toBeNull();
+    event({ type: "REASONING_MESSAGE_CONTENT", seq: 1, messageId: "r", delta: "테스트부터 보자" });
+    toolStart(2);
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+    expect(summary()).toHaveTextContent("활동 · 추론 · 도구 1");
+    expect(screen.getByText("테스트부터 보자")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "실행 중" })).toBeInTheDocument();
+
+    run({ status: "streaming" });
+    delta(3, "답 시작");
+    expect(summary()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("테스트부터 보자")).toBeNull();
+    expect(screen.getByText("답 시작")).toBeInTheDocument();
+  });
+
+  it("사람이 답 글 전에 접었다 펼쳤으면 그대로 둔다", async () => {
+    run({ status: "tool" });
+    toolStart(1);
+    renderWithClient(<StreamingBubble runId={RUN} />);
+    await userEvent.click(summary() as HTMLElement);
+    expect(summary()).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(summary() as HTMLElement);
+    run({ status: "streaming" });
+    delta(2, "답");
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("추론·도구 없는 런은 블록이 없다", () => {
+    run({ status: "streaming" });
+    delta(1, "바로 답");
+    renderWithClient(<StreamingBubble runId={RUN} />);
+    expect(screen.getByText("바로 답")).toBeInTheDocument();
+    expect(summary()).toBeNull();
   });
 });
