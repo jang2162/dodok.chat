@@ -5,10 +5,21 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
-import { CH2 } from "../../../test/fixtures";
-import { channelOf, json, renderRoute } from "../../../test/shellApi";
 import { stubMedia } from "../../../test/media";
-import { CH, DEV, FIN, OWNER, gate, memberOf, stubSettingsServer } from "../../../test/settingsServer";
+import { CH2, uid } from "../../../test/fixtures";
+import { ME, channelOf, json, renderRoute } from "../../../test/shellApi";
+import {
+  CH,
+  DEV,
+  DEV_AGENT,
+  FIN,
+  FIN_AGENT,
+  OWNER,
+  agentOf,
+  gate,
+  memberOf,
+  stubSettingsServer,
+} from "../../../test/settingsServer";
 import { PROMPT_SAVED_NOTICE } from "./PromptSection";
 
 const region = (name: string) => screen.findByRole("region", { name });
@@ -364,7 +375,7 @@ describe("릴레이 정책", () => {
     expect(server.writes()).toEqual([]);
   });
 
-  it("「모든 에이전트끼리 허용」을 끄면 from→to 체크 목록(자기 자신 없음) — 고른 쌍·상한으로 PATCH", async () => {
+  it("「모든 에이전트끼리 허용」을 끄면 from→to 격자(자기 자신 없음) — 고른 쌍·상한으로 PATCH", async () => {
     const server = stubSettingsServer({ members: withAgents() });
     const queryClient = createQueryClient(() => {});
     renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
@@ -405,6 +416,138 @@ describe("릴레이 정책", () => {
     // 저장 뒤 폼은 캐시 값 그대로
     expect(within(section).getByRole("switch", { name: "모든 에이전트끼리 허용" })).not.toBeChecked();
     expect(within(section).getByRole("checkbox", { name: "@dev → @fin" })).toBeChecked();
+  });
+
+  describe("허용 쌍 격자", () => {
+    const OPS = uid(13);
+    const three = {
+      channel: { relayPolicy: { maxRelayTurns: 4, allowPairs: [] } },
+      agents: [DEV_AGENT, FIN_AGENT, agentOf(OPS, "ops")],
+      members: [
+        memberOf("user", OWNER),
+        memberOf("agent", DEV),
+        memberOf("agent", FIN),
+        memberOf("agent", OPS),
+      ],
+    } satisfies Parameters<typeof stubSettingsServer>[0];
+    const grid = async () => {
+      const section = await region("릴레이 정책");
+      return { section, table: await within(section).findByRole("table", { name: "허용 쌍" }) };
+    };
+    const pairsSent = (server: ReturnType<typeof stubSettingsServer>) =>
+      (server.writes().at(-1)?.body?.relayPolicy as { allowPairs: unknown } | undefined)?.allowPairs;
+
+    it("에이전트 셋이면 3×3 표 — 대각선은 「—」(체크박스 없음), 칸을 켜면 allowPairs 에 그 쌍", async () => {
+      const server = stubSettingsServer(three);
+      renderRoute(`/c/${CH}/s/${CH}/settings`);
+      const { section, table } = await grid();
+      const rows = within(table).getAllByRole("row");
+      expect(rows).toHaveLength(4); // 머리 줄 + 셋
+      for (const row of rows.slice(1)) {
+        expect(within(row).getAllByRole("cell")).toHaveLength(3);
+        expect(within(row).getAllByRole("checkbox")).toHaveLength(2);
+        expect(within(row).getByText("—")).toBeInTheDocument();
+      }
+      expect(within(table).getAllByRole("checkbox")).toHaveLength(6);
+      expect(within(table).queryByRole("checkbox", { name: "@dev → @dev" })).not.toBeInTheDocument();
+
+      await userEvent.click(within(table).getByRole("checkbox", { name: "@fin → @ops" }));
+      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(server.writes()).toHaveLength(1));
+      expect(pairsSent(server)).toEqual([{ from: FIN, to: OPS }]);
+    });
+
+    it("행 머리는 그 에이전트가 보내는 쌍을 모두 켜고, 모두 켜져 있으면 모두 끈다 — 열 머리도 같다", async () => {
+      const server = stubSettingsServer(three);
+      renderRoute(`/c/${CH}/s/${CH}/settings`);
+      const { section, table } = await grid();
+      const box = (name: string) => within(table).getByRole("checkbox", { name });
+      const row = within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" });
+
+      await userEvent.click(box("@dev → @fin")); // 하나만 켜져 있으면 「모두 켜기」
+      await userEvent.click(row);
+      expect(box("@dev → @fin")).toBeChecked();
+      expect(box("@dev → @ops")).toBeChecked();
+      expect(box("@fin → @dev")).not.toBeChecked();
+      expect(box("@ops → @dev")).not.toBeChecked();
+      await userEvent.click(row);
+      expect(box("@dev → @fin")).not.toBeChecked();
+      expect(box("@dev → @ops")).not.toBeChecked();
+
+      const col = within(table).getByRole("button", { name: "@ops 가 받는 쌍 모두" });
+      await userEvent.click(col);
+      expect(box("@dev → @ops")).toBeChecked();
+      expect(box("@fin → @ops")).toBeChecked();
+      expect(box("@ops → @dev")).not.toBeChecked();
+      expect(box("@ops → @fin")).not.toBeChecked();
+      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(server.writes()).toHaveLength(1));
+      expect(pairsSent(server)).toEqual(
+        expect.arrayContaining([
+          { from: DEV, to: OPS },
+          { from: FIN, to: OPS },
+        ]),
+      );
+      expect(pairsSent(server)).toHaveLength(2);
+
+      await userEvent.click(col);
+      expect(box("@dev → @ops")).not.toBeChecked();
+      expect(box("@fin → @ops")).not.toBeChecked();
+    });
+
+    it("에이전트가 하나면 안내 문구 그대로 — 표 없음", async () => {
+      stubSettingsServer({
+        channel: { relayPolicy: { maxRelayTurns: 4, allowPairs: [] } },
+        members: [memberOf("user", OWNER), memberOf("agent", DEV)],
+      });
+      renderRoute(`/c/${CH}/s/${CH}/settings`);
+      const section = await region("릴레이 정책");
+      expect(
+        await within(section).findByText("에이전트가 둘 이상 있어야 쌍을 고를 수 있습니다."),
+      ).toBeInTheDocument();
+      expect(within(section).queryByRole("table")).not.toBeInTheDocument();
+    });
+
+    it("채널에서 빠진 에이전트의 쌍은 격자에 없고, 다른 칸·머리 단추를 바꿔 저장해도 본문에 남는다", async () => {
+      const GONE = uid(14);
+      const server = stubSettingsServer({
+        channel: {
+          relayPolicy: {
+            maxRelayTurns: 4,
+            allowPairs: [
+              { from: GONE, to: DEV },
+              { from: DEV, to: GONE },
+            ],
+          },
+        },
+        members: [memberOf("user", OWNER), memberOf("agent", DEV), memberOf("agent", FIN)],
+      });
+      renderRoute(`/c/${CH}/s/${CH}/settings`);
+      const { section, table } = await grid();
+      expect(within(table).getAllByRole("checkbox")).toHaveLength(2);
+      for (const b of within(table).getAllByRole("checkbox")) expect(b).not.toBeChecked();
+
+      await userEvent.click(within(table).getByRole("button", { name: "@dev 가 받는 쌍 모두" }));
+      await userEvent.click(within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" }));
+      await userEvent.click(within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" }));
+      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(server.writes()).toHaveLength(1));
+      expect(pairsSent(server)).toEqual([
+        { from: GONE, to: DEV },
+        { from: DEV, to: GONE },
+        { from: FIN, to: DEV },
+      ]);
+    });
+
+    it("admin 미만이면 칸·머리 단추 모두 잠긴다", async () => {
+      stubSettingsServer({ ...three, me: { ...ME, role: "member" } });
+      renderRoute(`/c/${CH}/s/${CH}/settings`);
+      const { table } = await grid();
+      for (const b of within(table).getAllByRole("checkbox")) expect(b).toBeDisabled();
+      const heads = within(table).getAllByRole("button");
+      expect(heads).toHaveLength(6);
+      for (const b of heads) expect(b).toBeDisabled();
+    });
   });
 
   it("일일 상한을 비우면 없앤다(보내지 않음), 서버 VALIDATION 은 섹션 안", async () => {
