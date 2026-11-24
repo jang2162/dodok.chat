@@ -66,6 +66,24 @@ describe("createRunSink", () => {
     expect(out).toEqual([]);
   });
 
+  it("추론 글(REASONING_MESSAGE_CONTENT)도 가리고, 가린 뒤 빈 조각은 내지 않는다 — START/END 는 그대로 통과", () => {
+    const { out, sink } = harness();
+    sink.event({ type: "REASONING_MESSAGE_START", runId: RUN_ID, messageId: "r" });
+    sink.event({
+      type: "REASONING_MESSAGE_CONTENT",
+      runId: RUN_ID,
+      messageId: "r",
+      delta: `열자 ${WORKDIR}/a.ts`,
+    });
+    sink.event({ type: "REASONING_MESSAGE_CONTENT", runId: RUN_ID, messageId: "r", delta: `${WORKDIR}/` });
+    sink.event({ type: "REASONING_MESSAGE_END", runId: RUN_ID, messageId: "r" });
+    expect(out).toEqual([
+      ["event", { type: "REASONING_MESSAGE_START", runId: RUN_ID, messageId: "r" }],
+      ["event", { type: "REASONING_MESSAGE_CONTENT", runId: RUN_ID, messageId: "r", delta: "열자 a.ts" }],
+      ["event", { type: "REASONING_MESSAGE_END", runId: RUN_ID, messageId: "r" }],
+    ]);
+  });
+
   it("final·error 를 가리고 error 는 2000자로 자른다", () => {
     const { out, sink } = harness();
     sink.final({ text: `끝 ${WORKDIR}/x`, stopReason: "end_turn", costKind: "api" });
