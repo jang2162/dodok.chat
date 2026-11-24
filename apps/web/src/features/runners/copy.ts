@@ -62,6 +62,8 @@ export const PERMISSION_MODE_LABEL: Record<RunnerPermissionMode, string> = {
   dontAsk: "dontAsk — 미리 허용한 도구만, 나머지는 거절",
   default: "default — 쓰기 도구는 승인 카드",
   acceptEdits: "acceptEdits — 파일 편집은 묻지 않음",
+  auto: "auto — 모델 분류기가 승인(승인 카드 없음)",
+  bypassPermissions: "bypassPermissions — 묻지 않고 실행(승인 카드 없음)",
 };
 
 /** 프로그램 로그인 상태(hello `programs[].auth`) */

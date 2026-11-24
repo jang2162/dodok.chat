@@ -43,13 +43,15 @@ describe("러너 에이전트 본문", () => {
     expect(UpdateAgentBody.parse({ model: "opus", permissionMode: "acceptEdits" })).toEqual({});
   });
 
-  it("UpdateAgentBody.sessionDefaults — 보낸 필드만, null 은 「기본」, bypassPermissions·모르는 effort 는 거절", () => {
+  it("UpdateAgentBody.sessionDefaults — 보낸 필드만, null 은 「기본」, auto·bypassPermissions 는 받고 모르는 값은 거절", () => {
     expect(UpdateAgentBody.parse({ sessionDefaults: { model: null, effort: "high" } })).toEqual({
       sessionDefaults: { model: null, effort: "high" },
     });
-    expect(
-      UpdateAgentBody.safeParse({ sessionDefaults: { permissionMode: "bypassPermissions" } }).success,
-    ).toBe(false);
+    for (const mode of ["auto", "bypassPermissions"] as const)
+      expect(UpdateAgentBody.parse({ sessionDefaults: { permissionMode: mode } })).toEqual({
+        sessionDefaults: { permissionMode: mode },
+      });
+    expect(UpdateAgentBody.safeParse({ sessionDefaults: { permissionMode: "yolo" } }).success).toBe(false);
     expect(UpdateAgentBody.safeParse({ sessionDefaults: { effort: "extreme" } }).success).toBe(false);
   });
 

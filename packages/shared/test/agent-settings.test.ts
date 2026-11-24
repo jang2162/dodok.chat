@@ -30,8 +30,10 @@ describe("AgentSettingsPatch", () => {
     });
   });
 
-  it("bypassPermissions·모르는 effort 는 거절한다", () => {
-    expect(AgentSettingsPatch.safeParse({ permissionMode: "bypassPermissions" }).success).toBe(false);
+  it("모르는 권한 모드·effort 는 거절한다 — auto·bypassPermissions 는 받는다(상한은 서버가 본다)", () => {
+    expect(AgentSettingsPatch.safeParse({ permissionMode: "yolo" }).success).toBe(false);
+    for (const permissionMode of ["auto", "bypassPermissions"] as const)
+      expect(AgentSettingsPatch.parse({ permissionMode })).toEqual({ permissionMode });
     expect(AgentSettingsPatch.safeParse({ effort: "extreme" }).success).toBe(false);
     expect(AgentSettingsPatch.safeParse({ model: "" }).success).toBe(false);
   });

@@ -38,11 +38,20 @@ export type AgentProvider = z.infer<typeof AgentProvider>;
 export const RunnerProgram = z.enum(["claude", "codex", "opencode"]);
 export type RunnerProgram = z.infer<typeof RunnerProgram>;
 /**
- * 권한 모드 — 배열 순서가 「묻지 않고 돌 수 있는 것이 많은 순」의 정본이다(러너 일반화 스펙 2장). bypassPermissions 는 승인 카드가
- * 아예 뜨지 않아 「쓰기 도구는 승인 카드」 원칙이 깨지므로 어느 스키마도 받지 않는다. 러너 계약(runner/index.ts)이 다시 내보낸다 —
- * 여기 두는 까닭은 Agent 응답의 runnerAgent 가 쓰기 때문이다(runner 가 domain 을 값으로 import 한다)
+ * 권한 모드 — 배열 순서가 「묻지 않고 돌 수 있는 것이 많은 순」의 정본이다(러너 일반화 스펙 2장). 끝의 auto(모델 분류기가 승인)와
+ * bypassPermissions(묻지 않음)는 승인 카드 없이 돈다 — 러너 로컬 설정의 상한이 열 때만 고를 수 있고 기본 상한(default)에는 들지
+ * 않는다(채널 UI·권한 모드 스펙 1장, plan.md 10장). 「쓰기 도구는 승인 카드」 원칙은 상한이 이 둘을 열지 않은 러너에서만 보장된다.
+ * 러너 계약(runner/index.ts)이 다시 내보낸다 — 여기 두는 까닭은 Agent 응답의 runnerAgent 가 쓰기 때문이다(runner 가 domain 을 값으로
+ * import 한다)
  */
-export const RUNNER_PERMISSION_MODES = ["plan", "dontAsk", "default", "acceptEdits"] as const;
+export const RUNNER_PERMISSION_MODES = [
+  "plan",
+  "dontAsk",
+  "default",
+  "acceptEdits",
+  "auto",
+  "bypassPermissions",
+] as const;
 export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
 export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
 export const permissionModeRank = (mode: RunnerPermissionMode): number =>

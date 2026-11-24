@@ -34,8 +34,11 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
   const noah = { id: "", token: "" };
   const fakeRunners: FakeRunner[] = [];
   const sockets: WireClient[] = [];
-  /** 주인 없는 러너(상한 acceptEdits), mia 의 러너(상한 acceptEdits), 상한 default 인 러너, 모델 목록을 알린 admin 의 러너 */
-  const runner = { open: "", mine: "", low: "", models: "" };
+  /**
+   * 주인 없는 러너(상한 acceptEdits), mia 의 러너(상한 acceptEdits), 상한 default 인 러너, 모델 목록을 알린 admin 의 러너,
+   * 상한을 bypassPermissions 까지 연 주인 없는 러너·mia 의 러너
+   */
+  const runner = { open: "", mine: "", low: "", models: "", wide: "", wideMine: "" };
   const MODELS = [
     { value: "default", displayName: "Default (recommended)", efforts: ["low", "medium", "high"] },
     { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
@@ -77,6 +80,8 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     runner.mine = await connect("mine", mia.id, "acceptEdits");
     runner.low = await connect("low", null, "default");
     runner.models = await connect("models", admin.id, "acceptEdits", MODELS);
+    runner.wide = await connect("wide", null, "bypassPermissions");
+    runner.wideMine = await connect("wide-mine", mia.id, "bypassPermissions");
   });
   afterEach(() => {
     for (const socket of sockets.splice(0)) socket.close();
@@ -173,13 +178,41 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
       expect(res.json()).toMatchObject({ code: "VALIDATION", details: { field: "permissionMode" } });
     });
 
-    it("빈 본문·bypassPermissions 는 400", async () => {
+    it("빈 본문·모르는 권한 모드는 400", async () => {
       const { conversationId, agent } = setup();
       expect((await patch(owner, conversationId, agent.id, {})).statusCode).toBe(400);
-      expect(
-        (await patch(owner, conversationId, agent.id, { permissionMode: "bypassPermissions" })).statusCode,
-      ).toBe(400);
+      expect((await patch(owner, conversationId, agent.id, { permissionMode: "yolo" })).statusCode).toBe(400);
     });
+
+    it.each(["auto", "bypassPermissions"] as const)(
+      "%s — 상한 acceptEdits 러너면 owner 도 400(VALIDATION permissionMode)",
+      async (permissionMode) => {
+        const { conversationId, agent } = setup();
+        const res = await patch(owner, conversationId, agent.id, { permissionMode });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({ code: "VALIDATION", details: { field: "permissionMode" } });
+      },
+    );
+
+    it.each(["auto", "bypassPermissions"] as const)(
+      "%s — 상한을 연 러너에서 member 는 403, 러너 주인 member·admin·owner 는 200",
+      async (permissionMode) => {
+        const wide = setup(runner.wide);
+        const refused = await patch(mia.token, wide.conversationId, wide.agent.id, { permissionMode });
+        expect(refused.statusCode).toBe(403);
+        expect(refused.json()).toMatchObject({ code: "FORBIDDEN" });
+        const mine = setup(runner.wideMine);
+        expect(
+          (await patch(mia.token, mine.conversationId, mine.agent.id, { permissionMode })).statusCode,
+        ).toBe(200);
+        expect(
+          (await patch(admin.token, wide.conversationId, wide.agent.id, { permissionMode })).statusCode,
+        ).toBe(200);
+        const saved = await patch(owner, wide.conversationId, wide.agent.id, { permissionMode });
+        expect(saved.statusCode).toBe(200);
+        expect(saved.json()).toMatchObject({ permissionMode, ceiling: "bypassPermissions" });
+      },
+    );
 
     it("OpenClaw 에이전트·채널 밖 러너 에이전트는 404, GET 목록에도 없다", async () => {
       const { channel, conversationId } = setup();

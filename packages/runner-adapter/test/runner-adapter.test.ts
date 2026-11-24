@@ -776,6 +776,8 @@ describe("send", () => {
       ["dontAsk", "dontAsk"],
       ["default", "default"],
       ["acceptEdits", "default"],
+      ["auto", "default"],
+      ["bypassPermissions", "default"],
     ] as const)("권한 「기본」(null) + 러너 상한 %s → run.start 의 %s", async (ceiling, expected) => {
       const h = await setup();
       const r = await readyRunner(h, TOKEN_A, helloWithCeiling(ceiling));
@@ -791,6 +793,36 @@ describe("send", () => {
       await startRun(h, r);
       expect(r.runStarts[0]?.agent.permissionMode).toBe("acceptEdits");
     });
+
+    it("상한이 연 auto·bypassPermissions 는 그대로 보낸다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, helloWithCeiling("bypassPermissions"));
+      h.defineAgent("coder", { permissionMode: "auto" });
+      await startRun(h, r);
+      h.defineAgent("coder", { permissionMode: "bypassPermissions" });
+      await startRun(h, r);
+      expect(r.runStarts.map((s) => s.agent.permissionMode)).toEqual(["auto", "bypassPermissions"]);
+    });
+
+    it.each(["auto", "bypassPermissions"] as const)(
+      "상한(acceptEdits) 위의 %s 는 run.start 를 보내지 않고 RUNNER_CEILING(permissionMode)으로 닫는다 — 옛 러너는 그 값을 몰라 VALIDATION 으로 버린다 [Review Focus]",
+      async (mode) => {
+        const h = await setup();
+        const r = await readyRunner(h, TOKEN_A, helloWithCeiling("acceptEdits"));
+        h.defineAgent("coder", { permissionMode: mode });
+        const input = deliver();
+        const result = await h.adapter.send(input, {
+          connectionId: RUNNER_A_CONNECTION,
+          providerSessionId: SESSION_ID,
+        });
+        expect(result).toMatchObject({ admission: "dispatch", connectionId: RUNNER_A_CONNECTION });
+        await until(() => signals(h, input.runId).includes("gateway_error"), "ceiling error");
+        expect(runEvents(h, input.runId)).toEqual([
+          { type: "RUN_ERROR", runId: input.runId, code: "RUNNER_CEILING", message: "permissionMode" },
+        ]);
+        expect(r.runStarts).toHaveLength(0);
+      },
+    );
 
     it("effort 를 싣고, 허용 도구는 늘 null — 정의를 그 대화 id 로 묻는다", async () => {
       const h = await setup();

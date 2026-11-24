@@ -31,6 +31,7 @@ import {
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalRequested,
+  type RunnerCeilingItem,
   RunnerApprovalWithdrawn,
   type RunnerClientToServerEvents,
   RunnerControlCall,
@@ -1237,6 +1238,24 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         ...(bot === undefined ? {} : { bot }),
         permissionMode: resolvePermissionMode(definition.agent.permissionMode, ceiling?.maxPermissionMode),
       };
+      // acceptEdits 위의 모드(auto·bypassPermissions)는 그 모드를 아는 러너만 상한으로 알릴 수 있다. 알린 상한 위면 보내지 않고 러너의
+      // 천장 거절과 같은 RUNNER_CEILING 으로 닫는다 — 옛 러너는 그 값을 몰라 run.start 를 VALIDATION 으로 버리고, 카드에는 코드만 남는다.
+      // acceptEdits 이하는 지금처럼 보내 러너가 거절한다(Review Focus 3)
+      if (
+        ceiling !== undefined &&
+        permissionModeRank(agent.permissionMode) > permissionModeRank("acceptEdits") &&
+        permissionModeRank(agent.permissionMode) > permissionModeRank(ceiling.maxPermissionMode)
+      ) {
+        const code = "RUNNER_CEILING";
+        const message: RunnerCeilingItem = "permissionMode";
+        logger.info(
+          { runId: input.runId, tokenId: runner.tokenId, permissionMode: agent.permissionMode },
+          "runner run refused above the announced permission ceiling",
+        );
+        emitEvent(runner.tokenId, input.runId, { type: "RUN_ERROR", runId: input.runId, code, message });
+        emitSignal(runner.tokenId, input.runId, { kind: "gateway_error", code, message });
+        return { admission: "dispatch", providerRunId: input.runId, connectionId: runner.tokenId };
+      }
       const serverSessionIds = capabilitiesFor(input.agentId, runner.tokenId).serverSessionIds;
       if (serverSessionIds && sendOpts.providerSessionId === undefined) {
         throw new AdapterError("INTERNAL", "this runner program needs a server-chosen providerSessionId");

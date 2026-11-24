@@ -482,6 +482,12 @@ describe("RUNNER_CONTROL_TOOLS — 「이 러너 설정 제어」(러너 봇 2�
       parse("set_agent_session_defaults", { agentId: ID, permissionMode: "acceptEdits", sessionDefaults: {} })
         .success,
     ).toBe(false);
+    // 상한이 열린 러너의 두 모드도 제어 도구로는 못 올린다 — 사람이 화면에서 고른다
+    for (const permissionMode of ["auto", "bypassPermissions"])
+      expect(
+        parse("set_agent_session_defaults", { agentId: ID, sessionDefaults: { permissionMode } }).success,
+        permissionMode,
+      ).toBe(false);
   });
 
   it("create_runner_agent 는 프로젝트·봇 중 정확히 하나, 봇은 basePrompt 를 받지 않는다", () => {

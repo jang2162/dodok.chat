@@ -48,7 +48,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
 import { avatarsDirOf, bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { expectOk, openRun as openControlRun, pat } from "./helpers/control";
-import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
+import { FAKE_CLAUDE_PROGRAM, type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng } from "./helpers/png";
 import { connectWire, openWire, recordEvents, waitFor, type WireClient } from "./helpers/wire";
@@ -85,6 +85,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
   const fakeRunners: FakeRunner[] = [];
   /** 붙은 가짜 러너 둘의 토큰 id — [0] 에 프로젝트를 만들고 [1] 로 옮긴다 */
   const runnerIds: string[] = [];
+  let wideRunnerId = "";
   let n = 0;
 
   beforeAll(async () => {
@@ -114,6 +115,23 @@ describe("역할 매트릭스(스펙 2장)", () => {
       );
       runnerIds.push(issued.record.id);
     }
+    // 권한 상한을 bypassPermissions 까지 연 러너 — auto·bypassPermissions 를 고르는 줄이 쓴다
+    const wide = issueRunnerToken(app.db, app.workspaceId, "matrix-wide", null);
+    fakeRunners.push(
+      await startFakeRunner({
+        url: app.url,
+        token: wide.token,
+        hello: {
+          programs: [
+            {
+              ...FAKE_CLAUDE_PROGRAM,
+              ceiling: { maxPermissionMode: "bypassPermissions", allowedToolsCeiling: null },
+            },
+          ],
+        },
+      }),
+    );
+    wideRunnerId = wide.record.id;
     tokens.owner = (await login(app)).token;
     ids.owner = app.ownerUserId;
     for (const role of ["admin", "member"] as const) {
@@ -225,12 +243,12 @@ describe("역할 매트릭스(스펙 2장)", () => {
     return { channel, conversationId, root };
   };
   /** 러너 에이전트가 든 채널의 대화 — 세션 설정 경로(러너 runnerA 는 주인이 없다 — 누구도 그 연결의 주인이 아니다) */
-  const runnerConversation = () => {
+  const runnerConversation = (runnerTokenId = runnerA()) => {
     const channel = newChannel();
     const { agent } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
       handle: `rn${++n}`,
-      runnerTokenId: runnerA(),
+      runnerTokenId,
     });
     addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
     return { conversationId: seedConversation(app.db, channel.id), agentId: agent.id };
@@ -740,6 +758,20 @@ describe("역할 매트릭스(스펙 2장)", () => {
         };
       },
     },
+    // 상한이 연 auto·bypassPermissions 도 acceptEdits 와 같은 규칙(채널 UI·권한 모드 스펙 1장)
+    ...(["auto", "bypassPermissions"] as const).map((permissionMode) => ({
+      name: `PATCH /conversations/:id/agent-settings/:agentId {permissionMode ${permissionMode}}`,
+      min: "admin" as const,
+      ok: 200,
+      request: () => {
+        const { conversationId, agentId } = runnerConversation(wideRunnerId);
+        return {
+          method: "PATCH" as const,
+          url: `/api/v1/conversations/${conversationId}/agent-settings/${agentId}`,
+          payload: { permissionMode },
+        };
+      },
+    })),
     // 세션에 에이전트 초대(세션 에이전트 초대 스펙 I3) — 채널에 에이전트를 넣고 빼는 판정과 같다(지금은 누구나)
     {
       name: "GET /conversations/:id/agents",
