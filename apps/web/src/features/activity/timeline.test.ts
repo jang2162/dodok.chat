@@ -2,6 +2,7 @@ import { type Run, type RunEventType, type RunState, RUN_EVENT_TYPES } from "@do
 import { describe, expect, it } from "vitest";
 import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../../test/fixtures";
 import {
+  activitySummaryLabel,
   approvalOutcomeLabel,
   freezeDurations,
   hasFlowingDuration,
@@ -10,7 +11,9 @@ import {
   keepTimelineEvents,
   mergeRunEvents,
   mergeRuns,
+  REASONING_TRUNCATED,
   runDurationMs,
+  summarizeActivity,
   toActivityRows,
   toolNameByCallId,
   UNKNOWN_TOOL,
@@ -220,6 +223,111 @@ describe("toActivityRows", () => {
         reason: "run-aborted",
       },
     ]);
+  });
+});
+
+describe("toActivityRows — 추론", () => {
+  const start = (seq: number, messageId = "r1") =>
+    runEvent({ type: "REASONING_MESSAGE_START", seq, messageId });
+  const content = (seq: number, delta: string, messageId = "r1") =>
+    runEvent({ type: "REASONING_MESSAGE_CONTENT", seq, messageId, delta });
+  const end = (seq: number, messageId = "r1") => runEvent({ type: "REASONING_MESSAGE_END", seq, messageId });
+
+  it("START·CONTENT×2·END 는 글을 이은 추론 행 하나(done)", () => {
+    expect(toActivityRows([start(1), content(2, "테스트 실패 "), content(3, "원인부터"), end(4)])).toEqual([
+      { kind: "reasoning", key: "reasoning:1", text: "테스트 실패 원인부터", state: "done" },
+    ]);
+  });
+
+  it("END 전이면 running, START/END 만 오면 빈 글", () => {
+    expect(toActivityRows([start(1), content(2, "생각")])[0]).toMatchObject({ state: "running" });
+    expect(toActivityRows([start(1), end(2)])).toEqual([
+      { kind: "reasoning", key: "reasoning:1", text: "", state: "done" },
+    ]);
+  });
+
+  it("도구와 섞이면 시간 순 — 같은 messageId 가 END 뒤에 다시 오면 새 덩이", () => {
+    const rows = toActivityRows([
+      start(1),
+      content(2, "먼저"),
+      end(3),
+      runEvent({ type: "TOOL_CALL_START", seq: 4, toolCallId: "t1", toolCallName: "Read" }),
+      runEvent({ type: "TOOL_CALL_RESULT", seq: 5, toolCallId: "t1", content: "ok", ok: true }),
+      start(6),
+      content(7, "다음"),
+      end(8),
+    ]);
+    expect(rows.map((r) => [r.kind, r.key])).toEqual([
+      ["reasoning", "reasoning:1"],
+      ["tool", "tool:t1"],
+      ["reasoning", "reasoning:6"],
+    ]);
+    expect(rows[2]).toMatchObject({ text: "다음" });
+  });
+
+  it("잘림 표시(CUSTOM reasoning_truncated)는 그 앞 추론 덩이에 붙는다", () => {
+    const rows = toActivityRows([
+      start(1),
+      content(2, "아주 긴"),
+      runEvent({ type: "CUSTOM", seq: 3, name: REASONING_TRUNCATED, value: { maxChars: 20000 } }),
+      end(4),
+    ]);
+    expect(rows).toEqual([
+      { kind: "reasoning", key: "reasoning:1", text: "아주 긴", state: "done", truncated: true },
+    ]);
+  });
+
+  it("다른 CUSTOM 은 행도 표시도 아니다", () => {
+    const rows = toActivityRows([start(1), runEvent({ type: "CUSTOM", seq: 2, name: "뭔가" }), end(3)]);
+    expect(rows[0]).not.toHaveProperty("truncated");
+    expect(isTimelineEvent(runEvent({ type: "CUSTOM", seq: 2, name: "뭔가" }))).toBe(false);
+    expect(isTimelineEvent(runEvent({ type: "CUSTOM", seq: 2, name: REASONING_TRUNCATED }))).toBe(true);
+  });
+});
+
+describe("summarizeActivity · activitySummaryLabel", () => {
+  const at = (s: number) => `2027-01-15T08:00:${String(s).padStart(2, "0")}.000Z`;
+  const events = [
+    runEvent({ type: "REASONING_MESSAGE_START", seq: 1, messageId: "r", ts: at(0) }),
+    runEvent({ type: "REASONING_MESSAGE_END", seq: 2, messageId: "r", ts: at(1) }),
+    ...[1, 2, 3, 4].flatMap((n) => [
+      runEvent({
+        type: "TOOL_CALL_START",
+        seq: n * 10,
+        toolCallId: `t${n}`,
+        toolCallName: "Read",
+        ts: at(n),
+      }),
+      runEvent({
+        type: "TOOL_CALL_RESULT",
+        seq: n * 10 + 1,
+        toolCallId: `t${n}`,
+        content: "ok",
+        ts: at(n + 8),
+      }),
+    ]),
+    // 답 글은 시간에 들지 않는다
+    runEvent({ type: "TEXT_MESSAGE_CONTENT", seq: 99, messageId: "m", delta: "답", ts: at(40) }),
+  ];
+
+  it("추론·도구 4·12초", () => {
+    const summary = summarizeActivity(toActivityRows(events), events);
+    expect(summary).toEqual({ reasoning: true, tools: 4, durationMs: 12_000 });
+    expect(activitySummaryLabel(summary)).toBe("활동 · 추론 · 도구 4 · 12초");
+  });
+
+  it("추론이 없으면 「추론」이 빠지고, 시간을 모르면 시간이 빠진다", () => {
+    const tools = events.slice(2);
+    expect(activitySummaryLabel(summarizeActivity(toActivityRows(tools)))).toBe("활동 · 도구 4");
+  });
+
+  it("도는 행이 있으면 시간은 빠진다(흐르는 중)", () => {
+    const running = events.slice(0, 3);
+    expect(summarizeActivity(toActivityRows(running), running)).toEqual({ reasoning: true, tools: 1 });
+  });
+
+  it("아직 안 받은 요약은 「활동」만", () => {
+    expect(activitySummaryLabel(undefined)).toBe("활동");
   });
 });
 
