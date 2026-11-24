@@ -156,6 +156,8 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   let chosen: ClaudeExecutable | undefined;
   // 고른 CLI 가 바뀔 때만 한 줄 — 경로는 찍지 않는다(로그를 남에게 보여 줄 수 있다)
   let lastChoice = "";
+  /** detect 가 고른 CLI 의 판 — startRun 이 --thinking-display 를 넘길지 가른다(run.ts supportsThinkingDisplay) */
+  let chosenVersion: string | undefined;
   // 마지막으로 받은 모델 목록과 그때의 CLI·로그인 자리 — 같으면 재연결마다 CLI 를 다시 띄우지 않는다. 시간 초과도 같은 키로 기억해
   // 목록 없이 간다(멈추는 CLI 를 재연결마다 띄우지 않게) — 단 MODELS_TIMEOUT_MEMORY_MS 까지만(expiresAt). 던짐(로그인 전 등)은
   // 기억하지 않는다 — 로그인 뒤 다음 연결에서 다시 받는다
@@ -234,6 +236,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
       // 설치본 판본을 못 읽으면 비운다 — 실행은 그대로 한다
       const version =
         chosen.cli === "installed" ? await readVersion(chosen.path, env) : opts.claudeCodeVersion;
+      chosenVersion = version;
       const choice = `${chosen.cli === "installed" ? "설치본" : "내장"} ${version ?? "(판 모름)"}`;
       if (choice !== lastChoice) opts.logger?.info(`dodok-runner: Claude Code ${choice}`);
       lastChoice = choice;
@@ -302,11 +305,15 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         sink.error("INTERNAL", exe.reason);
         return;
       }
+      // detect 전이면 설치본 판을 모른다 — 그때는 넘기지 않는다(번들은 빌드가 구운 판)
+      const cliVersion =
+        exe.cli === "installed" ? (exe === chosen ? chosenVersion : undefined) : opts.claudeCodeVersion;
       await runOnce(claudeSpec, {
         sdk: opts.sdk,
         sink,
         baseEnv: env,
         ...(exe.cli === "installed" ? { executable: exe.path } : {}),
+        ...(cliVersion === undefined ? {} : { cliVersion }),
         costs,
         signal,
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),

@@ -11,7 +11,10 @@ import {
   resolveClaudeExecutable,
   VERSION_TIMEOUT_MS,
 } from "../src/drivers/claude/executable";
-import { createFakeSdk } from "./helpers/fake-query";
+import { createRunSink } from "../src/sink";
+import { createFakeBridge } from "./helpers/fake-bridge";
+import { createFakeSdk, script as sdkScript } from "./helpers/fake-query";
+import { AGENT, runSpec } from "./helpers/fixtures";
 
 const base = mkdtempSync(join(tmpdir(), "dodok-exe-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
@@ -165,6 +168,33 @@ describe("createClaudeDriver detect — 고른 CLI", () => {
     const d = await driver(only("/usr/local/bin/claude"), null).detect(ceiling);
     expect(d).toMatchObject({ available: true, cli: "installed" });
     expect("version" in d).toBe(false);
+  });
+
+  it("런은 detect 가 고른 CLI 의 판으로 --thinking-display 를 가른다 — 설치본 낮은 판·판 모름이면 넘기지 않는다", async () => {
+    const extraArgsOf = async (isExecutable: (p: string) => boolean, version: string | null) => {
+      const fake = createFakeSdk();
+      fake.script(sdkScript.init(), ...sdkScript.textTurn("msg_1", ["x"]));
+      const d = createClaudeDriver({
+        sdk: fake,
+        claudeCodeVersion: "2.1.283",
+        baseEnv: { PATH: "/usr/local/bin", HOME: base },
+        isExecutable,
+        readVersion: async () => version ?? undefined,
+      });
+      await d.detect(ceiling);
+      const sink = createRunSink({
+        workdir: AGENT.workdir,
+        bridge: createFakeBridge(),
+        emit: { event: () => {}, final: () => {}, error: () => {}, session: () => {} },
+      });
+      await d.startRun(runSpec(), sink, new AbortController().signal);
+      return fake.calls[0]?.options.extraArgs;
+    };
+    const flag = { "thinking-display": "summarized" };
+    expect(await extraArgsOf(only("/usr/local/bin/claude"), "2.1.331")).toEqual(flag);
+    expect(await extraArgsOf(only("/usr/local/bin/claude"), "2.1.100")).toBeUndefined();
+    expect(await extraArgsOf(only("/usr/local/bin/claude"), null)).toBeUndefined();
+    expect(await extraArgsOf(only(), null)).toEqual(flag); // 번들 — 빌드가 구운 2.1.283
   });
 
   it("설정 executable 이 없으면 available false 와 사유(cli 없음)", async () => {
