@@ -108,18 +108,25 @@ describe("통합 — 스레드 소식", () => {
     expect(second.delivery?.context).not.toHaveProperty("threadUpdates");
   });
 
-  it("스레드 런에는 threadUpdates 가 없다 — 채널 커서도 건드리지 않는다", async () => {
+  it("스레드 런에는 threadUpdates 가 없다 — 스레드 세션이 이미 있고 그 뒤 답글이 달려도. 채널 커서도 건드리지 않는다", async () => {
     const t = await start();
     await turn(t, "@dev 시작");
     const root = await thread(t, "루트", ["답글 하나"]);
 
-    const inThread = await turn(t, "@dev 스레드에서", { threadRootId: root });
-    expect(inThread.delivery?.threadId).toBeDefined();
-    expect(inThread.delivery?.context).not.toHaveProperty("threadUpdates");
+    // 첫 스레드 런이 스레드 세션 행을 만든다(그 커서는 만든 시각) — 그 뒤 달린 답글이 둘째 스레드 런의 후보가 된다
+    const first = await turn(t, "@dev 스레드에서", { threadRootId: root });
+    expect(first.delivery?.threadId).toBeDefined();
+    expect(first.delivery?.context).not.toHaveProperty("threadUpdates");
+    await say(t, "스레드 세션 뒤 답글", { threadRootId: root });
+    const second = await turn(t, "@dev 스레드 또", { threadRootId: root });
+    expect(second.delivery?.threadId).toBeDefined();
+    expect(second.delivery?.context).not.toHaveProperty("threadUpdates");
 
-    // 스레드 런의 멘션 글·에이전트 답글도 스레드 답글이다 — 채널 세션에는 셋 다 실린다
+    // 스레드 런의 멘션 글·에이전트 답글도 스레드 답글이다 — 채널 세션에는 그동안의 여섯 개가 다 실린다(최근 3)
     const channel = await turn(t, "@dev 채널에서");
-    expect(texts(channel.delivery)?.[0]?.[1]).toBe(3);
+    const [u] = channel.delivery?.context.threadUpdates ?? [];
+    expect(u?.newReplies).toBe(6);
+    expect(u?.recent.map((m) => m.text)).toEqual(["스레드 세션 뒤 답글", "@dev 스레드 또", "답 2"]);
   });
 
   it("다른 대화(같은 채널의 다른 세션)의 스레드 답글은 싣지 않는다", async () => {
