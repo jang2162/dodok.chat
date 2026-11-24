@@ -27,6 +27,21 @@ const region = (name: string, root: HTMLElement = document.body) =>
   within(root).findByRole("region", { name });
 /** Gateway 상세 본문 */
 const detail = () => screen.findByTestId("gateway-detail");
+/**
+ * 머리의 「<이름> 더 보기」 메뉴(연결 재설계 — 끄기·켜기·삭제는 메뉴에). 트리거에 초점을 준 뒤 Enter 로 연다(sidebar.test 의 까닭 —
+ * jsdom 의 window blur 가 Radix 메뉴를 닫는다)
+ */
+async function openMenu(root: HTMLElement, name: string) {
+  within(root)
+    .getByRole("button", { name: `${name} 더 보기` })
+    .focus();
+  await userEvent.keyboard("{Enter}");
+  return screen.findByRole("menu");
+}
+async function chooseMenu(root: HTMLElement, name: string, item: string) {
+  const menu = await openMenu(root, name);
+  await userEvent.click(within(menu).getByRole("menuitem", { name: item }));
+}
 const HOME = gatewayDetailPath(gatewayId(2));
 const OFFICE = gatewayDetailPath();
 
@@ -57,9 +72,14 @@ describe("Gateway 상세", () => {
     expect(await region("플러그인", card)).toBeInTheDocument();
     expect(await region("브리지 토큰", card)).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "새 토큰 발급" })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: `${name} 수정` })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: `${name} 끄기` })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: `${name} 삭제` })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "이름·주소 수정" })).toBeInTheDocument();
+    const menu = await openMenu(card, name);
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["끄기", "삭제"]);
+    await userEvent.keyboard("{Escape}");
     // 설치 상자는 상세마다 하나 — 설치 명령은 그 상세의 「새 토큰 발급」이 준다
     expect(within(card).getAllByText(/^(플러그인 설치|다시 설치)$/)).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
@@ -113,7 +133,9 @@ describe("Gateway 상세", () => {
 describe("수정", () => {
   async function openEdit(name: string) {
     const card = await detail();
-    await userEvent.click(within(card).getByRole("button", { name: `${name} 수정` }));
+    // 「이름·주소 수정」은 그 Gateway 상세 머리에 하나
+    expect(within(card).getByRole("heading", { level: 1, name })).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "이름·주소 수정" }));
     return screen.findByRole("dialog");
   }
 
@@ -180,14 +202,15 @@ describe("끄기·켜기", () => {
     });
     const first = renderConnection(undefined, undefined, OFFICE);
     const office = await detail();
-    await userEvent.click(within(office).getByRole("button", { name: "사무실 끄기" }));
+    await chooseMenu(office, "사무실", "끄기");
     await waitFor(() => expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
     await act(() => first.router.navigate({ to: HOME }));
     const home = await within(await detail()).findByRole("heading", { level: 1, name: "집" });
     const homeDetail = home.closest("[data-testid=gateway-detail]") as HTMLElement;
     expect(within(homeDetail).getByText("꺼짐")).toBeInTheDocument();
-    expect(within(homeDetail).queryByRole("button", { name: "집 끄기" })).not.toBeInTheDocument();
-    await userEvent.click(within(homeDetail).getByRole("button", { name: "집 켜기" }));
+    const homeMenu = await openMenu(homeDetail, "집");
+    expect(within(homeMenu).queryByRole("menuitem", { name: "끄기" })).not.toBeInTheDocument();
+    await userEvent.click(within(homeMenu).getByRole("menuitem", { name: "켜기" }));
     await waitFor(() => expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
     expect(server.calls.filter((c) => c.method === "PATCH")).toEqual([
       { method: "PATCH", url: `/api/v1/gateways/${GATEWAY_ID}`, body: { enabled: false } },
@@ -204,7 +227,7 @@ describe("지워진 Gateway·서버 실패 문구(태스크 6 리뷰 Minor 2)", 
       updateGateway: () => json(404, { code: "NOT_FOUND", message: "gateway not found" }),
     });
     renderConnection(undefined, undefined, HOME);
-    await userEvent.click(within(await detail()).getByRole("button", { name: "집 끄기" }));
+    await chooseMenu(await detail(), "집", "끄기");
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("이미 삭제된 Gateway 입니다"));
     expect(toastError).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(2));
@@ -217,7 +240,7 @@ describe("지워진 Gateway·서버 실패 문구(태스크 6 리뷰 Minor 2)", 
       updateGateway: () => json(500, { code: "INTERNAL", message: "sqlite busy" }),
     });
     renderConnection(undefined, undefined, HOME);
-    await userEvent.click(within(await detail()).getByRole("button", { name: "집 끄기" }));
+    await chooseMenu(await detail(), "집", "끄기");
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Gateway 를 바꾸지 못했습니다. 다시 시도해 주세요."),
     );
@@ -242,7 +265,7 @@ describe("삭제", () => {
 
   async function openDelete() {
     const home = await detail();
-    await userEvent.click(within(home).getByRole("button", { name: "집 삭제" }));
+    await chooseMenu(home, "집", "삭제");
     return { home, confirm: await within(home).findByRole("group", { name: "「집」 Gateway 삭제" }) };
   }
 
@@ -255,9 +278,12 @@ describe("삭제", () => {
     renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    const menu = within(home).getByRole("button", { name: "집 삭제" });
-    expect(menu).toHaveAttribute("aria-expanded", "true");
-    expect(menu).toHaveAttribute("aria-controls", confirm.id);
+    // 메뉴는 닫히고 확인 줄이 상세 안에 열린다(대화상자가 아니다)
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(within(home).getByRole("button", { name: "집 더 보기" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     await waitFor(() =>
       expect(confirm).toHaveTextContent("이 Gateway 의 에이전트 2개는 남고 브리지 토큰 3개가 지워집니다"),
     );
@@ -265,15 +291,15 @@ describe("삭제", () => {
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 
-  it("취소하면 보내지 않고 확인을 접고, 초점은 「삭제」 메뉴로 돌아간다", async () => {
+  it("취소하면 보내지 않고 확인을 접고, 초점은 「더 보기」 메뉴로 돌아간다", async () => {
     const server = stubSetupServer({ status: TWO, gatewayTokens: { [gatewayId(2)]: HOME_TOKENS } });
     renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
     await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
     expect(within(home).queryByRole("group", { name: "「집」 Gateway 삭제" })).not.toBeInTheDocument();
-    expect(within(home).getByRole("button", { name: "집 삭제" })).toHaveFocus();
+    expect(within(home).getByRole("button", { name: "집 더 보기" })).toHaveFocus();
     // 접힌 동안에는 가리킬 영역이 없다
-    expect(within(home).getByRole("button", { name: "집 삭제" })).not.toHaveAttribute("aria-controls");
+    expect(within(home).getByRole("button", { name: "집 더 보기" })).not.toHaveAttribute("aria-controls");
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 

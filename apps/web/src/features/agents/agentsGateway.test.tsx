@@ -36,7 +36,8 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
     renderPage(undefined, "owner", agentPath(office));
     const nav = await screen.findByRole("navigation", { name: "연결 목록" });
     const under = async (gateway: RegExp) =>
-      (await within(nav).findByRole("link", { name: gateway })).parentElement as HTMLElement;
+      // 연결 줄은 접기 단추와 한 줄(div) — 그 아래 목록까지 든 li 를 본다
+      (await within(nav).findByRole("link", { name: gateway })).closest("li") as HTMLElement;
     expect(within(await under(/^사무실/)).getByRole("link", { name: /Main 사무실/ })).toBeInTheDocument();
     expect(within(await under(/^사무실/)).queryByRole("link", { name: /Main 집/ })).toBeNull();
     expect(within(await under(/^집/)).getByRole("link", { name: /Main 집/ })).toBeInTheDocument();

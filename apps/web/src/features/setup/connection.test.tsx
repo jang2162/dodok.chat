@@ -43,7 +43,7 @@ describe("권한", () => {
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
-    expect(await within(gw).findByRole("region", { name: "에이전트 0" })).toBeInTheDocument();
+    expect(await within(gw).findByRole("region", { name: "에이전트" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "플러그인" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "브리지 토큰" })).not.toBeInTheDocument();
     expect(gw).not.toHaveTextContent("wss://");
