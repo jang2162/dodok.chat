@@ -140,3 +140,15 @@ export const selectPendingApproval =
     selectChannelApprovals(channelId)(s).find(
       (v) => v.approval.status === "pending" && (runId === undefined || v.approval.runId === runId),
     );
+
+/**
+ * 그 채널의 아직 답하지 않은 승인 수 — 패널 머리 「활동」 탭의 배지(재설계 스펙 목표 5). 수를 돌려주므로 그대로 써도 된다(새 참조가 없다)
+ */
+export const selectPendingCount =
+  (channelId: string) =>
+  (s: Pick<ApprovalStore, "byChannel">): number => {
+    let count = 0;
+    for (const view of Object.values(s.byChannel[channelId] ?? {}))
+      if (view.approval.status === "pending") count += 1;
+    return count;
+  };

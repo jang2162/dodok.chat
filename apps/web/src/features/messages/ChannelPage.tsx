@@ -6,6 +6,7 @@ import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
 import { PanelTabs, usePanelTab } from "@/app/layout/PanelTabs";
 import { useSidebarSheetOpen } from "@/app/layout/sidebarSheet";
+import { selectPendingCount, useApprovalStore } from "@/features/approvals/approvalStore";
 import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
 import { ChannelArchivedContext, isChannelArchived } from "@/features/channels/archived";
 import { Composer } from "@/features/composer/Composer";
@@ -106,6 +107,9 @@ export function ChannelPage() {
     : directChannel && (routeTab === "settings" || (routeTab === "activity" && !sessions))
       ? undefined
       : routeTab;
+  // 활동 탭 머리의 「승인 대기 N」 — 그 채널의 미해결 승인 수(재설계 스펙 목표 5). 패널이 닫혀 있으면 머리가 없어 그리지 않는다
+  const pendingApprovals = useApprovalStore(selectPendingCount(channelId));
+  const badges = useMemo(() => ({ activity: pendingApprovals }), [pendingApprovals]);
   // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다).
   // 왼쪽 사이드바 시트도 같다(AppShell 이 연 채로 둔다)
   const sidebarSheetOpen = useSidebarSheetOpen();
@@ -336,6 +340,7 @@ export function ChannelPage() {
                   rootId={tab === "thread" ? rootId : undefined}
                   profile={tab === "profile" && kind && id ? { kind, id } : undefined}
                   active={tab}
+                  badges={badges}
                   openerRef={settingsRef}
                   threadOpenerRef={threadOpenerRef}
                   only={
