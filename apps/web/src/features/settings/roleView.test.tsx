@@ -20,6 +20,13 @@ import {
 const MEMBER = { ...ME, role: "member" };
 const LOCKED = "관리자만 바꿀 수 있습니다";
 const region = (name: string) => screen.findByRole("region", { name });
+/** 「멤버」 칸의 「초대」를 눌러 연 대화상자 */
+async function openInvite() {
+  const invite = within(await membersSection()).getByRole("button", { name: "초대" });
+  await waitFor(() => expect(invite).toBeEnabled());
+  await userEvent.click(invite);
+  return screen.findByRole("dialog", { name: "채널에 초대" });
+}
 
 let toastError: MockInstance<typeof toast.error>;
 beforeEach(() => {
@@ -84,32 +91,35 @@ describe("member 의 채널 설정", () => {
     expect(within(list).queryByRole("button", { name: "@dev 채널 프롬프트 편집" })).toBeNull();
     expect(within(list).getByText(LOCKED)).toBeInTheDocument();
 
-    const select = within(section).getByRole("combobox", { name: "에이전트 추가" });
-    await waitFor(() => expect(select).toBeEnabled());
-    await userEvent.selectOptions(select, FIN);
-    await userEvent.click(within(section).getByRole("button", { name: "추가" }));
+    const invite = within(section).getByRole("button", { name: "초대" });
+    await waitFor(() => expect(invite).toBeEnabled());
+    await userEvent.click(invite);
+    const dialog = await screen.findByRole("dialog", { name: "채널에 초대" });
+    await userEvent.click(within(dialog).getByRole("button", { name: /@fin/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "초대 (1)" }));
     await waitFor(() =>
       expect(server.writes()).toEqual([
         { method: "POST", url: membersUrl, body: { memberType: "agent", memberId: FIN } },
       ]),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(within(list).getByRole("button", { name: "@dev 제거" })).toBeEnabled();
   });
 
   it("에이전트가 모두 채널에 있으면 안내 문구만 — 「에이전트 등록」 링크는 admin 이상에게만(o4)", async () => {
     stubSettingsServer({ me: MEMBER, members: members([DEV], [FIN]) });
     renderRoute(`/c/${CH}/s/${CH}/settings`);
-    const section = await membersSection();
-    expect(await within(section).findByText(/등록된 에이전트가 모두 채널에 있습니다/)).toBeInTheDocument();
-    expect(within(section).queryByRole("link", { name: "에이전트 등록" })).toBeNull();
+    const dialog = await openInvite();
+    expect(await within(dialog).findByText(/등록된 에이전트가 모두 채널에 있습니다/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("link", { name: "에이전트 등록" })).toBeNull();
   });
 
   it("등록된 에이전트가 없으면 안내 문구만 — 「설정 → 연결에서 데려오세요」 링크는 admin 이상에게만", async () => {
     stubSettingsServer({ me: MEMBER, agents: [] });
     renderRoute(`/c/${CH}/s/${CH}/settings`);
-    const section = await membersSection();
-    expect(await within(section).findByText(/등록된 에이전트가 없습니다/)).toBeInTheDocument();
-    expect(within(section).queryByRole("link", { name: "설정 → 연결에서 데려오세요" })).toBeNull();
+    const dialog = await openInvite();
+    expect(await within(dialog).findByText(/등록된 에이전트가 없습니다/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("link", { name: "설정 → 연결에서 데려오세요" })).toBeNull();
   });
 
   it("owner·admin 에게는 잠김이 없다", async () => {

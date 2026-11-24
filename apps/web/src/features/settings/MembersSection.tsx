@@ -1,18 +1,17 @@
-import type { Agent, ChannelMember } from "@dodok/shared";
-import { Link } from "@tanstack/react-router";
-import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
+import type { Agent, ChannelMember, Person } from "@dodok/shared";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formError } from "@/api/formErrors";
-import { useCanManage } from "@/api/queries";
+import { usePeople, useRole } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
-import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
-import { cn } from "@/lib/utils";
+import { josa } from "@/lib/josa";
 import { Button } from "@/ui/button";
-import { FieldError } from "@/ui/field-error";
-import { Label } from "@/ui/label";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { AgentMemberRow } from "./AgentMemberRow";
 import type { AutoRespondStep } from "./autoRespond";
-import { useAddMember, usePatchMember } from "./mutations";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { InviteMembersDialog } from "./InviteMembersDialog";
+import { usePatchMember, useRemoveMember } from "./mutations";
 import { Section } from "./Section";
 
 export type AgentMember = { member: ChannelMember; agent: Agent };
@@ -30,8 +29,8 @@ export function agentMembers(members: ChannelMember[] = [], agents: Agent[] = []
 }
 
 /**
- * 멤버(스펙 6.4): 에이전트 추가 + 에이전트 행. 자동 응답 바꾸기는 여기서 차례로 보낸다 — 한 번에 하나만 돌고,
- * 도는 동안 모든 행의 자동 응답 스위치를 잠근다(두 흐름이 겹쳐 둘이 켜지지 않게)
+ * 멤버(스펙 6.4·채널 UI 스펙 4장): 맨 위 「초대」(사람·에이전트를 한 대화상자에서), 그 아래 「사람」·「에이전트」 두 묶음. 자동 응답
+ * 바꾸기는 여기서 차례로 보낸다 — 한 번에 하나만 돌고, 도는 동안 모든 행의 자동 응답 스위치를 잠근다(두 흐름이 겹쳐 둘이 켜지지 않게)
  */
 export function MembersSection({
   channelId,
@@ -52,13 +51,14 @@ export function MembersSection({
   onRetryAgents?: () => void;
 }) {
   const patch = usePatchMember(channelId);
+  const people = usePeople().data;
   const [busy, setBusy] = useState(false);
   const rows = agentMembers(members, agents);
-  const addRef = useRef<HTMLSelectElement>(null);
-  // 행이 사라지면 초점을 「에이전트 추가」로 옮긴다 — 제거 뒤 body 로 떨어지지 않게
+  const inviteRef = useRef<HTMLButtonElement>(null);
+  // 행이 사라지면 초점을 「초대」로 옮긴다 — 제거 뒤 body 로 떨어지지 않게
   const [removedAt, setRemovedAt] = useState(0);
   useEffect(() => {
-    if (removedAt > 0) addRef.current?.focus();
+    if (removedAt > 0) inviteRef.current?.focus();
   }, [removedAt]);
 
   /**
@@ -81,16 +81,19 @@ export function MembersSection({
   }
 
   const handleOf = (agentId: string) => rows.find((r) => r.agent.id === agentId)?.agent.handle ?? "?";
+  const humans = (members ?? []).filter((m) => m.memberType === "user");
+  const byPerson = new Map((people ?? []).map((p) => [p.id, p]));
 
   return (
     <Section title="멤버">
-      <AddAgentForm
+      <InviteMembersDialog
         channelId={channelId}
         members={members}
+        people={people}
         agents={agents}
         agentsError={agentsError}
         onRetryAgents={onRetryAgents}
-        selectRef={addRef}
+        triggerRef={inviteRef}
       />
       {members === undefined ? (
         loadError ? (
@@ -105,150 +108,136 @@ export function MembersSection({
             불러오는 중…
           </p>
         )
-      ) : agents === undefined ? null : rows.length === 0 ? ( // 에이전트 목록 상태는 위 폼이 보인다
-        <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>
       ) : (
-        <ul aria-label="채널 에이전트" className="flex flex-col gap-2">
-          {rows.map(({ member, agent }) => (
-            <AgentMemberRow
-              key={member.id}
-              channelId={channelId}
-              member={member}
-              agent={agent}
-              members={members}
-              handleOf={handleOf}
-              autoRespondBusy={busy}
-              onAutoRespond={(steps) => void applyAutoRespond(steps)}
-              onRemoved={() => setRemovedAt((n) => n + 1)}
-            />
-          ))}
-        </ul>
+        <>
+          <div className="flex flex-col gap-2">
+            <h4 className="text-sm font-medium">사람</h4>
+            {humans.length === 0 ? (
+              <p className="text-sm text-muted-foreground">아직 참여한 사람이 없습니다.</p>
+            ) : (
+              <ul aria-label="채널 사람" className="flex flex-col gap-1">
+                {humans.map((member) => (
+                  <PersonMemberRow
+                    key={member.id}
+                    channelId={channelId}
+                    member={member}
+                    person={byPerson.get(member.memberId)}
+                    onRemoved={() => setRemovedAt((n) => n + 1)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex flex-col gap-2">
+            <h4 className="text-sm font-medium">에이전트</h4>
+            {agents === undefined ? (
+              agentsError ? (
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  에이전트 목록을 불러오지 못했습니다
+                  {onRetryAgents && (
+                    <Button variant="outline" size="sm" onClick={onRetryAgents}>
+                      다시 시도
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p role="status" className="text-sm text-muted-foreground">
+                  에이전트 목록을 불러오는 중…
+                </p>
+              )
+            ) : rows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>
+            ) : (
+              <ul aria-label="채널 에이전트" className="flex flex-col gap-2">
+                {rows.map(({ member, agent }) => (
+                  <AgentMemberRow
+                    key={member.id}
+                    channelId={channelId}
+                    member={member}
+                    agent={agent}
+                    members={members}
+                    handleOf={handleOf}
+                    autoRespondBusy={busy}
+                    onAutoRespond={(steps) => void applyAutoRespond(steps)}
+                    onRemoved={() => setRemovedAt((n) => n + 1)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
       )}
     </Section>
   );
 }
 
 /**
- * 등록됐고 아직 멤버가 아닌 에이전트를 골라 넣는다 — 보관(삭제)한 에이전트는 고를 수 없다(서버도 409 AGENT_ARCHIVED).
- * VALIDATION·CONFLICT·AGENT_ARCHIVED 만 폼 안에, 그 밖은 전역 토스트
+ * 채널의 사람 한 줄 — 아바타·이름·@핸들과 「빼기」. 빼기는 누구나(팀 스펙 「역할과 권한」 — 서버 authorizeChannelMemberRemove 가
+ * member 이상), 역할을 모르면(옛 me·guest) 숨긴다. 뺀 사람도 그 채널에 다시 쓰거나 멘션되면 저절로 참여한다(「채널 참여」).
+ * 사람 목록에 없으면 「알 수 없는 사람」
  */
-function AddAgentForm({
+function PersonMemberRow({
   channelId,
-  members,
-  agents,
-  agentsError,
-  onRetryAgents,
-  selectRef,
+  member,
+  person,
+  onRemoved,
 }: {
   channelId: string;
-  members: ChannelMember[] | undefined;
-  agents: Agent[] | undefined;
-  agentsError: boolean;
-  onRetryAgents?: () => void;
-  selectRef: RefObject<HTMLSelectElement | null>;
+  member: ChannelMember;
+  person: Person | undefined;
+  onRemoved: () => void;
 }) {
-  const add = useAddMember(channelId);
-  const canManage = useCanManage();
-  const [selected, setSelected] = useState("");
-  const [error, setError] = useState<string>();
-  const id = useId();
-
-  // 에이전트 목록을 아직 못 받았으면 상태를 보인다 — 「등록된 에이전트가 없습니다」와 섞이지 않게(원인은 전역 토스트)
-  if (agents === undefined) {
-    return agentsError ? (
-      <div className="flex items-center gap-3 text-sm text-muted-foreground">
-        에이전트 목록을 불러오지 못했습니다
-        {onRetryAgents && (
-          <Button variant="outline" size="sm" onClick={onRetryAgents}>
-            다시 시도
-          </Button>
-        )}
-      </div>
-    ) : (
-      <p role="status" className="text-sm text-muted-foreground">
-        에이전트 목록을 불러오는 중…
-      </p>
-    );
-  }
-  const live = agents.filter((a) => !isArchived(a));
-  if (live.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        등록된 에이전트가 없습니다.
-        {canManage && (
-          <>
-            {" "}
-            <Link to="/settings/connection" className="text-primary underline-offset-4 hover:underline">
-              설정 → 연결에서 데려오세요
-            </Link>
-          </>
-        )}
-      </p>
-    );
-  }
-  const memberIds = new Set((members ?? []).filter((m) => m.memberType === "agent").map((m) => m.memberId));
-  const candidates = live.filter((a) => !memberIds.has(a.id));
-  const ready = members !== undefined;
-
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!selected || add.isPending) return;
-    setError(undefined);
-    add.mutate(selected, {
-      onSuccess: () => setSelected(""),
-      onError: (err) => setError(formError(err)),
-    });
-  }
-
-  if (ready && candidates.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        등록된 에이전트가 모두 채널에 있습니다.
-        {canManage && (
-          <>
-            {" "}
-            <Link to="/settings/connection" className="text-primary underline-offset-4 hover:underline">
-              에이전트 등록
-            </Link>
-          </>
-        )}
-      </p>
-    );
-  }
+  const remove = useRemoveMember(channelId);
+  const canRemove = useRole() !== undefined;
+  const [removing, setRemoving] = useState(false);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const name = person ? person.displayName || person.handle : "알 수 없는 사람";
+  const label = person ? `@${person.handle}` : name;
   return (
-    <form onSubmit={submit} className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>에이전트 추가</Label>
-      <div className="flex gap-2">
-        <select
-          id={id}
-          ref={selectRef}
-          value={selected}
-          aria-invalid={error !== undefined || undefined}
-          aria-describedby={error === undefined ? undefined : `${id}-error`}
-          disabled={!ready || add.isPending}
-          onChange={(e) => {
-            setSelected(e.target.value);
-            setError(undefined);
-          }}
-          className={cn(
-            "h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none",
-            "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50",
-          )}
+    <li className="flex min-w-0 items-center gap-2 text-sm">
+      <IdentityAvatar
+        kind="person"
+        id={member.memberId}
+        name={name}
+        avatarUrl={person?.avatarUrl}
+        size={24}
+      />
+      <span className="truncate font-medium">{name}</span>
+      {person && <span className="truncate text-muted-foreground">@{person.handle}</span>}
+      {canRemove && (
+        <Button
+          ref={removeRef}
+          variant="ghost"
+          size="xs"
+          className="ml-auto"
+          aria-label={`${label} 빼기`}
+          onClick={() => setRemoving(true)}
         >
-          <option value="">에이전트 선택</option>
-          {candidates.map((a) => (
-            <option key={a.id} value={a.id}>
-              {`@${a.handle}${gatewaySuffix(a)} — ${a.name}${a.enabled ? "" : " (꺼짐)"}`}
-            </option>
-          ))}
-        </select>
-        <Button type="submit" size="sm" className="h-9" disabled={!selected || add.isPending}>
-          {add.isPending ? "추가하는 중…" : "추가"}
+          빼기
         </Button>
-      </div>
-      <FieldError id={`${id}-error`} role="alert" className="text-sm empty:-mt-1.5">
-        {error}
-      </FieldError>
-    </form>
+      )}
+      <ConfirmDialog
+        open={removing}
+        onOpenChange={setRemoving}
+        title="사람 빼기"
+        description={`${label} ${josa(label, "을", "를")} 이 채널에서 뺍니다. 이 채널에 다시 쓰거나 멘션되면 다시 참여합니다`}
+        confirmLabel="빼기"
+        pendingLabel="빼는 중…"
+        pending={remove.isPending}
+        destructive
+        returnFocus={removeRef}
+        onConfirm={() =>
+          // mutate 의 콜백이 아니라 mutateAsync().then — 캐시 갱신으로 이 줄이 먼저 언마운트되면 mutate 콜백은 불리지 않아
+          // 초점이 body 로 떨어진다(docs/guides/browser-verification.md 「초점 이동은 …」). 실패는 전역 토스트, 대화상자는 남는다
+          void remove
+            .mutateAsync({ memberType: "user", memberId: member.memberId })
+            .then(() => {
+              setRemoving(false);
+              onRemoved();
+            })
+            .catch(() => {})
+        }
+      />
+    </li>
   );
 }
