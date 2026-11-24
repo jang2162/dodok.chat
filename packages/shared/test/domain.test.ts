@@ -16,6 +16,7 @@ import {
   INTERACTIONS_MAX,
   Message,
   RelayPolicy,
+  ROOT_RUNS_MAX,
   Run,
   RunState,
   RunStatus,
@@ -426,6 +427,15 @@ describe("run root", () => {
     expect(Message.parse({ ...msg, runRoot }).runRoot).toEqual(runRoot);
     expect(Message.parse(msg).runRoot).toBeUndefined();
     expect(Message.safeParse({ ...msg, runRoot: { ...runRoot, rootMessageId: "x" } }).success).toBe(false);
+  });
+  it("Message.rootRuns 는 선택 — 상태를 싣고 ROOT_RUNS_MAX 를 넘으면 거부", () => {
+    const run = { runId: ID(1), agentId: ID(3), status: "aborted" };
+    expect(Message.parse({ ...msg, rootRuns: [run] }).rootRuns).toEqual([run]);
+    expect(Message.parse(msg).rootRuns).toBeUndefined();
+    expect(Message.safeParse({ ...msg, rootRuns: [{ ...run, status: "nope" }] }).success).toBe(false);
+    const many = Array.from({ length: ROOT_RUNS_MAX + 1 }, () => run);
+    expect(Message.safeParse({ ...msg, rootRuns: many }).success).toBe(false);
+    expect(Message.safeParse({ ...msg, rootRuns: many.slice(1) }).success).toBe(true);
   });
 });
 

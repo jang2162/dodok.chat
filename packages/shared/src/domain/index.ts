@@ -407,6 +407,36 @@ export const MessageRunRoot = z.object({
 });
 export type MessageRunRoot = z.infer<typeof MessageRunRoot>;
 
+export const RunStatus = z.enum([
+  "queued",
+  "streaming",
+  "tool",
+  "awaiting_approval",
+  "finalizing",
+  "done",
+  "error",
+  "aborted",
+]);
+export type RunStatus = z.infer<typeof RunStatus>;
+
+/**
+ * 사람 최상위 글에 실리는 그 글이 루트인 런 하나(답 묶음 설계 「줄의 원천은 런」). 메시지 없이 중지·실패한 런도 새로 불러온 뒤 줄이
+ * 서게 서버(hydrateForClient)가 붙인다. 실시간 상태 변화는 run.state 가 맡고 루트 글을 다시 보내지는 않는다
+ */
+export const MessageRootRun = z.object({
+  runId: Id,
+  agentId: Id,
+  status: RunStatus,
+  triggerMessageId: Id.optional(),
+});
+export type MessageRootRun = z.infer<typeof MessageRootRun>;
+
+/**
+ * 루트 글 하나에 싣는 런 수의 상한 — 넘치면 최근 것(런 id 가 큰 것)부터 남긴다. 한 글에서 갈라지는 런은 보통 몇 개라 이 값이면 다
+ * 실린다. 릴레이를 「이어 가기」로 계속 늘려도 글 한 개의 크기가 끝없이 커지지 않게 막는다
+ */
+export const ROOT_RUNS_MAX = 32;
+
 export const Message = z.object({
   id: Id,
   channelId: Id,
@@ -439,6 +469,8 @@ export const Message = z.object({
   threadSummary: ThreadSummary.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
   runRoot: MessageRunRoot.optional(),
+  /** 사람 최상위 글이면 그 글이 루트인 런(런 id 순, 최대 ROOT_RUNS_MAX). 옛 서버·대상 아닌 글이면 없다 */
+  rootRuns: z.array(MessageRootRun).max(ROOT_RUNS_MAX).optional(),
   clientMsgId: z.string().max(64).optional(), // 사용자 전송 멱등 키
   externalId: z.string().max(128).optional(), // 브리지 outboundId
   createdAt: IsoDateTime,
@@ -446,17 +478,6 @@ export const Message = z.object({
 });
 export type Message = z.infer<typeof Message>;
 
-export const RunStatus = z.enum([
-  "queued",
-  "streaming",
-  "tool",
-  "awaiting_approval",
-  "finalizing",
-  "done",
-  "error",
-  "aborted",
-]);
-export type RunStatus = z.infer<typeof RunStatus>;
 // command — 에이전트 명령 런(에이전트 명령 스펙 5.1). 릴레이·자동 응답을 일으키지 않는다
 export const RunTriggerKind = z.enum([
   "mention",
