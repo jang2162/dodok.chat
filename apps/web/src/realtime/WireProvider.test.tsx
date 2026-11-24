@@ -8,6 +8,7 @@ import { createQueryClient } from "@/app/queryClient";
 import { resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
+import { useBundleExpansion } from "@/features/messages/bundleExpansion";
 import { ReadSenderContext } from "@/features/reads/readSender";
 import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
@@ -154,6 +155,17 @@ it("세션 정리는 읽지 않음 현황도 비운다 — 다음 사람에게 �
   resetClientState(queryClient);
 
   expect(useUnread.getState()).toMatchObject({ ready: false, byConversation: {} });
+});
+
+it("세션 정리는 답 묶음 줄의 펼침도 비운다 — 다음 사람에게 앞 사람이 펼친 값이 남지 않게", async () => {
+  stubMe();
+  render(<Tree />);
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  useBundleExpansion.getState().set(uid(301), true);
+
+  resetClientState(queryClient);
+
+  expect(useBundleExpansion.getState().open).toEqual({});
 });
 
 function ReadProbe({ seq }: { seq: number }) {
