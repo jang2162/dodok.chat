@@ -290,6 +290,34 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     }
   });
 
+  it("추론 이벤트는 run.event 로 팬아웃되고 REST GET /runs/:id/events 가 돌려준다 — 접근 검사는 그대로(아래 REST 시험의 워크스페이스 경계)", async () => {
+    const socket = await connect();
+    const run = await mentionDev(socket);
+    try {
+      adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "gateway_started" } });
+      const fanned = waitFor(socket, "run.event", (p) => p.event.type === "REASONING_MESSAGE_END");
+      for (const event of [
+        { type: "REASONING_MESSAGE_START", runId: run.id, messageId: "r0" },
+        { type: "REASONING_MESSAGE_CONTENT", runId: run.id, messageId: "r0", delta: "생각" },
+        { type: "REASONING_MESSAGE_END", runId: run.id, messageId: "r0" },
+      ] as const)
+        adapter.emit({ kind: "run_event", runId: run.id, event });
+      await fanned;
+      const res = await app.fastify.inject({ method: "GET", url: `/api/v1/runs/${run.id}/events`, headers });
+      expect(res.statusCode).toBe(200);
+      const reasoning = (res.json() as { events: { type: string }[] }).events.filter((e) =>
+        e.type.startsWith("REASONING_"),
+      );
+      expect(reasoning).toEqual([
+        expect.objectContaining({ type: "REASONING_MESSAGE_START", messageId: "r0" }),
+        expect.objectContaining({ type: "REASONING_MESSAGE_CONTENT", messageId: "r0", delta: "생각" }),
+        expect.objectContaining({ type: "REASONING_MESSAGE_END", messageId: "r0" }),
+      ]);
+    } finally {
+      await socket.emitWithAck("run.abort", { runId: run.id });
+    }
+  });
+
   it("REST GET /channels/:id/runs · /runs/:id · /runs/:id/events — 최근 순·limit·afterSeq·워크스페이스 경계", async () => {
     const api = (url: string, auth = true) =>
       app.fastify.inject({ method: "GET", url: `/api/v1${url}`, headers: auth ? headers : {} });

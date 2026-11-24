@@ -27,6 +27,8 @@ import {
   DEFAULT_RUN_TIMEOUTS,
   type OrchestratorDeps,
   type OrchestratorLogger,
+  REASONING_MAX_CHARS,
+  REASONING_TRUNCATED_EVENT,
   type RunTimeouts,
   createOrchestrator,
 } from "../src/modules/runs/orchestrator";
@@ -337,6 +339,101 @@ describe("orchestrator", () => {
     ]);
     expect(t.events).toEqual(t.eventsOf(run.id));
     t.orch.stop();
+  });
+
+  describe("추론 델타(REASONING_MESSAGE_CONTENT)", () => {
+    async function reasoningRun() {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      const emit = (event: RunEventBody) => t.adapter.emit({ kind: "run_event", runId: run.id, event });
+      const reasoning = (delta: string, messageId = "r0") =>
+        emit({ type: "REASONING_MESSAGE_CONTENT", runId: run.id, messageId, delta });
+      const text = (delta: string) =>
+        emit({ type: "TEXT_MESSAGE_CONTENT", runId: run.id, messageId: run.id, delta });
+      const stored = () =>
+        t
+          .eventsOf(run.id)
+          .filter((e) =>
+            ["REASONING_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "CUSTOM", "TOOL_CALL_START"].includes(
+              e.type,
+            ),
+          )
+          .map((e) =>
+            "delta" in e ? `${e.type}:${e.delta}` : e.type === "CUSTOM" ? `CUSTOM:${e.name}` : e.type,
+          );
+      return { t, run, emit, reasoning, text, stored };
+    }
+
+    it("텍스트 델타와 같은 규칙으로 합쳐 저장·전송된다 — 첫 조각 기준 50ms, messageId 가 바뀌면 끊는다", async () => {
+      const { t, run, reasoning, stored } = await reasoningRun();
+      reasoning("가");
+      vi.advanceTimersByTime(30);
+      reasoning("나");
+      reasoning("다", "r1");
+      expect(stored()).toEqual(["REASONING_MESSAGE_CONTENT:가나"]);
+      vi.advanceTimersByTime(49);
+      expect(stored()).toEqual(["REASONING_MESSAGE_CONTENT:가나"]);
+      vi.advanceTimersByTime(1); // 새 버퍼는 제 첫 조각 기준 50ms
+      expect(stored()).toEqual(["REASONING_MESSAGE_CONTENT:가나", "REASONING_MESSAGE_CONTENT:다"]);
+      expect(t.events).toEqual(t.eventsOf(run.id));
+      t.orch.stop();
+    });
+
+    it("텍스트와 섞여 와도 서로의 버퍼를 끊지 않는다 — 줄마다 순서 보존, 다른 이벤트가 오면 둘 다 먼저 저장", async () => {
+      const { t, run, emit, reasoning, text, stored } = await reasoningRun();
+      reasoning("생");
+      text("답");
+      reasoning("각");
+      text("변");
+      expect(stored()).toEqual([]);
+      emit({ type: "TOOL_CALL_START", runId: run.id, toolCallId: "t1", toolCallName: "exec" });
+      expect(stored()).toEqual([
+        "REASONING_MESSAGE_CONTENT:생각",
+        "TEXT_MESSAGE_CONTENT:답변",
+        "TOOL_CALL_START",
+      ]);
+      expect(t.events).toEqual(t.eventsOf(run.id));
+      t.orch.stop();
+    });
+
+    it("런의 추론이 20,000자를 넘으면 잘라 저장하고 reasoning_truncated 를 한 번 — 뒤 추론은 버리고 답 글은 계속", async () => {
+      const { t, run, reasoning, text, stored } = await reasoningRun();
+      reasoning("a".repeat(REASONING_MAX_CHARS - 3));
+      reasoning("bcdef");
+      reasoning("버림");
+      text("답");
+      reasoning("또 버림", "r1");
+      text("글");
+      await t.orch.signal(run.id, { kind: "gateway_error", code: "boom", message: "x" }); // 종료 시 flush
+      expect(stored()).toEqual([
+        `REASONING_MESSAGE_CONTENT:${"a".repeat(REASONING_MAX_CHARS - 3)}bcd`,
+        `CUSTOM:${REASONING_TRUNCATED_EVENT}`,
+        "TEXT_MESSAGE_CONTENT:답글",
+      ]);
+      const total = t
+        .eventsOf(run.id)
+        .flatMap((e) => (e.type === "REASONING_MESSAGE_CONTENT" ? [e.delta] : []))
+        .join("");
+      expect(total).toHaveLength(REASONING_MAX_CHARS);
+      expect(t.events).toEqual(t.eventsOf(run.id));
+      t.orch.stop();
+    });
+
+    it("상한에 꼭 맞으면 잘림 표시가 없다 — 그 뒤 한 글자가 오면 그때 표시", async () => {
+      const { t, reasoning, stored } = await reasoningRun();
+      reasoning("a".repeat(REASONING_MAX_CHARS));
+      vi.advanceTimersByTime(50);
+      expect(stored()).toEqual([`REASONING_MESSAGE_CONTENT:${"a".repeat(REASONING_MAX_CHARS)}`]);
+      reasoning("b");
+      reasoning("c");
+      expect(stored()).toEqual([
+        `REASONING_MESSAGE_CONTENT:${"a".repeat(REASONING_MAX_CHARS)}`,
+        `CUSTOM:${REASONING_TRUNCATED_EVENT}`,
+      ]);
+      t.orch.stop();
+    });
   });
 
   describe("스트리밍 델타의 MEDIA: 줄(결함 A) — 저장·팬아웃 전에 걷는다", () => {
