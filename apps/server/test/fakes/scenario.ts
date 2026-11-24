@@ -53,6 +53,8 @@ export type ScenarioScript = {
   /** 정본 본문(`outbound.message.text`)이자 chat final 의 스냅샷 */
   reply: string;
   tool?: { name: string; args: Record<string, unknown>; result: unknown };
+  /** 툴(없으면 답 글) 앞에 낼 추론 조각 — 가짜 Gateway 가 실물처럼 누적 글과 델타를 함께 싣는다 */
+  thinking?: string[];
   /** 툴이 승인을 요구한다. 배열이면 한 런에 **겹쳐** 띄운다(만료 시각이 다른 승인 둘) */
   approval?: ScenarioApproval | ScenarioApproval[];
   /** 있으면 런 없이 `{ admission: "drop", reason }` 만 ack 한다(봇 루프 보호 등) */
@@ -177,6 +179,11 @@ export function createScenario(opts: {
         return;
       }
       if (stopped()) return;
+      let thought = "";
+      for (const delta of script.thinking ?? []) {
+        thought += delta;
+        await gateway.thinking(runId, sessionKey, agentId, { text: thought, delta });
+      }
       if (script.tool) {
         const toolCallId = `toolu_${runId}`;
         const { name, args, result } = script.tool;

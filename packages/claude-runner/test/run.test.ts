@@ -32,6 +32,8 @@ import {
   ENV_ALLOWLIST,
   isSessionInUseText,
   runOnce,
+  supportsThinkingDisplay,
+  THINKING_DISPLAY_MIN_CLI,
   RUNNER_DISALLOWED_TOOLS,
   type RunContext,
   writeSoul,
@@ -119,6 +121,25 @@ describe("buildQueryOptions", () => {
     expect(buildQueryOptions(runSpec({ effort: "high" }), deps(false)).effort).toBe("high");
     expect(buildQueryOptions(runSpec({ effort: null }), deps(false))).not.toHaveProperty("effort");
     expect(buildQueryOptions(runSpec(), deps(false))).not.toHaveProperty("effort");
+  });
+
+  it("thinkingDisplay 면 CLI 플래그 --thinking-display summarized 만 넘긴다 — SDK thinking(type 까지 정함)은 넘기지 않는다", () => {
+    const on = buildQueryOptions(runSpec(), { ...deps(false), thinkingDisplay: true });
+    expect(on.extraArgs).toEqual({ "thinking-display": "summarized" });
+    expect(on).not.toHaveProperty("thinking");
+    expect(on).not.toHaveProperty("maxThinkingTokens");
+    expect(buildQueryOptions(runSpec(), deps(false))).not.toHaveProperty("extraArgs");
+  });
+
+  it("supportsThinkingDisplay — 판을 모르거나 2.1.283 보다 낮으면 false(모르는 플래그는 CLI 를 실패시킨다)", () => {
+    expect(THINKING_DISPLAY_MIN_CLI).toBe("2.1.283");
+    expect(supportsThinkingDisplay("2.1.283")).toBe(true);
+    expect(supportsThinkingDisplay("2.1.331")).toBe(true);
+    expect(supportsThinkingDisplay("2.2.0")).toBe(true);
+    expect(supportsThinkingDisplay("2.1.282")).toBe(false);
+    expect(supportsThinkingDisplay("1.9.999")).toBe(false);
+    expect(supportsThinkingDisplay(undefined)).toBe(false);
+    expect(supportsThinkingDisplay("(판 모름)")).toBe(false);
   });
 
   it("bypassPermissions 일 때만 allowDangerouslySkipPermissions — auto 는 SDK 에 그대로 넘긴다 [채널 UI·권한 모드 스펙 1장]", () => {
@@ -314,6 +335,19 @@ describe("runOnce", () => {
     fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
     await runOnce(runSpec(), ctx);
     expect(fake.calls[0]!.options.pathToClaudeCodeExecutable).toBe("/opt/c/claude");
+  });
+
+  it("cliVersion 이 플래그를 아는 판일 때만 --thinking-display 를 싣는다", async () => {
+    for (const [cliVersion, expected] of [
+      ["2.1.283", { "thinking-display": "summarized" }],
+      ["2.1.200", undefined],
+      [undefined, undefined],
+    ] as const) {
+      const { fake, ctx } = harness(createFakeSdk(), cliVersion === undefined ? {} : { cliVersion });
+      fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+      await runOnce(runSpec(), ctx);
+      expect(fake.calls[0]!.options.extraArgs).toEqual(expected);
+    }
   });
 
   it("전사가 있으면 resume 으로 연다(판정 P2)", async () => {

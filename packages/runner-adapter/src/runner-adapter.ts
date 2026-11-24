@@ -254,6 +254,10 @@ const RUNNER_EVENT_TYPES: ReadonlySet<RunEventType> = new Set<RunEventType>([
   "TEXT_MESSAGE_CONTENT",
   "TEXT_MESSAGE_REPLACE",
   "TEXT_MESSAGE_END",
+  // 추론 — 옛 서버는 이 타입을 계약 밖으로 읽어 그 이벤트만 버린다(onRunEvent 의 safeParse — 런은 이어진다)
+  "REASONING_MESSAGE_START",
+  "REASONING_MESSAGE_CONTENT",
+  "REASONING_MESSAGE_END",
   "TOOL_CALL_START",
   "TOOL_CALL_ARGS",
   "TOOL_CALL_END",

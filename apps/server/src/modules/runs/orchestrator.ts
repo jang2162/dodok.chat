@@ -241,8 +241,19 @@ const NOTIFY_CODES: ReadonlySet<string> = new Set([
 /** 다시 실행해도 같은 사유로 떨어지는 코드 — 누를 때마다 카드만 는다 */
 const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protection", INVALID_AGENT_ID]);
 
-type Coalescable = Extract<RunEventBody, { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" }>;
-type DeltaBuffer = { channelId: string; type: Coalescable["type"]; key: string; delta: string };
+type Coalescable = Extract<
+  RunEventBody,
+  { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" | "REASONING_MESSAGE_CONTENT" }
+>;
+/**
+ * 코얼레싱 줄 — 추론은 답 글·도구 인자와 따로 모은다. 섞여 와도 서로의 버퍼를 끊지 않는다(줄마다 순서는 그대로, 줄 사이는
+ * 먼저 모이기 시작한 버퍼가 먼저 저장된다)
+ */
+type Lane = "main" | "reasoning";
+type DeltaBuffer = { channelId: string; lane: Lane; type: Coalescable["type"]; key: string; delta: string };
+/** 런 하나의 추론 저장 상한(스펙 「데이터」) — 넘으면 자르고 `CUSTOM reasoning_truncated` 하나, 뒤 추론 델타는 버린다 */
+export const REASONING_MAX_CHARS = 20_000;
+export const REASONING_TRUNCATED_EVENT = "reasoning_truncated";
 type TextFilter = { channelId: string; messageId: string; state: MediaLineFilter };
 /** command 는 명령 런만(RunPlan.command) — 보낼 때 InboundDeliver.command 로 싣는다 */
 type Pending = { queueKey: string; order: number; trigger: EnqueueTrigger; command?: DeliverCommand };
@@ -283,7 +294,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const pending = new Map<string, Pending>(); // 이 프로세스가 enqueue 한 미종료 런
   const inflight = new Set<string>();
   const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
-  const buffers = new Map<string, DeltaBuffer>();
+  const buffers = new Map<string, DeltaBuffer[]>(); // 런별, 줄(Lane)마다 하나까지 — 먼저 모이기 시작한 것이 앞
+  const reasoningChars = new Map<string, number>(); // 런별 저장한 추론 글자 수
+  const reasoningTruncated = new Set<string>(); // reasoning_truncated 를 남긴 런
   const textFilters = new Map<string, TextFilter>(); // 런별 MEDIA: 줄 필터(결함 A) — 텍스트 델타가 코얼레싱에 들어가기 전
   const snapshots = new Map<string, string>();
   const forgetTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -356,28 +369,48 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     emitEvents(channelId, events);
   }
 
-  function flushBuffer(runId: string): void {
-    const buf = buffers.get(runId);
-    if (!buf) return;
-    buffers.delete(runId);
-    timers.clear(runId, "coalesce");
-    const body: RunEventBody =
-      buf.type === "TEXT_MESSAGE_CONTENT"
-        ? { type: buf.type, runId, messageId: buf.key, delta: buf.delta }
-        : { type: buf.type, runId, toolCallId: buf.key, delta: buf.delta };
-    writeEvents(buf.channelId, runId, [body]);
+  function bufferBody(runId: string, buf: DeltaBuffer): RunEventBody {
+    return buf.type === "TOOL_CALL_ARGS"
+      ? { type: buf.type, runId, toolCallId: buf.key, delta: buf.delta }
+      : { type: buf.type, runId, messageId: buf.key, delta: buf.delta };
   }
 
-  /** 같은 key 의 조각은 첫 조각 기준 coalesceMs 뒤 한 번에 저장한다(타이머를 다시 걸지 않아 무한 지연이 없다). */
+  /** 모은 조각을 모두(먼저 모이기 시작한 줄부터) 저장한다 — lane 을 주면 그 줄만 */
+  function flushBuffer(runId: string, lane?: Lane): void {
+    const list = buffers.get(runId);
+    if (!list) return;
+    const out = lane === undefined ? list : list.filter((b) => b.lane === lane);
+    const first = out[0];
+    if (!first) return;
+    const rest = lane === undefined ? [] : list.filter((b) => b.lane !== lane);
+    if (rest.length === 0) {
+      buffers.delete(runId);
+      timers.clear(runId, "coalesce");
+    } else buffers.set(runId, rest);
+    writeEvents(
+      first.channelId,
+      runId,
+      out.map((b) => bufferBody(runId, b)),
+    );
+  }
+
+  /**
+   * 같은 key 의 조각은 첫 조각 기준 coalesceMs 뒤 한 번에 저장한다(타이머를 다시 걸지 않아 무한 지연이 없다). 타이머는 런마다
+   * 하나 — 버퍼가 비어 있다가 처음 생길 때 걸고, 울리면 두 줄을 함께 저장한다
+   */
   function coalesce(run: Pick<Run, "id" | "channelId">, event: Coalescable): void {
-    const key = event.type === "TEXT_MESSAGE_CONTENT" ? event.messageId : event.toolCallId;
-    const buf = buffers.get(run.id);
+    const lane: Lane = event.type === "REASONING_MESSAGE_CONTENT" ? "reasoning" : "main";
+    const key = event.type === "TOOL_CALL_ARGS" ? event.toolCallId : event.messageId;
+    const buf = buffers.get(run.id)?.find((b) => b.lane === lane);
     if (buf && buf.type === event.type && buf.key === key) {
       buf.delta += event.delta;
       return;
     }
-    flushBuffer(run.id);
-    buffers.set(run.id, { channelId: run.channelId, type: event.type, key, delta: event.delta });
+    if (buf) flushBuffer(run.id, lane);
+    const list = buffers.get(run.id) ?? [];
+    list.push({ channelId: run.channelId, lane, type: event.type, key, delta: event.delta });
+    buffers.set(run.id, list);
+    if (timers.has(run.id, "coalesce")) return;
     timers.set(run.id, "coalesce", timeouts.coalesceMs, () => {
       try {
         flushBuffer(run.id);
@@ -385,6 +418,37 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         logger.error({ err, runId: run.id }, "run event flush failed");
       }
     });
+  }
+
+  /**
+   * 추론 델타 — 런마다 REASONING_MAX_CHARS 까지만 모은다. 상한에 닿는 조각은 남은 만큼 잘라 넣고, 그 자리에
+   * `CUSTOM reasoning_truncated` 를 한 번 남긴다. 그 뒤 추론 델타는 저장·팬아웃하지 않는다(답 글은 상관없다)
+   */
+  function coalesceReasoning(
+    run: Pick<Run, "id" | "channelId">,
+    event: Extract<Coalescable, { type: "REASONING_MESSAGE_CONTENT" }>,
+  ): void {
+    if (reasoningTruncated.has(run.id)) return;
+    const used = reasoningChars.get(run.id) ?? 0;
+    const room = REASONING_MAX_CHARS - used;
+    if (event.delta.length <= room) {
+      reasoningChars.set(run.id, used + event.delta.length);
+      coalesce(run, event);
+      return;
+    }
+    reasoningChars.set(run.id, REASONING_MAX_CHARS);
+    reasoningTruncated.add(run.id);
+    const head = event.delta.slice(0, room);
+    if (head !== "") coalesce(run, { ...event, delta: head });
+    flushBuffer(run.id); // 순서 보존 — 잘린 글 다음에 표시
+    writeEvents(run.channelId, run.id, [
+      {
+        type: "CUSTOM",
+        runId: run.id,
+        name: REASONING_TRUNCATED_EVENT,
+        value: { maxChars: REASONING_MAX_CHARS },
+      },
+    ]);
   }
 
   /**
@@ -663,6 +727,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     inflight.delete(runId);
     timers.clear(runId);
     buffers.delete(runId);
+    reasoningChars.delete(runId);
+    reasoningTruncated.delete(runId);
     textFilters.delete(runId);
     snapshots.delete(runId);
     if (!info) return;
@@ -1424,6 +1490,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         }
         if (body.type === "TOOL_CALL_ARGS") {
           coalesce(run, body);
+          return;
+        }
+        if (body.type === "REASONING_MESSAGE_CONTENT") {
+          coalesceReasoning(run, body);
           return;
         }
         if (body.type === "TEXT_MESSAGE_END") drainTextFilter(runId);

@@ -161,12 +161,105 @@ describe("createGatewayEventMapper — 매핑 표", () => {
     expect(signals(out)).toEqual([]);
   });
 
-  it("agent assistant·thinking·run_status → 무시", () => {
+  it("agent assistant·run_status → 무시", () => {
     const m = started();
 
     expect(run(m, f.agentEvent("assistant", { text: "P", delta: "P" }))).toEqual([]);
-    expect(run(m, f.agentEvent("thinking", { progressTokens: 12 }))).toEqual([]);
     expect(run(m, f.agentEvent("run_status", { phase: "running" }))).toEqual([]);
+  });
+
+  describe("agent thinking → REASONING_MESSAGE_*", () => {
+    const R0 = `${f.RUN_ID}:thinking:0`;
+    const R1 = `${f.RUN_ID}:thinking:1`;
+    const reasoning = (out: MappedEvent[]) =>
+      events(out).filter((e) => e.type.startsWith("REASONING_") || e.type.startsWith("TEXT_"));
+
+    it("누적 글(text)과의 차이만 델타로 — 답 글 델타가 오면 닫는다, 신호는 내지 않는다", () => {
+      const m = started();
+      const out = [
+        ...run(m, f.agentEvent("thinking", { text: "테스트", delta: "테스트" })),
+        ...run(
+          m,
+          f.agentEvent("thinking", { text: "테스트 실패", delta: " 실패", isReasoningSnapshot: true }),
+        ),
+        ...run(m, f.agentEvent("thinking", { text: "테스트 실패" })),
+        ...run(m, f.chatDelta("답")),
+      ];
+      expect(reasoning(out)).toEqual([
+        { type: "REASONING_MESSAGE_START", runId: f.RUN_ID, messageId: R0 },
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R0, delta: "테스트" },
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R0, delta: " 실패" },
+        { type: "REASONING_MESSAGE_END", runId: f.RUN_ID, messageId: R0 },
+        { type: "TEXT_MESSAGE_START", runId: f.RUN_ID, messageId: f.RUN_ID, role: "assistant" },
+        { type: "TEXT_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: f.RUN_ID, delta: "답" },
+      ]);
+      expect(signals(out)).toEqual([{ kind: "text_delta" }]);
+    });
+
+    it("진행만(progressTokens — claude-cli 백엔드) 오면 START 하나, 런 끝(final)에 END — 빈 CONTENT 없음", () => {
+      const m = started();
+      const out = [
+        ...run(m, f.agentEvent("thinking", { progressTokens: 12 })),
+        ...run(m, f.agentEvent("thinking", { progressTokens: 40 })),
+        ...run(m, f.chatFinal("PONG")),
+      ];
+      expect(types(out)).toEqual(["REASONING_MESSAGE_START", "REASONING_MESSAGE_END"]);
+    });
+
+    it("도구가 시작되면 닫고, 그 뒤 추론은 새 메시지 — 누적 글이 이어지면 차이만", () => {
+      const m = started();
+      const out = [
+        ...run(m, f.agentEvent("thinking", { text: "먼저", delta: "먼저" })),
+        ...run(m, f.toolStart()),
+        ...run(m, f.agentEvent("thinking", { text: "먼저 그다음", delta: " 그다음" })),
+        ...run(m, f.lifecycleEnd()),
+      ];
+      expect(events(out).map((e) => [e.type, "messageId" in e ? e.messageId : undefined])).toEqual([
+        ["REASONING_MESSAGE_START", R0],
+        ["REASONING_MESSAGE_CONTENT", R0],
+        ["REASONING_MESSAGE_END", R0],
+        ["TOOL_CALL_START", undefined],
+        ["TOOL_CALL_ARGS", undefined],
+        ["REASONING_MESSAGE_START", R1],
+        ["REASONING_MESSAGE_CONTENT", R1],
+        ["REASONING_MESSAGE_END", R1],
+        ["STEP_FINISHED", undefined],
+      ]);
+      expect(events(out)[6]).toMatchObject({ delta: " 그다음" });
+    });
+
+    it("앞 글을 갈아 끼운 누적 글 — 닫고 새 메시지로 전체 글", () => {
+      const m = started();
+      const out = [
+        ...run(m, f.agentEvent("thinking", { text: "초안", delta: "초안" })),
+        ...run(m, f.agentEvent("thinking", { text: "다시 쓴 글", delta: "다시 쓴 글" })),
+      ];
+      expect(reasoning(out)).toEqual([
+        { type: "REASONING_MESSAGE_START", runId: f.RUN_ID, messageId: R0 },
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R0, delta: "초안" },
+        { type: "REASONING_MESSAGE_END", runId: f.RUN_ID, messageId: R0 },
+        { type: "REASONING_MESSAGE_START", runId: f.RUN_ID, messageId: R1 },
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R1, delta: "다시 쓴 글" },
+      ]);
+    });
+
+    it("text 없이 delta 만 오면 이어 붙인다", () => {
+      const m = started();
+      const out = [
+        ...run(m, f.agentEvent("thinking", { delta: "가" })),
+        ...run(m, f.agentEvent("thinking", { delta: "나" })),
+      ];
+      expect(events(out).filter((e) => e.type === "REASONING_MESSAGE_CONTENT")).toEqual([
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R0, delta: "가" },
+        { type: "REASONING_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: R0, delta: "나" },
+      ]);
+    });
+
+    it("끝난 런의 늦은 thinking 은 버린다", () => {
+      const m = started();
+      run(m, f.chatFinal("PONG"));
+      expect(run(m, f.agentEvent("thinking", { text: "늦음", delta: "늦음" }))).toEqual([]);
+    });
   });
 
   it("session.message(assistant, usage) → CUSTOM openclaw.usage (runId 는 idempotencyKey 에서)", () => {

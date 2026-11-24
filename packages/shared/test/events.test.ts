@@ -18,6 +18,9 @@ describe("RunEvent", () => {
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_REPLACE",
       "TEXT_MESSAGE_END",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
       "TOOL_CALL_START",
       "TOOL_CALL_ARGS",
       "TOOL_CALL_END",
@@ -48,6 +51,9 @@ describe("RunEvent", () => {
     { type: "TEXT_MESSAGE_CONTENT", messageId: "gw-1", delta: "안녕" },
     { type: "TEXT_MESSAGE_REPLACE", messageId: "gw-1", text: "전체" },
     { type: "TEXT_MESSAGE_END", messageId: "gw-1" },
+    { type: "REASONING_MESSAGE_START", messageId: "r-0" },
+    { type: "REASONING_MESSAGE_CONTENT", messageId: "r-0", delta: "생각" },
+    { type: "REASONING_MESSAGE_END", messageId: "r-0" },
     { type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "exec" },
     { type: "TOOL_CALL_ARGS", toolCallId: "t1", delta: "{" },
     { type: "TOOL_CALL_END", toolCallId: "t1" },
@@ -73,6 +79,12 @@ describe("RunEvent", () => {
     { type: "CUSTOM", name: "openclaw.agent.lifecycle" },
   ])("$type 파싱", (payload) => {
     expect(RunEvent.safeParse({ ...base, ...payload }).success).toBe(true);
+  });
+
+  it("REASONING_MESSAGE_CONTENT 의 빈 delta 는 거절", () => {
+    expect(
+      RunEvent.safeParse({ ...base, type: "REASONING_MESSAGE_CONTENT", messageId: "r-0", delta: "" }).success,
+    ).toBe(false);
   });
 
   it("STATE_SNAPSHOT은 RunState를 담는다", () => {

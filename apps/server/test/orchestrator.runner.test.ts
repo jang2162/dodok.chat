@@ -429,6 +429,34 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
     },
   );
 
+  it("러너가 보낸 추론 이벤트는 저장되고 REST 런 이벤트로 돌아온다 — 추론 조각은 합쳐지고 답 글은 그대로 [응답 안의 활동 E3]", async () => {
+    const { coder, log, channel } = await start({
+      script: (run) => {
+        run.reasoning(["먼저 ", "README 를 보자"]);
+        run.tool("Read", { file_path: "README.md" }, "# dodok");
+        run.text("읽었습니다");
+        run.final("읽었습니다");
+      },
+    });
+    await sendMessage(log.socket, channel.id, "@coder 봐 줘");
+    const run = await runOf(log, coder.id);
+    expect((await log.terminal(run.id)).status).toBe("done");
+    const { body } = await rest<{ events: Array<{ type: string; delta?: string }> }>(
+      live,
+      "GET",
+      `/runs/${run.id}/events`,
+    );
+    const kinds = body.events
+      .filter((e) => e.type.startsWith("REASONING_") || e.type.startsWith("TOOL_CALL_START"))
+      .map((e) => (e.delta === undefined ? e.type : `${e.type}:${e.delta}`));
+    expect(kinds).toEqual([
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT:먼저 README 를 보자",
+      "REASONING_MESSAGE_END",
+      "TOOL_CALL_START",
+    ]);
+  });
+
   it("세션 id 를 스스로 짓는 프로그램 — 첫 런은 id 없이, run.session 으로 알린 id 를 세션 행에 두고 다음 런에 싣는다 [PR3]", async () => {
     const { runner, coder, log, channel } = await start({
       agent: { program: "codex" },

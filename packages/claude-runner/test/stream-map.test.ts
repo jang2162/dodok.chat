@@ -10,6 +10,19 @@ function mapper(clock = { t: 1000 }, mask?: PathMasker) {
   return createStreamMapper(() => clock.t, { runId: RUN, mask });
 }
 
+const thinkingDelta = (index: number, thinking: string) =>
+  sdkMsg({
+    type: "stream_event",
+    parent_tool_use_id: null,
+    event: { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking } },
+  });
+const signatureDelta = (index: number, signature: string) =>
+  sdkMsg({
+    type: "stream_event",
+    parent_tool_use_id: null,
+    event: { type: "content_block_delta", index, delta: { type: "signature_delta", signature } },
+  });
+
 const events = (items: ReturnType<ReturnType<typeof mapper>["map"]>) => items.map((i) => i.event);
 
 describe("createStreamMapper — ADR 0007 6.4 대응표", () => {
@@ -195,22 +208,84 @@ describe("createStreamMapper — ADR 0007 6.4 대응표", () => {
     expect(items[0]?.error?.message).toBe("ENOENT <작업 디렉터리 밖>");
   });
 
-  it("버리는 것: thinking 블록·system/thinking_tokens·tool_progress·그 밖의 system·완성본 assistant", () => {
+  it("추론: thinking 블록 start → START(블록 인덱스로 만든 id), thinking_delta 마다 CONTENT, stop → END — 빈 델타·signature_delta 는 버린다", () => {
+    const m = mapper();
+    const out = [
+      script.messageStart("msg_r"),
+      script.blockStart(0, { type: "thinking", thinking: "", signature: "" }),
+      thinkingDelta(0, "테스트 실패 "),
+      thinkingDelta(0, ""),
+      thinkingDelta(0, "원인부터"),
+      signatureDelta(0, "sig"),
+      script.blockStop(0),
+      script.blockStart(1, { type: "text", text: "" }),
+      script.textDelta(1, "답"),
+      script.blockStop(1),
+      script.messageStop(),
+    ].flatMap((x) => events(m.map(x)));
+    expect(out).toEqual([
+      { type: "REASONING_MESSAGE_START", runId: RUN, messageId: "msg_r:thinking:0" },
+      { type: "REASONING_MESSAGE_CONTENT", runId: RUN, messageId: "msg_r:thinking:0", delta: "테스트 실패 " },
+      { type: "REASONING_MESSAGE_CONTENT", runId: RUN, messageId: "msg_r:thinking:0", delta: "원인부터" },
+      { type: "REASONING_MESSAGE_END", runId: RUN, messageId: "msg_r:thinking:0" },
+      { type: "TEXT_MESSAGE_START", runId: RUN, messageId: "msg_r", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", runId: RUN, messageId: "msg_r", delta: "답" },
+      { type: "TEXT_MESSAGE_END", runId: RUN, messageId: "msg_r" },
+    ]);
+    for (const e of out) expect(RunEventBodySchema.safeParse(e).success).toBe(true);
+  });
+
+  it("추론이 비거나 가려진 모델(빈 thinking·redacted_thinking) — START/END 만, 빈 CONTENT 는 내지 않는다", () => {
+    const m = mapper();
+    const out = [
+      script.messageStart("msg_e"),
+      script.blockStart(0, { type: "thinking", thinking: "", signature: "" }),
+      thinkingDelta(0, ""),
+      signatureDelta(0, "sig"),
+      script.blockStop(0),
+      script.blockStart(1, { type: "redacted_thinking", data: "xx" }),
+      script.blockStop(1),
+      script.messageStop(),
+    ].flatMap((x) => events(m.map(x)));
+    expect(out).toEqual([
+      { type: "REASONING_MESSAGE_START", runId: RUN, messageId: "msg_e:thinking:0" },
+      { type: "REASONING_MESSAGE_END", runId: RUN, messageId: "msg_e:thinking:0" },
+    ]);
+  });
+
+  it("추론 글의 호스트 경로도 가린다 — 델타 둘에 걸친 경로도", () => {
+    const m = mapper({ t: 0 }, createPathMasker(["/home/u/src/repo"]));
+    const out = [
+      script.messageStart("msg_p"),
+      script.blockStart(0, { type: "thinking", thinking: "", signature: "" }),
+      thinkingDelta(0, "열어 보자 /home/u/sr"),
+      thinkingDelta(0, "c/repo/src/a.ts 를"),
+      script.blockStop(0),
+    ].flatMap((x) => events(m.map(x)));
+    const text = out
+      .filter((e) => e?.type === "REASONING_MESSAGE_CONTENT")
+      .map((e) => (e as { delta: string }).delta)
+      .join("");
+    expect(text).toBe("열어 보자 src/a.ts 를");
+  });
+
+  it("서브에이전트(parent_tool_use_id 가 있는) 추론은 버린다", () => {
+    const m = mapper();
+    const sub = (x: ReturnType<typeof script.messageStart>) =>
+      ({ ...x, parent_tool_use_id: "toolu_task" }) as typeof x;
+    const out = [
+      sub(script.messageStart("msg_sub")),
+      sub(script.blockStart(0, { type: "thinking", thinking: "", signature: "" })),
+      sub(thinkingDelta(0, "속")),
+      sub(script.blockStop(0)),
+    ].flatMap((x) => m.map(x));
+    expect(out).toEqual([]);
+  });
+
+  it("버리는 것: system/thinking_tokens·tool_progress·그 밖의 system·완성본 assistant", () => {
     const m = mapper();
     const out = [
       script.messageStart("msg_t"),
-      script.blockStart(0, { type: "thinking", thinking: "", signature: "" }),
-      sdkMsg({
-        type: "stream_event",
-        parent_tool_use_id: null,
-        event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "" } },
-      }),
-      sdkMsg({
-        type: "stream_event",
-        parent_tool_use_id: null,
-        event: { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "x" } },
-      }),
-      script.blockStop(0),
       sdkMsg({ type: "system", subtype: "thinking_tokens", estimated_tokens: 50 }),
       sdkMsg({ type: "tool_progress", tool_use_id: "t", tool_name: "Bash", elapsed_time_seconds: 1 }),
       sdkMsg({ type: "system", subtype: "status", status: "requesting" }),

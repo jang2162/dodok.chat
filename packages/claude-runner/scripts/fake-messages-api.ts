@@ -12,6 +12,7 @@
  * | 키워드 | 응답 |
  * | --- | --- |
  * | HX-TEXT | 글 한 덩이(델타 5) |
+ * | HX-THINK | thinking 블록(thinking_delta 3 + signature_delta) 뒤 글 한 덩이 — 응답 안의 활동(추론) |
  * | HX-SLOW | 글 40조각을 0.5초 간격(20초) — 중지·러너 죽이기용 |
  * | HX-BASH | 쓰기 Bash(`touch hx-note.txt`) tool_use → 결과를 받으면 `HX-BASH-DONE` |
  * | HX-POST-IN | `mcp__dodok__post` 로 작업 디렉터리 안 파일 `hx-out.txt` → `HX-POST-DONE` |
@@ -36,6 +37,8 @@ type Script = {
   /** 첫 응답이 글이면 조각들, 도구면 그 도구 */
   text?: string[];
   tool?: ToolStep;
+  /** 첫 응답 맨 앞의 thinking 블록 조각들 */
+  thinking?: string[];
   intervalMs: number;
 };
 
@@ -61,6 +64,12 @@ const SCRIPTS: Script[] = [
   {
     key: "HX-POST-OUT",
     tool: { name: "mcp__dodok__post", input: { text: "밖 파일", files: ["../hx-outside.txt"] } },
+    intervalMs: 20,
+  },
+  {
+    key: "HX-THINK",
+    thinking: ["하네스 추론 ", "첫 조각, ", "끝 조각."],
+    text: ["생각한 ", "답입니다."],
     intervalMs: 20,
   },
   {
@@ -123,7 +132,7 @@ function resultText(content: unknown): string {
   return "";
 }
 
-type Plan = { scenario: string; text?: string[]; tool?: ToolStep; intervalMs: number };
+type Plan = { scenario: string; text?: string[]; tool?: ToolStep; thinking?: string[]; intervalMs: number };
 
 function plan(body: Json): Plan {
   const messages = (Array.isArray(body.messages) ? body.messages : []) as ApiMessage[];
@@ -141,7 +150,13 @@ function plan(body: Json): Plan {
   const prompt = lastPromptBody(messages);
   const script = prompt === undefined ? undefined : SCRIPTS.find((s) => prompt.includes(s.key));
   if (!script) return { scenario: prompt === undefined ? "aux" : "plain", text: ["ok"], intervalMs: 0 };
-  return { scenario: script.key, text: script.text, tool: script.tool, intervalMs: script.intervalMs };
+  return {
+    scenario: script.key,
+    text: script.text,
+    tool: script.tool,
+    thinking: script.thinking,
+    intervalMs: script.intervalMs,
+  };
 }
 
 function sse(res: ServerResponse, event: string, data: Json): void {
@@ -171,11 +186,31 @@ async function stream(res: ServerResponse, model: string, p: Plan, closed: () =>
     },
   });
   let output = 0;
+  // thinking 블록이 있으면 index 0 — 뒤 블록은 1 부터
+  let index = 0;
+  if (p.thinking) {
+    sse(res, "content_block_start", {
+      index,
+      content_block: { type: "thinking", thinking: "", signature: "" },
+    });
+    for (const piece of p.thinking) {
+      await sleep(p.intervalMs);
+      if (closed()) return;
+      sse(res, "content_block_delta", { index, delta: { type: "thinking_delta", thinking: piece } });
+      output += Math.max(1, piece.length >> 2);
+    }
+    sse(res, "content_block_delta", {
+      index,
+      delta: { type: "signature_delta", signature: "hx-fake-signature" },
+    });
+    sse(res, "content_block_stop", { index });
+    index += 1;
+  }
   if (p.tool) {
     const toolUseId = `toolu_hx_${seq}_${Date.now()}`;
     toolScripts.set(toolUseId, p.scenario);
     sse(res, "content_block_start", {
-      index: 0,
+      index,
       content_block: { type: "tool_use", id: toolUseId, name: p.tool.name, input: {} },
     });
     const json = JSON.stringify(p.tool.input);
@@ -183,23 +218,23 @@ async function stream(res: ServerResponse, model: string, p: Plan, closed: () =>
     for (const part of [json.slice(0, json.length >> 1), json.slice(json.length >> 1)]) {
       await sleep(p.intervalMs);
       if (closed()) return;
-      sse(res, "content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: part } });
+      sse(res, "content_block_delta", { index, delta: { type: "input_json_delta", partial_json: part } });
     }
-    sse(res, "content_block_stop", { index: 0 });
-    output = json.length >> 2;
+    sse(res, "content_block_stop", { index });
+    output += json.length >> 2;
     sse(res, "message_delta", {
       delta: { stop_reason: "tool_use", stop_sequence: null },
       usage: usage(output),
     });
   } else {
-    sse(res, "content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+    sse(res, "content_block_start", { index, content_block: { type: "text", text: "" } });
     for (const piece of p.text ?? []) {
       await sleep(p.intervalMs);
       if (closed()) return;
-      sse(res, "content_block_delta", { index: 0, delta: { type: "text_delta", text: piece } });
+      sse(res, "content_block_delta", { index, delta: { type: "text_delta", text: piece } });
       output += Math.max(1, piece.length >> 2);
     }
-    sse(res, "content_block_stop", { index: 0 });
+    sse(res, "content_block_stop", { index });
     sse(res, "message_delta", {
       delta: { stop_reason: "end_turn", stop_sequence: null },
       usage: usage(output),

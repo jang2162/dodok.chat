@@ -1279,6 +1279,36 @@ describe("런 이벤트", () => {
     expect(toolEnd).toMatchObject({ signal: { kind: "tool_end", openTools: 0 } });
   });
 
+  it("추론 이벤트(REASONING_MESSAGE_*)를 run_event 로 옮긴다 — 상태 신호는 내지 않는다(첫 프레임이면 gateway_started 만)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    const frames: RunEventBody[] = [
+      { type: "REASONING_MESSAGE_START", runId, messageId: "msg_1:thinking:0" },
+      { type: "REASONING_MESSAGE_CONTENT", runId, messageId: "msg_1:thinking:0", delta: "생각" },
+      { type: "REASONING_MESSAGE_END", runId, messageId: "msg_1:thinking:0" },
+    ];
+    for (const event of frames) r.send("run.event", { runId, event });
+    await until(() => runEvents(h, runId).length === frames.length, "events");
+    expect(runEvents(h, runId)).toEqual(frames);
+    expect(signals(h, runId)).toEqual(["gateway_started"]);
+  });
+
+  it("모르는 이벤트 타입(새 러너가 옛 서버에 붙은 꼴)은 그 이벤트만 버리고 런은 이어진다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    r.send("run.event", { runId, event: { type: "REASONING_SOMETHING_NEW", runId, messageId: "r" } });
+    const text: RunEventBody = { type: "TEXT_MESSAGE_CONTENT", runId, messageId: "m", delta: "답" };
+    r.send("run.event", { runId, event: text });
+    await until(() => runEvents(h, runId).length === 1, "text event");
+    expect(runEvents(h, runId)).toEqual([text]);
+    expect(signals(h, runId)).toEqual(["gateway_started", "text_delta"]);
+    expect(h.logs.some((l) => l.level === "warn" && l.msg === "runner run.event violates contract")).toBe(
+      true,
+    );
+  });
+
   it("스키마 밖·수명·승인 이벤트와 runId 가 어긋난 이벤트는 버리고 warn 한다", async () => {
     const h = await setup();
     const r = await readyRunner(h);

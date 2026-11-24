@@ -55,6 +55,10 @@ const ToolData = z.looseObject({
   isError: z.boolean().optional(),
 });
 const LifecycleData = z.looseObject({ phase: z.string() });
+// thinking 은 둘 중 하나다(openclaw 2026.9.4 dist — execute.runtime·builtin-openclaw 의 emitAgentEvent):
+// 진행만 `{ progressTokens }`(claude-cli 백엔드 — ADR 0001 6.5 의 관찰값), 글이 있으면 `{ text: 누적 글, delta, isReasoningSnapshot? }`.
+// delta 는 앞 글을 갈아 끼운 때 전체 글이라 믿지 않고 누적 text 와의 차이로 낸다
+const ThinkingData = z.looseObject({ text: z.string().optional(), delta: z.string().optional() });
 
 const SessionMessagePayload = z.looseObject({
   runId: z.string().min(1).optional(),
@@ -73,7 +77,15 @@ const SessionMessagePayload = z.looseObject({
   }),
 });
 
-type RunTrack = { started: boolean; textStarted: boolean; openToolIds: Set<string> };
+type RunTrack = {
+  started: boolean;
+  textStarted: boolean;
+  openToolIds: Set<string>;
+  /** 추론 — 열린 REASONING 메시지 id(없으면 닫힘), 지금까지 낸 누적 글, 낸 메시지 수(id 순번) */
+  reasoningId?: string;
+  reasoningText: string;
+  reasoningCount: number;
+};
 
 export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => boolean }): GatewayEventMapper {
   const runs = new Map<string, RunTrack>();
@@ -84,7 +96,13 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
   function track(runId: string): RunTrack {
     let t = runs.get(runId);
     if (!t) {
-      t = { started: false, textStarted: false, openToolIds: new Set() };
+      t = {
+        started: false,
+        textStarted: false,
+        openToolIds: new Set(),
+        reasoningText: "",
+        reasoningCount: 0,
+      };
       runs.set(runId, t);
     }
     return t;
@@ -96,6 +114,50 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
     if (t.started) return;
     t.started = true;
     out.push({ runId, signal: { kind: "gateway_started" } });
+  }
+
+  function openReasoning(runId: string, t: RunTrack, out: MappedEvent[]): string {
+    if (t.reasoningId) return t.reasoningId;
+    const id = `${runId}:thinking:${t.reasoningCount}`;
+    t.reasoningCount += 1;
+    t.reasoningId = id;
+    out.push({ runId, event: { type: "REASONING_MESSAGE_START", runId, messageId: id } });
+    return id;
+  }
+
+  /** 답 글·도구·런 끝이 오면 열린 추론을 닫는다 — Gateway 는 추론 끝을 따로 알리지 않는다 */
+  function closeReasoning(runId: string, out: MappedEvent[]) {
+    const t = runs.get(runId);
+    if (!t?.reasoningId) return;
+    out.push({ runId, event: { type: "REASONING_MESSAGE_END", runId, messageId: t.reasoningId } });
+    t.reasoningId = undefined;
+  }
+
+  function mapThinking(runId: string, data: Record<string, unknown>): MappedEvent[] {
+    const thinking = ThinkingData.safeParse(data);
+    if (!thinking.success) return [];
+    const t = track(runId);
+    const out: MappedEvent[] = [];
+    const { text, delta } = thinking.data;
+    const next = text ?? (delta ? t.reasoningText + delta : undefined);
+    if (next === undefined) {
+      // 진행만(progressTokens) — 「생각 중」 한 줄이 보이게 열기만 한다
+      openReasoning(runId, t, out);
+      return out;
+    }
+    let added: string;
+    if (next.startsWith(t.reasoningText)) {
+      added = next.slice(t.reasoningText.length);
+    } else {
+      // 앞 글을 갈아 끼웠다 — 이미 낸 델타는 되돌릴 수 없으니 새 추론 메시지로 전체를 낸다
+      closeReasoning(runId, out);
+      added = next;
+    }
+    t.reasoningText = next;
+    const id = openReasoning(runId, t, out);
+    if (added)
+      out.push({ runId, event: { type: "REASONING_MESSAGE_CONTENT", runId, messageId: id, delta: added } });
+    return out;
   }
 
   function end(runId: string) {
@@ -118,6 +180,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
         break;
       case "delta": {
         if (!p.replace && p.deltaText === "") break;
+        closeReasoning(runId, out);
         // Gateway 델타에는 메시지 id 가 없어 runId 를 messageId 로 쓴다.
         if (!t.textStarted) {
           t.textStarted = true;
@@ -133,11 +196,13 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
         break;
       }
       case "final":
+        closeReasoning(runId, out);
         if (t.textStarted) out.push({ runId, event: { type: "TEXT_MESSAGE_END", runId, messageId: runId } });
         out.push({ runId, signal: { kind: "gateway_final" }, snapshotText: messageText(p.message) });
         end(runId);
         break;
       case "error": {
+        closeReasoning(runId, out);
         const code = p.errorKind ?? "unknown";
         const message = p.errorMessage ?? p.errorKind ?? "gateway error";
         out.push(
@@ -157,6 +222,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
         break;
       }
       case "aborted":
+        closeReasoning(runId, out);
         out.push(
           { runId, event: { type: "RUN_ABORTED", runId, by: "gateway" } },
           { runId, signal: { kind: "gateway_aborted" } },
@@ -178,11 +244,13 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
       const out: MappedEvent[] = [];
       if (lifecycle.data.phase === "start") markStarted(runId, out);
       if (lifecycle.data.phase === "end") {
+        closeReasoning(runId, out);
         out.push({ runId, event: { type: "STEP_FINISHED", runId, stepName: "lifecycle" } });
       }
       return out;
     }
-    if (stream !== "tool") return []; // assistant(chat delta 와 중복)·thinking·run_status 는 무시
+    if (stream === "thinking") return mapThinking(runId, data);
+    if (stream !== "tool") return []; // assistant(chat delta 와 중복)·run_status 는 무시
 
     const tool = ToolData.safeParse(data);
     if (!tool.success) return [];
@@ -191,7 +259,10 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
 
     if (phase === "start") {
       open.add(toolCallId);
+      const out: MappedEvent[] = [];
+      closeReasoning(runId, out);
       return [
+        ...out,
         { runId, event: { type: "TOOL_CALL_START", runId, toolCallId, toolCallName: tool.data.name ?? "" } },
         {
           runId,

@@ -75,7 +75,8 @@ export type RunSink = RunEmitter &
 
 function maskEvent(event: RunEventBody, mask: PathMasker): RunEventBody | undefined {
   switch (event.type) {
-    case "TEXT_MESSAGE_CONTENT": {
+    case "TEXT_MESSAGE_CONTENT":
+    case "REASONING_MESSAGE_CONTENT": {
       const delta = mask(event.delta);
       return delta ? { ...event, delta } : undefined;
     }

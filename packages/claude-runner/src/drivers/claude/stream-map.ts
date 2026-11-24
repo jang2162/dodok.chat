@@ -12,6 +12,8 @@ import type { SdkMessage } from "./sdk";
 // - 답 글 델타는 마지막 공백 뒤 꼬리를 쥐었다가 다음 델타·블록 끝에서 가려 낸다 — 델타 둘에 걸친 경로를 가리려면
 //   이어 붙여야 한다(mask.ts safeCut)
 // - 서브에이전트 안(parent_tool_use_id 가 있는) 스트림은 본 답 버블에 섞이지 않게 버린다
+// - thinking 블록은 REASONING_MESSAGE_*(id 는 「API 메시지 id:thinking:블록 인덱스」)로 — 글은 답 글처럼 꼬리를 쥐었다
+//   가려 낸다. 빈 델타·signature_delta·redacted_thinking 은 내지 않는다(요약이 비면 START/END 만 간다)
 
 export { ABORTED_STOP_REASON };
 
@@ -46,6 +48,7 @@ export const isAuthFailureText = (text: string): boolean => AUTH_FAILURE.test(te
 
 type Block =
   | { kind: "text"; pending: string }
+  | { kind: "reasoning"; id: string; pending: string }
   | { kind: "tool"; id: string; args: string }
   | { kind: "other" };
 
@@ -60,7 +63,7 @@ type Loose = {
     index?: number;
     message?: { id?: string };
     content_block?: { type?: string; id?: string; name?: string };
-    delta?: { type?: string; text?: string; partial_json?: string };
+    delta?: { type?: string; text?: string; thinking?: string; partial_json?: string };
   };
   message?: { content?: unknown; model?: string; usage?: Loose["usage"] };
   // result
@@ -158,6 +161,9 @@ export function createStreamMapper(
   const content = (delta: string): MapItem[] =>
     delta ? [{ event: { type: "TEXT_MESSAGE_CONTENT", runId, messageId, delta } }] : [];
 
+  const reasoning = (id: string, delta: string): MapItem[] =>
+    delta ? [{ event: { type: "REASONING_MESSAGE_CONTENT", runId, messageId: id, delta } }] : [];
+
   // 쥔 꼬리를 모두 가려 낸다 — 블록 끝·API 메시지 끝
   function flushText(): MapItem[] {
     const out: MapItem[] = [];
@@ -184,6 +190,11 @@ export function createStreamMapper(
           if (textStarted) return [];
           textStarted = true;
           return [{ event: { type: "TEXT_MESSAGE_START", runId, messageId, role: "assistant" } }];
+        }
+        if (b?.type === "thinking") {
+          const id = `${messageId}:thinking:${index}`;
+          blocks.set(index, { kind: "reasoning", id, pending: "" });
+          return [{ event: { type: "REASONING_MESSAGE_START", runId, messageId: id } }];
         }
         if (b?.type === "tool_use" && b.id) {
           blocks.set(index, { kind: "tool", id: b.id, args: "" });
@@ -212,6 +223,12 @@ export function createStreamMapper(
           block.pending = text.slice(cut);
           return content(mask(text.slice(0, cut)));
         }
+        if (block?.kind === "reasoning" && d?.type === "thinking_delta" && d.thinking) {
+          const text = block.pending + d.thinking;
+          const cut = mask.safeCut(text);
+          block.pending = text.slice(cut);
+          return reasoning(block.id, mask(text.slice(0, cut)));
+        }
         if (block?.kind === "tool" && d?.type === "input_json_delta") block.args += d.partial_json ?? "";
         return [];
       }
@@ -221,6 +238,11 @@ export function createStreamMapper(
           const out = content(mask(block.pending));
           block.pending = "";
           return out;
+        }
+        if (block?.kind === "reasoning") {
+          const out = reasoning(block.id, mask(block.pending));
+          block.pending = "";
+          return [...out, { event: { type: "REASONING_MESSAGE_END", runId, messageId: block.id } }];
         }
         if (block?.kind !== "tool") return [];
         return [

@@ -5,6 +5,7 @@ import {
   isStdioServer,
   CLAUDE_BUILTIN_ALLOWED,
   COMMAND_BLOCKED_MESSAGE,
+  compareVersions,
   type DeliverCommand,
   formatCommandText,
   renderRunnerPrompt,
@@ -276,6 +277,8 @@ export function buildQueryOptions(
     alwaysAllowed?: AlwaysAllowed;
     /** 봇 런의 앱 MCP(assembleBotMcp) — 러너가 다시 판정해 통과한 것만 */
     botMcp?: BotMcp;
+    /** CLI 가 --thinking-display 를 아는 판이면 true(supportsThinkingDisplay) — 추론 글(요약)을 받는다 */
+    thinkingDisplay?: boolean;
   },
 ): SdkOptions {
   const botMcp = deps.botMcp ?? { servers: {}, allowedTools: [] };
@@ -376,10 +379,25 @@ export function buildQueryOptions(
     strictMcpConfig: true,
     settingSources: [],
     includePartialMessages: true,
+    // 추론 글 — 넘기지 않으면 thinking_delta 가 빈 글로 온다(ADR 0007 4.1). SDK 의 thinking 옵션은 type 까지 정해 버려
+    // 모델마다 다른 CLI 기본(adaptive·enabled)을 덮으므로, 표시 방식만 CLI 플래그로 넘긴다
+    ...(deps.thinkingDisplay ? { extraArgs: { [THINKING_DISPLAY_FLAG]: THINKING_DISPLAY } } : {}),
     env,
     ...(deps.executable === undefined ? {} : { pathToClaudeCodeExecutable: deps.executable }),
     ...(deps.canUseTool ? { canUseTool: deps.canUseTool } : {}),
   };
+}
+
+const THINKING_DISPLAY_FLAG = "thinking-display";
+const THINKING_DISPLAY = "summarized";
+/**
+ * --thinking-display 를 아는 것으로 확인한 가장 낮은 CLI 판 — SDK 0.3.283 의 번들 CLI(2.1.283)가 안다. 모르는 플래그를 받은 CLI 는
+ * 「error: unknown option」으로 런 전체가 실패하므로, 판을 모르거나 이보다 낮으면 넘기지 않는다(추론 글 없이 START/END 만)
+ */
+export const THINKING_DISPLAY_MIN_CLI = "2.1.283";
+export function supportsThinkingDisplay(cliVersion: string | undefined): boolean {
+  if (cliVersion === undefined) return false;
+  return compareVersions(cliVersion, THINKING_DISPLAY_MIN_CLI) >= 0;
 }
 
 // `--session-id` 로 연 세션의 전사가 이미 있으면 CLI 가 「Error: Session ID <id> is already in use.」로 끝나고, SDK 는
@@ -395,6 +413,8 @@ export type RunContext = {
   baseEnv: NodeJS.ProcessEnv;
   /** 머신에 설치된 claude 의 경로(드라이버가 고른다) — 없으면 SDK 번들 CLI */
   executable?: string;
+  /** 쓰는 CLI 의 판(설치본은 --version, 번들은 빌드가 구운 값) — 모르면 없다 */
+  cliVersion?: string;
   /** 세션별 마지막 total_cost_usd(세션 누적값 — ADR 0007 5.9). 러너 프로세스 메모리에만 있다 */
   costs: Map<string, number>;
   signal: AbortSignal;
@@ -588,6 +608,7 @@ async function attempt(
       options: buildQueryOptions(spec, {
         baseEnv: ctx.baseEnv,
         ...(ctx.executable === undefined ? {} : { executable: ctx.executable }),
+        thinkingDisplay: supportsThinkingDisplay(ctx.cliVersion),
         mcpServer: createDodokMcpServer({
           sdk: ctx.sdk,
           post: createPoster({
