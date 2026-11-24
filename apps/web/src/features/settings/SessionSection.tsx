@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { FieldError } from "@/ui/field-error";
 import { Label } from "@/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { usePatchChannel } from "./mutations";
 import { Section } from "./Section";
 
@@ -34,8 +33,8 @@ export function SessionSection({
   const id = useId();
   const policy = channel.sessionPolicy?.create ?? "members";
 
-  function choose(next: string) {
-    if (locked || save.isPending || (next !== "members" && next !== "managers") || next === policy) return;
+  function choose(next: SessionPolicy["create"]) {
+    if (locked || save.isPending || next === policy) return;
     setError(undefined);
     save.mutate({ sessionPolicy: { create: next } }, { onError: (err) => setError(formError(err)) });
   }
@@ -46,22 +45,34 @@ export function SessionSection({
         <p id={`${id}-policy`} className="text-sm font-medium">
           새 세션을 만들 수 있는 사람
         </p>
-        <RadioGroup
+        {/* 세그먼트 — 누르는 즉시 저장한다(저장 막대에 들지 않는다). 저장 중 잠금은 `aria-disabled`(누른 단추의 초점을 지킨다), 권한 잠금은 `disabled` */}
+        <div
+          role="group"
           aria-labelledby={`${id}-policy`}
-          value={policy}
-          onValueChange={choose}
-          disabled={locked || save.isPending}
-          className="flex flex-col gap-2"
+          aria-describedby={error === undefined ? undefined : `${id}-error`}
+          className="inline-flex self-start rounded-md bg-muted p-0.5"
         >
           {(["members", "managers"] as const).map((value) => (
-            <div key={value} className="flex items-center gap-2">
-              <RadioGroupItem id={`${id}-${value}`} value={value} />
-              <Label htmlFor={`${id}-${value}`} className="font-normal">
-                {POLICY_LABEL[value]}
-              </Label>
-            </div>
+            <Button
+              key={value}
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-pressed={policy === value}
+              disabled={locked}
+              aria-disabled={save.isPending || undefined}
+              className={cn(
+                "h-7 rounded-sm px-3 font-medium aria-disabled:cursor-not-allowed",
+                policy === value
+                  ? "bg-background text-foreground shadow-xs hover:bg-background"
+                  : "text-muted-foreground hover:bg-transparent hover:text-foreground",
+              )}
+              onClick={() => choose(value)}
+            >
+              {POLICY_LABEL[value]}
+            </Button>
           ))}
-        </RadioGroup>
+        </div>
         <FieldError id={`${id}-error`}>{error}</FieldError>
       </div>
       <Managers channelId={channel.id} members={members} locked={locked} />

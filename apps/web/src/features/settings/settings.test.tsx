@@ -146,10 +146,16 @@ describe("패널", () => {
     await userEvent.type(within(basic).getByLabelText("이름"), "-초안");
     const panel = screen.getByTestId("page-channel-panel");
 
-    await router.navigate({
+    // 바뀐 것이 있으니 먼저 묻는다(떠날 때 확인) — 「버리기」로 옮긴다
+    void router.navigate({
       to: "/c/$channelId/s/$conversationId/settings",
       params: { channelId: CH2, conversationId: CH2 },
     });
+    await userEvent.click(
+      within(await screen.findByRole("dialog", { name: "저장하지 않은 변경 1개" })).getByRole("button", {
+        name: "버리기",
+      }),
+    );
     await waitFor(() =>
       expect(within(screen.getByTestId("page-channel-panel")).getByLabelText("이름")).toHaveValue("random"),
     );
@@ -707,10 +713,165 @@ describe("저장 막대", () => {
     const server = stubSettingsServer();
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     const session = await region("세션");
-    await userEvent.click(within(session).getByRole("radio", { name: "세션 관리자만" }));
+    const group = within(session).getByRole("group", { name: "새 세션을 만들 수 있는 사람" });
+    expect(within(group).getByRole("button", { name: "누구나" })).toHaveAttribute("aria-pressed", "true");
+    const managers = within(group).getByRole("button", { name: "세션 관리자만" });
+    expect(managers).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(managers);
     await waitFor(() =>
       expect(server.writes().map((c) => c.body)).toEqual([{ sessionPolicy: { create: "managers" } }]),
     );
+    await waitFor(() => expect(managers).toHaveAttribute("aria-pressed", "true"));
+    expect(managers).toHaveFocus();
     noBar();
+  });
+});
+
+describe("떠날 때 확인", () => {
+  const dialog = () => screen.findByRole("dialog", { name: "저장하지 않은 변경 1개" });
+  const panelLink = (name: string) =>
+    within(screen.getByRole("navigation", { name: "패널 탭" })).getByRole("link", { name });
+
+  it("이름을 고친 채 활동 탭 — 「취소」는 그대로, 「버리기」는 이동, 「저장」은 PATCH 뒤 이동", async () => {
+    const server = stubSettingsServer();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const name = within(await region("기본")).getByLabelText("이름");
+    await userEvent.type(name, "-2");
+
+    await userEvent.click(panelLink("활동"));
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`);
+    expect(within(await region("기본")).getByLabelText("이름")).toHaveValue("general-2");
+
+    await userEvent.click(panelLink("활동"));
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`));
+    expect(server.writes().map((c) => c.body)).toEqual([{ name: "general-2", topic: null }]);
+
+    // 다시 설정 탭에서 고치고 「버리기」 — 보내지 않고 떠난다
+    await userEvent.click(panelLink("설정"));
+    await userEvent.type(within(await region("기본")).getByLabelText("이름"), "x");
+    await userEvent.click(panelLink("파일"));
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "버리기" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/files`));
+    expect(server.writes()).toHaveLength(1);
+  });
+
+  it("「저장」인데 VALIDATION 이면 머문다 — 오류는 섹션 안", async () => {
+    stubSettingsServer({
+      override: ({ method }) =>
+        method === "PATCH" ? apiErr(400, "VALIDATION", "body — name: 이상하다") : undefined,
+    });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    await userEvent.type(within(basic).getByLabelText("이름"), "!");
+    await userEvent.click(panelLink("활동"));
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "저장" }));
+    expect(await within(basic).findByRole("alert")).toHaveTextContent("body — name: 이상하다");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`);
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+  });
+
+  it("고친 채 「설정 닫기」·다른 채널로 가도 묻는다 — 바뀐 것이 없으면 묻지 않는다", async () => {
+    stubSettingsServer({
+      override: ({ method, url }) =>
+        method === "GET" && url === `/api/v1/channels/${CH2}`
+          ? json(200, { channel: channelOf(CH2, { name: "random" }) })
+          : method === "GET" && url === `/api/v1/channels/${CH2}/members`
+            ? json(200, { members: [] })
+            : undefined,
+    });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
+    await userEvent.type(within(await region("기본")).getByLabelText("이름"), "-2");
+
+    await userEvent.click(
+      within(screen.getByTestId("page-channel-panel")).getByRole("link", { name: "설정 닫기" }),
+    );
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`);
+
+    void router.navigate({
+      to: "/c/$channelId/s/$conversationId/settings",
+      params: { channelId: CH2, conversationId: CH2 },
+    });
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`);
+
+    // 되돌리면 묻지 않고 떠난다
+    await userEvent.click(within(saveBar()).getByRole("button", { name: "되돌리기" }));
+    await userEvent.click(panelLink("활동"));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("좁은 화면 시트를 닫아도(닫기 단추) 묻는다", async () => {
+    stubMedia(true);
+    stubSettingsServer();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const sheet = await screen.findByRole("dialog", { name: "채널 설정" });
+    await userEvent.type(
+      within(await within(sheet).findByRole("region", { name: "기본" })).getByLabelText("이름"),
+      "-2",
+    );
+    await userEvent.click(within(sheet).getByRole("button", { name: "닫기" }));
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "버리기" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+});
+
+describe("컨트롤 꼴", () => {
+  it("턴 상한 −/+ — 한 칸씩, 32 에서 「늘리기」·0 에서 「줄이기」는 잠긴다(aria-disabled, 초점 그대로)", async () => {
+    stubSettingsServer({ channel: { relayPolicy: { maxRelayTurns: 31, allowPairs: "all" } } });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const section = await region("릴레이 정책");
+    const turns = within(section).getByRole("textbox", { name: "턴 상한" });
+    const up = within(section).getByRole("button", { name: "턴 상한 늘리기" });
+    const down = within(section).getByRole("button", { name: "턴 상한 줄이기" });
+    await userEvent.click(up);
+    expect(turns).toHaveValue("32");
+    expect(turns).toHaveAttribute("data-dirty", "true");
+    expect(up).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(up);
+    expect(turns).toHaveValue("32");
+    expect(up).toHaveFocus();
+
+    await userEvent.clear(turns);
+    await userEvent.type(turns, "1");
+    await userEvent.click(down);
+    expect(turns).toHaveValue("0");
+    expect(down).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(down);
+    expect(turns).toHaveValue("0");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+  });
+
+  it("「모든 에이전트끼리 허용」은 설명 있는 스위치 줄", async () => {
+    stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const section = await region("릴레이 정책");
+    expect(
+      within(section).getByRole("switch", { name: "모든 에이전트끼리 허용" }),
+    ).toHaveAccessibleDescription("끄면 아래 표에서 고른 쌍만 서로 이어 부릅니다");
+  });
+
+  it("채널 보관은 맨 아래 접힌 줄 — 펼치면 안내와 「이 채널 보관」", async () => {
+    stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const section = await region("채널 보관");
+    const toggle = within(section).getByRole("button", { name: "채널 보관" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(section).queryByRole("button", { name: "이 채널 보관" })).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(within(section).getByRole("button", { name: "이 채널 보관" }));
+    expect(await screen.findByRole("dialog", { name: "채널 보관" })).toHaveTextContent(
+      "#general 을 보관합니다.",
+    );
+    // 섹션 차례에서 맨 아래다
+    expect(section.parentElement?.lastElementChild).toBe(section);
   });
 });

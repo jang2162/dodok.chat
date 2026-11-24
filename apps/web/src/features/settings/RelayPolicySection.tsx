@@ -1,7 +1,9 @@
 import type { Agent, Channel } from "@dodok/shared";
-import { useId, useState } from "react";
+import { MinusIcon, PlusIcon } from "lucide-react";
+import { type ReactNode, useId, useState } from "react";
 import { formError, validationField } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
+import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
@@ -77,6 +79,9 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
   }
 
   const dirty = dirtyFields(form, toForm(channel.relayPolicy));
+  // 스텝퍼의 기준 — 칸이 숫자가 아니면(지우는 중) 0 에서, 범위 밖이면 그 끝에서 움직인다
+  const typed = Number.parseInt(form.maxRelayTurns.trim(), 10);
+  const turnsValue = Number.isNaN(typed) ? 0 : Math.min(Math.max(typed, 0), MAX_TURNS);
   const changed = Object.values(dirty).filter(Boolean).length;
   useRegisterDraft(
     "relay",
@@ -97,16 +102,34 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${id}-turns`}>턴 상한</Label>
-            <Input
-              id={`${id}-turns`}
-              inputMode="numeric"
-              value={form.maxRelayTurns}
-              data-dirty={dirty.maxRelayTurns || undefined}
-              className={DIRTY_FIELD}
-              {...fieldProps("maxRelayTurns", `${id}-turns-hint`)}
-              disabled={disabled}
-              onChange={(e) => edit({ maxRelayTurns: e.target.value })}
-            />
+            <div className="flex items-center gap-1">
+              <StepButton
+                label="턴 상한 줄이기"
+                disabled={disabled}
+                atLimit={turnsValue <= 0}
+                onStep={() => edit({ maxRelayTurns: String(turnsValue - 1) })}
+              >
+                <MinusIcon aria-hidden="true" />
+              </StepButton>
+              <Input
+                id={`${id}-turns`}
+                inputMode="numeric"
+                value={form.maxRelayTurns}
+                data-dirty={dirty.maxRelayTurns || undefined}
+                className={cn("text-center tabular-nums", DIRTY_FIELD)}
+                {...fieldProps("maxRelayTurns", `${id}-turns-hint`)}
+                disabled={disabled}
+                onChange={(e) => edit({ maxRelayTurns: e.target.value })}
+              />
+              <StepButton
+                label="턴 상한 늘리기"
+                disabled={disabled}
+                atLimit={turnsValue >= MAX_TURNS}
+                onStep={() => edit({ maxRelayTurns: String(turnsValue + 1) })}
+              >
+                <PlusIcon aria-hidden="true" />
+              </StepButton>
+            </div>
             <p id={`${id}-turns-hint`} className="text-xs text-muted-foreground">
               에이전트끼리 이어 부르는 횟수(0~32)
             </p>
@@ -129,14 +152,22 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <Label htmlFor={`${id}-all`}>모든 에이전트끼리 허용</Label>
+            <p id={`${id}-all-hint`} className="text-xs text-muted-foreground">
+              끄면 아래 표에서 고른 쌍만 서로 이어 부릅니다
+            </p>
+          </div>
           <Switch
             id={`${id}-all`}
             checked={form.allowAll}
+            aria-describedby={`${id}-all-hint`}
+            data-dirty={dirty.allowAll || undefined}
+            className="data-dirty:ring-2 data-dirty:ring-primary/40"
             disabled={disabled}
             onCheckedChange={(allowAll) => edit({ allowAll })}
           />
-          <Label htmlFor={`${id}-all`}>모든 에이전트끼리 허용</Label>
         </div>
         {!form.allowAll && (
           <PairGrid
@@ -155,6 +186,44 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
         {saved && <Saved />}
       </div>
     </Section>
+  );
+}
+
+/** 스텝퍼의 끝 — `relayPolicyForm` 의 검증 한계(shared RelayPolicy 와 같은 0~32)와 같은 값 */
+const MAX_TURNS = 32;
+
+/**
+ * 턴 상한 −/+ 단추. 끝에 닿으면 `disabled` 가 아니라 `aria-disabled` — 키보드로 눌러 끝까지 간 사람의 초점이 `<body>` 로 떨어지지 않게.
+ * 권한·저장 중 잠금은 칸과 같이 `disabled`
+ */
+function StepButton({
+  label,
+  disabled,
+  atLimit,
+  onStep,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  atLimit: boolean;
+  onStep: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon-sm"
+      aria-label={label}
+      disabled={disabled}
+      aria-disabled={atLimit || undefined}
+      className="shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+      onClick={() => {
+        if (!atLimit) onStep();
+      }}
+    >
+      {children}
+    </Button>
   );
 }
 
