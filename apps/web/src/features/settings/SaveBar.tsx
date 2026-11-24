@@ -40,6 +40,7 @@ export function SaveBar() {
       <Button
         type="button"
         size="sm"
+        data-save-bar-save=""
         aria-disabled={idle || undefined}
         className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
         onClick={() => {

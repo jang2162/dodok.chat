@@ -130,8 +130,12 @@ describe("패널", () => {
     expect(screen.queryByRole("dialog", { name: "채널 설정" })).not.toBeInTheDocument();
   });
 
-  it("채널을 옮기면(패널이 남아 있어도) 고치던 초안은 따라가지 않는다 — 옮겨 간 채널 값", async () => {
-    const server = stubSettingsServer({
+  /**
+   * 라우트 컴포넌트는 채널을 옮겨도 남는다 — 안쪽(`SettingsBody`)을 `key={channelId}` 로 새로 그려야 열린 대화상자(제거 확인)
+   * 같은 섹션 상태가 옮겨 간 채널로 넘어가지 않는다. 바뀐 것이 없으면 묻지 않고 옮긴다 — 그래서 이 길이 `key` 를 잰다
+   */
+  const ch2Server = () =>
+    stubSettingsServer({
       override: ({ method, url }) =>
         method === "GET" && url === `/api/v1/channels/${CH2}`
           ? json(200, { channel: channelOf(CH2, { name: "random" }) })
@@ -139,18 +143,46 @@ describe("패널", () => {
             ? json(200, { members: [] })
             : undefined,
     });
+  const ch2Client = () => {
     const queryClient = createQueryClient(() => {});
     queryClient.setQueryData<Channel>(qk.channel(CH2), channelOf(CH2, { name: "random" }));
-    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
-    const basic = await region("기본");
-    await userEvent.type(within(basic).getByLabelText("이름"), "-초안");
-    const panel = screen.getByTestId("page-channel-panel");
-
-    // 바뀐 것이 있으니 먼저 묻는다(떠날 때 확인) — 「버리기」로 옮긴다
+    return queryClient;
+  };
+  const toCh2 = (router: ReturnType<typeof renderRoute>["router"]) =>
     void router.navigate({
       to: "/c/$channelId/s/$conversationId/settings",
       params: { channelId: CH2, conversationId: CH2 },
     });
+
+  it("채널을 옮기면(패널이 남아 있어도) 안쪽을 새로 그린다 — 열어 둔 섹션 상태(보관 펼침·확인 대화상자)가 따라가지 않는다", async () => {
+    const server = ch2Server();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`, ch2Client());
+    const archive = await region("채널 보관");
+    await userEvent.click(within(archive).getByRole("button", { name: "채널 보관" }));
+    await userEvent.click(within(archive).getByRole("button", { name: "이 채널 보관" }));
+    expect(await screen.findByRole("dialog", { name: "채널 보관" })).toHaveTextContent("#general");
+    const panel = screen.getByTestId("page-channel-panel");
+
+    toCh2(router);
+    await waitFor(() =>
+      expect(within(screen.getByTestId("page-channel-panel")).getByLabelText("이름")).toHaveValue("random"),
+    );
+    // 라우트 컴포넌트는 그대로다 — 안쪽만 새로 그렸다
+    expect(screen.getByTestId("page-channel-panel")).toBe(panel);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(await region("채널 보관")).getByRole("button", { name: "채널 보관" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(server.writes()).toEqual([]);
+  });
+
+  it("고치던 초안이 있으면 먼저 묻는다 — 「버리기」로 옮기면 옮겨 간 채널 값, 막대 없음", async () => {
+    const server = ch2Server();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`, ch2Client());
+    await userEvent.type(within(await region("기본")).getByLabelText("이름"), "-초안");
+
+    toCh2(router);
     await userEvent.click(
       within(await screen.findByRole("dialog", { name: "저장하지 않은 변경 1개" })).getByRole("button", {
         name: "버리기",
@@ -159,8 +191,6 @@ describe("패널", () => {
     await waitFor(() =>
       expect(within(screen.getByTestId("page-channel-panel")).getByLabelText("이름")).toHaveValue("random"),
     );
-    // 라우트 컴포넌트는 그대로다 — 안쪽만 새로 그렸다
-    expect(screen.getByTestId("page-channel-panel")).toBe(panel);
     await region("기본");
     expect(screen.queryByRole("region", { name: "저장하지 않은 변경" })).not.toBeInTheDocument();
     expect(server.writes()).toEqual([]);
@@ -806,6 +836,82 @@ describe("떠날 때 확인", () => {
     await userEvent.click(panelLink("활동"));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  /**
+   * 대화상자는 트리거 없이 열려, 머물 때 닫히면 초점이 `<body>` 로 떨어졌다(리뷰 Important) — 떠나려고 누른 자리로 돌려준다.
+   * 「설정 닫기」는 차단 전에 초점을 헤더로 옮기므로 누른 순간의 자리를 잰다
+   */
+  it("「취소」로 머물면 초점이 누른 자리로 돌아간다 — 탭 링크·「설정 닫기」·채널 링크, <body> 가 아니다", async () => {
+    stubSettingsServer({
+      channelList: () => [channelOf(CH, { name: "general" }), channelOf(CH2, { name: "random" })],
+      override: ({ method, url }) =>
+        method === "GET" && url === `/api/v1/channels/${CH2}`
+          ? json(200, { channel: channelOf(CH2, { name: "random" }) })
+          : undefined,
+    });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
+    await userEvent.type(within(await region("기본")).getByLabelText("이름"), "-2");
+    const close = within(screen.getByTestId("page-channel-panel")).getByRole("link", { name: "설정 닫기" });
+    const channelLink = within(await screen.findByRole("navigation", { name: "채널" })).getByRole("link", {
+      name: /random/,
+    });
+
+    for (const target of [panelLink("활동"), close, channelLink]) {
+      await userEvent.click(target);
+      await userEvent.click(within(await dialog()).getByRole("button", { name: "취소" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(target).toHaveFocus();
+    }
+
+    // 누른 자리 없이(뒤로 가기·코드 이동) 초점도 없던 채 막혔으면 막대의 「저장」으로
+    const name = within(await region("기본")).getByLabelText("이름");
+    name.focus();
+    name.blur();
+    void router.navigate({
+      to: "/c/$channelId/s/$conversationId/activity",
+      params: { channelId: CH, conversationId: CH },
+    });
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(saveBarButton()).toHaveFocus();
+  });
+
+  it("「저장」이 VALIDATION 으로 실패해 머물러도 초점은 <body> 가 아니다 — 누른 탭 링크", async () => {
+    stubSettingsServer({
+      override: ({ method }) =>
+        method === "PATCH" ? apiErr(400, "VALIDATION", "body — name: 이상하다") : undefined,
+    });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    await userEvent.type(within(basic).getByLabelText("이름"), "!");
+    const tab = panelLink("활동");
+    await userEvent.click(tab);
+    await userEvent.click(within(await dialog()).getByRole("button", { name: "저장" }));
+    expect(await within(basic).findByRole("alert")).toHaveTextContent("body — name: 이상하다");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(document.activeElement).not.toBe(document.body);
+    expect(tab).toHaveFocus();
+  });
+
+  it("새로고침·창 닫기(beforeunload)는 바뀐 것이 있을 때만 막는다", async () => {
+    stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const unload = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const name = within(await region("기본")).getByLabelText("이름");
+    expect(unload()).toBe(false);
+    await userEvent.type(name, "-2");
+    expect(unload()).toBe(true);
+    await userEvent.click(within(saveBar()).getByRole("button", { name: "되돌리기" }));
+    // 막대는 초점이 그 안에 있는 동안 남는다 — 바뀐 항목 수로 되돌린 것을 본다
+    await waitFor(() => expect(within(saveBar()).getByText("모두 저장했습니다")).toBeInTheDocument());
+    expect(unload()).toBe(false);
   });
 
   it("좁은 화면 시트를 닫아도(닫기 단추) 묻는다", async () => {
