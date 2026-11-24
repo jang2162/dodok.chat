@@ -71,6 +71,7 @@ import {
   DEV_FAKE_PLUGIN_HELLO,
   DEV_FAKE_RUNNERS,
   fakeAgentScript,
+  FAKE_REASONING,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
   DEV_FAKE_CONTEXT_WINDOW,
@@ -284,6 +285,9 @@ describe("fakeAgentScript", () => {
     expect(fakeAgentScript("dev", delivery("@dev 실패", owner)).fail).toBeDefined();
     expect(fakeAgentScript("dev", delivery("@dev 드롭", owner)).drop).toBe("bot-loop-protection");
     expect(fakeAgentScript("dev", delivery("@dev 도구", owner)).tool?.name).toBe("Read");
+    // 도구 런은 도구 앞에 추론 조각도 낸다(응답 안의 활동 화면 확인용) — 도구 없는 런은 없다
+    expect(fakeAgentScript("dev", delivery("@dev 도구", owner)).thinking).toEqual(FAKE_REASONING);
+    expect(fakeAgentScript("dev", delivery("@dev 안녕", owner))).not.toHaveProperty("thinking");
   });
 
   it("오래 → 답 길이와 무관하게 약 15초 동안 흐른다(채널·스레드 버블 둘을 동시에 볼 틈), 「느리게」와 함께 와도 오래가 이긴다", () => {
@@ -528,6 +532,7 @@ describe("fakeAgentScript", () => {
           ...stringsIn(s.components),
           ...stringsIn(s.approval),
           ...stringsIn(s.tool),
+          ...(s.thinking ?? []),
           ...(s.fail === undefined ? [] : [s.fail]),
         ];
       }),
@@ -564,6 +569,7 @@ describe("fakeAgentScript", () => {
 type RunnerCall =
   | { kind: "text"; delta: string }
   | { kind: "tool"; name: string; args: unknown }
+  | { kind: "reasoning"; chunks: string[] }
   | { kind: "approval"; toolName: string; summary: string }
   | { kind: "post"; text?: string; components?: unknown }
   | { kind: "control"; tool: string; args: Record<string, unknown> }
@@ -585,6 +591,7 @@ async function runRunnerScript(
     aborted: new Promise<void>(() => {}),
     text: (delta: string) => calls.push({ kind: "text", delta }),
     tool: (name: string, args: unknown) => calls.push({ kind: "tool", name, args }),
+    reasoning: (chunks: string[]) => calls.push({ kind: "reasoning", chunks }),
     approval: async (input: { toolName: string; summary: string }) => {
       calls.push({ kind: "approval", ...input });
       return decision;
@@ -639,9 +646,11 @@ describe("fakeContextBreakdown [작성기 칩 스펙 C2]", () => {
 describe("fakeRunnerScript", () => {
   const allow: RunnerApprovalResolve = { providerApprovalId: "p", decision: "allow-once" };
 
-  it("도구(Read)를 먼저 부르고, 델타를 이어 붙이면 최종 답 — fakeAgentScript 와 같은 답·릴레이 꼬리, api 비용", async () => {
+  it("추론 한 덩이와 도구(Read)를 먼저 부르고, 델타를 이어 붙이면 최종 답 — fakeAgentScript 와 같은 답·릴레이 꼬리, api 비용", async () => {
     const { calls, final, streamed } = await runRunnerScript("@coder @dev 안녕");
-    expect(calls[0]).toMatchObject({ kind: "tool", name: "Read" });
+    // 추론 한 덩이 뒤 도구(Read) — 응답 안의 활동 화면 확인용
+    expect(calls[0]).toEqual({ kind: "reasoning", chunks: [...FAKE_REASONING] });
+    expect(calls[1]).toMatchObject({ kind: "tool", name: "Read" });
     expect(final).toMatchObject({
       text: streamed,
       opts: { costKind: "api", usage: { inputTokens: 1_200, outputTokens: 80 }, costUsd: 0.02 },
@@ -693,7 +702,7 @@ describe("fakeRunnerScript", () => {
     expect(expired.streamed).toMatch(/^기한이 지나 실행하지 않았습니다\./);
     // 중지(approval 이 null) — 더 보내지 않는다. 끝은 가짜 러너가 aborted 로 낸다
     const stopped = await runRunnerScript("@coder 승인", null);
-    expect(stopped.calls.map((c) => c.kind)).toEqual(["tool", "approval"]);
+    expect(stopped.calls.map((c) => c.kind)).toEqual(["reasoning", "tool", "approval"]);
   });
 
   it("게시 → post 로 고정 글 + ComponentsV1 카드, 구독 → subscription_estimate, 실패 → run.error(최종 답 없음)", async () => {
@@ -707,7 +716,7 @@ describe("fakeRunnerScript", () => {
     expect(sub.final).toMatchObject({ opts: { costKind: "subscription_estimate" } });
 
     const failed = await runRunnerScript("@coder 실패");
-    expect(failed.calls.map((c) => c.kind)).toEqual(["tool", "error"]);
+    expect(failed.calls.map((c) => c.kind)).toEqual(["reasoning", "tool", "error"]);
 
     // 천장 — 실제 러너처럼 아무것도 돌리지 않고 항목 이름만
     const ceiling = await runRunnerScript("@coder 천장");

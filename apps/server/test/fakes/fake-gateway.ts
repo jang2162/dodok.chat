@@ -126,6 +126,13 @@ export type FakeGateway = {
     error?: { errorMessage?: string; errorKind?: string; errorDetail?: Record<string, unknown> },
   ): Promise<void>;
   chatAborted(runId: string, sessionKey: string, agentId: string): Promise<void>;
+  /** agent stream thinking — 실물 꼴 `{ text: 누적 글, delta }`(openclaw 2026.9.4 builtin-openclaw emitReasoningStream) */
+  thinking(
+    runId: string,
+    sessionKey: string,
+    agentId: string,
+    data: { text: string; delta: string },
+  ): Promise<void>;
   toolStart(
     runId: string,
     sessionKey: string,
@@ -576,6 +583,8 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       deltaSnapshots.delete(runId);
       return broadcast(fixtures.chatAborted(common(runId, sessionKey, agentId)));
     },
+    thinking: (runId, sessionKey, agentId, data) =>
+      broadcast(fixtures.agentEvent("thinking", data, common(runId, sessionKey, agentId))),
     toolStart(runId, sessionKey, agentId, tool) {
       toolStarts.set(tool.toolCallId, { name: tool.name, args: tool.args });
       return broadcast(

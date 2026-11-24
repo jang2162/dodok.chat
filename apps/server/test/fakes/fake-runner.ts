@@ -54,6 +54,8 @@ export type FakeRunnerRun = {
   text(delta: string): void;
   /** 도구 하나 — START·ARGS·END 뒤 RESULT(ok) */
   tool(name: string, args: unknown, result: string): void;
+  /** 추론 한 덩이 — START·조각마다 CONTENT·END(실제 러너의 thinking 블록 하나) */
+  reasoning(chunks: string[]): void;
   /** approval.requested 를 보내고 서버의 approval.resolve 를 기다린다. 중지되면 withdrawn 을 보내고 null */
   approval(input: {
     toolName: string;
@@ -527,6 +529,12 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
           event({ type: "TEXT_MESSAGE_START", runId, messageId: textId, role: "assistant" });
         }
         event({ type: "TEXT_MESSAGE_CONTENT", runId, messageId: textId, delta });
+      },
+      reasoning(chunks) {
+        const messageId = `msg_${randomUUID()}:thinking:0`;
+        event({ type: "REASONING_MESSAGE_START", runId, messageId });
+        for (const delta of chunks) event({ type: "REASONING_MESSAGE_CONTENT", runId, messageId, delta });
+        event({ type: "REASONING_MESSAGE_END", runId, messageId });
       },
       tool(name, args, result) {
         const toolCallId = `toolu_${randomUUID()}`;

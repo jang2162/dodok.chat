@@ -906,6 +906,16 @@ function fakeCommandScript(self: string, command: NonNullable<InboundDeliver["co
   return { reply, deltas: [reply], deltaDelayMs: 50 };
 }
 
+/**
+ * 대본 추론 조각 — OpenClaw 가짜 에이전트는 「도구」 키워드 런에서 도구 앞에, 가짜 러너는 런마다 Read 앞에 낸다(응답 안의 활동 화면 확인용).
+ * 키워드를 담지 않는다
+ */
+export const FAKE_REASONING: readonly string[] = [
+  "먼저 README 를 열어 ",
+  "프로젝트 구성을 확인하고, ",
+  "그 내용을 바탕으로 답을 정리하자.",
+];
+
 export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript {
   if (d.command !== undefined) return fakeCommandScript(self, d.command);
   const { text, author } = d.message;
@@ -939,7 +949,9 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
         ? 1_500
         : 150,
     ...(text.includes("실패") ? { fail: "fake failure" } : {}),
-    ...(text.includes("도구") ? { tool: { name: "Read", args: { path: "README.md" }, result: "ok" } } : {}),
+    ...(text.includes("도구")
+      ? { thinking: [...FAKE_REASONING], tool: { name: "Read", args: { path: "README.md" }, result: "ok" } }
+      : {}),
     ...(text.includes("승인") ? { approval: approvalScript(text) } : {}),
     ...(components ? { components } : {}),
     ...(media ? { attachments: media[2] } : {}),
@@ -1021,7 +1033,7 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
 
 /**
  * 가짜 러너(에이전트 coder)의 대본. 답 글·델타·간격·릴레이 꼬리는 `fakeAgentScript` 와 같다(「오래」·「느리게」도 그대로) —
- * 늘 도구 하나(Read)를 먼저 부르고, 러너 키워드: 천장(도구 없이 run.error RUNNER_CEILING permissionMode — 천장 카드)·
+ * 늘 추론 한 덩이(FAKE_REASONING)와 도구 하나(Read)를 먼저 부르고, 러너 키워드: 천장(도구 없이 run.error RUNNER_CEILING permissionMode — 천장 카드)·
  * 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
  * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
  * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
@@ -1052,6 +1064,7 @@ export async function fakeRunnerScript(
     run.error("RUNNER_CEILING", "permissionMode");
     return;
   }
+  run.reasoning([...FAKE_REASONING]);
   run.tool("Read", { file_path: "README.md" }, "# dodok");
   if (text.includes("실패")) {
     run.error("INTERNAL", "fake runner failure");
