@@ -187,9 +187,12 @@ export function ProjectRow({
               {project.isGit && " · git"} · 에이전트 {project.agentCount}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex items-start gap-1">
+            {/* 잠긴 사유 줄은 단추 아래에만 — 「⋯」를 다음 줄로 밀지 않게 단추와 한 칸으로 묶는다 */}
             {!isWorktree && (
-              <CreateWorktreeDialog parent={project} runner={runner} a11yName={a11yName(project)} />
+              <div className="flex max-w-64 flex-col items-end gap-1 text-right">
+                <CreateWorktreeDialog parent={project} runner={runner} a11yName={a11yName(project)} />
+              </div>
             )}
             <OverflowMenu label={`${a11yName(project)} 더 보기`} items={menuItems} triggerRef={menuButton} />
           </div>
