@@ -44,7 +44,7 @@ describe("threadFaces", () => {
     ]);
   });
 
-  it("active agent already in participants is marked, not duplicated", () => {
+  it("active agent already in participants is marked, moved to front, not duplicated", () => {
     const summary = {
       count: 2,
       lastAt: LAST,
@@ -55,8 +55,37 @@ describe("threadFaces", () => {
       ],
     };
     expect(threadFaces(summary, [{ agentId: "a1", status: "tool" }])).toEqual([
-      { kind: "user", id: "u1" },
       { kind: "agent", id: "a1", active: "tool" },
+      { kind: "user", id: "u1" },
+    ]);
+  });
+
+  it("active agent beyond the 4th moves to front", () => {
+    const summary = {
+      count: 6,
+      lastAt: LAST,
+      agentIds: ["a5", "a6"],
+      participants: [
+        { kind: "user" as const, id: "u1" },
+        { kind: "user" as const, id: "u2" },
+        { kind: "user" as const, id: "u3" },
+        { kind: "user" as const, id: "u4" },
+        { kind: "agent" as const, id: "a5" },
+        { kind: "agent" as const, id: "a6" },
+      ],
+    };
+    const faces = threadFaces(summary, [
+      { agentId: "a6", status: "streaming" },
+      { agentId: "a5", status: "tool" },
+    ]);
+    // 진행 중끼리는 런 순으로 앞에, 나머지는 원래 순서 — 보이는 4개(칩의 AVATARS_MAX)에 둘 다 든다
+    expect(faces).toEqual([
+      { kind: "agent", id: "a6", active: "streaming" },
+      { kind: "agent", id: "a5", active: "tool" },
+      { kind: "user", id: "u1" },
+      { kind: "user", id: "u2" },
+      { kind: "user", id: "u3" },
+      { kind: "user", id: "u4" },
     ]);
   });
 

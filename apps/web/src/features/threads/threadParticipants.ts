@@ -8,8 +8,8 @@ export type ThreadFace = { kind: "user" | "agent"; id: string; active?: RunStatu
 export type ThreadActiveRun = { agentId: string; status: RunStatus };
 
 /**
- * 칩에 그릴 참여자 — 요약의 participants(옛 서버면 agentIds 를 에이전트로). 진행 중 에이전트는 표시하고, 목록에 없으면
- * (아직 답글 전) 앞에 더한다. 같은 얼굴은 한 번
+ * 칩에 그릴 참여자 — 요약의 participants(옛 서버면 agentIds 를 에이전트로). 진행 중 에이전트는 표시하고 맨 앞으로 올린다 — 참여자에
+ * 이미 있어도(보이는 4개 안에 늘 먼저 들어 +N 에 숨지 않게), 진행 중끼리는 런 순. 같은 얼굴은 한 번
  */
 export function threadFaces(
   summary: ThreadSummary | undefined,
@@ -19,18 +19,14 @@ export function threadFaces(
     summary?.participants ?? (summary?.agentIds ?? []).map((id) => ({ kind: "agent" as const, id }));
   const statusOf = new Map<string, RunStatus>();
   for (const r of active) if (!statusOf.has(r.agentId)) statusOf.set(r.agentId, r.status);
-  const listed = new Set(base.filter((f) => f.kind === "agent").map((f) => f.id));
-  const added: ThreadFace[] = [...statusOf]
-    .filter(([id]) => !listed.has(id))
-    .map(([id, status]) => ({ kind: "agent", id, active: status }));
+  const running: ThreadFace[] = [...statusOf].map(([id, status]) => ({ kind: "agent", id, active: status }));
   const seen = new Set<string>();
   const out: ThreadFace[] = [];
-  for (const f of [...added, ...base]) {
+  for (const f of [...running, ...base]) {
     const key = `${f.kind}:${f.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const status = f.kind === "agent" ? statusOf.get(f.id) : undefined;
-    out.push(status === undefined ? { kind: f.kind, id: f.id } : { kind: f.kind, id: f.id, active: status });
+    out.push(f.active === undefined ? { kind: f.kind, id: f.id } : f);
   }
   return out;
 }

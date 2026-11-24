@@ -36,7 +36,8 @@ type ResolvedFace = {
  * 루트 아래 스레드 칩(스레드·검색 스펙 4.2) — 「참여자 아바타(최대 4 + N) · 답글 N개 · 마지막 시각」, 그 스레드에서 끝나지 않은 런이
  * 있으면 그 에이전트 아바타에 링과 「@핸들 응답 중…」. 누르면 그 스레드. 요약은 서버가 루트에 싣는다(`threadSummary` — 답글이
  * 있을 때만) — 요약도 진행 중 런도 없으면 그리지 않는다. 모르는 사람·에이전트(지워졌거나 아직 목록을 못 받았다)는 건너뛰고 +N 에도
- * 세지 않는다. 문구에 aria-live 는 두지 않는다 — 채널 목록의 칩마다 읽히면 시끄럽다(문구는 링크 이름에 든다)
+ * 세지 않는다. 문구에 aria-live 는 두지 않는다 — 채널 목록의 칩마다 읽히면 시끄럽다(문구는 링크 이름에 든다). 아바타는 28px —
+ * IdentityAvatar 에 28 칸이 없어 기본(32) 꼴에 size-7 을 덮는다(24 로 덮으면 data-[size=sm] 선택자가 이긴다)
  */
 export function ThreadChip({ message, summary }: { message: Message; summary?: ThreadSummary | undefined }) {
   const agents = useAgents().data;
@@ -79,7 +80,7 @@ export function ThreadChip({ message, summary }: { message: Message; summary?: T
       params={{ channelId: message.channelId, conversationId: message.conversationId, rootId: message.id }}
       onClick={noteOpener}
       data-slot="thread-chip"
-      className="mt-1 inline-flex min-h-8 max-w-full items-center gap-2 rounded-md border border-transparent px-2 py-1 text-sm hover:border-border hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      className="mt-1.5 inline-flex min-h-10 max-w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-sm transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
     >
       {shown.length > 0 && (
         <AvatarGroup role="group" aria-label="스레드 참여자" className="shrink-0">
@@ -91,22 +92,22 @@ export function ThreadChip({ message, summary }: { message: Message; summary?: T
               name={f.name}
               handle={f.handle}
               avatarUrl={f.avatarUrl}
-              size={24}
+              size={32}
               role="img"
               aria-label={f.kind === "agent" ? `@${f.handle}` : f.name}
               title={`${f.name} (@${f.handle})`}
               data-active={f.active !== undefined ? "true" : undefined}
-              className={cn(f.active !== undefined && "ring-primary! motion-safe:animate-pulse")}
+              className={cn("size-7", f.active !== undefined && "ring-primary! motion-safe:animate-pulse")}
             />
           ))}
           {hidden > 0 && (
-            <AvatarGroupCount role="img" className="size-6 text-xs" aria-label={`참여자 ${hidden}명 더`}>
+            <AvatarGroupCount role="img" className="size-7 text-xs" aria-label={`참여자 ${hidden}명 더`}>
               +{hidden}
             </AvatarGroupCount>
           )}
         </AvatarGroup>
       )}
-      <span className="shrink-0 font-medium text-primary">
+      <span className="shrink-0 font-semibold text-primary">
         {summary ? `답글 ${summary.count}개` : "스레드"}
       </span>{" "}
       {firstStatus !== undefined ? (

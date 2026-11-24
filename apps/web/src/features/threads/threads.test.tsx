@@ -208,6 +208,34 @@ describe("채널 타임라인의 칩·메뉴", () => {
     expect(document.querySelector('[data-active="true"]')).toBeNull();
   });
 
+  it("running agent beyond the 4th shows first, chip avatars are 28px", () => {
+    const six = [
+      { kind: "user" as const, id: MIA.id },
+      { kind: "agent" as const, id: FIN.id },
+      { kind: "user" as const, id: JUN.id },
+      { kind: "agent" as const, id: OPS.id },
+      { kind: "user" as const, id: USER },
+      { kind: "agent" as const, id: AGENT },
+    ];
+    act(() => {
+      useRunStore.getState().applyState(runState({ id: RUN, status: "tool", threadRootId: ROOT.id }));
+    });
+    renderWithClient(<MessageItem message={withParticipants(six)} head />, crowdClient());
+    const group = screen.getByRole("group", { name: "스레드 참여자" });
+    const faces = group.querySelectorAll('[data-slot="avatar"]');
+    expect(faces).toHaveLength(4);
+    // 6번째였던 dev 가 +N 에 숨지 않고 맨 앞에 링과 함께
+    expect(faces[0]).toHaveAttribute("aria-label", "@dev");
+    expect(faces[0]).toHaveAttribute("data-active", "true");
+    expect(
+      within(group)
+        .getAllByRole("img")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["@dev", "mia", "@fin", "jun", "참여자 2명 더"]);
+    for (const f of faces) expect(f).toHaveClass("size-7");
+    expect(within(group).getByRole("img", { name: "참여자 2명 더" })).toHaveClass("size-7");
+  });
+
   it("other thread or channel runs do not show", () => {
     act(() => {
       // 다른 스레드의 런, 채널(세션) 런, 다른 세션의 같은 rootId 런
