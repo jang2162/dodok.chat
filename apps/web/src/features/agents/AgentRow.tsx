@@ -1,12 +1,10 @@
-import { type Agent, type DmAccess, RUNNER_PROGRAM_NAME, type SessionDefaults } from "@dodok/shared";
+import { type Agent, type DmAccess, type SessionDefaults } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { MessageCircleIcon } from "lucide-react";
 import { type FormEvent, type Ref, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { agentColorVar } from "@/theme/agentColor";
 import { Button } from "@/ui/button";
 import { Label } from "@/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
 import { formError } from "@/api/formErrors";
@@ -16,116 +14,57 @@ import { FieldError } from "@/ui/field-error";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import { josa } from "@/lib/josa";
-import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { AvatarPicker } from "@/features/account/AvatarPicker";
 import { useAgentAvatar, useArchiveAgent, usePatchAgent } from "./mutations";
-import { providerIdLabel } from "./providerLabels";
-import { BotDefinitionEditor, DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
+import { DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
 
 /**
- * 목록 한 줄: 이름·핸들(OpenClaw 면 「@핸들 · Gateway 이름」)·제공자별 id·사용 토글·메모(OpenClaw)·지시(러너). 토글은 낙관적 갱신 없이 요청 중에만
- * 잠근다(실패는 전역 토스트). `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만.
- * OpenClaw 에이전트의 「Gateway 옮기기」는 `moveTargets` 를 준 사람에게만(admin 이상, 또는 그 Gateway 의 주인 — 연결 탭 통합 스펙 5.2) —
- * 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
- * 연결이 빈 줄의 안내도 역할에 맞춘다 — 옮길 수 없는 admin·member 에게 옮기라고 권하지 않는다.
- * 「삭제」(보관, admin 이상 — 스펙 「에이전트 보관」 절)는 확인 뒤 보낸다. 보관하면 줄이 목록에서 빠지므로 `onArchived` 가 초점을 옮긴다.
- * `focusRef` 는 사용 토글에 붙는다 — 페이지가 되살린 줄로 초점을 옮기는 자리다.
- * 「DM 보내기」는 지금 내 역할로 이 에이전트와 DM 을 열 수 있을 때만(에이전트 DM 스펙 3.1), DM 허용 범위(`dmAccess`)는 admin 이상이 바꾸고
- * 아래 사람에게는 값만 보인다(스펙 결정 4)
+ * 에이전트 상세(「연결」 탭 — 연결 재설계 스펙 목표 3)가 카드에 나눠 담는 칸들. 머리의 켜기 스위치(`AgentEnabledSwitch`)·「DM 보내기」
+ * (`AgentDmLink`), 「실행」 카드의 새 세션 시작값(`RunnerSessionDefaults`)·지시(`BasePromptEditor` — OpenClaw 에서는 「프로필」 카드의 메모),
+ * 「프로필」 카드의 사진(`AgentAvatarField`), 「DM 허용」 카드(`DmAccessField`), 「관리」 카드의 삭제(`ArchiveAgentButton`).
+ * 토글·저장은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트). `readOnly`(그 연결의 주인도 admin 이상도 아님)면 값만 보인다
  */
-export function AgentRow({
+
+/** 켜기 스위치 — 보이는 이름표 「켜짐」/「꺼짐」, 접근 이름은 「에이전트 켜짐」(상태는 aria-checked 가 말한다) */
+export function AgentEnabledSwitch({
   agent,
-  readOnly = false,
-  onArchived,
+  readOnly,
   focusRef,
-  as: Root = "li",
-  moveTargets,
 }: {
   agent: Agent;
-  readOnly?: boolean;
-  /**
-   * 「Gateway 옮기기」를 보일 때 옮길 수 있는 Gateway 판정 — 없으면 단추를 그리지 않는다. admin 이상은 모두, 그 Gateway 의 주인 member 는
-   * 자기 Gateway 만(연결 탭 통합 스펙 5.2)
-   */
-  moveTargets?: (gatewayId: string) => boolean;
-  onArchived?: () => void;
+  readOnly: boolean;
   focusRef?: Ref<HTMLButtonElement>;
-  /** 「연결」 탭의 에이전트 상세는 목록 밖에서 그린다 — `div` */
-  as?: "li" | "div";
 }) {
   const toggle = usePatchAgent();
-  const role = useRole();
-  const handle = `@${agent.handle}`;
-  const openclaw = agent.provider === "openclaw";
   return (
-    <Root className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-      {/* 좁은 화면(390px)에서는 버튼·스위치 묶음이 아랫줄로 감긴다 — 이름 칸이 한 글자 폭으로 눌리지 않게 최소 폭을 준다 */}
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="flex min-w-0 grow basis-48 items-start gap-3">
-          <span
-            aria-hidden
-            className="mt-1.5 size-2.5 shrink-0 rounded-full"
-            style={{ background: agentColorVar(agent.handle) }}
-          />
-          <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className="font-medium">{agent.name}</span>
-              <span className="text-sm text-muted-foreground">
-                <span>{handle}</span>
-                {openclaw && agent.gateway && <> · {agent.gateway.name}</>}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
-            </p>
-            {agent.provider === "runner" && <RunnerLine agent={agent} />}
-            {openclaw && agent.gateway === null && (
-              <p className="text-xs font-medium text-destructive">
-                {moveTargets
-                  ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
-                  : "Gateway 가 삭제됨 — admin 이 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {canOpenDm(agent, role) && (
-            <Button asChild variant="outline" size="sm">
-              <Link to="/dm/$agentId" params={{ agentId: agent.id }} aria-label={`${handle} DM 보내기`}>
-                <MessageCircleIcon />
-                DM 보내기
-              </Link>
-            </Button>
-          )}
-          {openclaw && moveTargets && <MoveGatewayDialog agent={agent} allowed={moveTargets} />}
-          {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
-          <Switch
-            ref={focusRef}
-            aria-label={`${handle} 사용`}
-            checked={agent.enabled}
-            disabled={toggle.isPending || readOnly}
-            onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
-          />
-        </div>
-      </div>
-      {!readOnly && agent.sessionDefaults && (
-        <RunnerSessionDefaults
-          agent={agent}
-          defaults={agent.sessionDefaults}
-          projectId={agent.runnerAgent?.projectId ?? null}
-        />
-      )}
-      {/* 봇은 기본 지시 대신 봇 정의(러너 봇 스펙 B3) — 정의는 주인·admin 이상만 받는다 */}
-      {agent.runner?.bot ? (
-        <BotDefinitionEditor agent={agent} readOnly={readOnly} />
-      ) : (
-        <BasePromptEditor agent={agent} readOnly={readOnly} />
-      )}
-      <DmAccessField agent={agent} readOnly={readOnly} />
-      {!readOnly && <AgentAvatarField agent={agent} />}
-    </Root>
+    <span className="inline-flex items-center gap-2 rounded-md border px-2 py-1">
+      <Switch
+        ref={focusRef}
+        aria-label="에이전트 켜짐"
+        checked={agent.enabled}
+        disabled={toggle.isPending || readOnly}
+        onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
+      />
+      <span aria-hidden className="text-sm">
+        {agent.enabled ? "켜짐" : "꺼짐"}
+      </span>
+    </span>
+  );
+}
+
+/** 「DM 보내기」 — 지금 내 역할로 이 에이전트와 DM 을 열 수 있을 때만(에이전트 DM 스펙 3.1) */
+export function AgentDmLink({ agent }: { agent: Agent }) {
+  const role = useRole();
+  if (!canOpenDm(agent, role)) return null;
+  return (
+    <Button asChild variant="outline" size="sm">
+      <Link to="/dm/$agentId" params={{ agentId: agent.id }} aria-label={`@${agent.handle} DM 보내기`}>
+        <MessageCircleIcon />
+        DM 보내기
+      </Link>
+    </Button>
   );
 }
 
@@ -149,23 +88,20 @@ export function AgentAvatarField({ agent }: { agent: Agent }) {
 const DM_ACCESS_LABEL: Record<DmAccess, string> = { off: "끔", admins: "admin 이상", everyone: "모두" };
 
 /**
- * DM 허용 범위(에이전트 DM 스펙 결정 4) — 누가 이 에이전트와 새 DM 을 여나. 고르는 즉시 저장한다(채널의 세션 정책과 같은 방식). 좁히면 그
- * 범위 밖 사람의 DM 은 읽기 전용이 된다(서버가 판정 — wire `agents.changed` 로 그 사람의 화면이 바뀐다). `readOnly`(admin 미만)면 값만 보인다.
+ * DM 허용 범위(에이전트 DM 스펙 결정 4) — 누가 이 에이전트와 새 DM 을 여나. 세그먼트(끔 / admin 이상 / 모두), 고르는 즉시 저장한다(채널의
+ * 세션 정책과 같은 방식). 좁히면 그 범위 밖 사람의 DM 은 읽기 전용이 된다(서버가 판정 — wire `agents.changed` 로 그 사람의 화면이 바뀐다).
+ * `readOnly`(admin 미만)면 값만 보인다.
  */
-function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+export function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const save = usePatchAgent();
   const [error, setError] = useState<string>();
   const id = useId();
-  const handle = `@${agent.handle}`;
   const value = agent.dmAccess;
 
-  function choose(next: string) {
-    if (readOnly || save.isPending || next === value || !(next in DM_ACCESS_LABEL)) return;
+  function choose(next: DmAccess) {
+    if (readOnly || save.isPending || next === value) return;
     setError(undefined);
-    save.mutate(
-      { id: agent.id, patch: { dmAccess: next as DmAccess } },
-      { onError: (err) => setError(formError(err)) },
-    );
+    save.mutate({ id: agent.id, patch: { dmAccess: next } }, { onError: (err) => setError(formError(err)) });
   }
 
   if (readOnly)
@@ -176,26 +112,30 @@ function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean })
     );
   return (
     <div className="flex flex-col gap-2">
-      <p aria-hidden className="text-sm font-medium">
-        DM 허용
-      </p>
-      <RadioGroup
-        aria-label={`${handle} DM 허용`}
+      <div
+        role="group"
+        aria-label="DM 을 열 수 있는 사람"
         aria-describedby={error ? `${id}-error` : undefined}
-        value={value}
-        onValueChange={choose}
-        disabled={save.isPending}
-        className="flex flex-col gap-2"
+        className="inline-flex w-fit rounded-md border p-0.5"
       >
         {(["off", "admins", "everyone"] as const).map((option) => (
-          <div key={option} className="flex items-center gap-2">
-            <RadioGroupItem id={`${id}-${option}`} value={option} />
-            <Label htmlFor={`${id}-${option}`} className="font-normal">
-              {DM_ACCESS_LABEL[option]}
-            </Label>
-          </div>
+          <button
+            key={option}
+            type="button"
+            aria-pressed={value === option}
+            disabled={save.isPending}
+            onClick={() => choose(option)}
+            className={cn(
+              "rounded px-3 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+              value === option
+                ? "bg-accent font-medium text-foreground"
+                : "text-muted-foreground hover:bg-accent/60",
+            )}
+          >
+            {DM_ACCESS_LABEL[option]}
+          </button>
         ))}
-      </RadioGroup>
+      </div>
       <FieldError id={`${id}-error`}>{error}</FieldError>
     </div>
   );
@@ -205,7 +145,7 @@ function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean })
  * 「삭제」와 확인 대화상자. 확인을 같은 틱에 두 번 눌러도 한 번만 보낸다 — `isPending` 은 다시 그린 뒤에야 참이라 그 사이 두 번째 클릭이
  * 지나간다. 실패는 전역 토스트(대화상자는 열린 채 다시 누를 수 있다)
  */
-function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: () => void }) {
+export function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: () => void }) {
   const archive = useArchiveAgent();
   const [open, setOpen] = useState(false);
   const sending = useRef(false);
@@ -254,22 +194,17 @@ function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: 
 }
 
 /**
- * 러너 에이전트의 프로그램과 맡은 러너(묶인 러너 토큰의 라벨) — 누구나 본다. 토큰이 폐기됐으면 맡을 러너가 없다: 그 프로젝트를
- * 러너 상세(「연결」 탭)에서 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8)
+ * 러너 에이전트가 맡을 러너가 없을 때의 경고 — 러너가 없거나 토큰이 폐기됐다: 그 프로젝트를 러너 상세(「연결」 탭)에서 다른 러너로 옮긴다
+ * (러너 일반화 계획 판정 PR8). 맡을 러너가 있으면 그리지 않는다(머리의 칩 줄이 러너를 보인다)
  */
-function RunnerLine({ agent }: { agent: Agent }) {
-  const program = agent.program ? `${RUNNER_PROGRAM_NAME[agent.program]} · ` : "";
+export function RunnerWarning({ agent }: { agent: Agent }) {
   const runner = agent.runner;
-  if (!runner) return <p className="text-xs text-muted-foreground">{program}맡을 러너가 없습니다</p>;
-  if (!runner.revoked)
-    return (
-      <p className="text-xs text-muted-foreground">
-        {program}러너 {runner.label}
-      </p>
-    );
+  if (agent.provider !== "runner") return null;
+  if (!runner) return <p className="text-xs font-medium text-destructive">맡을 러너가 없습니다</p>;
+  if (!runner.revoked) return null;
   return (
     <p className="text-xs font-medium text-destructive">
-      {program}러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다.{" "}
+      러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다.{" "}
       <Link
         to="/settings/connection/runner/$runnerId"
         params={{ runnerId: runner.tokenId }}
@@ -289,7 +224,7 @@ const orDefault = (v: string | null) => v ?? DEFAULT_LABEL;
  * 러너 에이전트의 「새 세션 시작값」(세션 설정 스펙 S10 — 그 연결의 주인·admin 이상, 읽기 전용이면 그리지 않는다): 요약 한 줄과
  * 「시작값 고치기」. 고치면 그 뒤 새 세션부터 — 이미 있는 대화는 그 대화의 설정을 따른다
  */
-function RunnerSessionDefaults({
+export function RunnerSessionDefaults({
   agent,
   defaults,
   projectId,
@@ -355,14 +290,14 @@ function RunnerSessionDefaults({
  * 같은 `basePrompt` 칸을 제공자에 맞는 이름으로 부른다. 러너 에이전트에게는 매 런 지시로 가므로 만들 때와 같은 「지시」,
  * OpenClaw 에이전트에게는 인바운드에 실리지 않아(서버 코어 스펙 에이전트 항목 — 의도) 규칙을 적는 자리로 읽히지 않게 「메모」다
  */
-function promptCopy(agent: Pick<Agent, "provider">) {
+export function promptCopy(agent: Pick<Agent, "provider">) {
   return agent.provider === "runner"
     ? { name: "지시", empty: "지시 없음", note: undefined }
     : { name: "메모", empty: "메모 없음", note: "에이전트에게 전달되지 않음" };
 }
 
 /** 접힌 채로는 미리보기, 펼치면 편집. 비워 저장하면 null(지움). VALIDATION·CONFLICT 만 폼 안에 — 그 밖은 전역 토스트 */
-function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+export function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const copy = promptCopy(agent);
   const save = usePatchAgent();
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
@@ -378,7 +313,7 @@ function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean
         <div className="flex min-w-0 flex-col gap-0.5">
           {copy.note && (
             <p className="text-xs text-muted-foreground">
-              {copy.name}({copy.note})
+              {copy.name} — {copy.note}
             </p>
           )}
           <p

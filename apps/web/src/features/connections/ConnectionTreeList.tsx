@@ -1,45 +1,97 @@
 import type { Agent } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
-import { BotIcon, ChevronRightIcon, FolderIcon } from "lucide-react";
-import { type Ref, useState } from "react";
+import { BotIcon, ChevronRightIcon, FolderIcon, LaptopIcon, ServerIcon } from "lucide-react";
+import { type Ref, useId, useMemo, useState } from "react";
+import { ProgramBadge } from "@/features/runners/ProgramBadge";
 import { cn } from "@/lib/utils";
-import { agentColorVar } from "@/theme/agentColor";
-import { Badge } from "@/ui/badge";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { useConnections } from "./context";
-import type { ConnectionTree, TreeAgent, TreeConnection, TreeProject } from "./tree";
+import {
+  type ConnectionTree,
+  type StateTone,
+  type TreeAgent,
+  type TreeConnection,
+  type TreeProject,
+  filterConnectionTree,
+  stateTone,
+} from "./tree";
 
 const ROW =
-  "flex min-h-9 items-center gap-2 rounded-md px-2 py-1 text-sm outline-none hover:not-aria-[current=page]:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-accent aria-[current=page]:font-medium";
+  "flex min-h-9 min-w-0 items-center gap-2 rounded-md px-2 py-1 text-sm outline-none hover:not-aria-[current=page]:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-accent aria-[current=page]:font-medium";
+
+const DOT: Record<StateTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  muted: "bg-muted-foreground",
+};
+
+/** 상태 점 + 글 — 상태를 색만으로 전하지 않는다(연결 재설계 스펙 반목표). 강조색은 쓰지 않는다 */
+export function StatusDot({
+  tone,
+  label,
+  className,
+}: {
+  tone: StateTone;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground", className)}
+    >
+      <span aria-hidden data-state={tone} className={cn("size-2 rounded-full", DOT[tone])} />
+      {label}
+    </span>
+  );
+}
 
 /**
- * 「연결」 트리(연결 탭 통합 스펙 3.2) — 줄 하나가 한 항목이고 누르면 그 상세가 열린다. 줄에는 이름·핸들·상태만 보인다. 1단계는 주인이
- * 없어 묶음 제목 없이 한 묶음(`mine` 이 비면)이다. 「연결 없음」은 있을 때만, 「삭제된 에이전트 N」은 접힌 채 있을 때만 그린다
+ * 「연결」 트리(연결 탭 통합 스펙 3.2, 연결 재설계 스펙 목표 1) — 줄 하나가 한 항목이고 누르면 그 상세가 열린다. 연결은 종류별 묶음
+ * (「GATEWAY N」·「러너 N」)으로 가르고, 주인이 있으면 그 위에 「내 연결」·「다른 사람의 연결」. 연결 줄은 접고 펼 수 있고, 접힌 줄 끝에
+ * 「에이전트 N」·「프로젝트 N」 요약. 검색 중에는 접힘을 무시하고 맞는 것을 모두 펼친다 — 검색을 비우면 접힘 상태가 그대로 돌아온다
  */
 export function ConnectionTreeList({
-  tree,
+  tree: full,
+  query = "",
   onNavigate,
   archivedToggleRef,
 }: {
   tree: ConnectionTree;
+  query?: string;
   onNavigate: () => void;
   archivedToggleRef?: Ref<HTMLButtonElement>;
 }) {
-  const grouped = tree.mine.length > 0;
+  const tree = useMemo(() => filterConnectionTree(full, query), [full, query]);
+  const searching = tree !== full;
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  const open = (key: string) => searching || !collapsed.has(key);
+  const nodeProps = { onNavigate, open, toggle, searching };
+
+  const grouped = full.mine.length > 0;
   const empty = tree.mine.length === 0 && tree.others.length === 0 && tree.orphaned.length === 0;
   return (
     <nav aria-label="연결 목록" className="flex flex-col gap-4">
-      {empty && <p className="px-2 text-sm text-muted-foreground">아직 연결이 없습니다.</p>}
-      {grouped && <Group title="내 연결" connections={tree.mine} onNavigate={onNavigate} />}
+      {empty &&
+        (searching ? (
+          tree.archived.length === 0 && (
+            <p className="px-2 text-sm text-muted-foreground">찾는 연결·에이전트가 없습니다</p>
+          )
+        ) : (
+          <p className="px-2 text-sm text-muted-foreground">아직 연결이 없습니다.</p>
+        ))}
+      {grouped && <Group title="내 연결" connections={tree.mine} {...nodeProps} />}
       {(tree.others.length > 0 || !grouped) && (
-        <Group
-          title={grouped ? "다른 사람의 연결" : undefined}
-          connections={tree.others}
-          onNavigate={onNavigate}
-        />
+        <Group title={grouped ? "다른 사람의 연결" : undefined} connections={tree.others} {...nodeProps} />
       )}
       {tree.orphaned.length > 0 && (
         <section aria-label="연결 없음" className="flex flex-col gap-1">
-          <h2 className="px-2 text-xs font-medium text-muted-foreground">연결 없음</h2>
+          <GroupHeading>연결 없음</GroupHeading>
           <ul className="flex flex-col">
             {tree.orphaned.map((leaf) => (
               <li key={leaf.agent.id}>
@@ -50,9 +102,30 @@ export function ConnectionTreeList({
         </section>
       )}
       {tree.archived.length > 0 && (
-        <ArchivedGroup agents={tree.archived} onNavigate={onNavigate} toggleRef={archivedToggleRef} />
+        <ArchivedGroup
+          agents={tree.archived}
+          onNavigate={onNavigate}
+          toggleRef={archivedToggleRef}
+          forceOpen={searching}
+        />
       )}
     </nav>
+  );
+}
+
+type NodeProps = {
+  onNavigate: () => void;
+  open: (key: string) => boolean;
+  toggle: (key: string) => void;
+  /** 검색 중에는 접힘을 무시하고 펼치므로 접기 단추를 숨긴다 — 눌러도 보이는 것이 바뀌지 않는다 */
+  searching: boolean;
+};
+
+function GroupHeading({ id, children }: { id?: string; children: React.ReactNode }) {
+  return (
+    <h2 id={id} className="px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+      {children}
+    </h2>
   );
 }
 
@@ -66,72 +139,122 @@ function orphanReason(agent: Agent): string {
 function Group({
   title,
   connections,
-  onNavigate,
-}: {
-  title?: string;
-  connections: TreeConnection[];
-  onNavigate: () => void;
-}) {
+  ...props
+}: { title?: string; connections: TreeConnection[] } & NodeProps) {
   if (connections.length === 0) return null;
-  const list = (
-    <ul className="flex flex-col gap-1">
-      {connections.map((c) => (
-        <li key={`${c.kind}:${c.id}`}>
-          <ConnectionNode node={c} onNavigate={onNavigate} />
-        </li>
-      ))}
-    </ul>
+  const gateways = connections.filter((c) => c.kind === "gateway");
+  const runners = connections.filter((c) => c.kind === "runner");
+  const kinds = (
+    <div className="flex flex-col gap-3">
+      <KindGroup title="GATEWAY" connections={gateways} {...props} />
+      <KindGroup title="러너" connections={runners} {...props} />
+    </div>
   );
-  if (!title) return list;
+  if (!title) return kinds;
   return (
-    <section aria-label={title} className="flex flex-col gap-1">
-      <h2 className="px-2 text-xs font-medium text-muted-foreground">{title}</h2>
-      {list}
+    <section aria-label={title} className="flex flex-col gap-2">
+      <h2 className="px-2 text-xs font-medium text-foreground">{title}</h2>
+      {kinds}
     </section>
   );
 }
 
-function StateBadge({ state }: { state: string | null }) {
-  if (state === null) return null;
+/** 종류 묶음 — 「GATEWAY 2」·「러너 2」 머리 */
+function KindGroup({
+  title,
+  connections,
+  ...props
+}: { title: string; connections: TreeConnection[] } & NodeProps) {
+  const headingId = useId();
+  if (connections.length === 0) return null;
   return (
-    <Badge variant={state === "연결됨" ? "default" : "outline"} className="ml-auto">
-      {state}
-    </Badge>
+    <section aria-labelledby={headingId} className="flex flex-col gap-1">
+      <GroupHeading id={headingId}>
+        {title} {connections.length}
+      </GroupHeading>
+      <ul className="flex flex-col gap-0.5">
+        {connections.map((c) => (
+          <li key={`${c.kind}:${c.id}`}>
+            <ConnectionNode node={c} {...props} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
-function ConnectionNode({ node, onNavigate }: { node: TreeConnection; onNavigate: () => void }) {
+/** 접힌 연결 줄 끝의 요약 — 「에이전트 N」·「프로젝트 N」(봇도 에이전트로 센다) */
+function summaryOf(node: TreeConnection): string {
+  if (node.kind === "gateway") return `에이전트 ${node.agents.length}`;
+  const count = (p: TreeProject): number => p.agents.length + p.worktrees.reduce((n, w) => n + count(w), 0);
+  const agents = node.agents.length + node.bots.length + node.projects.reduce((n, p) => n + count(p), 0);
+  const parts = [`에이전트 ${agents}`];
+  if (node.projects.length > 0) parts.unshift(`프로젝트 ${node.projects.length}`);
+  return parts.join(" · ");
+}
+
+function ConnectionNode({ node, onNavigate, open, toggle, searching }: { node: TreeConnection } & NodeProps) {
+  const key = `${node.kind}:${node.id}`;
+  const name = node.kind === "gateway" ? node.name : node.label;
+  const projects = node.kind === "runner" ? node.projects : [];
+  const bots = node.kind === "runner" ? node.bots : [];
+  const hasChildren = projects.length > 0 || bots.length > 0 || node.agents.length > 0;
+  const expanded = hasChildren && open(key);
+  const Icon = node.kind === "gateway" ? ServerIcon : LaptopIcon;
+  const inner = (
+    <>
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate font-medium">{name}</span>
+      <span className="sr-only">{node.kind === "gateway" ? "Gateway" : "러너"}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {hasChildren && !expanded && <span className="text-xs text-muted-foreground">{summaryOf(node)}</span>}
+        {node.state !== null && <StatusDot tone={stateTone(node.state)} label={node.state} />}
+      </span>
+    </>
+  );
   const link =
     node.kind === "gateway" ? (
       <Link
         to="/settings/connection/gateway/$gatewayId"
         params={{ gatewayId: node.id }}
         onClick={onNavigate}
-        className={ROW}
+        className={cn(ROW, "flex-1")}
       >
-        <span className="min-w-0 truncate font-medium">{node.name}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">Gateway</span>
-        <StateBadge state={node.state} />
+        {inner}
       </Link>
     ) : (
       <Link
         to="/settings/connection/runner/$runnerId"
         params={{ runnerId: node.id }}
         onClick={onNavigate}
-        className={ROW}
+        className={cn(ROW, "flex-1")}
       >
-        <span className="min-w-0 truncate font-medium">{node.label}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">러너</span>
-        <StateBadge state={node.state} />
+        {inner}
       </Link>
     );
-  const projects = node.kind === "runner" ? node.projects : [];
-  const bots = node.kind === "runner" ? node.bots : [];
   return (
     <>
-      {link}
-      {(projects.length > 0 || bots.length > 0 || node.agents.length > 0) && (
-        <ul className="ml-3 flex flex-col border-l pl-1">
+      <div className="flex items-center">
+        {hasChildren && !searching ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={`${name} ${expanded ? "접기" : "펼치기"}`}
+            onClick={() => toggle(key)}
+            className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3.5 transition-transform", expanded && "rotate-90")}
+            />
+          </button>
+        ) : (
+          <span aria-hidden className="size-6 shrink-0" />
+        )}
+        {link}
+      </div>
+      {expanded && (
+        <ul className="ml-6 flex flex-col border-l pl-1">
           {projects.map((p) => (
             <li key={p.id}>
               <ProjectNode project={p} onNavigate={onNavigate} />
@@ -181,7 +304,7 @@ function ProjectNode({ project, onNavigate }: { project: TreeProject; onNavigate
         onClick={onNavigate}
         className={ROW}
       >
-        <FolderIcon aria-hidden className="size-4 shrink-0 opacity-70" />
+        <FolderIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate">{project.label}</span>
       </Link>
       {(project.agents.length > 0 || project.worktrees.length > 0) && (
@@ -203,6 +326,7 @@ function ProjectNode({ project, onNavigate }: { project: TreeProject; onNavigate
   );
 }
 
+/** 에이전트 줄 — 에이전트 색 테두리의 이니셜 아바타(상태 점이 아니다) · 이름 · 핸들 · 러너 에이전트면 끝에 프로그램 배지 */
 function AgentLink({
   leaf,
   onNavigate,
@@ -220,32 +344,42 @@ function AgentLink({
       onClick={onNavigate}
       className={cn(ROW, !agent.enabled && "text-muted-foreground")}
     >
-      <span
-        aria-hidden
-        className="size-2 shrink-0 rounded-full"
-        style={{ background: agentColorVar(agent.handle) }}
+      <IdentityAvatar
+        kind="agent"
+        id={agent.id}
+        name={agent.name}
+        handle={agent.handle}
+        avatarUrl={agent.avatarUrl}
+        size={24}
+        className={cn("size-5", !agent.enabled && "opacity-60")}
       />
       <span className="min-w-0 truncate">{agent.name}</span>
       <span className="shrink-0 text-xs text-muted-foreground">@{agent.handle}</span>
       {!agent.enabled && <span className="shrink-0 text-xs">(꺼짐)</span>}
       {reason && <span className="min-w-0 truncate text-xs text-destructive">— {reason}</span>}
+      {agent.provider === "runner" && agent.program && (
+        <ProgramBadge program={agent.program} className="ml-auto" />
+      )}
     </Link>
   );
 }
 
-/** 「삭제된 에이전트 N」 — 접힌 채 시작한다. 펼치면 줄마다 그 에이전트 상세(되살리기가 거기 있다) */
+/** 「삭제된 에이전트 N」 — 접힌 채 시작한다. 펼치면 줄마다 그 에이전트 상세(되살리기가 거기 있다). 검색 중에는 펼친다 */
 function ArchivedGroup({
   agents,
   onNavigate,
   toggleRef,
+  forceOpen,
 }: {
   agents: Agent[];
   onNavigate: () => void;
   toggleRef?: Ref<HTMLButtonElement>;
+  forceOpen: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpen] = useState(false);
+  const open = forceOpen || openState;
   return (
-    <section aria-label="삭제된 에이전트" className="flex flex-col gap-1">
+    <section aria-label="삭제된 에이전트" className="flex flex-col gap-1 border-t pt-3">
       <button
         ref={toggleRef}
         type="button"
@@ -269,7 +403,7 @@ function ArchivedGroup({
   );
 }
 
-/** 상세 화면의 「에이전트 N」 줄 — 트리 줄과 같은 꼴. 누르면 그 에이전트 상세의 제목으로 초점이 간다 */
+/** 상세 화면의 에이전트 줄 — 트리 줄과 같은 꼴. 누르면 그 에이전트 상세의 제목으로 초점이 간다 */
 export function AgentLinks({ agents }: { agents: readonly Agent[] }) {
   const { focusDetail } = useConnections();
   const onNavigate = () => {

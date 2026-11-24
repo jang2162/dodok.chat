@@ -1,5 +1,5 @@
 import type { Agent, RunnerProject, RunnerSummary } from "@dodok/shared";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -60,15 +60,28 @@ export function MoveProjectDialog({
   runner,
   runners,
   afterMove,
+  open: controlledOpen,
+  onOpenChange: setControlledOpen,
+  returnFocus,
 }: {
   project: RunnerProject;
   runner: RunnerSummary;
   runners: readonly RunnerSummary[];
   afterMove: () => HTMLElement | null;
+  /**
+   * 다른 곳(프로젝트 줄의 「⋯」 메뉴)이 여닫는다 — 주면 이 컴포넌트는 트리거 단추를 그리지 않고, 닫히면 초점을 `returnFocus` 로 돌린다.
+   * 주지 않으면 지금처럼 「옮기기」 단추를 스스로 그린다
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const move = useMoveRunnerProject();
   const agents = useAgents().data;
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = controlledOpen !== undefined;
+  const open = controlled ? controlledOpen : ownOpen;
+  const setOpen = (next: boolean) => (controlled ? setControlledOpen?.(next) : setOwnOpen(next));
   const [target, setTarget] = useState<string>();
   const [error, setError] = useState<string>();
   const sending = useRef(false);
@@ -85,13 +98,16 @@ export function MoveProjectDialog({
   const others = runners.filter((r) => r.id !== runner.id && !r.revoked);
   const picked = others.find((r) => r.id === target && r.connected);
 
+  // 열 때마다 고른 것·오류를 비운다 — 바깥에서 열어도(controlled) 같다
+  useEffect(() => {
+    if (!open) return;
+    setTarget(undefined);
+    setError(undefined);
+    moved.current = false;
+  }, [open]);
+
   function onOpenChange(next: boolean) {
     if (!next && move.isPending) return;
-    if (next) {
-      setTarget(undefined);
-      setError(undefined);
-      moved.current = false;
-    }
     setOpen(next);
   }
 
@@ -121,21 +137,23 @@ export function MoveProjectDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* 줄의 다른 버튼과 같은 이름 꼴(ProjectList a11yName) — 라벨이 같은 두 줄을 자리로 가른다 */}
-      <Button
-        ref={trigger}
-        type="button"
-        size="sm"
-        variant="outline"
-        aria-label={`${project.label} (${projectPlace(project)}) 옮기기`}
-        onClick={() => onOpenChange(true)}
-      >
-        옮기기
-      </Button>
+      {!controlled && (
+        <Button
+          ref={trigger}
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`${project.label} (${projectPlace(project)}) 옮기기`}
+          onClick={() => onOpenChange(true)}
+        >
+          옮기기
+        </Button>
+      )}
       <DialogContent
         closeDisabled={move.isPending}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
-          (moved.current ? afterMove() : trigger.current)?.focus();
+          (moved.current ? afterMove() : (returnFocus?.current ?? trigger.current))?.focus();
         }}
       >
         <form onSubmit={submit} className="grid gap-4">

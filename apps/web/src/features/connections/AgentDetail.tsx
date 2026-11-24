@@ -1,17 +1,31 @@
-import { type Agent, RUNNER_PROGRAM_NAME, roleAtLeast } from "@dodok/shared";
+import { type Agent, roleAtLeast } from "@dodok/shared";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { LaptopIcon, ServerIcon } from "lucide-react";
 import { useRef } from "react";
 import { useAgents, useRole } from "@/api/queries";
-import { AgentRow } from "@/features/agents/AgentRow";
+import {
+  AgentAvatarField,
+  AgentDmLink,
+  AgentEnabledSwitch,
+  ArchiveAgentButton,
+  BasePromptEditor,
+  DmAccessField,
+  RunnerSessionDefaults,
+  RunnerWarning,
+} from "@/features/agents/AgentRow";
 import { useRestoreAgent } from "@/features/agents/mutations";
+import { MoveGatewayDialog } from "@/features/agents/MoveGatewayDialog";
 import { providerIdLabel } from "@/features/agents/providerLabels";
-import { NO_PROJECT_RESTORE } from "@/features/runners/copy";
+import { BotDefinitionEditor } from "@/features/agents/RunnerAgentForm";
+import { NO_PROJECT_RESTORE, worktreeName } from "@/features/runners/copy";
+import { ProgramBadge } from "@/features/runners/ProgramBadge";
+import { PROGRAM_META } from "@/features/runners/programMeta";
 import { useRunnerProjects } from "@/features/runners/queries";
-import { worktreeName } from "@/features/runners/copy";
 import { LOCKED_NOTICE } from "@/features/settings/Section";
-import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { IdentityAvatar } from "@/ui/identity-avatar";
 import { useConnections } from "./context";
+import { DetailCard } from "./DetailCard";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
 import { canManageConnection, canMoveBetween, useViewer } from "./permissions";
@@ -19,9 +33,11 @@ import { useConnectionList } from "./queries";
 import { agentOwnerOf, connectionOwnerMaps } from "./useConnectionTree";
 
 /**
- * 에이전트 상세(연결 탭 통합 스펙 3.3) — 머리에 이름과 경로(「<러너> › <프로젝트> · <프로그램>」 또는 「<Gateway> · OpenClaw」 — 연결
- * 이름은 그 연결 상세 링크), 본문은 목록 시절의 에이전트 줄 그대로(사용·DM·지시·메모·DM 허용·Gateway 옮기기·삭제·사진). 고칠 수
- * 없는 사람(그 에이전트 연결의 주인도 admin 이상도 아니다 — 연결 탭 통합 스펙 5.2)에게는 값만 보인다. 보관(삭제)한 에이전트면 「삭제된 에이전트」 배지와 「되살리기」.
+ * 에이전트 상세(연결 탭 통합 스펙 3.3, 연결 재설계 스펙 목표 3). 머리: 큰 아바타 · 이름 · 값 줄(핸들·제공자 id) · 칩 줄(프로그램 또는
+ * OpenClaw · 러너/Gateway 링크 · 프로젝트 링크), 오른쪽에 「DM 보내기」와 이름표 있는 켜기 스위치. 카드: 「실행」(러너 에이전트만 —
+ * 프로그램(읽기 전용 — 만든 뒤 바꾸는 API 가 없다)·새 세션 시작값·지시, 봇이면 지시 자리에 봇 정의) · 「프로필」(사진, OpenClaw 는 메모 —
+ * 에이전트에게 전달되지 않음) · 「DM 허용」(세그먼트) · 「관리」(Gateway 옮기기·삭제, 붉은 테두리). 고칠 수 없는 사람(그 에이전트 연결의
+ * 주인도 admin 이상도 아니다 — 연결 탭 통합 스펙 5.2)에게는 값만 보인다. 보관(삭제)한 에이전트면 「삭제된 에이전트」 칩과 「되살리기」.
  * 보관하면 트리로 돌아가 「삭제된 에이전트 N」 단추로, 되살리면 이 상세의 제목으로 초점이 간다
  */
 export function AgentDetail() {
@@ -38,6 +54,9 @@ export function AgentDetail() {
   if (!agent) return <NotFoundDetail message="이 에이전트를 찾을 수 없습니다" />;
   const archived = agent.archivedAt !== null;
   const canManage = canManageConnection(role, meId, agentOwnerOf(agent, list.data));
+  const readOnly = !canManage;
+  const openclaw = agent.provider === "openclaw";
+  const handle = `@${agent.handle}`;
   // Gateway 옮기기 — 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것이거나 admin 이상
   const owners = connectionOwnerMaps(list.data);
   const from = agent.gateway ? (owners.gateways.get(agent.gateway.id) ?? null) : null;
@@ -46,97 +65,186 @@ export function AgentDetail() {
     : canMoveBetween(role, meId, from, from)
       ? (gatewayId: string) => canMoveBetween(role, meId, from, owners.gateways.get(gatewayId) ?? null)
       : undefined;
+  const canMove = openclaw && moveTargets !== undefined;
 
   return (
-    <>
+    <div data-testid="agent-detail" className="flex flex-col gap-4">
       <DetailHeader
+        leading={
+          <IdentityAvatar
+            kind="agent"
+            id={agent.id}
+            name={agent.name}
+            handle={agent.handle}
+            avatarUrl={agent.avatarUrl}
+            size={64}
+            className={!agent.enabled || archived ? "opacity-60" : undefined}
+          />
+        }
         title={agent.name}
         headingRef={heading}
-        badge={
-          archived ? (
-            <Badge variant="outline">삭제된 에이전트</Badge>
+        state={archived ? { tone: "muted", label: "삭제된 에이전트" } : undefined}
+        facts={[
+          openclaw && agent.gateway ? (
+            <span key="handle">
+              <span>{handle}</span> · {agent.gateway.name}
+            </span>
           ) : (
-            !agent.enabled && <Badge variant="outline">꺼짐</Badge>
+            <span key="handle">{handle}</span>
+          ),
+          <span key="id">
+            {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
+          </span>,
+        ]}
+        primary={
+          !archived && (
+            <>
+              <AgentDmLink agent={agent} />
+              <AgentEnabledSwitch agent={agent} readOnly={readOnly} />
+            </>
           )
         }
-        meta={<AgentPath agent={agent} />}
-      />
-      {!canManage && <p className="-mt-3 text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
-      <div data-testid="agent-detail" className="contents">
-        {archived ? (
-          <ArchivedBody agent={agent} readOnly={!canManage} onRestored={() => heading.current?.focus()} />
-        ) : (
-          <AgentRow
-            as="div"
-            agent={agent}
-            readOnly={!canManage}
-            {...(moveTargets ? { moveTargets } : {})}
-            onArchived={() => {
-              focusTree("archived");
-              void navigate({ to: "/settings/connection" });
-            }}
-          />
+      >
+        <AgentChips agent={agent} />
+        <RunnerWarning agent={agent} />
+        {openclaw && agent.gateway === null && (
+          <p className="text-xs font-medium text-destructive">
+            {canMove
+              ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
+              : "Gateway 가 삭제됨 — admin 이 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
+          </p>
         )}
-      </div>
-    </>
+        {readOnly && <p className="text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
+      </DetailHeader>
+      {archived ? (
+        <ArchivedBody agent={agent} readOnly={readOnly} onRestored={() => heading.current?.focus()} />
+      ) : (
+        <>
+          {agent.provider === "runner" && (
+            <DetailCard title="실행">
+              <dl className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <dt className="text-muted-foreground">프로그램</dt>
+                <dd className="inline-flex items-center gap-1.5">
+                  {agent.program ? (
+                    <>
+                      <ProgramBadge program={agent.program} />
+                      {PROGRAM_META[agent.program].name}
+                    </>
+                  ) : (
+                    "모름"
+                  )}
+                  <span className="text-xs text-muted-foreground">(만든 뒤에는 바꿀 수 없습니다)</span>
+                </dd>
+              </dl>
+              {!readOnly && agent.sessionDefaults && (
+                <RunnerSessionDefaults
+                  agent={agent}
+                  defaults={agent.sessionDefaults}
+                  projectId={agent.runnerAgent?.projectId ?? null}
+                />
+              )}
+              {/* 봇은 기본 지시 대신 봇 정의(러너 봇 스펙 B3) — 정의는 주인·admin 이상만 받는다 */}
+              {agent.runner?.bot ? (
+                <BotDefinitionEditor agent={agent} readOnly={readOnly} />
+              ) : (
+                <BasePromptEditor agent={agent} readOnly={readOnly} />
+              )}
+            </DetailCard>
+          )}
+          {(openclaw || !readOnly) && (
+            <DetailCard title="프로필">
+              {!readOnly && <AgentAvatarField agent={agent} />}
+              {/* 같은 basePrompt 칸 — OpenClaw 에서는 인바운드에 실리지 않아 일부러 「메모」라 부른다(promptCopy) */}
+              {openclaw && <BasePromptEditor agent={agent} readOnly={readOnly} />}
+            </DetailCard>
+          )}
+          <DetailCard title="DM 허용">
+            <DmAccessField agent={agent} readOnly={readOnly} />
+          </DetailCard>
+          {(!readOnly || canMove) && (
+            <DetailCard title="관리" tone="danger">
+              <div className="flex flex-wrap items-center gap-2">
+                {canMove && <MoveGatewayDialog agent={agent} allowed={moveTargets} />}
+                {!readOnly && (
+                  <ArchiveAgentButton
+                    agent={agent}
+                    onArchived={() => {
+                      focusTree("archived");
+                      void navigate({ to: "/settings/connection" });
+                    }}
+                  />
+                )}
+              </div>
+            </DetailCard>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
-/** 「<연결> › <프로젝트> · <프로그램>」 — 연결 이름은 그 연결 상세로. 프로젝트 이름은 admin 이상만 안다(서버가 준다) */
-function AgentPath({ agent }: { agent: Agent }) {
+const CHIP = "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs";
+const CHIP_LINK = `${CHIP} text-foreground underline-offset-4 outline-none hover:bg-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring`;
+
+/**
+ * 칩 줄 — 프로그램(또는 OpenClaw) · 러너/Gateway(그 상세로) · 프로젝트(그 상세로, admin 이상만 안다 — 서버가 준다) 또는 「봇」
+ */
+function AgentChips({ agent }: { agent: Agent }) {
   const role = useRole();
   const admin = roleAtLeast(role, "admin");
   const runnerId = agent.runner?.tokenId;
   const projects = useRunnerProjects(runnerId, { enabled: admin && agent.provider === "runner" });
-  const link = "text-foreground underline-offset-4 hover:underline";
   if (agent.provider === "runner") {
     const projectId = agent.runnerAgent?.projectId;
     const project = projects.data?.find((p) => p.id === projectId);
-    const program = agent.program ? RUNNER_PROGRAM_NAME[agent.program] : "러너";
     return (
-      <p className="break-all">
-        {agent.runner ? (
+      <p className="flex flex-wrap items-center gap-1.5">
+        {agent.program ? (
+          <span className={CHIP}>
+            <ProgramBadge program={agent.program} />
+            {PROGRAM_META[agent.program].name}
+          </span>
+        ) : (
+          <span className={CHIP}>러너</span>
+        )}
+        {agent.runner && (
           <Link
             to="/settings/connection/runner/$runnerId"
             params={{ runnerId: agent.runner.tokenId }}
-            className={link}
+            className={CHIP_LINK}
           >
-            {agent.runner.label}
+            <LaptopIcon aria-hidden className="size-3.5 text-muted-foreground" />
+            러너 {agent.runner.label}
           </Link>
-        ) : (
-          "러너 없음"
         )}
-        {agent.runner?.bot && " › 봇"}
+        {agent.runner?.bot && <span className={CHIP}>봇</span>}
         {project && (
-          <>
-            {" › "}
-            <Link
-              to="/settings/connection/project/$projectId"
-              params={{ projectId: project.id }}
-              className={link}
-            >
-              {worktreeName(project, projects.data ?? [])}
-            </Link>
-          </>
+          <Link
+            to="/settings/connection/project/$projectId"
+            params={{ projectId: project.id }}
+            className={CHIP_LINK}
+          >
+            프로젝트 {worktreeName(project, projects.data ?? [])}
+          </Link>
         )}
-        {` · ${program}`}
       </p>
     );
   }
   return (
-    <p className="break-all">
+    <p className="flex flex-wrap items-center gap-1.5">
+      <span className={CHIP}>OpenClaw</span>
       {agent.gateway ? (
         <Link
           to="/settings/connection/gateway/$gatewayId"
           params={{ gatewayId: agent.gateway.id }}
-          className={link}
+          className={CHIP_LINK}
         >
-          {agent.gateway.name}
+          <ServerIcon aria-hidden className="size-3.5 text-muted-foreground" />
+          Gateway {agent.gateway.name}
         </Link>
       ) : (
-        "Gateway 없음"
+        <span className={CHIP}>Gateway 없음</span>
       )}
-      {" · OpenClaw"}
     </p>
   );
 }

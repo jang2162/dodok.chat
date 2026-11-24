@@ -3,6 +3,7 @@ import {
   ControlResult,
   Id,
   RUNNER_NAMESPACE,
+  RUNNER_NO_DRIVER_REASON,
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalResolve,
@@ -38,8 +39,8 @@ export type RunnerLogger = { info(msg: string): void; warn(msg: string): void; e
 
 export type RunnerVersions = Pick<RunnerHello, "runnerVersion" | "sdkVersion" | "bundleSha256">;
 
-/** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다 */
-export const NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
+/** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다(값은 웹과 같은 shared 상수) */
+export const NO_DRIVER_REASON = RUNNER_NO_DRIVER_REASON;
 
 const CAPABILITIES: RunnerCapability[] = [
   "threads",

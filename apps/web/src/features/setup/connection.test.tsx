@@ -5,6 +5,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { makeAgent } from "../../../test/agentsPage";
 import { ME, TEST_GATEWAY } from "../../../test/shellApi";
 import {
   PUBLIC_URL,
@@ -32,18 +33,35 @@ const region = (name: string) => screen.findByRole("region", { name });
 const detail = () => screen.findByTestId("gateway-detail");
 /** 「플러그인」 섹션 안의 설치 상자(접힘 `details`) */
 const installBox = async () =>
-  (await within(await region("플러그인")).findByText(/^(플러그인 설치|다시 설치)$/)).closest(
+  (await within(await region("플러그인")).findByText(/^(플러그인 설치|다시 설치 방법)$/)).closest(
     "details",
   ) as HTMLElement;
 
 describe("권한", () => {
   it("관리할 수 없는 사람(남의 Gateway 의 member)은 머리(이름·상태)와 에이전트만 — 플러그인·브리지 토큰이 없고 setup API 를 부르지 않는다", async () => {
-    const server = stubSetupServer();
+    // 다른 Gateway 의 에이전트를 섞는다 — 카드는 이 Gateway 의 것만 센다
+    const server = stubSetupServer({
+      agents: [
+        makeAgent({ providerAgentId: "dev", handle: "dev", name: "Dev 에이전트" }),
+        makeAgent({
+          providerAgentId: "main",
+          handle: "main",
+          name: "Main 에이전트",
+          gateway: { id: "0190a000-0000-7000-8000-00000000beef", name: "집" },
+        }),
+      ],
+    });
     renderConnection({ ...ME, role: "member" }, undefined, gatewayDetailPath(TEST_GATEWAY.id));
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
-    expect(await within(gw).findByRole("region", { name: "에이전트 0" })).toBeInTheDocument();
+    const agents = await within(gw).findByRole("region", { name: "에이전트" });
+    await within(agents).findByText("Dev 에이전트");
+    expect(within(agents).queryByText("Main 에이전트")).not.toBeInTheDocument();
+    // 개수는 카드 머리의 제목 옆 — 이 Gateway 의 에이전트 1
+    expect(
+      within(agents).getByRole("heading", { level: 2, name: "에이전트" }).nextElementSibling,
+    ).toHaveTextContent(/^1$/);
     expect(screen.queryByRole("region", { name: "플러그인" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "브리지 토큰" })).not.toBeInTheDocument();
     expect(gw).not.toHaveTextContent("wss://");
@@ -212,7 +230,7 @@ describe("Gateway 머리", () => {
 });
 
 describe("플러그인", () => {
-  it("접속·SDK·Gateway 버전 한 줄, 같은 빌드 — 붙어 있으면 설치 상자는 「다시 설치」로 접혀 「새 토큰 발급」의 설치 명령을 가리킨다", async () => {
+  it("접속·SDK·Gateway 버전 한 줄, 같은 빌드 — 붙어 있으면 설치 상자는 「다시 설치 방법」으로 접혀 「새 토큰 발급」의 설치 명령을 가리킨다", async () => {
     stubSetupServer();
     renderConnection();
     const pl = await region("플러그인");
@@ -223,7 +241,7 @@ describe("플러그인", () => {
     expect(pl).not.toHaveTextContent(SHA_FILE);
     const head = await installBox();
     expect(head).not.toHaveAttribute("open");
-    expect(within(head).getByText("다시 설치")).toBeInTheDocument();
+    expect(within(head).getByText("다시 설치 방법")).toBeInTheDocument();
     // 받기 버튼·sha·크기·/tmp 설치 명령은 없다 — 설치는 「새 토큰 발급」이 주는 한 줄로 한다
     expect(within(head).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
     expect(head).not.toHaveTextContent(SHA_FILE);
@@ -308,6 +326,8 @@ describe("브리지 토큰", () => {
     const envRow = await within(br).findByRole("listitem", { name: "env" });
     expect(envRow).toHaveTextContent("dbt_abc123…");
     expect(envRow).toHaveTextContent("지금 접속 중");
+    // 상태 색(success 점 + 글) — 강조색 배지가 아니다(연결 재설계 스펙 「상태 색」)
+    expect(within(envRow).getByText("지금 접속 중")).toHaveAttribute("data-tone", "success");
     const row2 = within(br).getByRole("listitem", { name: "노트북" });
     expect(row2).toHaveTextContent("dbt_xyz789…");
     expect(row2).not.toHaveTextContent("지금 접속 중");

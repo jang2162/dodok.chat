@@ -79,6 +79,14 @@ export type TreeInput = {
   meId: string | null;
 };
 
+/** 상태 색(연결 재설계 스펙 「정한 것」) — 연결됨 = success, 꺼짐·폐기 = muted, 그 밖(끊김·승인 대기·재연결 등) = warning */
+export type StateTone = "success" | "warning" | "muted";
+export function stateTone(label: GatewayStateLabel | RunnerStateLabel | string): StateTone {
+  if (label === "연결됨") return "success";
+  if (label === "꺼짐" || label === "폐기됨") return "muted";
+  return "warning";
+}
+
 /** wire `adapter.status` 의 Gateway 줄 하나의 배지 — 페어링 대기는 이 줄로 알 수 없다(owner 의 setup.status 만 안다) */
 export function wireGatewayStateLabel(g: OpenClawGatewayStatus): GatewayStateLabel {
   if (!g.enabled || g.gateway === "disabled") return "꺼짐";
@@ -198,4 +206,43 @@ export function buildConnectionTree(input: TreeInput): ConnectionTree {
   const mine = input.meId === null ? [] : all.filter((n) => n.ownerUserId === input.meId);
   const others = input.meId === null ? all : all.filter((n) => n.ownerUserId !== input.meId);
   return { mine, others, orphaned, archived };
+}
+
+/**
+ * 트리 검색칸(연결 재설계 스펙 목표 1) — 이름·핸들로 거른다(대소문자·앞뒤 공백 무시). 연결·프로젝트 이름이 맞으면 그 밑을 통째로,
+ * 에이전트가 맞으면 그 에이전트와 부모만 남긴다. 빈 검색은 받은 트리 그대로(같은 객체)
+ */
+export function filterConnectionTree(tree: ConnectionTree, query: string): ConnectionTree {
+  const q = query.trim().toLocaleLowerCase();
+  if (q === "") return tree;
+  const hit = (text: string) => text.toLocaleLowerCase().includes(q);
+  const agentHit = (agent: Agent) => hit(agent.name) || hit(agent.handle);
+  const leaves = (list: TreeAgent[]) => list.filter((l) => agentHit(l.agent));
+  const project = (p: TreeProject): TreeProject | null => {
+    if (hit(p.label)) return p;
+    const worktrees = p.worktrees.map(project).filter((w): w is TreeProject => w !== null);
+    const agents = leaves(p.agents);
+    return worktrees.length > 0 || agents.length > 0 ? { ...p, worktrees, agents } : null;
+  };
+  const connection = (c: TreeConnection): TreeConnection | null => {
+    if (hit(c.kind === "gateway" ? c.name : c.label)) return c;
+    if (c.kind === "gateway") {
+      const agents = leaves(c.agents);
+      return agents.length > 0 ? { ...c, agents } : null;
+    }
+    const projects = c.projects.map(project).filter((p): p is TreeProject => p !== null);
+    const bots = leaves(c.bots);
+    const agents = leaves(c.agents);
+    return projects.length > 0 || bots.length > 0 || agents.length > 0
+      ? { ...c, projects, bots, agents }
+      : null;
+  };
+  const connections = (list: TreeConnection[]) =>
+    list.map(connection).filter((c): c is TreeConnection => c !== null);
+  return {
+    mine: connections(tree.mine),
+    others: connections(tree.others),
+    orphaned: leaves(tree.orphaned),
+    archived: tree.archived.filter(agentHit),
+  };
 }

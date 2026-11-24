@@ -71,6 +71,7 @@ import {
   type RunnerModelOption,
   type RunnerProgramStatus,
   type RunnerProjectRef,
+  RUNNER_NO_DRIVER_REASON,
   RunnerRootId,
   type TeamRole,
 } from "@dodok/shared";
@@ -297,6 +298,15 @@ const DEV_FAKE_CODEX_MISSING: RunnerProgramStatus = {
   capabilities: [],
   ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null },
 };
+/** 드라이버가 없는 프로그램 — 실제 러너가 hello 에 싣는 꼴 그대로. 러너 카드의 「지원 예정」(설치 안내 없음)을 손으로 본다 */
+const DEV_FAKE_OPENCODE_NO_DRIVER: RunnerProgramStatus = {
+  program: "opencode",
+  available: false,
+  auth: "unknown",
+  reason: RUNNER_NO_DRIVER_REASON,
+  capabilities: [],
+  ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null },
+};
 
 /** 이름에 `&`·`#`·`%`·공백·`\` 가 든 디렉터리 — 둘러보기 주소 인코딩을 본다. `\` 는 relPath 규칙 밖이라 고르면 거절된다 */
 export const DEV_FAKE_SPECIAL_DIRS = ["a&b", "#x", "50%", "a b", "a\\b"] as const;
@@ -383,6 +393,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
           ceiling: { ...FAKE_CLAUDE_PROGRAM.ceiling, appMcp: "http", appMcpCommands: null },
         },
         DEV_FAKE_CODEX_MISSING,
+        DEV_FAKE_OPENCODE_NO_DRIVER,
       ],
     },
     tree: devFakeRunnerTree,

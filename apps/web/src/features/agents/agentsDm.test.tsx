@@ -20,32 +20,36 @@ const open = async (agents: Agent[], i: number, role = "owner") => {
 };
 
 describe("DM 허용", () => {
-  it("admin 이상은 선택지 셋(끔·admin 이상·모두)과 「모두」 아래 설명 — 고르면 PATCH { dmAccess } 하나", async () => {
+  it("admin 이상은 세그먼트 셋(끔·admin 이상·모두) — 고르면 PATCH { dmAccess } 하나(연결 재설계 스펙 목표 3)", async () => {
     const agent = dev();
     const server = stubServer({ agents: [agent] });
     renderPage(undefined, "admin", agentPath(agent));
-    const group = await screen.findByRole("radiogroup", { name: "@dev DM 허용" });
+    const card = await screen.findByRole("region", { name: "DM 허용" });
+    const group = within(card).getByRole("group", { name: "DM 을 열 수 있는 사람" });
     expect(
       within(group)
-        .getAllByRole("radio")
-        .map((r) => r.closest("div")?.textContent),
+        .getAllByRole("button")
+        .map((b) => b.textContent),
     ).toEqual(["끔", "admin 이상", "모두"]);
-    expect(within(group).getByRole("radio", { name: "admin 이상" })).toBeChecked();
+    expect(within(group).getByRole("button", { name: "admin 이상" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "모두" })).toHaveAttribute("aria-pressed", "false");
     // 「모두」 아래 설명 줄은 걷었다(2026-11-10 문구 걷기)
-    expect(within(group).getByRole("radio", { name: "모두" })).not.toHaveAttribute("aria-describedby");
+    expect(within(group).getByRole("button", { name: "모두" })).not.toHaveAttribute("aria-describedby");
 
-    await userEvent.click(within(group).getByRole("radio", { name: "모두" }));
+    await userEvent.click(within(group).getByRole("button", { name: "모두" }));
     await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ dmAccess: "everyone" }]));
-    await waitFor(() => expect(within(group).getByRole("radio", { name: "모두" })).toBeChecked());
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: "모두" })).toHaveAttribute("aria-pressed", "true"),
+    );
   });
 
   it("저장에 실패하면 오류 줄을 묶음이 가리킨다 — 스크린 리더가 묶음과 함께 읽는다(리뷰 참고)", async () => {
     const agent = dev();
     stubServer({ agents: [agent], patch: () => apiErr(409, "AGENT_ARCHIVED", "agent archived") });
     renderPage(undefined, "admin", agentPath(agent));
-    const group = await screen.findByRole("radiogroup", { name: "@dev DM 허용" });
+    const group = await screen.findByRole("group", { name: "DM 을 열 수 있는 사람" });
     expect(group).not.toHaveAttribute("aria-describedby");
-    await userEvent.click(within(group).getByRole("radio", { name: "끔" }));
+    await userEvent.click(within(group).getByRole("button", { name: "끔" }));
     await waitFor(() => expect(group).toHaveAccessibleDescription("삭제된 에이전트입니다"));
     expect(document.getElementById(group.getAttribute("aria-describedby") ?? "")).toHaveAttribute(
       "data-slot",
@@ -55,7 +59,7 @@ describe("DM 허용", () => {
 
   it("member 는 값만 본다 — 선택지가 없다", async () => {
     expect(await open([dev()], 0, "member")).toHaveTextContent("DM 허용: admin 이상");
-    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByRole("group", { name: "DM 을 열 수 있는 사람" })).toBeNull();
   });
 });
 

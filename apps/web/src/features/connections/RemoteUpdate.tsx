@@ -13,8 +13,9 @@ import { qk } from "@/api/queries";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { CopyBlock } from "@/features/setup/sections";
 import { Button } from "@/ui/button";
+import { ArrowUpCircleIcon } from "lucide-react";
 
-// 원격 업데이트(원격 업데이트 스펙 U8·U9) — 러너 상세·Gateway 상세의 「판 X · 최신 Y [업데이트]」. 누르면 확인 → 「업데이트 중…」 →
+// 원격 업데이트(원격 업데이트 스펙 U8·U9) — 러너 상세 머리의 「러너 업데이트」와 「판 X · 최신 Y」, Gateway 상세의 「[업데이트]」. 누르면 확인 → 「업데이트 중…」 →
 // 다시 붙으면 새 판(진행이 사라진다) / 실패면 사유 한 줄 / 상한 안에 다시 붙지 않으면 「응답이 없습니다 — 그 머신에서 확인하세요」
 
 /** 옛 러너(능력 remoteUpdate 없음)에 보이는 명령 한 줄(U8) */
@@ -67,8 +68,11 @@ function ProgressLine({ view }: { view: ReturnType<typeof useProgressView> }) {
   );
 }
 
-/** 러너 — 판 X · 최신 Y 와 업데이트(U2·U3). 붙어 있을 때만 */
-export function RunnerUpdate({ runner }: { runner: RunnerSummary }) {
+/**
+ * 러너 업데이트의 상태(U2·U3) — 머리의 「러너 업데이트」 단추(`RunnerUpdateButton`)와 머리 아래 상태 줄(`RunnerUpdateStatus`)이 함께 쓴다
+ * (연결 재설계 스펙 목표 2 — 자주 쓰는 동작 하나는 머리 오른쪽). 붙어 있지 않거나 판을 모르면 `null`
+ */
+export function useRunnerUpdate(runner: RunnerSummary) {
   const qc = useQueryClient();
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -82,27 +86,39 @@ export function RunnerUpdate({ runner }: { runner: RunnerSummary }) {
   if (!runner.connected || runner.runnerVersion === null || runner.latestVersion === undefined) return null;
   const latest = runner.latestVersion;
   const newer = latest !== null && compareVersions(latest, runner.runnerVersion) > 0;
-  const updating = view?.state === "updating";
+  return { runner, button, open, setOpen, view, start, latest, newer, updating: view?.state === "updating" };
+}
+export type RunnerUpdateState = NonNullable<ReturnType<typeof useRunnerUpdate>>;
+
+/** 머리의 「러너 업데이트」 — 최신보다 낮고 그 머신이 원격 업데이트를 켰을 때만 */
+export function RunnerUpdateButton({ update: u }: { update: RunnerUpdateState | null }) {
+  if (!u || !u.newer || u.runner.remoteUpdate !== "on") return null;
+  return (
+    <Button
+      ref={u.button}
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={u.updating || u.start.isPending}
+      onClick={() => {
+        u.start.reset();
+        u.setOpen(true);
+      }}
+    >
+      <ArrowUpCircleIcon />
+      러너 업데이트
+    </Button>
+  );
+}
+
+/** 머리 아래의 판 X · 최신 Y 와 안내·진행·실패 줄, 확인 대화상자 */
+export function RunnerUpdateStatus({ update: u }: { update: RunnerUpdateState | null }) {
+  if (!u) return null;
+  const { runner, latest, newer, start, open } = u;
   return (
     <div aria-label="러너 업데이트" role="group" className="flex flex-col gap-1.5 text-sm">
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>
-          판 {runner.runnerVersion} · 최신 {latest ?? "알 수 없음"}
-        </span>
-        {newer && runner.remoteUpdate === "on" && (
-          <Button
-            ref={button}
-            size="sm"
-            variant="outline"
-            disabled={updating || start.isPending}
-            onClick={() => {
-              start.reset();
-              setOpen(true);
-            }}
-          >
-            업데이트
-          </Button>
-        )}
+      <p className="text-muted-foreground">
+        판 {runner.runnerVersion} · 최신 {latest ?? "알 수 없음"}
       </p>
       {latest === null && (
         <p className="text-muted-foreground">npm 레지스트리에 닿지 않아 최신 판을 알 수 없습니다</p>
@@ -120,7 +136,7 @@ export function RunnerUpdate({ runner }: { runner: RunnerSummary }) {
           <CopyBlock text={RUNNER_UPDATE_COMMAND} label="업데이트 명령 복사" />
         </>
       )}
-      <ProgressLine view={view} />
+      <ProgressLine view={u.view} />
       {start.isError && !open && (
         <p role="alert" className="font-medium text-destructive">
           {updateError(start.error)}
@@ -129,7 +145,7 @@ export function RunnerUpdate({ runner }: { runner: RunnerSummary }) {
       <ConfirmDialog
         open={open}
         onOpenChange={(next) => {
-          setOpen(next);
+          u.setOpen(next);
           if (!next) start.reset();
         }}
         title={`러너를 ${latest ?? ""} 로 업데이트할까요?`}
@@ -141,7 +157,7 @@ export function RunnerUpdate({ runner }: { runner: RunnerSummary }) {
         confirmLabel="업데이트"
         pendingLabel="보내는 중…"
         pending={start.isPending}
-        returnFocus={button}
+        returnFocus={u.button}
         onConfirm={() => start.mutate()}
       />
     </div>

@@ -1,11 +1,16 @@
 import { type Agent, type ConnectionsResponse, type GatewaySetup, roleAtLeast } from "@dodok/shared";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { PencilIcon, PowerIcon, Trash2Icon } from "lucide-react";
+import { PencilIcon, PowerIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { useAdapterStatus, useAgents } from "@/api/queries";
 import { DiscoverDialog } from "@/features/agents/DiscoverDialog";
 import { DeleteGatewayConfirm } from "@/features/setup/DeleteGatewayConfirm";
-import { BridgeTokens, GatewayMeta, PluginStatus, gatewayStateLabel } from "@/features/setup/GatewayCard";
+import {
+  BridgeTokensCard,
+  GatewayStatusCard,
+  gatewayFacts,
+  gatewayStateLabel,
+} from "@/features/setup/GatewayCard";
 import { GatewayForm } from "@/features/setup/GatewayForm";
 import {
   GATEWAY_URL_CHANGED,
@@ -14,23 +19,23 @@ import {
   useUpdateGateway,
 } from "@/features/setup/mutations";
 import { useSetupStatus } from "@/features/setup/queries";
-import { Section } from "@/features/setup/sections";
-import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { AgentLinks } from "./ConnectionTreeList";
 import { useConnections } from "./context";
+import { DetailCard, OverflowMenu } from "./DetailCard";
 import { DetailHeader } from "./DetailHeader";
 import { DetailPending, NotFoundDetail } from "./NotFoundDetail";
 import { canManageConnection, useViewer } from "./permissions";
 import { useConnectionList } from "./queries";
-import { wireGatewayStateLabel } from "./tree";
+import { stateTone, wireGatewayStateLabel } from "./tree";
 
 type ListedGateway = ConnectionsResponse["gateways"][number];
 
 /**
- * Gateway 상세(연결 탭 통합 스펙 3.3·5장). 관리할 수 있는 사람(그 Gateway 의 주인·admin 이상): 머리(이름·상태·수정/끄기/삭제)·한 줄 메타
- * (주인)·승인 대기 줄·「플러그인」·「브리지 토큰」·「에이전트 N」(「에이전트 가져오기」가 이 Gateway 로 고정). 그 밖의 사람은 머리(이름·상태·
- * 주인)와 「에이전트 N」만 — 주소·토큰·설치 명령은 걸러진 설정 상태에만 있다. 없는 id·지워진 Gateway 는 「이 연결을 찾을 수 없습니다」
+ * Gateway 상세(연결 탭 통합 스펙 3.3·5장, 연결 재설계 스펙 목표 2·3). 관리할 수 있는 사람(그 Gateway 의 주인·admin 이상): 머리(아이콘·이름·
+ * 상태 칩·값 줄 — 주인·주소·판, 「이름·주소 수정」, 「⋯」 메뉴의 끄기/켜기·삭제)·승인 대기 줄·카드 「상태」(Gateway·플러그인)·「에이전트」
+ * (머리 동작 「가져오기」가 이 Gateway 로 고정)·「브리지 토큰」. 그 밖의 사람은 머리(이름·상태·주인)와 「에이전트」만 — 주소·토큰·설치
+ * 명령은 걸러진 설정 상태에만 있다. 없는 id·지워진 Gateway 는 「이 연결을 찾을 수 없습니다」
  */
 export function GatewayDetail() {
   const { gatewayId } = useParams({ strict: false });
@@ -55,7 +60,7 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
   const { announce, focusTree } = useConnections();
   const toggle = useUpdateGateway(id);
   const [confirming, setConfirming] = useState(false);
-  const deleteButton = useRef<HTMLButtonElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const confirmId = useId();
   if (status.isPending) return <DetailPending failed={false} retry={() => void status.refetch()} />;
   const gateway = status.data?.gateways.find((g) => g.id === id);
@@ -63,48 +68,39 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
   if (!status.data || !gateway) return <WireGateway id={id} entry={entry} canManage />;
   const label = gatewayStateLabel(gateway);
   return (
-    <div data-testid="gateway-detail" className="flex flex-col gap-6">
+    <div data-testid="gateway-detail" className="flex flex-col gap-4">
       <DetailHeader
+        icon={<ServerIcon />}
         title={gateway.name}
-        badge={<Badge variant={label === "연결됨" ? "default" : "outline"}>{label}</Badge>}
-        actions={
-          <>
-            <GatewayForm
-              gateway={gateway}
-              trigger={
-                <Button type="button" size="xs" variant="outline" aria-label={`${gateway.name} 수정`}>
-                  <PencilIcon />
-                  수정
-                </Button>
-              }
-            />
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              aria-label={`${gateway.name} ${gateway.enabled ? "끄기" : "켜기"}`}
-              disabled={toggle.isPending}
-              onClick={() => toggle.mutate({ enabled: !gateway.enabled })}
-            >
-              <PowerIcon />
-              {gateway.enabled ? "끄기" : "켜기"}
-            </Button>
-            <Button
-              ref={deleteButton}
-              type="button"
-              size="xs"
-              variant="outline"
-              aria-label={`${gateway.name} 삭제`}
-              aria-expanded={confirming}
-              aria-controls={confirming ? confirmId : undefined}
-              onClick={() => setConfirming(true)}
-            >
-              <Trash2Icon />
-              삭제
-            </Button>
-          </>
+        state={{ tone: stateTone(label), label }}
+        facts={gatewayFacts(gateway, entry?.owner?.name)}
+        primary={
+          <GatewayForm
+            gateway={gateway}
+            trigger={
+              <Button type="button" size="sm" variant="outline">
+                <PencilIcon />
+                이름·주소 수정
+              </Button>
+            }
+          />
         }
-        meta={<GatewayMeta gateway={gateway} owner={entry?.owner?.name} />}
+        menu={
+          <OverflowMenu
+            label={`${gateway.name} 더 보기`}
+            triggerRef={menuButton}
+            controls={confirming ? confirmId : undefined}
+            items={[
+              {
+                label: gateway.enabled ? "끄기" : "켜기",
+                icon: <PowerIcon />,
+                disabled: toggle.isPending,
+                onSelect: () => toggle.mutate({ enabled: !gateway.enabled }),
+              },
+              { label: "삭제", icon: <Trash2Icon />, danger: true, onSelect: () => setConfirming(true) },
+            ]}
+          />
+        }
       />
       {!gateway.approved && <Approval gateway={gateway} />}
       {confirming && (
@@ -113,7 +109,7 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
           gateway={gateway}
           onCancel={() => {
             setConfirming(false);
-            deleteButton.current?.focus();
+            menuButton.current?.focus();
           }}
           onDeleted={() => {
             // 상세가 사라진다 — 알림은 트리 머리의 라이브 영역에, 초점은 「연결 추가」로
@@ -123,9 +119,9 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
           }}
         />
       )}
-      <PluginStatus gateway={gateway} status={status.data} />
-      <BridgeTokens gateway={gateway} status={status.data} />
+      <GatewayStatusCard gateway={gateway} status={status.data} />
       <GatewayAgents gateway={gateway} canManage />
+      <BridgeTokensCard gateway={gateway} status={status.data} />
     </div>
   );
 }
@@ -183,22 +179,19 @@ function WireGateway({
   if (name === undefined) return <NotFoundDetail />;
   const label = entry && !entry.approved ? "승인 대기" : wire ? wireGatewayStateLabel(wire) : null;
   return (
-    <div data-testid="gateway-detail" className="flex flex-col gap-6">
+    <div data-testid="gateway-detail" className="flex flex-col gap-4">
       <DetailHeader
+        icon={<ServerIcon />}
         title={name}
-        badge={
-          label === null ? undefined : (
-            <Badge variant={label === "연결됨" ? "default" : "outline"}>{label}</Badge>
-          )
-        }
-        meta={entry?.owner ? `OpenClaw Gateway · 주인 ${entry.owner.name}` : "OpenClaw Gateway"}
+        state={label === null ? undefined : { tone: stateTone(label), label }}
+        facts={["OpenClaw Gateway", entry?.owner ? `주인 ${entry.owner.name}` : null]}
       />
       <GatewayAgents gateway={{ id, name }} canManage={canManage} />
     </div>
   );
 }
 
-/** 「에이전트 N」 — 줄은 트리와 같다. 관리할 수 있으면 이 Gateway 로 고정한 「에이전트 가져오기」 */
+/** 「에이전트」 카드 — 줄은 트리와 같다(누르면 그 에이전트 상세). 관리할 수 있으면 머리 동작이 이 Gateway 로 고정한 「가져오기」 */
 function GatewayAgents({
   gateway,
   canManage,
@@ -211,17 +204,20 @@ function GatewayAgents({
     (a: Agent) => a.provider === "openclaw" && a.gateway?.id === gateway.id && a.archivedAt === null,
   );
   return (
-    <Section title={`에이전트 ${here.length}`} bare>
-      {canManage && (
-        <div>
-          <DiscoverDialog agents={agents.data ?? []} gatewayId={gateway.id} disabled={!agents.data} />
-        </div>
-      )}
+    <DetailCard
+      title="에이전트"
+      count={here.length}
+      action={
+        canManage && (
+          <DiscoverDialog agents={agents.data ?? []} gatewayId={gateway.id} disabled={!agents.data} compact />
+        )
+      }
+    >
       {here.length === 0 ? (
         <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>
       ) : (
         <AgentLinks agents={here} />
       )}
-    </Section>
+    </DetailCard>
   );
 }

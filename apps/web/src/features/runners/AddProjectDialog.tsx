@@ -63,9 +63,12 @@ const defaultLabel = (picked: Picked, rootLabel: string) => picked.relPath.split
 export function AddProjectDialog({
   runner,
   triggerRef,
+  triggerVariant = "default",
 }: {
   runner: RunnerSummary;
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  /** 카드 머리에 둘 때는 고스트(연결 재설계 스펙 목표 3) — 기본은 지금의 주요 버튼 */
+  triggerVariant?: "default" | "ghost";
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -97,7 +100,7 @@ export function AddProjectDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button ref={triggerRef} type="button" size="sm" disabled={!live}>
+        <Button ref={triggerRef} type="button" size="sm" variant={triggerVariant} disabled={!live}>
           <PlusIcon />
           프로젝트 추가
         </Button>

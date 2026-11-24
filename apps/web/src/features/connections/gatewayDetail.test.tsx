@@ -44,13 +44,17 @@ describe("owner", () => {
     const headings = within(gw)
       .getAllByRole("heading", { level: 2 })
       .map((h) => h.textContent);
-    expect(headings).toEqual(["플러그인", "브리지 토큰", "에이전트 1"]);
-    const agents = within(gw).getByRole("region", { name: "에이전트 1" });
+    expect(headings).toEqual(["상태", "에이전트", "브리지 토큰"]);
+    const agents = within(gw).getByRole("region", { name: "에이전트" });
+    expect(agents).toHaveTextContent("에이전트1");
     expect(await within(agents).findByRole("link", { name: /@dev/ })).toHaveAttribute(
       "href",
       `/settings/connection/agent/${agent.id}`,
     );
-    expect(within(agents).getByRole("button", { name: "에이전트 가져오기" })).toBeInTheDocument();
+    // 카드 머리 동작 — 고스트 「가져오기」(접근 이름은 「에이전트 가져오기」)
+    const discover = within(agents).getByRole("button", { name: "에이전트 가져오기" });
+    expect(discover).toHaveTextContent("가져오기");
+    expect(discover).toHaveAttribute("data-variant", "ghost");
   });
 
   it("bridge token section shows the bridge url as one copyable line — 설명 문장·「?」 없이(2026-11-10 문구 걷기)", async () => {
@@ -72,6 +76,84 @@ describe("owner", () => {
     renderConnection();
     const plugin = await within(await detail()).findByRole("region", { name: "플러그인" });
     expect(within(plugin).getByText("플러그인 설치").closest("details")).toHaveAttribute("open");
+  });
+});
+
+describe("머리·메뉴·카드(연결 재설계 스펙 목표 2·3)", () => {
+  async function openMenu(gw: HTMLElement) {
+    within(gw).getByRole("button", { name: "사무실 더 보기" }).focus();
+    await userEvent.keyboard("{Enter}");
+    return screen.findByRole("menu");
+  }
+
+  it("머리 — 제목·상태 칩·값 줄(판·주인·주소), 자주 쓰는 동작 하나와 「⋯」 메뉴", async () => {
+    stubSetupServer({ connections: listOf({ owner: { id: MIA, name: "mia" } }) });
+    renderConnection();
+    const gw = await detail();
+    const header = within(gw).getByRole("banner");
+    expect(within(header).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
+    expect(within(header).getByText("연결됨")).toHaveAttribute("data-tone", "success");
+    expect(header).toHaveTextContent("OpenClaw Gateway · 주인 mia · wss://gateway.example.com · 2026.9.5");
+    expect(within(header).getByRole("button", { name: "이름·주소 수정" })).toBeInTheDocument();
+    // 주요(파랑) 버튼은 한 화면에 없다 — 카드 동작은 고스트, 머리 동작은 외곽선
+    expect(gw.querySelector('button[data-variant="default"]')).toBeNull();
+    const menu = await openMenu(gw);
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["끄기", "삭제"]);
+  });
+
+  it("메뉴의 「삭제」는 지금의 확인 줄을 연다", async () => {
+    stubSetupServer();
+    renderConnection();
+    const gw = await detail();
+    const menu = await openMenu(gw);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "삭제" }));
+    expect(await within(gw).findByRole("group", { name: "「사무실」 Gateway 삭제" })).toBeInTheDocument();
+  });
+
+  it("확인 줄이 열려 있으면 「⋯」는 메뉴가 닫힌 동안만 그 줄을 aria-controls 로 가리킨다 — 열린 동안은 메뉴", async () => {
+    stubSetupServer();
+    renderConnection();
+    const gw = await detail();
+    const trigger = within(gw).getByRole("button", { name: "사무실 더 보기" });
+    await userEvent.click(within(await openMenu(gw)).getByRole("menuitem", { name: "삭제" }));
+    const confirm = await within(gw).findByRole("group", { name: "「사무실」 Gateway 삭제" });
+    expect(confirm.id).not.toBe("");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(trigger).toHaveAttribute("aria-controls", confirm.id);
+    const menu = await openMenu(gw);
+    expect(menu.id).not.toBe("");
+    expect(trigger).toHaveAttribute("aria-controls", menu.id);
+  });
+
+  it("카드 셋 — 상태(Gateway·플러그인 칸)·에이전트·브리지 토큰, 브리지 토큰 머리 동작 「새 토큰 발급」", async () => {
+    stubSetupServer();
+    renderConnection();
+    const gw = await detail();
+    const status = within(gw).getByRole("region", { name: "상태" });
+    expect(within(status).getByRole("region", { name: "Gateway" })).toBeInTheDocument();
+    expect(within(status).getByRole("region", { name: "플러그인" })).toBeInTheDocument();
+    expect(within(gw).getByRole("region", { name: "에이전트" })).toBeInTheDocument();
+    const tokens = within(gw).getByRole("region", { name: "브리지 토큰" });
+    const issue = within(tokens).getByRole("button", { name: "새 토큰 발급" });
+    expect(issue).toHaveAttribute("data-variant", "ghost");
+    // 머리 줄(제목 옆)에 — 몸통의 브리지 주소 줄보다 앞
+    expect(issue.compareDocumentPosition(within(tokens).getByTestId("bridge-url"))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("플러그인 빌드를 모르면 상태 카드 안 노란 안내 띠와 「다시 설치 방법」 접힘", async () => {
+    stubSetupServer({ status: statusOf({ plugin: { bundleSha256: null }, pluginMatches: null }) });
+    renderConnection();
+    const status = within(await detail()).getByRole("region", { name: "상태" });
+    const band = within(status).getByText(/빌드를 알 수 없습니다/);
+    expect(band.className).toMatch(/bg-warning/);
+    const box = within(status).getByText("다시 설치 방법").closest("details");
+    expect(box).not.toHaveAttribute("open");
   });
 });
 
@@ -102,7 +184,7 @@ describe("연결의 주인·승인(2단계)", () => {
       within(gw)
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
-    ).toEqual(["플러그인", "브리지 토큰", "에이전트 0"]);
+    ).toEqual(["상태", "에이전트", "브리지 토큰"]);
   });
 
   it("approve 409 (url changed meanwhile) — 승인 줄에 「주소가 바뀌었습니다」 한 줄, 설정 상태를 다시 받는다", async () => {
@@ -147,8 +229,10 @@ describe("연결의 주인·승인(2단계)", () => {
       within(gw)
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
-    ).toEqual(["플러그인", "브리지 토큰", "에이전트 0"]);
-    expect(within(gw).getByRole("button", { name: "사무실 수정" })).toBeInTheDocument();
+    ).toEqual(["상태", "에이전트", "브리지 토큰"]);
+    // 자기 Gateway 는 관리한다 — 머리의 수정과 「⋯」 메뉴
+    expect(within(gw).getByRole("button", { name: "이름·주소 수정" })).toBeInTheDocument();
+    expect(within(gw).getByRole("button", { name: "사무실 더 보기" })).toBeInTheDocument();
   });
 
   it("member opening another's gateway sees no plugin or bridge tokens — 주소·토큰 요청도 없다", async () => {
@@ -175,8 +259,10 @@ describe("연결의 주인·승인(2단계)", () => {
       within(gw)
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
-    ).toEqual(["에이전트 0"]);
+    ).toEqual(["에이전트"]);
     expect(within(gw).queryByRole("button", { name: /수정|끄기|삭제/ })).toBeNull();
+    // 관리할 수 없으면 「⋯」 메뉴도 없다(지금 숨기던 끄기·삭제와 같은 조건)
+    expect(within(gw).queryByRole("button", { name: /더 보기/ })).toBeNull();
     expect(server.calls.filter((c) => /bridge-tokens|setup\/status/.test(c.url))).toEqual([]);
   });
 });

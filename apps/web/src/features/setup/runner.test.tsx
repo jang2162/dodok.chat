@@ -144,6 +144,8 @@ describe("러너 토큰", () => {
     renderConnection(undefined, 2);
     const desk = await within(await runnerRegion()).findByRole("listitem", { name: "데스크톱" });
     expect(desk).toHaveTextContent("지금 접속 중");
+    // 상태 색(success 점 + 글) — 강조색 배지가 아니다(연결 재설계 스펙 「상태 색」)
+    expect(within(desk).getByText("지금 접속 중")).toHaveAttribute("data-tone", "success");
     expect(desk).not.toHaveTextContent("마지막 사용 없음");
     cleanup();
     stubSetupServer(opts);

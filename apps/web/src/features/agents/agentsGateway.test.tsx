@@ -36,7 +36,8 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", ()
     renderPage(undefined, "owner", agentPath(office));
     const nav = await screen.findByRole("navigation", { name: "연결 목록" });
     const under = async (gateway: RegExp) =>
-      (await within(nav).findByRole("link", { name: gateway })).parentElement as HTMLElement;
+      // 연결 줄은 접기 단추와 한 줄(div) — 그 아래 목록까지 든 li 를 본다
+      (await within(nav).findByRole("link", { name: gateway })).closest("li") as HTMLElement;
     expect(within(await under(/^사무실/)).getByRole("link", { name: /Main 사무실/ })).toBeInTheDocument();
     expect(within(await under(/^사무실/)).queryByRole("link", { name: /Main 집/ })).toBeNull();
     expect(within(await under(/^집/)).getByRole("link", { name: /Main 집/ })).toBeInTheDocument();
@@ -253,5 +254,21 @@ describe("에이전트 가져오기 — 그 Gateway 상세에 고정", () => {
         name: "ops",
       },
     ]);
+  });
+});
+
+describe("OpenClaw 에이전트 상세의 카드(연결 재설계 스펙 목표 3)", () => {
+  it("「실행」 카드가 없고, 「프로필」 카드에 「메모 — 에이전트에게 전달되지 않음」, 「관리」에 Gateway 옮기기·삭제", async () => {
+    const office = mainOffice();
+    stubServer({ agents: [office], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage(undefined, "owner", agentPath(office));
+    const detail = await agentDetail();
+    expect(within(detail).queryByRole("region", { name: "실행" })).toBeNull();
+    const profile = within(detail).getByRole("region", { name: "프로필" });
+    expect(profile).toHaveTextContent("메모 — 에이전트에게 전달되지 않음");
+    expect(within(detail).getByRole("banner")).toHaveTextContent("OpenClaw");
+    const manage = within(detail).getByRole("region", { name: "관리" });
+    expect(within(manage).getByRole("button", { name: "@main-office Gateway 옮기기" })).toBeInTheDocument();
+    expect(within(manage).getByRole("button", { name: "@main-office 삭제" })).toBeInTheDocument();
   });
 });

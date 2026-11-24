@@ -1,3 +1,4 @@
+import { DownloadIcon } from "lucide-react";
 import type { Agent } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
@@ -46,10 +47,13 @@ export function DiscoverDialog({
   agents,
   gatewayId,
   disabled = false,
+  compact = false,
 }: {
   agents: readonly Agent[];
   gatewayId: string;
   disabled?: boolean;
+  /** 카드 머리의 고스트 버튼 「가져오기」(접근 이름은 「에이전트 가져오기」 그대로) — 기본은 지금의 주요 버튼 */
+  compact?: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -140,7 +144,14 @@ export function DiscoverDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button disabled={disabled}>에이전트 가져오기</Button>
+        {compact ? (
+          <Button type="button" variant="ghost" size="sm" disabled={disabled} aria-label="에이전트 가져오기">
+            <DownloadIcon />
+            가져오기
+          </Button>
+        ) : (
+          <Button disabled={disabled}>에이전트 가져오기</Button>
+        )}
       </DialogTrigger>
       {/* 등록 중엔 기본 닫기(X)를 잠근다 — Esc·바깥 클릭은 onOpenChange 가 무시 */}
       <DialogContent

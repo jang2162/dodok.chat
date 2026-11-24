@@ -1,6 +1,7 @@
 import type { BridgeTokenRecord, GatewaySetup } from "@dodok/shared";
 import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
+import { StatusChip } from "@/features/connections/DetailCard";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { useRevokeBridgeToken } from "./mutations";
@@ -119,7 +120,7 @@ export function TokenList({
                     {token.label}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">{`dbt_${token.prefix}…`}</span>
-                  {token.id === connectedId && <Badge>지금 접속 중</Badge>}
+                  {token.id === connectedId && <StatusChip tone="success" label="지금 접속 중" />}
                   {revoked && <Badge variant="outline">폐기됨</Badge>}
                 </div>
                 <p className="text-xs text-muted-foreground">

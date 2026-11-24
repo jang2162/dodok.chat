@@ -44,6 +44,7 @@ function issueError(e: unknown, label: string, reservedLabel?: (label: string) =
 export function IssueDialog<T extends Issued>({
   triggerRef,
   triggerLabel,
+  triggerVariant = "default",
   title,
   path,
   listKey,
@@ -56,6 +57,8 @@ export function IssueDialog<T extends Issued>({
   onDone?: (issued: T) => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
+  /** 카드 머리에 둘 때는 고스트(연결 재설계 스펙 목표 3) — 기본은 지금의 주요 버튼 */
+  triggerVariant?: "default" | "ghost";
   /** 라벨 입력 화면의 제목 */
   title: string;
   /** 발급 API 경로(`/api/v1` 뒤)와 다시 받을 목록 키 */
@@ -124,7 +127,7 @@ export function IssueDialog<T extends Issued>({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button ref={triggerRef} type="button" size="sm">
+        <Button ref={triggerRef} type="button" size="sm" variant={triggerVariant}>
           <KeyRoundIcon />
           {triggerLabel}
         </Button>
@@ -254,6 +257,7 @@ export function IssueTokenDialog({
   origin,
   pluginFileAvailable,
   triggerRef,
+  triggerVariant,
 }: {
   gatewayId: string;
   /** 서버의 공개 오리진(publicOriginOf) — 설치 명령과 「AI 에게 맡기기」 줄의 서버 주소 */
@@ -261,10 +265,12 @@ export function IssueTokenDialog({
   /** 서버가 플러그인 tgz 를 품었는가(`status.pluginFile.available`) — 없으면 설치 명령 대신 만드는 명령 */
   pluginFileAvailable: boolean;
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  triggerVariant?: "default" | "ghost";
 }) {
   return (
     <IssueDialog<IssueBridgeTokenResult>
       triggerRef={triggerRef}
+      triggerVariant={triggerVariant}
       triggerLabel="새 토큰 발급"
       title="새 브리지 토큰"
       path={`/gateways/${gatewayId}/bridge-tokens`}

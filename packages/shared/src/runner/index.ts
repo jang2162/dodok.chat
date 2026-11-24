@@ -87,6 +87,12 @@ export type RunnerRunEvent = z.infer<typeof RunnerRunEvent>;
  */
 export const RUNNER_SHUTDOWN_STOP_REASON = "runner_shutdown";
 
+/**
+ * 드라이버가 없는 프로그램을 러너 설정에 적었을 때 hello `programs` 줄의 `reason` — 꺼진 것과 같지만 사유와 함께 알린다.
+ * 웹은 이 사유를 「설치 안 됨」이 아니라 「지원 예정」으로 그린다(연결 재설계 스펙 「「지원 예정」 판정」). 러너와 웹이 같은 값을 쓴다
+ */
+export const RUNNER_NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
+
 /** 그 프롬프트 턴의 result. costUsd 는 세션 누적 비용의 런 전후 차이(ADR 0007 5.9) */
 export const RunnerRunFinal = z.object({
   runId: Id,

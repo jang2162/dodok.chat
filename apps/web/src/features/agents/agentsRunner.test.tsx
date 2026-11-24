@@ -117,7 +117,11 @@ describe("러너 에이전트 줄 — 새 세션 시작값 [세션 설정 스펙
       "member",
     );
     const row = await agentDetail();
-    expect(row).toHaveTextContent("Claude Code · 러너 맥북");
+    // 머리 칩 줄의 프로그램·러너(누구나 본다)
+    expect(
+      within(within(row).getByRole("banner")).getByRole("img", { name: "Claude Code" }),
+    ).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "러너 맥북" })).toBeInTheDocument();
     expect(row).not.toHaveTextContent("새 세션 시작값");
     expect(within(row).queryByRole("button", { name: /시작값 고치기/ })).toBeNull();
   });
@@ -403,9 +407,9 @@ describe("워크트리의 러너 에이전트 — 경로 줄은 「<부모> · <
       createQueryClient(() => {}),
       "admin",
     );
-    // 경로 줄은 상세 머리(DetailHeader meta)에 있다
+    // 프로젝트 링크는 상세 머리의 칩 줄에 있다
     await screen.findByTestId("agent-detail");
-    expect(await screen.findByRole("link", { name: "dodok · dodok/feat" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "프로젝트 dodok · dodok/feat" })).toHaveAttribute(
       "href",
       `/settings/connection/project/${wt.id}`,
     );
@@ -565,7 +569,7 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     );
   });
 
-  it("member — 봇임은 경로에 보이고(「› 봇」), 정의 편집·정의 내용은 없다 [Review Focus 5]", async () => {
+  it("member — 봇임은 머리 칩 줄에 보이고(「봇」), 정의 편집·정의 내용은 없다 [Review Focus 5]", async () => {
     stubServer({ agents: [bot(false)] });
     renderPage(
       createQueryClient(() => {}),
@@ -574,7 +578,8 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     const row = await agentDetail();
     expect(within(row).queryByRole("button", { name: /봇 정의 편집/ })).toBeNull();
     expect(row).not.toHaveTextContent("리뷰 봇");
-    expect(screen.getByText(/› 봇/)).toBeInTheDocument();
+    // 머리 칩 줄의 「봇」
+    expect(within(row).getByText("봇", { selector: "span" })).toBeInTheDocument();
   });
 
   describe("봇 도구(러너 봇 2부 스펙 T1·T3·T4·T7·T15)", () => {
@@ -757,5 +762,47 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B5·B7)", () => {
     const row = await agentDetail();
     expect(row).not.toHaveTextContent(NO_PROJECT_RESTORE);
     expect(within(row).getByRole("button", { name: "@coder 되살리기" })).toBeInTheDocument();
+  });
+});
+
+describe("에이전트 상세의 카드(연결 재설계 스펙 목표 3)", () => {
+  it("러너 에이전트 — 머리 칩 줄(프로그램·러너·프로젝트), 「실행」 카드에 읽기 전용 프로그램·새 세션 시작값·지시", async () => {
+    stubServer({ agents: [coder()], runners: routes() });
+    renderPage(
+      createQueryClient(() => {}),
+      "admin",
+    );
+    const detail = await agentDetail();
+    const header = within(detail).getByRole("banner");
+    expect(within(header).getByRole("img", { name: "Claude Code" })).toBeInTheDocument();
+    expect(within(header).getByRole("link", { name: "러너 맥북" })).toBeInTheDocument();
+    expect(await within(header).findByRole("link", { name: "프로젝트 dodok" })).toBeInTheDocument();
+    const run = within(detail).getByRole("region", { name: "실행" });
+    // 프로그램은 만든 뒤 바꾸는 API 가 없다 — 고르는 칸이 아니다
+    expect(run).toHaveTextContent("프로그램CCClaude Code(만든 뒤에는 바꿀 수 없습니다)");
+    expect(within(run).queryByRole("combobox")).toBeNull();
+    expect(within(run).queryByRole("radio")).toBeNull();
+    expect(within(run).getByRole("button", { name: "@coder 시작값 고치기" })).toBeInTheDocument();
+    expect(within(run).getByRole("button", { name: "@coder 지시 편집" })).toBeInTheDocument();
+    // 「프로필」(사진)·「DM 허용」·「관리」(삭제, 붉은 테두리)
+    expect(within(detail).getByRole("region", { name: "프로필" })).not.toHaveTextContent("메모");
+    expect(within(detail).getByRole("region", { name: "DM 허용" })).toBeInTheDocument();
+    const manage = within(detail).getByRole("region", { name: "관리" });
+    expect(manage.className).toMatch(/border-destructive/);
+    expect(within(manage).getByRole("button", { name: "@coder 삭제" })).toBeInTheDocument();
+  });
+
+  it("켜기 스위치 — 접근 이름 「에이전트 켜짐」, 보이는 이름표 「켜짐」/「꺼짐」", async () => {
+    stubServer({ agents: [{ ...coder(), enabled: false }], runners: routes() });
+    renderPage(
+      createQueryClient(() => {}),
+      "admin",
+    );
+    const header = within(await agentDetail()).getByRole("banner");
+    const sw = within(header).getByRole("switch", { name: "에이전트 켜짐" });
+    expect(sw).not.toBeChecked();
+    expect(sw.parentElement).toHaveTextContent("꺼짐");
+    await userEvent.click(sw);
+    await waitFor(() => expect(sw.parentElement).toHaveTextContent("켜짐"));
   });
 });

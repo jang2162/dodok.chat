@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { makeAgent } from "../../../test/agentsPage";
 import { projectOf, runnerId } from "../../../test/runnersServer";
-import { buildConnectionTree, type TreeGateway, type TreeInput, type TreeRunner } from "./tree";
+import {
+  buildConnectionTree,
+  filterConnectionTree,
+  type TreeGateway,
+  type TreeInput,
+  type TreeRunner,
+} from "./tree";
 
 const G1 = "01a00000-0000-7000-8000-0000000000a1";
 const G2 = "01a00000-0000-7000-8000-0000000000a2";
@@ -176,5 +182,62 @@ describe("러너 아래 「봇」(러너 봇 스펙 B11)", () => {
       expect(runner.bots.map((b) => b.agent.handle)).toEqual(["rev"]);
       expect(runner.agents.map((a) => a.agent.handle)).toEqual(["old"]);
     }
+  });
+});
+
+describe("filterConnectionTree — 트리 검색칸(연결 재설계 스펙 목표 1)", () => {
+  const officeDev = makeAgent({
+    providerAgentId: "dev",
+    handle: "dev",
+    name: "Dev",
+    gateway: { id: G1, name: "사무실" },
+  });
+  const officeFin = makeAgent({
+    providerAgentId: "fin",
+    handle: "fin",
+    name: "Fin",
+    gateway: { id: G1, name: "사무실" },
+  });
+  const homeMain = makeAgent({
+    providerAgentId: "main",
+    handle: "main",
+    name: "Main",
+    gateway: { id: G2, name: "집" },
+  });
+  const p1 = { id: projectOf(1).id, runnerId: R1, label: "dodok", archived: false };
+  const p2 = { id: projectOf(2).id, runnerId: R1, label: "sandbox", archived: false };
+  const code = coder({ runnerAgent: { projectId: p1.id, disallowedTools: [] } });
+  const tree = buildConnectionTree(
+    base({
+      agents: [officeDev, officeFin, homeMain, code],
+      gateways: [gw(G1, "사무실"), gw(G2, "집")],
+      runners: [{ id: R1, label: "dev-fake", state: "연결됨" }],
+      projects: [p1, p2],
+    }),
+  );
+
+  it("에이전트가 맞으면 그 부모만 남긴다 — 「co」 → dev-fake 아래 dodok·Coder", () => {
+    const res = filterConnectionTree(tree, "co");
+    expect(res.others.map((n) => n.id)).toEqual([R1]);
+    const runner = res.others[0] as TreeRunner;
+    expect(runner.projects.map((p) => p.label)).toEqual(["dodok"]);
+    expect(runner.projects[0]!.agents.map((a) => a.agent.handle)).toEqual(["coder"]);
+  });
+
+  it("연결 이름이 맞으면 통째로 — 「사무실」(앞뒤 공백·대소문자 무시)", () => {
+    const res = filterConnectionTree(tree, "  사무실 ");
+    expect(res.others.map((n) => n.id)).toEqual([G1]);
+    expect((res.others[0] as TreeGateway).agents.map((a) => a.agent.handle)).toEqual(["dev", "fin"]);
+    expect(filterConnectionTree(tree, "MAIN").others.map((n) => n.id)).toEqual([G2]);
+  });
+
+  it("못 찾으면 빈 묶음, 빈 검색은 같은 객체", () => {
+    const res = filterConnectionTree(tree, "zzz");
+    expect(res.mine).toEqual([]);
+    expect(res.others).toEqual([]);
+    expect(res.orphaned).toEqual([]);
+    expect(res.archived).toEqual([]);
+    expect(filterConnectionTree(tree, "")).toBe(tree);
+    expect(filterConnectionTree(tree, "   ")).toBe(tree);
   });
 });
