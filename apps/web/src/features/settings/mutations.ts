@@ -53,15 +53,21 @@ function updateMembers(qc: QueryClient, channelId: string, fn: (prev: ChannelMem
   qc.setQueryData<ChannelMember[]>(qk.members(channelId), (prev) => prev && fn(prev));
 }
 
-/** 변수는 에이전트 id. 그 사이 wire 로 먼저 들어와 있으면 바꿔 끼우기만 */
+/**
+ * 채널 멤버 한 명(사람·에이전트)을 가리킨다. `memberId` 는 사람이면 user id, 에이전트면 agent id — 멤버 행 id 가 아니다
+ * (서버 `POST /channels/:id/members` 본문, `DELETE …/members/:memberId` 경로 둘 다)
+ */
+export type MemberRef = { memberType: ChannelMember["memberType"]; memberId: string };
+
+/** 그 사이 wire 로 먼저 들어와 있으면 바꿔 끼우기만 */
 export function useAddMember(channelId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (agentId: string) =>
+    mutationFn: async ({ memberType, memberId }: MemberRef) =>
       (
         await api<{ member: ChannelMember }>("POST", `/channels/${channelId}/members`, {
-          memberType: "agent",
-          memberId: agentId,
+          memberType,
+          memberId,
         })
       ).member,
     onSuccess: (member) =>
@@ -93,19 +99,19 @@ export function usePatchMember(channelId: string) {
 }
 
 /**
- * 변수는 에이전트 id. 응답은 뺀 뒤의 목록 전체지만 그 사이 wire 로 더 새 목록이 와 있을 수 있어,
- * 지금 캐시에서 그 멤버만 뺀다(캐시가 없을 때만 응답 목록을 넣는다)
+ * 응답은 뺀 뒤의 목록 전체지만 그 사이 wire 로 더 새 목록이 와 있을 수 있어, 지금 캐시에서 그 멤버만 뺀다(캐시가 없을 때만 응답
+ * 목록을 넣는다). 서버 경로는 종류를 받지 않지만(user id·agent id 는 겹치지 않는다) 캐시에서는 종류까지 맞춰 뺀다
  */
 export function useRemoveMember(channelId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (agentId: string) =>
-      (await api<{ members: ChannelMember[] }>("DELETE", `/channels/${channelId}/members/${agentId}`))
+    mutationFn: async ({ memberId }: MemberRef) =>
+      (await api<{ members: ChannelMember[] }>("DELETE", `/channels/${channelId}/members/${memberId}`))
         .members,
-    onSuccess: (members, agentId) =>
+    onSuccess: (members, { memberType, memberId }) =>
       qc.setQueryData<ChannelMember[]>(
         qk.members(channelId),
-        (prev) => prev?.filter((m) => !(m.memberType === "agent" && m.memberId === agentId)) ?? members,
+        (prev) => prev?.filter((m) => !(m.memberType === memberType && m.memberId === memberId)) ?? members,
       ),
   });
 }

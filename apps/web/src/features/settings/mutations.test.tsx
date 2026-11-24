@@ -105,7 +105,7 @@ it("DELETE 응답 목록으로 통째로 바꾸지 않는다 — 그 사이 wire
   qc.setQueryData(qk.members(CH), [memberOf("user", OWNER), memberOf("agent", DEV)]);
   const held = holdFetch({ members: [memberOf("user", OWNER)] });
   const { result } = renderHook(() => useRemoveMember(CH), { wrapper });
-  const done = act(() => result.current.mutateAsync(DEV));
+  const done = act(() => result.current.mutateAsync({ memberType: "agent", memberId: DEV }));
   qc.setQueryData(qk.members(CH), [memberOf("user", OWNER), memberOf("agent", DEV), memberOf("agent", FIN)]);
   held.open();
   await done;
@@ -117,13 +117,40 @@ it("POST 응답: wire 로 먼저 들어와 있으면 겹치지 않고, 목록이
   qc.setQueryData(qk.members(CH), [memberOf("user", OWNER)]);
   const held = holdFetch({ member: memberOf("agent", DEV) });
   const { result } = renderHook(() => useAddMember(CH), { wrapper });
-  const done = act(() => result.current.mutateAsync(DEV));
+  const done = act(() => result.current.mutateAsync({ memberType: "agent", memberId: DEV }));
   qc.setQueryData(qk.members(CH), [memberOf("user", OWNER), memberOf("agent", DEV)]);
   held.open();
   await done;
   expect(qc.getQueryData(qk.members(CH))).toEqual([memberOf("user", OWNER), memberOf("agent", DEV)]);
 
   qc.removeQueries({ queryKey: qk.members(CH) });
-  await act(() => result.current.mutateAsync(FIN));
+  await act(() => result.current.mutateAsync({ memberType: "agent", memberId: FIN }));
   expect(qc.getQueryData(qk.members(CH))).toBeUndefined();
+});
+
+it("사람도 같은 경로 — POST { memberType: user, memberId: <user id> }, DELETE …/members/<user id> 는 그 사람 줄만 뺀다", async () => {
+  const { qc, wrapper } = setup();
+  const MIA = "mia-user-id";
+  qc.setQueryData(qk.members(CH), [memberOf("user", OWNER), memberOf("agent", DEV)]);
+  const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+    init?.method === "POST"
+      ? json(201, { member: memberOf("user", MIA) })
+      : json(200, { members: [memberOf("agent", DEV)] }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const add = renderHook(() => useAddMember(CH), { wrapper });
+  await act(() => add.result.current.mutateAsync({ memberType: "user", memberId: MIA }));
+  expect(fetch.mock.calls[0]?.[0]).toBe(`/api/v1/channels/${CH}/members`);
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ memberType: "user", memberId: MIA });
+  expect(qc.getQueryData(qk.members(CH))).toEqual([
+    memberOf("user", OWNER),
+    memberOf("agent", DEV),
+    memberOf("user", MIA),
+  ]);
+
+  const remove = renderHook(() => useRemoveMember(CH), { wrapper });
+  await act(() => remove.result.current.mutateAsync({ memberType: "user", memberId: OWNER }));
+  expect(fetch.mock.calls[1]?.[0]).toBe(`/api/v1/channels/${CH}/members/${OWNER}`);
+  expect(fetch.mock.calls[1]?.[1]?.method).toBe("DELETE");
+  expect(qc.getQueryData(qk.members(CH))).toEqual([memberOf("agent", DEV), memberOf("user", MIA)]);
 });

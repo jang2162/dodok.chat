@@ -138,12 +138,15 @@ export function AgentMemberRow({
         destructive
         returnFocus={removeRef}
         onConfirm={() =>
-          remove.mutate(agent.id, {
-            onSuccess: () => {
-              setRemoving(false);
-              onRemoved();
+          remove.mutate(
+            { memberType: "agent", memberId: agent.id },
+            {
+              onSuccess: () => {
+                setRemoving(false);
+                onRemoved();
+              },
             },
-          })
+          )
         }
       />
     </li>
