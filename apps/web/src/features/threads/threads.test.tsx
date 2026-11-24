@@ -30,9 +30,10 @@ import {
   runState,
   textDelta,
   uid,
+  USER,
 } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
-import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
+import { authorsClient, DEV, OWNER_PERSON, renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 
@@ -125,6 +126,123 @@ describe("채널 타임라인의 칩·메뉴", () => {
     expect(chip.querySelectorAll('[data-slot="avatar"]')).toHaveLength(1);
     // 답글 없는 루트에는 칩이 없다
     expect(container.querySelectorAll('[data-slot="thread-chip"]')).toHaveLength(1);
+  });
+
+  const person = (n: number, handle: string) => ({
+    ...OWNER_PERSON,
+    id: uid(n),
+    handle,
+    displayName: handle,
+    role: "member" as const,
+  });
+  const agentOf = (n: number, handle: string) => ({
+    ...DEV,
+    id: uid(n),
+    handle,
+    providerAgentId: handle,
+    name: handle,
+  });
+  const MIA = person(20, "mia");
+  const JUN = person(21, "jun");
+  const FIN = agentOf(22, "fin");
+  const OPS = agentOf(23, "ops");
+  const crowdClient = () => authorsClient([DEV, FIN, OPS], [OWNER_PERSON, MIA, JUN]);
+  const withParticipants = (participants: { kind: "user" | "agent"; id: string }[]) => ({
+    ...ROOT,
+    threadSummary: { ...summary, participants },
+  });
+  const activeText = () => document.querySelector('[data-slot="thread-chip-active"]')?.textContent ?? null;
+
+  it("chip shows people and agents as an avatar group", () => {
+    const six = [
+      { kind: "agent" as const, id: AGENT },
+      { kind: "user" as const, id: MIA.id },
+      { kind: "agent" as const, id: FIN.id },
+      { kind: "user" as const, id: JUN.id },
+      { kind: "agent" as const, id: OPS.id },
+      { kind: "user" as const, id: USER },
+    ];
+    const { unmount } = renderWithClient(<MessageItem message={withParticipants(six)} head />, crowdClient());
+    const group = screen.getByRole("group", { name: "스레드 참여자" });
+    expect(group.querySelectorAll('[data-slot="avatar"]')).toHaveLength(4);
+    expect(within(group).getByRole("img", { name: "참여자 2명 더" })).toHaveTextContent("+2");
+    // 사람은 이름으로, 에이전트는 핸들로 — 최근 순 그대로
+    expect(
+      within(group)
+        .getAllByRole("img")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["@dev", "mia", "@fin", "jun", "참여자 2명 더"]);
+    unmount();
+
+    // 모르는 id 는 건너뛰고 +N 에도 세지 않는다(Review Focus 4)
+    const withUnknown = [...six.slice(0, 5), { kind: "user" as const, id: uid(99) }];
+    renderWithClient(<MessageItem message={withParticipants(withUnknown)} head />, crowdClient());
+    const again = screen.getByRole("group", { name: "스레드 참여자" });
+    expect(again.querySelectorAll('[data-slot="avatar"]')).toHaveLength(4);
+    expect(within(again).getByRole("img", { name: "참여자 1명 더" })).toHaveTextContent("+1");
+  });
+
+  it("chip shows the running agent in the thread", () => {
+    const item = withParticipants([{ kind: "user", id: USER }]);
+    act(() => {
+      useRunStore.getState().applyState(runState({ id: RUN, status: "streaming", threadRootId: ROOT.id }));
+    });
+    renderWithClient(<MessageItem message={item} head />, crowdClient());
+    expect(activeText()).toBe("@dev 응답 중…");
+    const chip = screen.getByRole("link", { name: /답글 2개/ });
+    expect(chip).toHaveAccessibleName(/@dev 응답 중…/);
+    // 목록에 없던 dev 가 앞에, 링
+    const group = screen.getByRole("group", { name: "스레드 참여자" });
+    const faces = group.querySelectorAll('[data-slot="avatar"]');
+    expect(faces[0]).toHaveAttribute("aria-label", "@dev");
+    expect(faces[0]).toHaveAttribute("data-active", "true");
+    expect(faces[0]).toHaveClass("ring-primary!", "motion-safe:animate-pulse");
+    expect(faces[1]).not.toHaveAttribute("data-active");
+
+    // 끝나면(done) 링과 문구가 사라진다 — 칩은 남는다(Review Focus 2)
+    act(() => {
+      useRunStore.getState().applyState(runState({ id: RUN, status: "done", threadRootId: ROOT.id }));
+    });
+    expect(activeText()).toBeNull();
+    expect(screen.getByRole("link", { name: /답글 2개/ })).toHaveTextContent("마지막 답글");
+    expect(document.querySelector('[data-active="true"]')).toBeNull();
+  });
+
+  it("other thread or channel runs do not show", () => {
+    act(() => {
+      // 다른 스레드의 런, 채널(세션) 런, 다른 세션의 같은 rootId 런
+      useRunStore
+        .getState()
+        .applyState(runState({ id: RUN, status: "streaming", threadRootId: uid(10_999) }));
+      useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" }));
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id: uid(103), status: "tool", conversationId: uid(3), threadRootId: ROOT.id }),
+        );
+    });
+    const { container } = renderWithClient(
+      <MessageItem message={withParticipants([{ kind: "user", id: USER }])} head />,
+      crowdClient(),
+    );
+    expect(activeText()).toBeNull();
+    expect(container.querySelector('[data-active="true"]')).toBeNull();
+    // 요약 없는 루트에는 그 런들로 칩이 생기지 않는다
+    const bare = renderWithClient(<MessageItem message={msg(5)} head />, crowdClient());
+    expect(bare.container.querySelector('[data-slot="thread-chip"]')).toBeNull();
+  });
+
+  it("chip renders for a running thread with no replies yet", () => {
+    const { container } = renderWithClient(<MessageItem message={ROOT} head />, crowdClient());
+    expect(container.querySelector('[data-slot="thread-chip"]')).toBeNull();
+    act(() => {
+      useRunStore.getState().applyState(runState({ id: RUN, status: "queued", threadRootId: ROOT.id }));
+    });
+    const chip = container.querySelector('[data-slot="thread-chip"]');
+    expect(chip).toHaveAccessibleName("스레드 참여자 스레드 @dev 대기 중…");
+    expect(chip).toHaveAttribute("href", `/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(chip).not.toHaveTextContent("답글");
+    expect(activeText()).toBe("@dev 대기 중…");
   });
 
   it("「스레드에서 답하기」 — 루트면 그 스레드, 답글이면 그 답글의 루트 스레드(Review Focus 1)", () => {

@@ -218,7 +218,8 @@ export function MessageItem({
         {reactable && me && (
           <ReactionChips message={message} me={me} onToggle={(e, on) => setReaction(message.id, e, on)} />
         )}
-        {!noThreads && message.threadSummary && (
+        {/* 답글이 없어도 그 스레드에 진행 중 런이 있으면 칩이 뜬다 — 그릴지는 칩이 정한다 */}
+        {!noThreads && message.threadRootId === undefined && (
           <ThreadChip message={message} summary={message.threadSummary} />
         )}
       </div>

@@ -1,14 +1,17 @@
-import type { Message, ThreadSummary } from "@dodok/shared";
+import type { Message, RunStatus, ThreadSummary } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { MessageSquareReplyIcon } from "lucide-react";
 import { useMemo } from "react";
-import { useAgents } from "@/api/queries";
+import { useAgents, usePeople } from "@/api/queries";
+import { AvatarGroup, AvatarGroupCount } from "@/ui/avatar";
 import { IdentityAvatar } from "@/ui/identity-avatar";
+import { cn } from "@/lib/utils";
 import { threadRootOf } from "./queries";
+import { activeLabel, threadFaces, useThreadActiveRuns } from "./threadParticipants";
 import { useNoteThreadOpener } from "./threadOpener";
 
-/** 칩에 그리는 에이전트 아바타 수 — 요약의 agentIds 는 최근에 답한 에이전트부터다 */
-const AVATARS_MAX = 3;
+/** 칩에 그리는 참여자 아바타 수 — 나머지는 +N(채널 헤더의 「참여 에이전트」와 같은 모양) */
+const AVATARS_MAX = 4;
 const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" });
 const DATE = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" });
 const FULL = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full", timeStyle: "short" });
@@ -19,48 +22,110 @@ export function lastReplyLabel(iso: string, now: Date = new Date()): string {
   return d.toDateString() === now.toDateString() ? TIME.format(d) : DATE.format(d);
 }
 
+type ResolvedFace = {
+  kind: "person" | "agent";
+  id: string;
+  name: string;
+  handle: string;
+  avatarUrl?: string | null | undefined;
+  /** 그 스레드에서 끝나지 않은 런의 상태 — 에이전트만 */
+  active?: RunStatus | undefined;
+};
+
 /**
- * 루트 아래 답글 요약 칩(스레드·검색 스펙 4.2) — 「답글 N · 마지막 시각 · 에이전트 아바타(최대 3)」, 누르면 그 스레드.
- * 요약은 서버가 루트에 싣는다(`threadSummary` — 답글이 있을 때만). 모르는 에이전트(지워졌거나 아직 목록을 못 받았다)는 건너뛴다
+ * 루트 아래 스레드 칩(스레드·검색 스펙 4.2) — 「참여자 아바타(최대 4 + N) · 답글 N개 · 마지막 시각」, 그 스레드에서 끝나지 않은 런이
+ * 있으면 그 에이전트 아바타에 링과 「@핸들 응답 중…」. 누르면 그 스레드. 요약은 서버가 루트에 싣는다(`threadSummary` — 답글이
+ * 있을 때만) — 요약도 진행 중 런도 없으면 그리지 않는다. 모르는 사람·에이전트(지워졌거나 아직 목록을 못 받았다)는 건너뛰고 +N 에도
+ * 세지 않는다. 문구에 aria-live 는 두지 않는다 — 채널 목록의 칩마다 읽히면 시끄럽다(문구는 링크 이름에 든다)
  */
-export function ThreadChip({ message, summary }: { message: Message; summary: ThreadSummary }) {
+export function ThreadChip({ message, summary }: { message: Message; summary?: ThreadSummary | undefined }) {
   const agents = useAgents().data;
+  const people = usePeople().data;
+  const active = useThreadActiveRuns(message.channelId, message.conversationId, message.id);
   const faces = useMemo(() => {
-    const byId = new Map((agents ?? []).map((a) => [a.id, a]));
-    return summary.agentIds.flatMap((id) => byId.get(id) ?? []).slice(0, AVATARS_MAX);
-  }, [agents, summary.agentIds]);
+    const agentById = new Map((agents ?? []).map((a) => [a.id, a]));
+    const personById = new Map((people ?? []).map((p) => [p.id, p]));
+    return threadFaces(summary, active).flatMap((f): ResolvedFace[] => {
+      if (f.kind === "agent") {
+        const a = agentById.get(f.id);
+        return a
+          ? [
+              {
+                kind: "agent",
+                id: a.id,
+                name: a.name,
+                handle: a.handle,
+                avatarUrl: a.avatarUrl,
+                active: f.active,
+              },
+            ]
+          : [];
+      }
+      const p = personById.get(f.id);
+      return p
+        ? [{ kind: "person", id: p.id, name: p.displayName, handle: p.handle, avatarUrl: p.avatarUrl }]
+        : [];
+    });
+  }, [agents, people, summary, active]);
   const noteOpener = useNoteThreadOpener(message.id);
+  if (summary === undefined && active.length === 0) return null;
+  const shown = faces.slice(0, AVATARS_MAX);
+  const hidden = faces.length - shown.length;
+  const running = faces.filter((f) => f.active !== undefined);
+  const firstStatus = running[0]?.active;
   return (
     <Link
       to="/c/$channelId/s/$conversationId/t/$rootId"
       params={{ channelId: message.channelId, conversationId: message.conversationId, rootId: message.id }}
       onClick={noteOpener}
       data-slot="thread-chip"
-      className="mt-1 inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-0.5 text-xs hover:border-border hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      className="mt-1 inline-flex min-h-8 max-w-full items-center gap-2 rounded-md border border-transparent px-2 py-1 text-sm hover:border-border hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
     >
-      {faces.length > 0 && (
-        <span className="flex -space-x-1.5" aria-hidden>
-          {faces.map((a) => (
+      {shown.length > 0 && (
+        <AvatarGroup role="group" aria-label="스레드 참여자" className="shrink-0">
+          {shown.map((f) => (
             <IdentityAvatar
-              key={a.id}
-              kind="agent"
-              id={a.id}
-              name={a.name}
-              handle={a.handle}
-              avatarUrl={a.avatarUrl}
+              key={`${f.kind}:${f.id}`}
+              kind={f.kind}
+              id={f.id}
+              name={f.name}
+              handle={f.handle}
+              avatarUrl={f.avatarUrl}
               size={24}
-              className="size-5"
+              role="img"
+              aria-label={f.kind === "agent" ? `@${f.handle}` : f.name}
+              title={`${f.name} (@${f.handle})`}
+              data-active={f.active !== undefined ? "true" : undefined}
+              className={cn(f.active !== undefined && "ring-primary! motion-safe:animate-pulse")}
             />
           ))}
-        </span>
+          {hidden > 0 && (
+            <AvatarGroupCount role="img" className="size-6 text-xs" aria-label={`참여자 ${hidden}명 더`}>
+              +{hidden}
+            </AvatarGroupCount>
+          )}
+        </AvatarGroup>
       )}
-      <span className="font-medium text-primary">답글 {summary.count}개</span>
-      <span className="truncate text-muted-foreground">
-        마지막 답글{" "}
-        <time dateTime={summary.lastAt} title={FULL.format(new Date(summary.lastAt))}>
-          {lastReplyLabel(summary.lastAt)}
-        </time>
-      </span>
+      <span className="shrink-0 font-medium text-primary">
+        {summary ? `답글 ${summary.count}개` : "스레드"}
+      </span>{" "}
+      {firstStatus !== undefined ? (
+        <span data-slot="thread-chip-active" className="truncate text-primary">
+          {activeLabel(
+            running.map((f) => f.handle),
+            firstStatus,
+          )}
+        </span>
+      ) : (
+        summary && (
+          <span className="truncate text-muted-foreground">
+            마지막 답글{" "}
+            <time dateTime={summary.lastAt} title={FULL.format(new Date(summary.lastAt))}>
+              {lastReplyLabel(summary.lastAt)}
+            </time>
+          </span>
+        )
+      )}
     </Link>
   );
 }
