@@ -1,3 +1,4 @@
+import type { Message } from "@dodok/shared";
 import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownIcon } from "lucide-react";
 import {
@@ -23,11 +24,13 @@ import { useRunStore } from "@/features/runs/runStore";
 import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { type Bundle, type BundleRun, computeBundles } from "./bundles";
 import { groupRows, type Row } from "./groupRows";
 import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
+import { ReplyBundle } from "./ReplyBundle";
 import { SystemCard } from "./SystemCard";
 import { HIGHLIGHT_MS } from "./jumpTarget";
 import { useJump } from "./useJump";
@@ -49,6 +52,7 @@ const UNREAD_CONTEXT_PX = 128;
 /** 이어 받기를 기다리며 읽음을 붙잡는 가장 긴 시간 — 응답이 끝내 안 오면 놓는다 */
 const AWAIT_UNREAD_MAX_MS = 5_000;
 const NO_RUNS: readonly string[] = [];
+const NO_BUNDLES: ReadonlyMap<string, Bundle> = new Map();
 const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
 export type MessageListProps = {
@@ -126,6 +130,29 @@ function ChannelMessages({
     [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
+  // 답 묶음(설계 「정한 것」) — 세션 타임라인에서만. 스레드 패널은 이미 따로 떨어진 공간이라 묶지 않는다. 런의 루트는 저장소의 `roots`
+  // (지운 런도 남는다 — 실시간 메시지에는 runRoot 가 없다)와 지난 메시지의 runRoot 로 안다
+  const runRoots = useRunStore((s) => s.roots);
+  const bundleRuns = useMemo(
+    (): BundleRun[] =>
+      threadRootId !== undefined
+        ? []
+        : Object.values(runRoots).filter(
+            (r) =>
+              r.channelId === channelId &&
+              r.conversationId === conversationId &&
+              r.threadRootId === undefined,
+          ),
+    [runRoots, channelId, conversationId, threadRootId],
+  );
+  const timelineItems = timeline?.items;
+  const bundles = useMemo(
+    () =>
+      threadRootId !== undefined || !timelineItems ? NO_BUNDLES : computeBundles(timelineItems, bundleRuns),
+    [timelineItems, bundleRuns, threadRootId],
+  );
+  const messagesById = useMemo(() => new Map((timelineItems ?? []).map((m) => [m.id, m])), [timelineItems]);
+  const bubbleSet = useMemo(() => new Set(bubbleRunIds), [bubbleRunIds]);
   /**
    * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
    * 페이지 경계가 우연히 맞았으면 배너 대신 구분선에서 연다. `done` 이 되기 전에는 첫 위치를 잡지 않고 자리표시를 그린다.
@@ -137,9 +164,14 @@ function ChannelMessages({
   const rows = useMemo(
     () =>
       timeline
-        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me, settledReadSeq })
+        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, {
+            entryReadSeq,
+            me,
+            settledReadSeq,
+            bundles,
+          })
         : [],
-    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq],
+    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq, bundles],
   );
   // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게.
   // 읽은 자리가 0 인 채널(새 멤버가 처음 여는 채널 등)은 끝에서 연다(사용자 결정) — 기록 전체가 안 읽음이라 구분선에서 열면
@@ -236,6 +268,18 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  // 묶음 줄의 「승인 대기」 — 목록 맨 아래 그 승인 카드로
+  const toApproval = useCallback(
+    (approvalId: string) => {
+      const index = rowsRef.current.findIndex((r) => r.key === `approval:${approvalId}`);
+      if (index >= 0) arrive(index);
+    },
+    [arrive],
+  );
+  const bundleView = useMemo(
+    (): BundleView => ({ messagesById, bubbleRunIds: bubbleSet, bubbles, onApproval: toApproval }),
+    [messagesById, bubbleSet, bubbles, toApproval],
+  );
   // 묻는 것은 처음 위치를 잡기 전 한 번 — 배너가 뜰 경계(`showBanner` 와 같은 조건)이고 받은 목록에 구분선이 없을 때만.
   // 결과로 가기 목표를 안고 열렸으면 그리로 가므로 묻지 않는다
   const probing =
@@ -661,6 +705,7 @@ function ChannelMessages({
                     channelId={channelId}
                     inThread={threadRootId !== undefined}
                     bubble={row.kind === "bubble" ? bubbles?.(row.runId) : undefined}
+                    bundleView={row.kind === "bundle" ? bundleView : undefined}
                   />
                 </MessageErrorBoundary>
               </div>
@@ -718,13 +763,29 @@ function sameRow(a: Row, b: Row): boolean {
   if (a.kind === "message" && b.kind === "message")
     return a.message === b.message && a.head === b.head && a.activity === b.activity;
   if (a.kind === "pending" && b.kind === "pending") return a.pending === b.pending;
+  if (a.kind === "bundle" && b.kind === "bundle") return a.bundle === b.bundle;
   // 구분선(날짜)·버블(runId)·승인(approvalId)은 key 에 다 들어 있다 — 카드 안은 저마다 스토어를 구독한다
   return true;
 }
 
-type RowProps = { row: Row; channelId: string; inThread: boolean; bubble: ReactNode };
+/** 묶음 행이 그릴 때 보는 목록의 것 — 메시지·버블·승인 카드로 가기 */
+type BundleView = {
+  messagesById: ReadonlyMap<string, Message>;
+  bubbleRunIds: ReadonlySet<string>;
+  bubbles: ((runId: string) => ReactNode) | undefined;
+  onApproval: (approvalId: string) => void;
+  highlighted?: string;
+};
+
+type RowProps = {
+  row: Row;
+  channelId: string;
+  inThread: boolean;
+  bubble: ReactNode;
+  bundleView: BundleView | undefined;
+};
 const RowView = memo(
-  function RowView({ row, channelId, inThread, bubble }: RowProps) {
+  function RowView({ row, channelId, inThread, bubble, bundleView }: RowProps) {
     switch (row.kind) {
       case "divider":
         return <DayDivider date={row.date} />;
@@ -742,10 +803,13 @@ const RowView = memo(
         return <ApprovalCard approvalId={row.approvalId} channelId={channelId} />;
       case "unread":
         return <NewMessagesDivider />;
+      case "bundle":
+        return bundleView ? <ReplyBundle bundle={row.bundle} {...bundleView} /> : null;
     }
   },
   (a: RowProps, b: RowProps) =>
     a.bubble === b.bubble &&
+    a.bundleView === b.bundleView &&
     a.channelId === b.channelId &&
     a.inThread === b.inThread &&
     sameRow(a.row, b.row),
