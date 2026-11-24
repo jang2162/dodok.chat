@@ -1,5 +1,5 @@
 import { type Agent, type Message, StoredComponentsV1 } from "@dodok/shared";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -79,6 +79,14 @@ describe("ReplyBundle", () => {
     draw([root, live, used]);
     expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
     expect(lane("fin")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("보고 있는 동안 카드가 만료되면 접힌 기본으로 돌아간다", async () => {
+    const soon = new Date(Date.now() + 300).toISOString();
+    const live = reply(2, AGENT, RA, { components: CARD, componentState: { expiresAt: soon, consumed: [] } });
+    draw([root, live, reply(3, FIN, RB)]);
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(lane("dev")).toHaveAttribute("aria-expanded", "false"), { timeout: 2_000 });
   });
 
   it("만료된 카드는 펼치지 않는다", () => {

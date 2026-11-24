@@ -1,6 +1,6 @@
 import type { Message } from "@dodok/shared";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { runStatusLabel } from "@/features/activity/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -40,6 +40,9 @@ export function hasLiveCard(m: Message, now: number): boolean {
   const consumed = new Set(m.componentState?.consumed ?? []);
   return ids.some((id) => !consumed.has(id));
 }
+
+/** setTimeout 최대 지연(약 24.8일) — 그보다 먼 만료는 그때 다시 잰다 */
+const MAX_TIMER_MS = 2_147_483_647;
 
 /** 접힌 줄의 미리보기 — 마크다운 표시를 걷은 첫 줄. 멘션 토큰은 @핸들로 */
 function previewOf(bodyMd: string, mention: (kind: "a" | "u", id: string) => string | undefined): string {
@@ -121,8 +124,21 @@ function Lane({
   const systems = lane.systemIds.flatMap((id) => messagesById.get(id) ?? []);
   const manual = useBundleExpansion((s) => s.open[lane.runId]);
   const setOpen = useBundleExpansion((s) => s.set);
-  const auto = messages.some((m) => hasLiveCard(m, Date.now()));
+  const now = Date.now();
+  const live = messages.filter((m) => hasLiveCard(m, now));
+  const auto = live.length > 0;
   const open = manual ?? auto;
+  // 자동으로 펼친 줄은 카드가 만료되는 순간 접힌 기본으로 돌아간다 — 그 시각에 한 번 다시 그린다
+  const [, redraw] = useReducer((n: number) => n + 1, 0);
+  const expiry =
+    manual === undefined
+      ? Math.min(...live.map((m) => Date.parse(m.componentState?.expiresAt ?? "")).filter(Number.isFinite))
+      : Number.POSITIVE_INFINITY;
+  useEffect(() => {
+    if (!Number.isFinite(expiry)) return;
+    const timer = setTimeout(redraw, Math.min(Math.max(0, expiry - Date.now()) + 50, MAX_TIMER_MS));
+    return () => clearTimeout(timer);
+  }, [expiry]);
   const approvalId = useApprovalStore(
     useShallow((s) => {
       for (const channel of Object.values(s.byChannel))
@@ -168,7 +184,8 @@ function Lane({
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
-          <LaneStatus status={lane.status} running={running} />
+          {/* 승인 배지가 있으면 같은 말(「승인 대기」)을 두 번 쓰지 않는다 */}
+          {approvalId === undefined && <LaneStatus status={lane.status} running={running} />}
         </button>
         {approvalId !== undefined && (
           <button
