@@ -380,7 +380,7 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
 ```bash
 # 기준은 「지금 세션이 서 있는 브랜치」다. main 이라고 박아 두지 마라.
 BASE=$(git branch --show-current)
-orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects/dodok.chat \
+orca worktree create --name <슬러그> --repo path:/Users/jang2162/Projects/Personal/dodok.chat \
     --base-branch "$BASE" --setup run --json
 ```
 
@@ -425,7 +425,7 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
   손으로 만든 워크트리는 아래 「생성 직후 세팅」을 직접 밟는다.
 
   ```bash
-  orca repo show --repo path:/Users/jang2162/IdeaProjects/dodok.chat --json \
+  orca repo show --repo path:/Users/jang2162/Projects/Personal/dodok.chat --json \
     | jq '.result.repo.hookSettings | {commandSourcePolicy, setupRunPolicy}'
   ```
 - **경로는 Orca 가 정한다 — 글로벌 설정 또는 repo 별 `worktreeBasePath`.** 워크트리 위치는 앱의 글로벌 worktree 경로
@@ -719,7 +719,7 @@ Orca 가 재시작되거나 새 코디네이터 세션이 일을 이어받으면
 
 ### 이월 출처는 메인 체크아웃 절대 경로로 적는다
 
-이월 항목의 출처 보고서·리뷰는 `.superpowers/sdd/` 아래라 git 에서 빠져 워크트리에 없다. 브리프에 `/Users/jang2162/IdeaProjects/dodok.chat/.superpowers/sdd/<묶음>/` 절대 경로로 적는다.
+이월 항목의 출처 보고서·리뷰는 `.superpowers/sdd/` 아래라 git 에서 빠져 워크트리에 없다. 브리프에 `/Users/jang2162/Projects/Personal/dodok.chat/.superpowers/sdd/<묶음>/` 절대 경로로 적는다.
 
 ### 이월 줄은 굵은 제목과 커밋을 붙인 번호로 가리킨다
 
