@@ -1,6 +1,8 @@
 import { SquareIcon } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { InlineActivity } from "@/features/activity/InlineActivity";
+import { summarizeActivity, toActivityRows } from "@/features/activity/timeline";
 import { MessageBody } from "@/features/messages/MessageBody";
 import { MessageErrorBoundary } from "@/features/messages/MessageErrorBoundary";
 import { AuthorAvatar, AuthorLine } from "@/features/messages/MessageItem";
@@ -51,6 +53,7 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
                 </span>
               </AuthorLine>
             </div>
+            <BubbleActivity runId={runId} hasText={view.text !== ""} live={!TERMINAL.has(status)} />
             {phase.textVisible && (
               <div data-cursor={streaming || undefined} aria-busy={!TERMINAL.has(status)}>
                 {view.text ? (
@@ -67,6 +70,21 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
     </div>
   );
 });
+
+/**
+ * 버블 안 활동(스펙 「모양」) — 런 스토어의 활동 기록으로 그린다(텍스트 델타는 기록 밖이라 델타마다 다시 접지 않는다).
+ * 답 글이 아직 없으면 펼친 채, 첫 텍스트 델타가 오면 접힌다. 사람이 그 전에 손으로 접거나 펼쳤으면 그 선택을 따른다.
+ * 활동이 없는 런은 아무것도 그리지 않는다
+ */
+function BubbleActivity({ runId, hasText, live }: { runId: string; hasText: boolean; live: boolean }) {
+  const events = useRunStore((s) => s.activity[runId]?.events);
+  const rows = useMemo(() => toActivityRows(events ?? []), [events]);
+  const summary = useMemo(() => summarizeActivity(rows, events), [rows, events]);
+  const [manual, setManual] = useState<boolean>();
+  return (
+    <InlineActivity rows={rows} summary={summary} live={live} open={manual ?? !hasText} onOpenChange={setManual} />
+  );
+}
 
 /** 대기 중이면 점 셋(모션 허용일 때만 움직임) */
 function StatusLabel({ label, queued }: { label: string; queued: boolean }) {

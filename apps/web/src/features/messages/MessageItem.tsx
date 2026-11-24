@@ -2,6 +2,7 @@ import type { Message } from "@dodok/shared";
 import { useMe } from "@/api/queries";
 import { BotIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { MessageActivity } from "@/features/activity/InlineActivity";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
@@ -199,6 +200,10 @@ export function MessageItem({
           <AuthorLine author={author} onOpen={openAuthor}>
             <MessageTime iso={message.createdAt} />
           </AuthorLine>
+        )}
+        {/* 에이전트 답의 활동(스펙 「모양」) — 요약 줄만, 이벤트는 펼칠 때 */}
+        {message.authorType === "agent" && message.runId !== undefined && (
+          <MessageActivity runId={message.runId} />
         )}
         {message.bodyMd !== "" && <MessageBody bodyMd={message.bodyMd} />}
         {message.editedAt && <span className="text-xs text-muted-foreground">(수정됨)</span>}

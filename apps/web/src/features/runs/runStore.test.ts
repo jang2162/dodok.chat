@@ -1,6 +1,7 @@
 import { RunEvent, RunState } from "@dodok/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  ACTIVITY_KEEP,
   reduceEvent,
   reduceReplay,
   reduceState,
@@ -173,5 +174,46 @@ describe("런의 스레드 소속(판정 R3′)", () => {
       .getState()
       .applyReplay(state({ id: R1 }), [started(`agent:dev:dodok:channel:${C1}:thread:${ROOT}`)]);
     expect(useRunStore.getState().threads[R1]).toBe(ROOT);
+  });
+});
+
+describe("활동 기록(응답 안의 활동)", () => {
+  const tool = (seq: number) => ev({ type: "TOOL_CALL_START", seq, toolCallId: `t${seq}`, toolCallName: "Read" });
+  beforeEach(() => useRunStore.getState().reset());
+
+  it("대기로 처음 본 런은 처음부터 본 것(complete) — 행이 되는 이벤트만 모은다", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ status: "queued" }));
+    expect(useRunStore.getState().activity[R1]).toEqual({ events: [], complete: true });
+    s.applyEvent(ev({ type: "REASONING_MESSAGE_CONTENT", seq: 1, messageId: "r", delta: "생각" }));
+    s.applyEvent(tool(2));
+    const before = useRunStore.getState().activity;
+    s.applyEvent(text(3, "답"));
+    // 텍스트 델타는 활동 기록의 참조를 바꾸지 않는다 — 버블이 델타마다 행을 다시 접지 않게
+    expect(useRunStore.getState().activity).toBe(before);
+    expect(useRunStore.getState().activity[R1]?.events.map((e) => e.seq)).toEqual([1, 2]);
+    expect(useRunStore.getState().activity[R1]?.complete).toBe(true);
+  });
+
+  it("도중에 처음 본 런은 모으되 complete 가 아니다 — 처음부터 재생하면 complete", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ status: "tool" }));
+    s.applyEvent(tool(5));
+    expect(useRunStore.getState().activity[R1]).toMatchObject({ complete: false });
+    s.applyReplay(state({ status: "tool" }), [text(1, "가"), tool(2), tool(5)]);
+    expect(useRunStore.getState().activity[R1]).toEqual({ events: [tool(2), tool(5)], complete: true });
+  });
+
+  it("런을 지워도 활동 기록은 남는다 — 최근 ACTIVITY_KEEP 개까지", () => {
+    const s = useRunStore.getState();
+    const ids = Array.from({ length: ACTIVITY_KEEP + 2 }, (_, i) => id(1000 + i));
+    for (const runId of ids) {
+      s.applyState(state({ id: runId, status: "queued" }));
+      s.remove(runId);
+    }
+    const kept = Object.keys(useRunStore.getState().activity).sort();
+    expect(kept).toEqual(ids.slice(2));
+    useRunStore.getState().reset();
+    expect(useRunStore.getState().activity).toEqual({});
   });
 });

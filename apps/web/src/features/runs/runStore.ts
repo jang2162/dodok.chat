@@ -1,5 +1,6 @@
 import { parseDodokSessionKey, type RunEvent, type RunState } from "@dodok/shared";
 import { create } from "zustand";
+import { isTimelineEvent } from "@/features/activity/timeline";
 
 export const TERMINAL: ReadonlySet<RunState["status"]> = new Set(["done", "error", "aborted"]);
 
@@ -45,8 +46,30 @@ export function reduceReplay(state: RunState, events: readonly RunEvent[], now: 
   return events.reduce<RunView>((v, e) => reduceEvent(v, e) ?? v, reduceState(undefined, state, now));
 }
 
+/**
+ * 런 하나의 활동 이벤트(추론·도구 등 행이 되는 것만 — 텍스트 델타는 빼서 델타마다 참조가 바뀌지 않게).
+ * `complete` 는 처음(seq 1)부터 본 런인가 — 확정 메시지는 이것일 때만 REST 없이 그린다(스펙 「모양」 막 끝난 런).
+ * 처음부터 못 봤으면(재생 실패 등) 버블은 가진 것만 그리고, 메시지는 펼칠 때 받는다
+ */
+export type RunActivity = { events: readonly RunEvent[]; complete: boolean };
+
+/** `remove` 뒤에도 남기는 활동 기록 수 — 지운 런 가운데 최근 것만(긴 탭이 기록을 끝없이 쌓지 않게) */
+export const ACTIVITY_KEEP = 50;
+
+const EMPTY_ACTIVITY: RunActivity = { events: [], complete: true };
+
+/** 활동 이벤트 하나를 잇는다(seq 가 이미 있으면 그대로). 행이 아닌 이벤트는 참조를 바꾸지 않는다 */
+function addActivity(prev: RunActivity | undefined, event: RunEvent): RunActivity | undefined {
+  if (!isTimelineEvent(event)) return prev;
+  const base = prev ?? { events: [], complete: false };
+  if (base.events.some((e) => e.seq === event.seq)) return base;
+  return { ...base, events: [...base.events, event] };
+}
+
 type RunStore = {
   runs: Record<string, RunView>;
+  /** 런 id → 활동 기록. `remove` 해도 최근 `ACTIVITY_KEEP` 개는 남긴다 — 버블이 내려간 뒤 확정 메시지가 이어 쓴다. `reset` 에서만 비운다 */
+  activity: Record<string, RunActivity>;
   /**
    * 스레드 런 id → 루트. `remove` 로 런을 지워도 남긴다 — 그 런의 확정된 승인 카드가 기록으로 남는 동안
    * 어느 목록(채널·스레드)에 그릴지 알아야 한다. `reset` 에서만 비운다
@@ -69,23 +92,52 @@ function put(s: RunStore, view: RunView): Pick<RunStore, "runs" | "threads"> {
     : { runs, threads: { ...s.threads, [id]: rootId } };
 }
 
+/** 지운 런의 활동 기록 가운데 오래된 것(id = uuid v7 생성 순)을 `ACTIVITY_KEEP` 개만 남기고 버린다 */
+function pruneActivity(
+  activity: Record<string, RunActivity>,
+  runs: Record<string, RunView>,
+): Record<string, RunActivity> {
+  const gone = Object.keys(activity).filter((id) => !(id in runs));
+  if (gone.length <= ACTIVITY_KEEP) return activity;
+  const drop = new Set(gone.sort().slice(0, gone.length - ACTIVITY_KEEP));
+  return Object.fromEntries(Object.entries(activity).filter(([id]) => !drop.has(id)));
+}
+
 export const useRunStore = create<RunStore>()((set) => ({
   runs: {},
   threads: {},
-  applyState: (state) => set((s) => put(s, reduceState(s.runs[state.id], state, Date.now()))),
+  activity: {},
+  applyState: (state) =>
+    set((s) => {
+      const next = put(s, reduceState(s.runs[state.id], state, Date.now()));
+      // 대기로 처음 본 런은 처음부터 보는 것이다(런은 queued 로 생긴다) — 이벤트가 하나도 없어도 빈 기록이 사실이다
+      if (s.runs[state.id] || s.activity[state.id] || state.status !== "queued") return next;
+      return { ...next, activity: { ...s.activity, [state.id]: EMPTY_ACTIVITY } };
+    }),
   applyEvent: (event) =>
     set((s) => {
-      const next = reduceEvent(s.runs[event.runId], event);
-      return next === s.runs[event.runId] || !next ? s : put(s, next);
+      const prev = s.runs[event.runId];
+      const next = reduceEvent(prev, event);
+      if (next === prev || !next) return s;
+      const had = s.activity[event.runId];
+      const activity = addActivity(had, event);
+      return activity === undefined || activity === had
+        ? put(s, next)
+        : { ...put(s, next), activity: { ...s.activity, [event.runId]: activity } };
     }),
-  applyReplay: (state, events) => set((s) => put(s, reduceReplay(state, events, Date.now()))),
+  applyReplay: (state, events) =>
+    set((s) => ({
+      ...put(s, reduceReplay(state, events, Date.now())),
+      // 처음부터(afterSeq 0) 재생했다 — 앞서 모은 것보다 이쪽이 온전하다
+      activity: { ...s.activity, [state.id]: { events: events.filter(isTimelineEvent), complete: true } },
+    })),
   remove: (runId) =>
     set((s) => {
       if (!(runId in s.runs)) return s;
       const { [runId]: _, ...rest } = s.runs;
-      return { runs: rest };
+      return { runs: rest, activity: pruneActivity(s.activity, rest) };
     }),
-  reset: () => set({ runs: {}, threads: {} }),
+  reset: () => set({ runs: {}, threads: {}, activity: {} }),
 }));
 
 /**

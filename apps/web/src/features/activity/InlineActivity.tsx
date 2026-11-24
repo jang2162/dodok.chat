@@ -1,14 +1,18 @@
 import { BrainIcon, ChevronRightIcon, LoaderIcon } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/ui/button";
 import {
   type ActivityRow,
   type ActivitySummary,
   type ReasoningRow,
   activitySummaryLabel,
   approvalOutcomeLabel,
+  summarizeActivity,
+  toActivityRows,
 } from "./timeline";
 import { ToolCallRow } from "./ToolCallRow";
+import { useRunActivity } from "./useRunActivity";
 
 /** 잘린 추론 덩이 아래 한 줄(서버 상한 — 스펙 「데이터」) */
 export const REASONING_TRUNCATED_NOTE = "추론이 길어 일부만 남겼습니다";
@@ -135,6 +139,57 @@ export function ReasoningLine({ row }: { row: ReasoningRow }) {
         </p>
         {row.truncated && <p className="mt-1 text-[11px]">{REASONING_TRUNCATED_NOTE}</p>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 확정된 에이전트 메시지의 활동(스펙 「모양」). 처음에는 요약 줄 「활동」만 — 펼칠 때 받는다(`useRunActivity`).
+ * 그 탭이 처음부터 본 런이면 호출 없이 수가 바로 보이고, 활동이 없던 런이면 줄이 없다.
+ * 받은 것이 비었으면(보존 정리·옛 런) 「활동 기록이 없습니다.」, 실패는 이 자리에서만 알린다(전역 토스트 없음)
+ */
+export function MessageActivity({ runId }: { runId: string }) {
+  const [open, setOpen] = useState(false);
+  const activity = useRunActivity(runId, { enabled: open });
+  const { events } = activity;
+  const rows = useMemo(() => (events ? toActivityRows(events) : undefined), [events]);
+  const summary = useMemo(() => (rows && events ? summarizeActivity(rows, events) : undefined), [rows, events]);
+
+  let notice: ReactNode;
+  if (activity.status === "error") {
+    notice = (
+      <InlineNotice onRetry={activity.refetch} retrying={activity.fetching}>
+        활동을 불러오지 못했습니다
+      </InlineNotice>
+    );
+  } else if (rows === undefined) {
+    notice = <InlineNotice>불러오는 중…</InlineNotice>;
+  } else if (rows.length === 0 && !activity.known) {
+    notice = <InlineNotice>활동 기록이 없습니다.</InlineNotice>;
+  }
+
+  return (
+    <InlineActivity rows={rows} summary={summary} open={open} onOpenChange={setOpen} notice={notice} />
+  );
+}
+
+function InlineNotice({
+  children,
+  onRetry,
+  retrying,
+}: {
+  children: ReactNode;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-2 px-3 py-1 text-xs text-muted-foreground">
+      <span>{children}</span>
+      {onRetry && (
+        <Button variant="outline" size="xs" disabled={retrying} onClick={onRetry}>
+          다시 시도
+        </Button>
+      )}
     </div>
   );
 }

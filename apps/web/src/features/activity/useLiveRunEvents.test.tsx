@@ -63,3 +63,11 @@ it("소켓이 없으면(연결 전) 빈 채로 돈다", () => {
   const { result } = renderHook(() => useLiveRunEvents(RUN));
   expect(result.current).toEqual([]);
 });
+
+it("추론 이벤트도 모은다 — 활동 탭 타임라인에 추론 줄이 선다", () => {
+  const { result } = renderHook(() => useLiveRunEvents(RUN));
+  emit(runEvent({ type: "REASONING_MESSAGE_START", seq: 1, messageId: "r" }));
+  emit(runEvent({ type: "REASONING_MESSAGE_CONTENT", seq: 2, messageId: "r", delta: "생각" }));
+  emit(runEvent({ type: "CUSTOM", seq: 3, name: "뭔가" }));
+  expect(result.current.map((e) => e.type)).toEqual(["REASONING_MESSAGE_START", "REASONING_MESSAGE_CONTENT"]);
+});
