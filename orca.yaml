@@ -7,8 +7,8 @@ scripts:
     mise trust "$ORCA_WORKTREE_PATH/mise.toml"
     mise install
     mise exec -- pnpm install --frozen-lockfile
-    # AGENTS.md·.mcp.json·.claude/skills 는 gitignore 된 ruler 생성물이라 새 워크트리에 없다
-    mise exec -- pnpm exec ruler apply
+    # AGENTS.md·.mcp.json·.claude/skills 와 .ruler/ 의 지침은 gitignore 된 생성물이라 새 워크트리에 없다 — guideline apply 가 .guideline/ 에서 조합하고 ruler 를 돌린다(ruler apply 단독은 소스가 없어 안 된다)
+    mise exec -- pnpm exec guideline apply
     # .env 는 gitignore 라 따라오지 않는다. data/ 는 복사하지 않는다(워크트리마다 따로)
     if [ -f "$ORCA_ROOT_PATH/.env" ]; then cp "$ORCA_ROOT_PATH/.env" "$ORCA_WORKTREE_PATH/.env"; fi
     # codegraph 인덱스(.codegraph/)는 gitignore 라 워크트리마다 만든다. 실패해도 셋업은 멈추지 않는다 — 인덱스 없이도 작업은 된다

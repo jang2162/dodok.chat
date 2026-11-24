@@ -1,0 +1,34 @@
+---
+load: reference
+when: "neo 에 Playwright 를 붙이거나, playwright-neo MCP 를 설정할 때"
+---
+
+# Playwright 를 neo 에 붙일 때
+
+## neo 의 CDP 포트는 neo 설정의 `ports.cdp` 이고, 상시로 쓸 거면 `playwright-neo` MCP 로 붙인다
+
+neo 는 CDP 를 열어 두고 있다. 포트는 `~/Library/Application Support/BrowserClaw/.browseros/config.json` 의 `ports.cdp` 다(기본 `9110`). 원리(새 브라우저를 띄우지 않는다, 붙기 전에 page 대상을 본다, 한 탭을 양쪽에서 만지지 않는다)는 `browser` 스택 「페이지 자동화 도구를 얹을 때」 가 갖는다.
+
+- **Why:** 같은 브라우저·같은 프로필·같은 로그인을 그대로 쓰면서 neo 가 못 하는 다섯 가지 중 앞의 넷이 전부 열린다(보이지 않는 탭의 렌더는 그대로다 — 탭을 백그라운드로 열기 때문) — 첫 로드 콘솔, 요청마다 메서드와 상태 코드, WebSocket 프레임, `setViewportSize` 로 미디어쿼리 발화.
+- **How to apply:**
+  - 상시로 쓰면 MCP 서버 `playwright-neo` 를 프로젝트에 둔다(문서 저장소 `mcp/playwright-neo/`). 커밋된 설정이라 워커 세션도 같은 것을 받는다. 세션이 시작될 때 읽히므로 항목을 바꿨으면 세션을 새로 연다.
+  - 한 번만 필요하면 `playwright-core` 로 붙는다. 끝낼 때 `close()` 는 **연결만 끊는다** — neo 는 살아 있다.
+    ```js
+    import { chromium } from 'playwright-core';
+    import { readFileSync } from 'node:fs';
+    import { homedir } from 'node:os';
+    const cfg = `${homedir()}/Library/Application Support/BrowserClaw/.browseros/config.json`;
+    const port = JSON.parse(readFileSync(cfg, 'utf8')).ports?.cdp ?? 9110;
+    const b = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    const page = await b.contexts()[0].newPage();   // neo 의 기존 컨텍스트
+    // ...
+    await b.close();
+    ```
+  - 겪은 동작: neo 에 창이 없을 때 CDP 에 Playwright 를 붙이면 `Browser context management is not supported` 로 거절된 적이 있다. 이때는 `00-switch.md` 의 창 없음 안내를 따른다.
+  - 포트는 위처럼 설정 파일에서 읽어 쓴다 — 기본값으로 추정하지 않는다. `playwright-neo` MCP 는 같은 방식으로 스스로 읽는다.
+  - 겪은 동작: **설정 파일의 `ports.cdp` 가 실제로 듣는 포트와 다를 수 있다.** 그러면 `playwright-neo` MCP 도 `playwright-core` 도 `ECONNREFUSED` 로 붙지 못한다. 듣는 포트를 찾고, `/json/version` 이 `Browser` 를 돌려주는 포트를 쓴다. 그 세션에서는 `playwright-core` 로 그 포트에 붙고, MCP 를 고치려면 사람에게 neo 재시작이나 설정 확인을 알린다.
+    ```bash
+    lsof -nP -iTCP -sTCP:LISTEN | grep -i browseros
+    curl -s http://127.0.0.1:<포트>/json/version
+    ```
+  - ⚠ **`playwright-neo` MCP 가 읽고 쓰는 파일은 그 세션의 작업 디렉터리 안이어야 한다.** `browser_run_code_unsafe` 로 돌리는 하네스와 스크린샷 경로가 세션 스크래치패드(`/private/tmp/...`) 같은 바깥이면 `File access denied: … outside allowed roots` 로 막힌다 — 기본 허용 범위가 MCP 의 workspace roots(없으면 cwd)다. 하네스와 스크린샷은 **작업 디렉터리의 `.playwright-mcp/`** 에 둔다(이 스택 `SETUP.md` 가 gitignore 한다). 막혔다고 `server.json` 에 `--allow-unrestricted-file-access` 를 더하지 않는다 — `file://` 탐색까지 함께 열린다.

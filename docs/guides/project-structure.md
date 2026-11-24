@@ -42,14 +42,14 @@ dodok.chat/
 │  ├─ settings.json           # SessionStart·UserPromptSubmit 훅 등록
 │  ├─ hooks/node-env.sh       # SessionStart: mise 가 핀한 Node·pnpm 을 Bash 도구 PATH 앞에 (비대화형 셸은 mise activate 훅이 안 돈다)
 │  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
-├─ orca.yaml                 # Orca 워크트리 셋업(mise·pnpm install·ruler apply·.env 복사·codegraph init, wait-for-setup) — 커밋된 것만 돈다
+├─ orca.yaml                 # Orca 워크트리 셋업(mise·pnpm install·guideline apply·.env 복사·codegraph init, wait-for-setup) — 커밋된 것만 돈다
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티, VAPID 키 vapid.json) — git 제외
 ├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / docker-deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다
-├─ .ruler/                    # 에이전트 지침 소스 — AGENTS.md(이 프로젝트 고유)·<스택>/(지침 서버 사본)·skills/·ruler.toml (7장)
-├─ AGENTS.md                  # ruler 생성물 — git 제외 (pnpm exec ruler apply)
+├─ .ruler/                    # 에이전트 지침 소스 — AGENTS.md(이 프로젝트 고유)·ruler.project.toml 만 커밋, <스택>/·skills/·ruler.toml 은 guideline apply 생성물 (7장)
+├─ AGENTS.md                  # ruler 생성물 — git 제외 (pnpm exec guideline apply)
 ├─ guideline.json / guideline-lock.json  # 지침 서버에서 고른 항목과 받은 리비전 (guideline CLI 가 쓴다)
-├─ .mcp.json                  # ruler 생성물 — git 제외. 프로젝트 MCP(playwright-neo·codegraph·context7)의 소스는 .ruler/ruler.toml
+├─ .mcp.json                  # ruler 생성물 — git 제외. 프로젝트 MCP(playwright-neo·codegraph·context7)의 소스는 .guideline/mcp/<이름>/server.json(받은 사본) — 프로젝트 MCP 는 .ruler/ruler.project.toml
 ├─ .oxlintrc.json / .oxfmtrc.json
 ├─ .dockerignore             # 이미지 빌드 컨텍스트에서 빼는 것 — .env*·data·node_modules·dist·.worktrees·.superpowers·.codegraph·compose.override.yaml (패턴이 루트 기준이라 **/ 로 하위까지)
 ├─ mise.toml / .npmrc         # Node 24.21.0 · pnpm 11.16.0 핀(openclaw engines >=24.16 <25) · engine-strict
@@ -1371,12 +1371,14 @@ Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 ## 7. 에이전트 지침 (`.ruler/`)
 
-에이전트 지침의 소스는 `.ruler/` 이고, 루트 `AGENTS.md` 는 `pnpm exec ruler apply` 가 그 소스를 이어붙여 만드는 생성물(git 제외)이다.
+에이전트 지침의 소스는 `.ruler/` 이고, 루트 `AGENTS.md` 는 `pnpm exec guideline apply` 가 받은 사본(`.guideline/`)과 프로젝트 소스를 조합해 ruler 로 이어붙여 만드는 생성물(git 제외)이다.
 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓰고, 같은 내용을 두 곳에 두지 않는다 —
 가르치는 자리가 둘이면 둘 다 맞아야 하므로 한 곳만 남긴다. 작업 방식(워크트리·Orca 워커·커밋 규칙)은
 `docs/guides/worktree-workflow.md` 가 정본이고 `.ruler/AGENTS.md` 는 그 요약이다.
 
-공용 지침은 지침 서버(https://guideline.develma.com)에서 `guideline` CLI 로 받는다 — 상시 지침 `.ruler/<스택>/`,
-참조 지침 `docs/guideline/<스택>/`, 스킬 `.ruler/skills/`. 이 사본들은 CLI 만 쓰고 직접 고치지 않는다.
-이 프로젝트만 다르게 할 것은 `.ruler/<스택>/override.md`, 공용으로 고칠 것은 `guideline propose` 로 서버에 올린다.
-새 워크트리에는 루트 `AGENTS.md` 가 없으므로 `scripts/orca-worker.sh` 의 spawn·sync-config 가 `ruler apply` 를 돌린다.
+공용 지침은 지침 서버(https://guideline.develma.com)에서 `guideline` CLI 로 받는다 — 받은 사본은 `.guideline/`(커밋, 직접 고치지 않음)에
+두고, `guideline apply` 가 그것으로 상시 지침 `.ruler/<스택>/`, 참조 지침 `docs/guideline/<스택>/`, 스킬 `.ruler/skills/`, `.ruler/ruler.toml` 을
+만든다(모두 gitignore 생성물). ruler 설정은 `.ruler/ruler.project.toml` 에 쓴다. 이 프로젝트만 다르게 할 것은
+`.guideline/overrides/<스택 경로>/override.md`, 공용으로 고칠 것은 `guideline propose` 로 서버에 올린다.
+pull 직후·새 클론에서는 `pnpm install`(`prepare` = `guideline apply`) 또는 `pnpm exec guideline apply` 를 돌린다 — `ruler apply` 단독은 소스가 없어 안 된다.
+새 워크트리에는 루트 `AGENTS.md` 가 없으므로 `scripts/orca-worker.sh` 의 spawn·sync-config 가 `guideline apply` 를 돌린다.

@@ -1463,13 +1463,13 @@ mkdir -p "$S2/wt/node_modules"
 verify_setup "$S2/wt" >/dev/null 2>&1
 assert_eq "$(grep -c 'pnpm install' "$SETUP_LOG")" "0" \
   "node_modules 가 있으면 pnpm install 을 돌리지 않는다"
-assert_eq "$(grep -c 'pnpm exec ruler apply' "$SETUP_LOG")" "0" \
-  ".ruler/ 가 없으면 ruler apply 를 돌리지 않는다"
+assert_eq "$(grep -c 'pnpm exec guideline apply' "$SETUP_LOG")" "0" \
+  ".ruler/ 가 없으면 guideline apply 를 돌리지 않는다"
 : > "$SETUP_LOG"
 mkdir -p "$S2/wt/.ruler"
 verify_setup "$S2/wt" >/dev/null 2>&1
-assert_eq "$(grep -c 'pnpm exec ruler apply' "$SETUP_LOG")" "1" \
-  ".ruler/ 가 있으면 ruler apply 로 AGENTS.md 를 만든다(gitignore 생성물이라 새 워크트리에 없다)"
+assert_eq "$(grep -c 'pnpm exec guideline apply' "$SETUP_LOG")" "1" \
+  ".ruler/ 가 있으면 guideline apply 로 AGENTS.md 를 만든다(gitignore 생성물이라 새 워크트리에 없다)"
 : > "$SETUP_LOG"
 verify_setup "$S2/wt" >/dev/null 2>&1
 assert_eq "$(grep -c '^codegraph init' "$SETUP_LOG")" "1" \

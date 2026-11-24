@@ -8,10 +8,12 @@
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "wire-cli": "tsx scripts/wire-cli.ts"
+    "wire-cli": "tsx scripts/wire-cli.ts",
+    "prepare": "guideline apply"
   },
   "devDependencies": {
     "@intellectronica/ruler": "0.3.44",
+    "guideline-manage": "0.24.0",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",
     "socket.io-client": "4.8.3",
