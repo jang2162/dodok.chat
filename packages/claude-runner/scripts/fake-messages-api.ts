@@ -17,6 +17,11 @@
  * | HX-BASH | 쓰기 Bash(`touch hx-note.txt`) tool_use → 결과를 받으면 `HX-BASH-DONE` |
  * | HX-POST-IN | `mcp__dodok__post` 로 작업 디렉터리 안 파일 `hx-out.txt` → `HX-POST-DONE` |
  * | HX-POST-OUT | `mcp__dodok__post` 로 작업 디렉터리 밖 `../hx-outside.txt` → `HX-POST-DONE` |
+ * | HX-BG-BASH | 백그라운드 Bash(`sleep 3; echo hx-bg-done`, `run_in_background`) → 결과를 받으면 `HX-BG-BASH-DONE` |
+ * | HX-BG-FOREVER | 끝나지 않는 백그라운드 Bash(`sleep 100000 # hx-bg-forever`) → `HX-BG-FOREVER-DONE` — 끄기·interrupt 재기용 |
+ * | HX-BG-AGENT | 백그라운드 서브에이전트(`Agent`, 프롬프트 `HX-SUB-SLOW 하위 작업`) → `HX-BG-AGENT-DONE` |
+ * | HX-SUB-SLOW | (dodok 머리 없는 요청의 첫 user 글에 있을 때) 글 40조각 0.5초 간격(20초) — 서브에이전트 쪽 대본 |
+ * | (작업 알림) | 마지막 비시스템 메시지가 도구 결과 없는 user 이고 `task-notification`·`Background command` 를 품으면 시나리오 `HX-BG-FOLLOWUP` — 글 10조각 0.5초 간격(5초), 끝 조각에 알림 글 앞 200자. 프롬프트 찾기보다 먼저 본다(앞쪽 첫 프롬프트가 다시 골리지 않게) |
  * | (그 밖) | 글 한 줄 `ok` — CLI 의 보조 요청도 여기로 온다 |
  *
  * 남기는 것: `<out>/requests.jsonl`(요청마다 한 줄 — 번호·시각·경로·대본·요약)과 `<out>/NNN.json`(요청 본문 그대로). 헤더는
@@ -43,6 +48,44 @@ type Script = {
 };
 
 const SCRIPTS: Script[] = [
+  {
+    key: "HX-BG-BASH",
+    tool: {
+      name: "Bash",
+      input: {
+        command: "sleep 3; echo hx-bg-done",
+        description: "Harness background shell",
+        run_in_background: true,
+      },
+    },
+    intervalMs: 20,
+  },
+  {
+    key: "HX-BG-FOREVER",
+    tool: {
+      name: "Bash",
+      input: {
+        command: "sleep 100000 # hx-bg-forever",
+        description: "Harness endless shell",
+        run_in_background: true,
+      },
+    },
+    intervalMs: 20,
+  },
+  {
+    // 도구 이름은 CLI 2.1.331 의 첫 요청 tools[].name 에서 골랐다 — Agent(Task 는 없다)
+    key: "HX-BG-AGENT",
+    tool: {
+      name: "Agent",
+      input: {
+        description: "Harness subagent",
+        prompt: "HX-SUB-SLOW 하위 작업",
+        subagent_type: "general-purpose",
+        run_in_background: true,
+      },
+    },
+    intervalMs: 20,
+  },
   {
     key: "HX-SLOW",
     text: Array.from({ length: 40 }, (_, i) => `느린 조각 ${i + 1}. `),
@@ -126,6 +169,24 @@ function lastToolResults(messages: ApiMessage[]): Block[] {
   return textBlocks(last).filter((b) => b.type === "tool_result");
 }
 
+/** 마지막 비시스템 메시지가 도구 결과 없는 user 일 때 그 글 — 작업 알림 판정용 */
+function lastUserText(messages: ApiMessage[]): string | undefined {
+  const last = [...messages].reverse().find((m) => m.role !== "system");
+  if (last?.role !== "user") return undefined;
+  const blocks = textBlocks(last);
+  if (blocks.some((b) => b.type === "tool_result")) return undefined;
+  return blocks.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("\n");
+}
+
+/** 첫 user 메시지의 글 — 서브에이전트 요청(dodok 머리 없음)의 대본 판정용 */
+function firstUserText(messages: ApiMessage[]): string {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return "";
+  return textBlocks(first)
+    .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+    .join("\n");
+}
+
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((c) => (c as Block).text ?? "").join(" ");
@@ -147,7 +208,28 @@ function plan(body: Json): Plan {
       intervalMs: 20,
     };
   }
+  // 작업 알림 턴은 프롬프트 찾기보다 먼저 — 그 요청에도 앞쪽에 첫 프롬프트가 있어 같은 도구를 또 내 끝없이 돈다
+  const userText = lastUserText(messages);
+  if (userText !== undefined && /task-notification|Background command/i.test(userText)) {
+    const head = userText.replace(/\s+/g, " ").trim().slice(0, 200);
+    return {
+      scenario: "HX-BG-FOLLOWUP",
+      text: [
+        "HX-BG-FOLLOWUP ",
+        ...Array.from({ length: 8 }, (_, i) => `추가 응답 조각 ${i + 2}. `),
+        `알림: ${head}`,
+      ],
+      intervalMs: 500,
+    };
+  }
   const prompt = lastPromptBody(messages);
+  if (prompt === undefined && firstUserText(messages).includes("HX-SUB-SLOW")) {
+    return {
+      scenario: "HX-SUB-SLOW",
+      text: Array.from({ length: 40 }, (_, i) => `서브에이전트 조각 ${i + 1}. `),
+      intervalMs: 500,
+    };
+  }
   const script = prompt === undefined ? undefined : SCRIPTS.find((s) => prompt.includes(s.key));
   if (!script) return { scenario: prompt === undefined ? "aux" : "plain", text: ["ok"], intervalMs: 0 };
   return {
