@@ -1,5 +1,5 @@
 import type { Agent, ConversationAgentSettings } from "@dodok/shared";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { Fragment, type ReactNode, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { ChevronDownIcon } from "lucide-react";
@@ -17,6 +17,20 @@ export const HINT_SAVED = "바꾸면 이 세션에 바로 저장됩니다";
 export const HINT_NEW = "첫 메시지와 함께 저장됩니다";
 
 export type PillItem = { agent: Agent; row: ConversationAgentSettings; invited: boolean };
+
+/**
+ * 설정 패널(팝오버)의 열 — 핸들·모델·노력·권한·컨텍스트(채널 UI·권한 모드 스펙 2장). 줄들이 한 grid 의 칸이라 칩 하나가 길면 그 열이
+ * 넓어지고, 패널이 최대폭에 닿으면 앞 넷이 줄어 칸 안에서 줄임표 — 게이지 열은 줄지 않는다. `renderLine` 은 칸 다섯을 내는 `contents`
+ * 줄이어야 한다(AgentSettingsBar SettingsLine)
+ */
+export const PANEL_COLUMNS = "repeat(4, minmax(0, auto)) auto";
+/**
+ * 시트(좁은 화면)의 열 — 줄지 않는다. 390px 에서 칩 셋이 한 줄에 다 들어가지 않아 줄이면 「모델 기…」처럼 값이 안 보인다(2026-11-24 화면
+ * 확인) — 그래서 표만 가로로 스크롤하고 페이지·시트는 넘치지 않는다
+ */
+export const SHEET_COLUMNS = "repeat(5, auto)";
+/** 시트(좁은 화면)의 줄 높이 — 손가락 44px 이상(T5) */
+const SHEET_ROWS = "minmax(2.75rem, auto)";
 
 const percentText = (percent: number | null) => (percent === null ? "—" : `${percent}%`);
 
@@ -146,7 +160,7 @@ export function AgentPills({
     </>
   );
   const pillRow = <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{pillButtons}</div>;
-  const lines = items.map((item) => <div key={item.agent.id}>{renderLine(item)}</div>);
+  const lines = items.map((item) => <Fragment key={item.agent.id}>{renderLine(item)}</Fragment>);
   const autoFocus = (e: Event) => {
     e.preventDefault();
     focusLine();
@@ -173,8 +187,14 @@ export function AgentPills({
               <SheetTitle className="text-sm font-medium">러너 에이전트 {items.length}</SheetTitle>
               <SheetDescription className="text-xs">{isNew ? HINT_NEW : HINT_SAVED}</SheetDescription>
             </div>
-            <div className="flex flex-col text-muted-foreground [&>div]:flex [&>div]:min-h-11 [&>div]:items-center">
-              {lines}
+            <div className="-mx-4 overflow-x-auto px-4" data-testid="agent-panel-scroll">
+              <div
+                className="grid w-max min-w-full items-center gap-x-1.5 text-muted-foreground"
+                style={{ gridTemplateColumns: SHEET_COLUMNS, gridAutoRows: SHEET_ROWS }}
+                data-testid="agent-panel-grid"
+              >
+                {lines}
+              </div>
             </div>
           </SheetContent>
         </Sheet>
@@ -223,7 +243,13 @@ function PanelBody({
         </h2>
         <p className="text-muted-foreground">{isNew ? HINT_NEW : HINT_SAVED}</p>
       </div>
-      <div className="flex flex-col gap-1.5 text-muted-foreground">{children}</div>
+      <div
+        className="grid items-center gap-x-1.5 gap-y-1.5 text-muted-foreground"
+        style={{ gridTemplateColumns: PANEL_COLUMNS }}
+        data-testid="agent-panel-grid"
+      >
+        {children}
+      </div>
     </>
   );
 }

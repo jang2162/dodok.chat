@@ -207,9 +207,13 @@ function SettingsLine({
       models={row.models}
       canRaise={canRaise}
       saving={patch.isPending}
-      error={error}
       onSave={save}
     />
+  );
+  const alert = error && (
+    <span role="alert" className="text-destructive">
+      {error}
+    </span>
   );
   const name = (
     <>
@@ -232,6 +236,7 @@ function SettingsLine({
         <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-2xl bg-muted/60 py-0.5 pr-0.5 pl-2">
           {name}
           {chips}
+          {alert}
         </div>
         <span className="ml-auto">
           <ContextGauge percent={row.contextPercent} context={row.context} label />
@@ -239,14 +244,13 @@ function SettingsLine({
       </div>
     );
   return (
-    // 좁은 화면(390px)에서는 칩이 줄을 바꾼다 — 가로 스크롤이 생기지 않게
-    <div
-      className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5"
-      data-testid={`agent-settings-${agent.handle}`}
-    >
-      {name}
+    // 설정 패널의 한 줄 — 상자 없이(contents) 칸 다섯(핸들·모델·노력·권한·컨텍스트)을 패널 grid 에 그대로 내놓아 줄끼리 열이 맞는다
+    // (AgentPills PANEL_COLUMNS, 채널 UI·권한 모드 스펙 2장). 오류는 그 아래 한 줄을 다 쓴다
+    <div className="contents" data-testid={`agent-settings-${agent.handle}`}>
+      <span className="flex min-w-0 items-center gap-1.5">{name}</span>
       {chips}
       <ContextGauge percent={row.contextPercent} context={row.context} />
+      {alert && <span className="col-span-full">{alert}</span>}
     </div>
   );
 }
