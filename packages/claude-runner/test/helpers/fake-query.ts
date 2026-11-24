@@ -20,7 +20,7 @@ import type {
  * - `{ exit }` 입력이 닫히기를 기다리지 않고 곧바로 끝난다(result 없이 프로세스가 끝남)
  * - `{ sleep }` 그만큼 쉬었다가 뒤의 메시지를 흘린다(interrupt 뒤 턴을 닫는 데 걸리는 시간)
  * - `{ waitInput }` 다음 사용자 입력을 기다렸다가 `prompts` 에 적고 뒤를 흘린다(붙든 프로세스의 다음 턴). 입력이 닫히면 끝난다
- * - `{ waitStopTask }` 그 작업의 stopTask() 를 기다렸다가 then 을 흘린다(끈 작업의 알림)
+ * - `{ waitStopTask }` 그 작업의 stopTask() 를 기다렸다가 emit 을 흘린다(끈 작업의 알림)
  * - `{ callTool }` dodok MCP 서버의 그 도구 handler 를 부르고 결과를 `toolResults` 에 적는다(CLI 가 SDK MCP 도구를 부름)
  * - `{ askPermission }` options.canUseTool 을 부르고 결과를 `permissions` 에 적는다. 콜백 signal 은 interrupt·close 에
  *   끊긴다(실제 SDK 는 CLI 의 control_cancel_request 를 받아 끊는다 — ADR 0007 4.2). `lateCancel` 이면 close 에만 끊긴다
@@ -34,7 +34,7 @@ export type ScriptStep =
   | { exit: true }
   | { sleep: number }
   | { waitInput: true }
-  | { waitStopTask: string; then: SdkMessage[] }
+  | { waitStopTask: string; emit: SdkMessage[] }
   | { callTool: { name: string; input: unknown } }
   | {
       askPermission: {
@@ -245,7 +245,11 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
           }
           if ("waitInput" in step) {
             const r = await Promise.race([next, closedSignal.then(() => undefined)]);
-            if (!r || r.done) return;
+            if (!r || r.done) {
+              // 입력이 닫혀 CLI 가 끝난다 — 닫힌(close) 것이 아니면 입력을 닫아 끝낸 것이다
+              call.inputClosed = !closed;
+              return;
+            }
             call.prompts.push(r.value);
             call.controlsAtPrompt.push(call.controls.length);
             pending = input.next();
@@ -256,7 +260,7 @@ export function createFakeSdk(opts: { lateCancel?: boolean; eagerInput?: boolean
             const stopped = new Promise<void>((resolve) => stopWaiters.set(step.waitStopTask, resolve));
             await Promise.race([stopped, closedSignal]);
             if (closed) return;
-            for (const m of step.then) yield m;
+            for (const m of step.emit) yield m;
             continue;
           }
           if ("hang" in step) {

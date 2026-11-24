@@ -446,6 +446,8 @@ export type RunContext = {
    * 붙든 세션의 다음 런은 같은 프로세스로 들어간다. 없으면 첫 result 에서 닫는다(지금 동작)
    */
   background?: BackgroundContext;
+  /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간(session-process SELF_TURN_WAIT_MS) */
+  selfTurnWaitMs?: number;
 };
 
 export type BackgroundContext = {
@@ -500,7 +502,8 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
       ctx.log?.(`dodok-runner: 런 ${runId} SOUL.md 를 쓰지 못했습니다 — ${String(error)}`);
     }
   }
-  const held = await heldProcessFor(spec, ctx);
+  let held = await heldProcessFor(spec, ctx);
+  if (held === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   let resume = false;
   if (held === undefined) {
     let lookup = "";
@@ -525,8 +528,21 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   const alwaysAllowed: AlwaysAllowed = new Set();
   const botMcp = assembleBotMcp(spec, ctx.log);
   if (held !== undefined) {
-    await runHeldTurn(spec, ctx, held, images, alwaysAllowed, botMcp);
-    return;
+    const outcome = await runHeldTurn(spec, ctx, held, images, alwaysAllowed, botMcp);
+    if (outcome === "done") return;
+    if (outcome === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+    // 기다리는 사이 프로세스가 닫혀 갔다 — 끝나기를 기다렸다가 새로 연다
+    held = await heldProcessFor(spec, ctx);
+    if (held === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+    if (held !== undefined) {
+      held.unreserve();
+      return void ctx.sink.error("INTERNAL", "Claude Code 세션 프로세스를 이어 쓰지 못했습니다");
+    }
+    try {
+      resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
+    } catch {
+      resume = false;
+    }
   }
   // 감싸개를 못 만들면(임시 디렉터리 실패) 명령·스킬 없이 돈다 — 런을 막지 않는다
   let wrappers: CommandWrappers | undefined;
@@ -560,11 +576,15 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
 }
 
 /**
- * 이 런을 넣을 붙든 프로세스 — 없으면 undefined(새로 연다). 끝나 가는 프로세스는 끝날 때까지 기다린다 — 같은 세션 파일을 두 CLI 가
- * 함께 쓰지 않게(ADR 0007 4.3). 세션이 리셋됐거나(다른 세션 id) 작업 디렉터리·로그인 자리가 바뀌었으면 옛 프로세스의 작업은 이어 갈
- * 수 없다 — 놓고(작업이 꺼진다) 새로 연다
+ * 이 런을 넣을 붙든 프로세스 — 없으면 undefined(새로 연다). 붙든 프로세스에 도는 턴(추가 응답)이 있으면 그 턴이 끝날 때까지 기다리고
+ * (한 번에 한 턴), 풀리면 그 자리를 쥔 채 돌려준다 — 곧바로 턴을 열거나 unreserve 한다. 기다리다 중지되면 "aborted".
+ * 끝나 가는 프로세스는 끝날 때까지 기다린다 — 같은 세션 파일을 두 CLI 가 함께 쓰지 않게(ADR 0007 4.3). 세션이 리셋됐거나(다른 세션
+ * id) 작업 디렉터리·로그인 자리·CLI 가 바뀌었으면 옛 프로세스의 작업은 이어 갈 수 없다 — 놓고(작업이 꺼진다) 새로 연다
  */
-async function heldProcessFor(spec: ClaudeRunSpec, ctx: RunContext): Promise<SessionProcess | undefined> {
+async function heldProcessFor(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+): Promise<SessionProcess | undefined | "aborted"> {
   const bg = ctx.background;
   if (bg === undefined) return undefined;
   const sp = bg.sessions.get(spec.start.deliver.sessionKey);
@@ -576,14 +596,19 @@ async function heldProcessFor(spec: ClaudeRunSpec, ctx: RunContext): Promise<Ses
     opened.workdir === spec.workdir &&
     opened.configDir === spec.configDir &&
     opened.executable === ctx.executable;
-  if (sp.reusable() && compatible) return sp;
-  if (sp.reusable()) {
+  if (sp.reusable() && compatible) {
+    if (!(await sp.whenIdle(ctx.signal))) return "aborted";
+    if (sp.reusable()) return sp;
+    sp.unreserve();
+  } else if (sp.reusable()) {
     ctx.log?.(`dodok-runner: 런 ${spec.start.deliver.runId} 세션이 바뀌어 붙든 프로세스를 놓습니다`);
     sp.release();
   }
   await sp.exited;
   return undefined;
 }
+
+const NO_IMAGES = { blocks: [], failed: 0 };
 
 /** 프로세스를 연 설정 — 붙든 프로세스에 이어 넣는 런과 견준다(D6) */
 type OpenedSettings = {
@@ -600,6 +625,8 @@ type OpenedSettings = {
   dodokServer: SdkMcpServer;
   plugins: CommandWrapperPlugin[];
   costKind: RunnerRunFinal["costKind"];
+  /** 마지막으로 이 프로세스에 넣은 런 — 스스로 연 턴(추가 응답)이 그 정의·문맥을 잇는다 */
+  last: { spec: ClaudeRunSpec; ctx: RunContext };
 };
 const openedOf = new WeakMap<SessionProcess, OpenedSettings>();
 
@@ -715,10 +742,13 @@ async function attempt(
   const sp = createSessionProcess({
     sessionKey,
     sessionId: start.providerSessionId,
+    workdir: spec.workdir,
     binding,
     ...(bg ? { hooks: bg.hooks } : {}),
     now,
     closeGraceMs: ctx.closeGraceMs ?? ABORT_CLOSE_MS,
+    ...(ctx.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: ctx.selfTurnWaitMs }),
+    ...(ctx.log ? { log: ctx.log } : {}),
   });
   const retryable = (error: unknown) =>
     !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
@@ -769,8 +799,10 @@ async function attempt(
     dodokServer,
     plugins,
     costKind: "subscription_estimate",
+    last: { spec, ctx },
   });
   if (bg) {
+    sp.onSelfTurn((run) => runFollowupTurn(sp, bg, run));
     bg.sessions.set(sessionKey, sp);
     void sp.exited.then(() => {
       if (bg.sessions.get(sessionKey) === sp) bg.sessions.delete(sessionKey);
@@ -792,12 +824,62 @@ async function runHeldTurn(
   images: { blocks: SdkImageBlock[]; failed: number },
   alwaysAllowed: AlwaysAllowed,
   botMcp: BotMcp,
-): Promise<void> {
+): Promise<"done" | "aborted" | "retry"> {
   const binding = bindingFor(spec, ctx, alwaysAllowed);
   const fields = await applyRunSettings(spec, ctx, sp, botMcp);
+  // 설정을 바꾸는 사이 CLI 가 스스로 턴을 열었으면 그 턴 뒤로 다시 선다
+  while (!sp.idleNow()) {
+    sp.unreserve();
+    if (!(await sp.whenIdle(ctx.signal))) return "aborted";
+    if (!sp.reusable()) {
+      sp.unreserve();
+      return "retry";
+    }
+  }
+  if (ctx.signal.aborted) {
+    sp.unreserve();
+    return "aborted";
+  }
+  const opened = openedOf.get(sp);
+  if (opened) opened.last = { spec, ctx };
   if (fields.length > 0)
     ctx.sink.event({ type: "CUSTOM", runId: binding.runId, name: HELD_SETTINGS_EVENT, value: { fields } });
   await runTurn(spec, ctx, sp, binding, images, { costDiff: true, retryable: () => false });
+  return "done";
+}
+
+/**
+ * CLI 가 작업 알림 뒤 스스로 연 턴을 서버가 받아 준 추가 응답 런으로 돌린다(스펙 5.3). 프롬프트는 없다 — 턴 사실(훅 문맥)도 붙지
+ * 않는다(5.8). 정의·문맥은 이 프로세스에 마지막으로 넣은 런의 것, 보내는 곳은 서버가 준 deliver(처음 응답의 스레드)다
+ */
+async function runFollowupTurn(
+  sp: SessionProcess,
+  bg: BackgroundContext,
+  run: { runId: string; deliver: RunBinding["deliver"] },
+): Promise<void> {
+  const opened = openedOf.get(sp);
+  if (!opened) return;
+  const { spec: lastSpec, ctx: lastCtx } = opened.last;
+  const followup = bg.hooks.openFollowup({
+    runId: run.runId,
+    deliver: run.deliver,
+    workdir: lastSpec.workdir,
+  });
+  try {
+    const spec: ClaudeRunSpec = {
+      ...lastSpec,
+      start: { ...lastSpec.start, deliver: run.deliver, turnFacts: "" },
+    };
+    const ctx: RunContext = { ...lastCtx, sink: followup.sink, signal: followup.signal };
+    const binding = bindingFor(spec, ctx, new Set());
+    await runTurn(spec, ctx, sp, binding, NO_IMAGES, {
+      costDiff: true,
+      retryable: () => false,
+      prompt: false,
+    });
+  } finally {
+    followup.close();
+  }
 }
 
 /** D6 — 바꿀 수 있는 것은 바꾸고, 못 바꾼(또는 바꾸다 실패한) 설정 이름을 돌려준다 */
@@ -884,6 +966,8 @@ async function runTurn(
     /** 비용을 세션 누적값의 차이로 — resume 한 프로세스·붙든 프로세스의 턴 */
     costDiff: boolean;
     retryable: (error: unknown) => boolean;
+    /** false — CLI 가 스스로 연 턴(추가 응답)이라 넣을 프롬프트가 없다 */
+    prompt?: boolean;
   },
 ): Promise<TurnResult> {
   const { start } = spec;
@@ -942,7 +1026,7 @@ async function runTurn(
     // 받아도) 프롬프트 없이 VALIDATION 으로 닫는다. 서버가 같은 판정을 하지만 목록을 모를 때 넘기므로 여기가 마지막 자리다
     const command = start.deliver.command;
     let blocked = false;
-    if (command !== undefined && needsAliasCheck(command)) {
+    if (o.prompt !== false && command !== undefined && needsAliasCheck(command)) {
       let alias = false;
       try {
         alias = isSkillAlias(command.name, await q.supportedCommands());
@@ -954,7 +1038,7 @@ async function runTurn(
     if (blocked) {
       sink.error("VALIDATION", COMMAND_BLOCKED_MESSAGE);
       end();
-    } else {
+    } else if (o.prompt !== false) {
       sp.send({
         type: "user",
         message: { role: "user", content: promptContent(start, images) },

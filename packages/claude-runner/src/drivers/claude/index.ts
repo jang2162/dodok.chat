@@ -56,6 +56,8 @@ export type ClaudeDriverOptions = {
    * CLI 를 닫는다(지금 동작)
    */
   hooks?: BackgroundHooks;
+  /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간 */
+  selfTurnWaitMs?: number;
 };
 
 /**
@@ -328,6 +330,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
         ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
         ...(hooks ? { background: { hooks, sessions } } : {}),
+        ...(opts.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: opts.selfTurnWaitMs }),
       });
     },
     ...(hooks

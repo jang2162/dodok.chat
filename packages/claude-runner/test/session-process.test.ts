@@ -6,6 +6,7 @@ import type { BackgroundHooks } from "../src/drivers/claude/session-process";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, type FakeSdk, type ScriptStep, script } from "./helpers/fake-query";
+import type { SdkMessage } from "../src/drivers/claude/sdk";
 import { AGENT, runSpec } from "./helpers/fixtures";
 
 const RUN_1 = "0192f000-0000-7000-8000-00000000a001";
@@ -21,21 +22,47 @@ type Hooks = BackgroundHooks & {
   heldLog: Array<[string, boolean]>;
   tasksLog: Array<[string, BackgroundTask[]]>;
   followups: RunnerFollowupRequest[];
+  /** 추가 응답 런마다 낸 것 */
+  followupRuns: Map<string, { emitted: Emitted[]; controller: AbortController; closed: boolean }>;
+  /** 모든 런의 final 차례 — [runId, text] */
+  order: Array<[string, unknown]>;
 };
 
 function hooksSpy(followup?: BackgroundHooks["requestFollowup"]): Hooks {
   const heldLog: Array<[string, boolean]> = [];
   const tasksLog: Array<[string, BackgroundTask[]]> = [];
   const followups: RunnerFollowupRequest[] = [];
+  const followupRuns: Hooks["followupRuns"] = new Map();
+  const order: Hooks["order"] = [];
   return {
     heldLog,
     tasksLog,
     followups,
+    followupRuns,
+    order,
     held: (key, holding) => void heldLog.push([key, holding]),
     tasksChanged: (key, tasks) => void tasksLog.push([key, tasks]),
     requestFollowup: async (req) => {
       followups.push(req);
       return followup ? followup(req) : { ok: false, reason: "unknown" };
+    },
+    openFollowup: ({ runId, workdir }) => {
+      const entry = { emitted: [] as Emitted[], controller: new AbortController(), closed: false };
+      followupRuns.set(runId, entry);
+      const sink = createRunSink({
+        workdir,
+        bridge: createFakeBridge(),
+        emit: {
+          event: (event) => entry.emitted.push({ kind: "event", event }),
+          final: (final) => {
+            order.push([runId, final.text]);
+            entry.emitted.push({ kind: "final", final });
+          },
+          error: (code, message) => entry.emitted.push({ kind: "error", code, message }),
+          session: () => {},
+        },
+      });
+      return { sink, signal: entry.controller.signal, close: () => void (entry.closed = true) };
     },
   };
 }
@@ -48,6 +75,7 @@ function runner(fake: FakeSdk, hooks: Hooks | null = hooksSpy()) {
     isExecutable: () => false,
     baseEnv: { PATH: "/usr/bin", HOME: "/home/u" },
     closeGraceMs: 30,
+    selfTurnWaitMs: 200,
     ...(hooks ? { hooks } : {}),
   });
   function start(spec: ClaudeRunSpec, bridge: FakeBridge = createFakeBridge()) {
@@ -58,7 +86,10 @@ function runner(fake: FakeSdk, hooks: Hooks | null = hooksSpy()) {
       bridge,
       emit: {
         event: (event) => emitted.push({ kind: "event", event }),
-        final: (final) => emitted.push({ kind: "final", final }),
+        final: (final) => {
+          hooks?.order.push([spec.start.deliver.runId, final.text]);
+          emitted.push({ kind: "final", final });
+        },
         error: (code, message) => emitted.push({ kind: "error", code, message }),
         session: () => {},
       },
@@ -74,7 +105,7 @@ const shellStarted = (id = "b1"): ScriptStep[] => [
   script.tasksChanged([{ task_id: id, task_type: "local_bash", description: "pnpm dev" }]),
   script.taskStarted(id, { description: "pnpm dev" }),
 ];
-const shellStopped = (id = "b1"): ScriptStep[] => [
+const shellStopped = (id = "b1"): SdkMessage[] => [
   script.taskUpdated(id, { status: "killed" }),
   script.taskNotification(id, "stopped"),
   script.tasksChanged([]),
@@ -359,5 +390,222 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     await second.done;
     expect(finals(first.emitted)[0]).toMatchObject({ final: { costUsd: 0.5 } });
     expect(finals(second.emitted)[0]).toMatchObject({ final: { costUsd: 0.25 } });
+  });
+});
+
+const FOLLOW = "0192f000-0000-7000-8000-00000000f001";
+const FOLLOW_2 = "0192f000-0000-7000-8000-00000000f002";
+const followupOk =
+  (runId = FOLLOW): BackgroundHooks["requestFollowup"] =>
+  async () => ({
+    ok: true,
+    runId,
+    deliver: {
+      ...runSpec().start.deliver,
+      kind: "background",
+      runId,
+      threadId: "0192f000-0000-7000-8000-00000000b009",
+    },
+  });
+const shellDone = (id = "b1"): ScriptStep[] => [
+  script.taskUpdated(id, { status: "completed" }),
+  script.taskNotification(id, "completed"),
+  script.tasksChanged([]),
+];
+
+describe("세션 프로세스 — 스스로 연 턴·한 번에 한 턴·끄기(백그라운드 작업 스펙 5.3)", () => {
+  it("opens a follow-up run when the cli opens a turn on its own", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellDone(),
+      script.init(),
+      ...script.textTurn("msg_f", ["다 끝났어요"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(hooks.followups).toEqual([
+      { sessionKey: runSpec().start.deliver.sessionKey, originRunId: RUN_1, taskIds: ["b1"] },
+    ]);
+    const run = hooks.followupRuns.get(FOLLOW)!;
+    expect(finals(run.emitted)).toMatchObject([{ final: { text: "다 끝났어요" } }]);
+    expect(run.emitted.filter((e) => e.kind === "event").length).toBeGreaterThan(0);
+    expect(run.emitted.every((e) => e.kind !== "event" || e.event.runId === FOLLOW)).toBe(true);
+    expect(run.closed).toBe(true);
+    // 작업이 비어 추가 응답 뒤 닫았다
+    expect(call.inputClosed).toBe(true);
+    expect(call.prompts).toHaveLength(1);
+  });
+
+  it("interrupts a follow-up turn when the followup request fails", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(async () => ({ ok: false, reason: "closed" }));
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellDone(),
+      script.init(),
+      script.messageStart("msg_f"),
+      { waitInterrupt: [script.errorResult("error_during_execution", ["[ede_diagnostic] interrupted"])] },
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(call.interrupts).toBe(1);
+    expect(hooks.followupRuns.size).toBe(0);
+    expect(hooks.followups).toHaveLength(1);
+  });
+
+  it("queues a human prompt behind a self-opened turn", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...shellStarted("b2"),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      script.taskNotification("b1", "completed"),
+      script.tasksChanged([{ task_id: "b2", task_type: "local_bash", description: "pnpm dev" }]),
+      script.init(),
+      { sleep: 60 },
+      ...script.textTurn("msg_f", ["b1 끝"]),
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_2", ["둘째"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    await until(() => hooks.followups.length === 1);
+    const second = start(spec2());
+    await second.done;
+    expect(finals(hooks.followupRuns.get(FOLLOW)!.emitted)).toMatchObject([{ final: { text: "b1 끝" } }]);
+    expect(finals(second.emitted)).toMatchObject([{ final: { text: "둘째" } }]);
+    expect(hooks.order).toEqual([
+      [RUN_1, "띄웠어요"],
+      [FOLLOW, "b1 끝"],
+      [RUN_2, "둘째"],
+    ]);
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("a queued human run aborted while waiting closes without a prompt", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start, driver } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...shellStarted("b2"),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      script.taskNotification("b1", "completed"),
+      script.tasksChanged([{ task_id: "b2", task_type: "local_bash", description: "pnpm dev" }]),
+      script.init(),
+      { sleep: 80 },
+      ...script.textTurn("msg_f", ["b1 끝"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    await until(() => hooks.followups.length === 1);
+    const second = start(spec2());
+    await new Promise((r) => setTimeout(r, 10));
+    second.controller.abort();
+    await second.done;
+    expect(finals(second.emitted)).toMatchObject([{ final: { text: "", stopReason: "aborted" } }]);
+    await until(() => finals(hooks.followupRuns.get(FOLLOW)?.emitted ?? []).length === 1);
+    expect(fake.calls[0]!.prompts).toHaveLength(1);
+    driver.background?.release(runSpec().start.deliver.sessionKey);
+  });
+
+  it("stopTask on a shell removes it without a follow-up", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start, driver } = runner(fake, hooks);
+    fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["띄웠어요"]), {
+      waitStopTask: "b1",
+      emit: shellStopped(),
+    });
+    await start(runSpec()).done;
+    const key = runSpec().start.deliver.sessionKey;
+    expect(await driver.background?.stopTask(key, "nope")).toBe(false);
+    expect(await driver.background?.stopTask("agent:x:dodok:channel:y", "b1")).toBe(false);
+    expect(await driver.background?.stopTask(key, "b1")).toBe(true);
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(call.controls).toEqual([{ method: "stopTask", arg: "b1" }]);
+    expect(hooks.followups).toEqual([]);
+    expect(hooks.tasksLog.at(-1)).toEqual([key, []]);
+    expect(driver.background?.held()).toEqual([]);
+  });
+
+  it("release closes the process and clears tasks", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start, driver } = runner(fake, hooks);
+    fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["띄웠어요"]), {
+      waitInput: true,
+    });
+    await start(runSpec()).done;
+    const key = runSpec().start.deliver.sessionKey;
+    driver.background?.release(key);
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(call.inputClosed).toBe(true);
+    expect(hooks.heldLog).toEqual([
+      [key, true],
+      [key, false],
+    ]);
+    expect(hooks.tasksLog.at(-1)).toEqual([key, []]);
+    expect(driver.background?.held()).toEqual([]);
+    expect(hooks.followups).toEqual([]);
+  });
+
+  it("uses the origin of the first notification when two runs finish together", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk(FOLLOW_2));
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted("b1"),
+      ...script.textTurn("msg_1", ["첫째"]),
+      { waitInput: true },
+      script.init(),
+      script.tasksChanged([
+        { task_id: "b1", task_type: "local_bash", description: "pnpm dev" },
+        { task_id: "b2", task_type: "local_bash", description: "pnpm test" },
+      ]),
+      script.taskStarted("b2", { description: "pnpm test" }),
+      ...script.textTurn("msg_2", ["둘째"]),
+      { sleep: 10 },
+      script.taskNotification("b1", "completed"),
+      script.taskNotification("b2", "completed"),
+      script.tasksChanged([]),
+      script.init(),
+      ...script.textTurn("msg_f", ["둘 다 끝"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    await start(spec2()).done;
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(hooks.followups).toEqual([
+      { sessionKey: runSpec().start.deliver.sessionKey, originRunId: RUN_1, taskIds: ["b1", "b2"] },
+    ]);
+    expect(finals(hooks.followupRuns.get(FOLLOW_2)!.emitted)).toMatchObject([
+      { final: { text: "둘 다 끝" } },
+    ]);
   });
 });
