@@ -11,7 +11,7 @@ import {
   summarizeActivity,
   toActivityRows,
 } from "./timeline";
-import { ToolCallRow } from "./ToolCallRow";
+import { RowMarker, ToolCallRow } from "./ToolCallRow";
 import { useRunActivity } from "./useRunActivity";
 
 /** 잘린 추론 덩이 아래 한 줄(서버 상한 — 스펙 「데이터」) */
@@ -127,13 +127,15 @@ function InlineRow({ row, approved }: { row: ActivityRow; approved: boolean }) {
 
 /**
  * 추론 한 덩이 — 흐린 글, 마크다운 해석 없이 그대로(줄바꿈만 살린다). 글이 없으면(START/END 만 온 모델) 「생각 중…」.
- * 긴 추론이 버블을 밀어내지 않게 높이를 묶고 안에서 스크롤한다. 활동 탭 타임라인도 이것을 쓴다
+ * 긴 추론이 버블을 밀어내지 않게 높이를 묶고 안에서 스크롤한다. 활동 탭 타임라인도 이것을 쓴다 — 줄 앞은 도구 줄과 같은 상태 원
  */
 export function ReasoningLine({ row }: { row: ReasoningRow }) {
   return (
     <div data-slot="reasoning-row" className="flex gap-2 px-3 py-1.5 text-muted-foreground">
-      <BrainIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-      <div className="min-w-0 flex-1">
+      <RowMarker>
+        <BrainIcon aria-hidden className="size-3 shrink-0" />
+      </RowMarker>
+      <div className="min-w-0 flex-1 px-1 pt-0.5">
         <p className="max-h-48 overflow-y-auto text-xs break-words whitespace-pre-wrap italic">
           {row.text === "" ? (row.state === "running" ? "생각 중…" : "추론 내용이 없습니다.") : row.text}
         </p>

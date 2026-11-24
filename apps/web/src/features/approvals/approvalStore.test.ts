@@ -5,6 +5,7 @@ import {
   mergeApproval,
   selectChannelApprovals,
   selectPendingApproval,
+  selectPendingCount,
   useApprovalStore,
 } from "./approvalStore";
 
@@ -193,5 +194,17 @@ describe("선택자", () => {
 
     store().apply({ ...late, status: "expired", reason: "timeout" });
     expect(selectPendingApproval(CH)(store())).toBeUndefined();
+  });
+
+  it("selectPendingCount: 그 채널의 미해결 수 — 확정되면 줄고, 다른 채널 것은 세지 않는다", () => {
+    expect(selectPendingCount(CH)(store())).toBe(0);
+    seed(early, late, approval({ id: uid(299), channelId: CH2 }));
+    expect(selectPendingCount(CH)(store())).toBe(2);
+    expect(selectPendingCount(CH2)(store())).toBe(1);
+    store().apply({ ...early, status: "allowed", decision: "allow-once" });
+    expect(selectPendingCount(CH)(store())).toBe(1);
+    store().apply({ ...late, status: "cancelled", reason: "run-aborted" });
+    expect(selectPendingCount(CH)(store())).toBe(0);
+    expect(selectPendingCount("없는-채널")(store())).toBe(0);
   });
 });

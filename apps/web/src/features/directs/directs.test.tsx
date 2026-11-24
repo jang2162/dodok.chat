@@ -247,6 +247,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   wire.socket = undefined;
   useWireStatus.getState().setStatus("idle");
+  useApprovalStore.getState().reset();
 });
 
 const dmNav = () => screen.findByRole("navigation", { name: "다이렉트 메시지" });

@@ -4,6 +4,8 @@ import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../
 import {
   activitySummaryLabel,
   approvalOutcomeLabel,
+  countRuns,
+  filterRuns,
   freezeDurations,
   hasFlowingDuration,
   isTimelineEvent,
@@ -13,7 +15,10 @@ import {
   mergeRuns,
   REASONING_TRUNCATED,
   runDurationMs,
+  runStatusTone,
+  runSummaryLabel,
   summarizeActivity,
+  summarizeRun,
   toActivityRows,
   toolNameByCallId,
   UNKNOWN_TOOL,
@@ -563,5 +568,88 @@ describe("runDurationMs", () => {
     const frozen = { startedAt: "2027-01-15T08:00:00.000Z", frozenAt: "2027-01-15T08:00:25.000Z" };
     expect(runDurationMs(frozen, Date.parse("2027-01-15T09:00:00.000Z"))).toBe(25_000);
     expect(runDurationMs({ ...frozen, endedAt: "2027-01-15T08:00:21.000Z" }, 0)).toBe(21_000);
+  });
+});
+
+describe("filterRuns · countRuns", () => {
+  const STATUSES = [
+    "queued",
+    "streaming",
+    "tool",
+    "awaiting_approval",
+    "finalizing",
+    "done",
+    "error",
+    "aborted",
+  ] as const;
+  const runs = STATUSES.map((status, i) => runState({ id: uid(600 + i), status }));
+  const statuses = (f: Parameters<typeof filterRuns>[1]) => filterRuns(runs, f).map((r) => r.status);
+
+  it("진행 중 = 끝나지 않은 모든 상태(finalizing 포함), 승인 대기 = awaiting_approval, 실패 = error", () => {
+    expect(statuses("all")).toEqual(STATUSES);
+    expect(statuses("running")).toEqual(["queued", "streaming", "tool", "awaiting_approval", "finalizing"]);
+    expect(statuses("approval")).toEqual(["awaiting_approval"]);
+    expect(statuses("failed")).toEqual(["error"]);
+  });
+
+  it("사람이 멈춘 aborted 는 실패가 아니다 — 전체에만 든다", () => {
+    const aborted = [runState({ status: "aborted" })];
+    expect(countRuns(aborted)).toEqual({ all: 1, running: 0, approval: 0, failed: 0 });
+  });
+
+  it("칩마다 수 — 거른 결과의 길이와 같다", () => {
+    expect(countRuns(runs)).toEqual({ all: 8, running: 5, approval: 1, failed: 1 });
+    for (const f of ["all", "running", "approval", "failed"] as const)
+      expect(countRuns(runs)[f]).toBe(filterRuns(runs, f).length);
+  });
+
+  it("전체는 받은 목록을 그대로(순서 유지), 빈 목록이면 빈 목록", () => {
+    expect(filterRuns(runs, "all")).toBe(runs);
+    expect(filterRuns([], "failed")).toEqual([]);
+    expect(countRuns([])).toEqual({ all: 0, running: 0, approval: 0, failed: 0 });
+  });
+});
+
+describe("runStatusTone", () => {
+  it("진행 중 넷은 running, 나머지는 제 빛깔", () => {
+    expect((["queued", "streaming", "tool", "finalizing"] as const).map(runStatusTone)).toEqual([
+      "running",
+      "running",
+      "running",
+      "running",
+    ]);
+    expect(runStatusTone("awaiting_approval")).toBe("approval");
+    expect(runStatusTone("done")).toBe("done");
+    expect(runStatusTone("error")).toBe("error");
+    expect(runStatusTone("aborted")).toBe("aborted");
+  });
+});
+
+describe("summarizeRun · runSummaryLabel", () => {
+  it("추론·도구(이름은 처음 나온 순, 겹치면 한 번)·답을 센다 — 텍스트 델타는 답 수에 안 든다", () => {
+    const summary = summarizeRun([
+      runEvent({ type: "REASONING_MESSAGE_START", seq: 1, messageId: "r" }),
+      runEvent({ type: "REASONING_MESSAGE_END", seq: 2, messageId: "r" }),
+      runEvent({ type: "REASONING_MESSAGE_START", seq: 3, messageId: "r" }),
+      runEvent({ type: "TOOL_CALL_START", seq: 4, toolCallId: "a", toolCallName: "Read" }),
+      runEvent({ type: "TOOL_CALL_START", seq: 5, toolCallId: "b", toolCallName: "Bash" }),
+      runEvent({ type: "TOOL_CALL_START", seq: 6, toolCallId: "c", toolCallName: "Read" }),
+      runEvent({ type: "TOOL_CALL_RESULT", seq: 7, toolCallId: "z", content: "x" }),
+      runEvent({ type: "TEXT_MESSAGE_START", seq: 8, messageId: "m", role: "assistant" }),
+      textDelta(9, "가"),
+      textDelta(10, "나"),
+    ]);
+    expect(summary).toEqual({
+      reasoning: 2,
+      tools: 4,
+      toolNames: ["Read", "Bash", UNKNOWN_TOOL],
+      answers: 1,
+    });
+    expect(runSummaryLabel(summary)).toBe(`생각 2 · 도구 4(Read, Bash, ${UNKNOWN_TOOL}) · 답 1`);
+  });
+
+  it("0 인 것은 빠지고, 다 0 이면 줄이 없다", () => {
+    expect(runSummaryLabel({ reasoning: 0, tools: 0, toolNames: [], answers: 2 })).toBe("답 2");
+    expect(runSummaryLabel(summarizeRun([]))).toBeUndefined();
   });
 });

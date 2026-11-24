@@ -1,12 +1,14 @@
 import type { Agent, ChannelMember } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, type MockInstance, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { agentColorVar } from "@/theme/agentColor";
+import { APPROVAL, APPROVAL2, approval, uid } from "../../../test/fixtures";
 import { ME, channelOf, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 // 채널 구독만 목으로 — 인자를 잰다
@@ -83,6 +85,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.mocked(useChannelSubscription).mockClear();
+  useApprovalStore.getState().reset();
 });
 
 it("마운트되면 useChannelSubscription(channelId) — 채널을 옮기면 그 채널로", async () => {
@@ -238,4 +241,53 @@ it("그 밖의 조회 실패는 원인과 「다시 시도」를 화면 안에 �
   down = false;
   await userEvent.click(within(page).getByRole("button", { name: "다시 시도" }));
   expect(await screen.findByRole("heading", { name: /general/ })).toBeInTheDocument();
+});
+
+/** 이 파일의 채널 id 는 uuid 가 아니라 픽스처의 파싱을 지난 뒤 채널만 바꾼다 */
+const at = (channelId: string, over: Parameters<typeof approval>[0] = {}) => ({
+  ...approval(over),
+  channelId,
+});
+
+it("활동 탭 머리에 그 채널의 승인 대기 수 — 둘이면 「활동, 승인 대기 2」, 하나가 허용되면 1, 없으면 배지 없음", async () => {
+  stubServer();
+  const { router } = renderRoute("/c/a/s/a/settings");
+  const panel = await screen.findByTestId("page-channel-panel");
+  const activity = () => within(panel).getByRole("link", { name: /^활동/ });
+  expect(activity()).toHaveAccessibleName("활동");
+
+  // 다른 채널의 승인은 세지 않는다
+  act(() => useApprovalStore.getState().apply(at("b", { id: uid(299) })));
+  expect(activity()).toHaveAccessibleName("활동");
+
+  act(() => {
+    useApprovalStore.getState().apply(at("a", {}));
+    useApprovalStore.getState().apply(at("a", { id: APPROVAL2 }));
+  });
+  await waitFor(() => expect(activity()).toHaveAccessibleName("활동, 승인 대기 2"));
+
+  act(() =>
+    useApprovalStore
+      .getState()
+      .apply(at("a", { id: APPROVAL, status: "allowed", decision: "allow-once", reason: "user" })),
+  );
+  await waitFor(() => expect(activity()).toHaveAccessibleName("활동, 승인 대기 1"));
+  act(() =>
+    useApprovalStore
+      .getState()
+      .apply(at("a", { id: APPROVAL2, status: "expired", decision: "deny", reason: "timeout" })),
+  );
+  await waitFor(() => expect(activity()).toHaveAccessibleName("활동"));
+
+  // 패널을 닫으면 머리가 없다 — 배지도 그리지 않는다
+  act(() => useApprovalStore.getState().apply(at("a", { id: uid(298) })));
+  await waitFor(() => expect(activity()).toHaveAccessibleName("활동, 승인 대기 1"));
+  await act(() =>
+    router.navigate({
+      to: "/c/$channelId/s/$conversationId",
+      params: { channelId: "a", conversationId: "a" },
+    }),
+  );
+  await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
+  expect(screen.queryByText(/승인 대기 1/)).not.toBeInTheDocument();
 });
