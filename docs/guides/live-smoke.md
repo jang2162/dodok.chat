@@ -962,6 +962,23 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - ⚠ **감싸개 기록(`cli-invocations.log`)에는 MCP 헤더 값이 원문으로 남는다** — SDK 가 봇의 MCP 설정을 CLI 에 `--mcp-config <JSON>` 인자로 넘기기 때문이다(2026-11-23 실측). 하네스에서는 가짜 값만 쓰고 기록을 정리 때 지운다. 같은 까닭으로 실제 러너 머신에서도 그 런의 CLI 가 도는 동안 그 머신의 `ps` 에 헤더 값이 보인다(러너 로그·서버 로그에는 없다).
 - **정리** — 러너(SIGTERM)·가짜 API·서버를 자기 PID 로 내리고 포트 LISTEN 0, 남은 CLI(감싸개가 띄운 `claude`)·`dodok-runner`·`fake-messages-api` 프로세스 0 을 본다. 스크래치(러너 설치본·감싸개·`HOME`(토큰)·`cfg/`(세션 전사)·루트·요청 본문·로그)와 워크트리 `data/`(드라이버·세션)·`packages/claude-runner/dist` 를 지운다.
 
+### 권한 auto·bypassPermissions 재기
+
+러너 설정의 `maxPermissionMode` 는 `plan`·`dontAsk`·`default`(기본)·`acceptEdits`·`auto`·`bypassPermissions` 다(러너 0.11.0 부터 끝의 둘 — 승인 카드 없이 돈다). 위 설정 JSON 의 상한을 `bypassPermissions` 로 바꿔 띄우면 앱의 권한 칩에서 둘을 고를 수 있고, 상한 `acceptEdits` 러너에 저장된 둘은 런마다 `RUNNER_CEILING(permissionMode)` 카드가 된다(어댑터가 `run.start` 를 보내지 않는다 — CLI 기동 0).
+
+**`auto` 를 받지 않는 모델에서 CLI 가 하는 일**은 러너·서버 없이 SDK 로 바로 잰다 — 가짜 Messages API 를 띄우고, 러너의 SDK(`packages/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk` 의 `sdk.mjs`)로 `query({ prompt, options })` 를 부르는 스크래치 스크립트 하나. `options` 는 `permissionMode: "auto"`·`model`·`cwd`(스크래치)·`env`(`PATH`·스크래치 `HOME`·`CLAUDE_CONFIG_DIR`·`ANTHROPIC_BASE_URL=http://127.0.0.1:<포트>`·가짜 `ANTHROPIC_API_KEY`)·`canUseTool`(부르면 적고 거절)이고, 설치본을 재려면 `pathToClaudeCodeExecutable`. 프롬프트는 `[dodok context] channel=probe` + `\n---\n` + `HX-BASH`(가짜 API 가 `---` 뒤 키워드로 대본을 고른다). `q.supportedModels()` 의 `supportsAutoMode` 로 받지 않는 모델을 먼저 고른다.
+
+결과(2026-11-24, SDK 0.3.283 — 모델 런 0회):
+
+| CLI | 모델 | 관찰 |
+| --- | --- | --- |
+| 내장 2.1.283 | `haiku` → `claude-haiku-4-5-20251001`(`supportsAutoMode` 없음) | init `permissionMode: "auto"` 뒤 곧바로 `system/status` `permissionMode: "default"`. 쓰기 Bash 가 `canUseTool` 로 간다(앱이면 승인 카드). 도구 결과 뒤에 「Exited Auto Mode」 system-reminder. 런은 성공으로 끝난다 |
+| 내장 2.1.283 | 기본(`claude-opus-5-5[1m]`) | `auto` 그대로, Bash 가 묻지 않고 돈다 |
+| 설치본 2.1.330 | `haiku` → `claude-haiku-5-5` | `auto` 그대로, Bash 가 묻지 않고 돈다 |
+| 둘 다 | 같은 모델 `default` | Bash 가 `canUseTool` 로 간다(대조군) |
+
+러너는 `system/status` 를 런 이벤트로 올리지 않으므로 앱에는 내려간 것이 보이지 않는다 — 칩은 `auto` 인데 승인 카드가 뜬다(plan.md 8장 「이월」). 가짜 API 기록에 `auto` 분류기 요청은 없었다.
+
 ### 모델 런으로 도는 러너 실연
 
 이 절의 하네스를 먼저 끝까지 돌린 뒤에 한다. 모델 런은 사용자가 승인한 상한 안에서 센다(러너가 연 `query()` 하나 = 1회 — 릴레이·카드 누르기가 만드는 러너 런도 센다).

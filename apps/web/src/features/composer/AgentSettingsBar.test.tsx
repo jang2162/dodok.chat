@@ -5,6 +5,7 @@ import type {
   Message,
   Result,
   RunnerModelOption,
+  RunnerPermissionMode,
 } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/core";
@@ -116,7 +117,7 @@ let restoreDom: () => void;
  */
 function serve(opts: {
   settings?: Record<string, ConversationAgentSettings[]>;
-  ceiling?: "plan" | "dontAsk" | "default" | "acceptEdits";
+  ceiling?: RunnerPermissionMode;
   patchFails?: { status: number; code: string };
   /** 채널의 agent-ceilings 가 싣는 모델 목록(새 세션 창) */
   models?: RunnerModelOption[];
@@ -703,22 +704,62 @@ describe("권한 칩 [S2]", () => {
       ["dontAsk", false],
       ["default", false],
       ["acceptEdits", true],
+      ["auto — 승인 카드 없이 실행됩니다", true],
+      ["bypassPermissions — 승인 카드 없이 실행됩니다", true],
     ]);
     expect(menu).toHaveTextContent(RAISE_LOCKED);
   });
+
+  it("상한이 열린 러너(bypassPermissions) — member 는 auto·bypassPermissions 도 RAISE_LOCKED, admin 은 고른다", async () => {
+    serve({ settings: { [CONV]: [row(CODER)] }, ceiling: "bypassPermissions" });
+    renderAt(CONV, { agents: [CODER] });
+    let { menu } = await openChip("coder", "권한");
+    expect(optionsOf(menu).slice(-2)).toMatchObject([{ disabled: true }, { disabled: true }]);
+    expect(menu).toHaveTextContent(RAISE_LOCKED);
+    expect(menu).not.toHaveTextContent("러너 상한");
+    await userEvent.keyboard("{Escape}");
+    cleanup();
+    serve({ settings: { [CONV]: [row(CODER)] }, ceiling: "bypassPermissions" });
+    renderAt(CONV, { agents: [CODER], role: "admin" });
+    ({ menu } = await openChip("coder", "권한"));
+    expect(optionsOf(menu).every((o) => !o.disabled)).toBe(true);
+    const auto = within(menu)
+      .getAllByRole("menuitemradio")
+      .find((o) => o.textContent === "auto — 승인 카드 없이 실행됩니다");
+    if (!auto) throw new Error("auto 선택지가 없다");
+    await userEvent.click(auto);
+    await waitFor(() => expect(patches().map((c) => c.body)).toEqual([{ permissionMode: "auto" }]));
+  });
+
+  it.each(["auto", "bypassPermissions"] as const)(
+    "고른 값이 %s 면 칩에 경고색과 접근 이름의 「승인 카드 없이 실행됩니다」",
+    async (permissionMode) => {
+      serve({
+        settings: { [CONV]: [row(CODER, { permissionMode }), row(REVIEWER)] },
+        ceiling: "bypassPermissions",
+      });
+      renderAt(CONV, { agents: [CODER, REVIEWER] });
+      await openPanel();
+      const picked = await waitFor(() => chip("coder", "권한"));
+      expect(picked).toHaveAccessibleName(`@coder 권한: ${permissionMode} — 승인 카드 없이 실행됩니다`);
+      expect(picked.className).toContain("text-destructive");
+      expect(chip("reviewer", "권한")).toHaveAccessibleName("@reviewer 권한: 기본");
+      expect(chip("reviewer", "권한").className).not.toContain("text-destructive");
+    },
+  );
 
   it("admin 은 acceptEdits 를 고른다 — 러너 상한(default) 위는 admin 도 막히고 그 사유", async () => {
     serve({ settings: { [CONV]: [row(CODER)] } });
     renderAt(CONV, { agents: [CODER], role: "admin" });
     let { menu } = await openChip("coder", "권한");
-    expect(optionsOf(menu).at(-1)).toMatchObject({ name: "acceptEdits", disabled: false });
+    expect(optionsOf(menu).find((o) => o.name === "acceptEdits")).toMatchObject({ disabled: false });
     await userEvent.keyboard("{Escape}");
     cleanup();
     serve({ settings: { [CONV]: [row(CODER)] }, ceiling: "default" });
     renderAt(CONV, { agents: [CODER], role: "admin" });
     ({ menu } = await openChip("coder", "권한"));
     await waitFor(() =>
-      expect(optionsOf(menu).at(-1)).toMatchObject({ name: "acceptEdits", disabled: true }),
+      expect(optionsOf(menu).find((o) => o.name === "acceptEdits")).toMatchObject({ disabled: true }),
     );
     expect(menu).toHaveTextContent(ABOVE_CEILING("default"));
   });
@@ -728,7 +769,7 @@ describe("권한 칩 [S2]", () => {
     renderAt(CONV, { agents: [CODER] });
     const { menu } = await openChip("coder", "권한");
     await waitFor(() =>
-      expect(optionsOf(menu).map((o) => o.disabled)).toEqual([false, false, true, true, true]),
+      expect(optionsOf(menu).map((o) => o.disabled)).toEqual([false, false, true, true, true, true, true]),
     );
     expect(calls.some((c) => c.url.endsWith("/runners"))).toBe(false);
   });
@@ -794,7 +835,13 @@ describe("새 세션 창 [S11]", () => {
         optionsOf(menu)
           .filter((o) => o.disabled)
           .map((o) => o.name),
-      ).toEqual(["dontAsk", "default", "acceptEdits"]),
+      ).toEqual([
+        "dontAsk",
+        "default",
+        "acceptEdits",
+        "auto — 승인 카드 없이 실행됩니다",
+        "bypassPermissions — 승인 카드 없이 실행됩니다",
+      ]),
     );
     expect(menu).toHaveTextContent(ABOVE_CEILING("plan"));
     expect(calls.map((c) => c.url)).toContain(`/api/v1/channels/${CH}/agent-ceilings`);

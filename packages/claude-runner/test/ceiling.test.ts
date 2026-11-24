@@ -188,6 +188,33 @@ describe("checkCeiling", () => {
     });
   });
 
+  it("permissionMode — 상한 acceptEdits 는 auto·bypassPermissions 를 거절, 상한 bypassPermissions 는 모두 통과", () => {
+    for (const permissionMode of ["auto", "bypassPermissions"] as const)
+      expect(
+        checkCeiling(cfg({ maxPermissionMode: "acceptEdits" }), agent({ permissionMode }), always),
+        permissionMode,
+      ).toEqual({ ok: false, item: "permissionMode" });
+    expect(
+      checkCeiling(
+        cfg({ maxPermissionMode: "auto" }),
+        agent({ permissionMode: "bypassPermissions" }),
+        always,
+      ),
+    ).toEqual({ ok: false, item: "permissionMode" });
+    for (const permissionMode of [
+      "plan",
+      "dontAsk",
+      "default",
+      "acceptEdits",
+      "auto",
+      "bypassPermissions",
+    ] as const)
+      expect(
+        checkCeiling(cfg({ maxPermissionMode: "bypassPermissions" }), agent({ permissionMode }), always).ok,
+        permissionMode,
+      ).toBe(true);
+  });
+
   it("allowedTools — 상한의 부분집합만(글자 그대로), null 은 어느 상한에도 든다", () => {
     const capped = cfg({ allowedToolsCeiling: ["Read", "Bash"] });
     expect(checkCeiling(capped, agent({ allowedTools: ["Read"] }), always).ok).toBe(true);

@@ -11,6 +11,7 @@ import {
   type InboundDeliver,
   type OutboundMessage,
   type ProviderApproval,
+  type RunnerPermissionMode,
 } from "@dodok/shared";
 import { createRunnerAdapter, type RunnerAdapter } from "@dodok/runner-adapter";
 import { Server } from "socket.io";
@@ -89,14 +90,24 @@ async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Pro
               instructions: null,
               agent: { ...RUN_AGENT, project: { rootId: "src", relPath: "" } },
             }
-          : // 러너 설정에서 지운 루트의 프로젝트(Review Focus 2)
-            agentId === "ghost"
+          : agentId === "auto-coder" || agentId === "yolo"
             ? {
-                name: "유령",
+                name: agentId,
                 instructions: null,
-                agent: { ...RUN_AGENT, project: { rootId: "gone", relPath: "" } },
+                agent: {
+                  ...RUN_AGENT,
+                  project: { rootId: "src", relPath: "" },
+                  permissionMode: agentId === "yolo" ? ("bypassPermissions" as const) : ("auto" as const),
+                },
               }
-            : null,
+            : // 러너 설정에서 지운 루트의 프로젝트(Review Focus 2)
+              agentId === "ghost"
+              ? {
+                  name: "유령",
+                  instructions: null,
+                  agent: { ...RUN_AGENT, project: { rootId: "gone", relPath: "" } },
+                }
+              : null,
     frameLimit: {
       buckets: () => ({ events: { take: () => true }, control: { take: () => true } }),
       onLimited: () => {},
@@ -153,6 +164,7 @@ function startRunner(
     remoteUpdate?: boolean;
     appMcp?: "off" | "http" | "all";
     appMcpCommands?: string[];
+    maxPermissionMode?: RunnerPermissionMode;
   } = {},
 ) {
   const fatal: number[] = [];
@@ -189,7 +201,7 @@ function startRunner(
       programs: {
         claude: {
           configDir: AGENT.configDir,
-          maxPermissionMode: "acceptEdits",
+          maxPermissionMode: opts.maxPermissionMode ?? "acceptEdits",
           disallowedTools: [],
           allowedToolsCeiling: null,
         },
@@ -321,6 +333,58 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       { type: "RUN_ERROR", runId: RUN_1, code: "RUNNER_CEILING", message: "root" },
     ]);
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("상한 acceptEdits 러너에 auto·bypassPermissions 에이전트 — 어댑터가 보내지 않고 RUNNER_CEILING(permissionMode), CLI 는 뜨지 않는다 [Review Focus]", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    const runner = startRunner(server, fake);
+    await ready(server);
+    for (const [agentId, runId] of [
+      ["auto-coder", RUN_1],
+      ["yolo", RUN_2],
+    ] as const) {
+      const input = { ...deliver(runId), agentId, sessionKey: dodokSessionKey(agentId, CHANNEL_ID) };
+      const sent = await server.adapter.send(input, {
+        connectionId: TOKEN_ID,
+        providerSessionId: SESSION_ID,
+      });
+      expect(sent).toMatchObject({ admission: "dispatch" });
+      await waitFor(() => signals(server, runId).includes("gateway_error"), `${agentId} 천장 오류`);
+      expect(runEvents(server, runId)).toEqual([
+        { type: "RUN_ERROR", runId, code: "RUNNER_CEILING", message: "permissionMode" },
+      ]);
+    }
+    expect(fake.calls).toHaveLength(0);
+    // 러너는 run.start 를 받지 않았다 — 옛 러너라면 그 값을 몰라 VALIDATION 으로 버렸을 것이다
+    expect(runner.logs.filter((l) => l.includes("run.start") || l.includes("천장에 걸려"))).toEqual([]);
+  });
+
+  it("상한 bypassPermissions 러너 — auto 는 그대로, bypassPermissions 는 확인 깃발과 함께 SDK 에 간다", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    startRunner(server, fake, { maxPermissionMode: "bypassPermissions" });
+    await ready(server);
+    expect(server.adapter.runnerInfo(TOKEN_ID)?.programs[0]?.ceiling.maxPermissionMode).toBe(
+      "bypassPermissions",
+    );
+    for (const [agentId, runId] of [
+      ["auto-coder", RUN_1],
+      ["yolo", RUN_2],
+    ] as const) {
+      fake.script(...script.textTurn(`msg_${agentId}`, ["끝"]));
+      const input = { ...deliver(runId), agentId, sessionKey: dodokSessionKey(agentId, CHANNEL_ID) };
+      await server.adapter.send(input, { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
+      await waitFor(() => signals(server, runId).includes("gateway_final"), `${agentId} 최종 답`);
+    }
+    expect(
+      fake.calls.map((c) => [c.options.permissionMode, c.options.allowDangerouslySkipPermissions]),
+    ).toEqual([
+      ["auto", undefined],
+      ["bypassPermissions", true],
+    ]);
   });
 
   it("fs.list·project.check — 어댑터가 묻고 러너가 루트 안에서 답한다", async () => {

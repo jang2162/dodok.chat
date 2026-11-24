@@ -1,9 +1,15 @@
-import { type Agent, BOT_TEMPLATES, type RunnerCapability, type SessionDefaults } from "@dodok/shared";
+import {
+  type Agent,
+  BOT_TEMPLATES,
+  type RunnerCapability,
+  type RunnerPermissionMode,
+  type SessionDefaults,
+} from "@dodok/shared";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
-import { NO_PROJECT_RESTORE } from "@/features/runners/copy";
+import { NO_APPROVAL_HINT, NO_PROJECT_RESTORE, PERMISSION_MODE_LABEL } from "@/features/runners/copy";
 import {
   ARCHIVED_AT,
   agentDetail,
@@ -66,7 +72,7 @@ function coder(
 }
 
 /** 맥북 — 상한(maxPermissionMode)을 바꿔 가며 */
-const routes = (max: "plan" | "dontAsk" | "default" | "acceptEdits" = "acceptEdits", connected = true) =>
+const routes = (max: RunnerPermissionMode = "acceptEdits", connected = true) =>
   runnersRoutes({
     runners: [
       runnerOf(1, {
@@ -143,7 +149,7 @@ describe("러너 에이전트의 지시(basePrompt) — 만들 때와 같은 「
 });
 
 describe("새 세션 시작값 고치기", () => {
-  it("프로그램·프로젝트는 읽기만, 권한 모드는 「기본」+넷 — 상한(default) 위는 막고 사유 한 줄", async () => {
+  it("프로그램·프로젝트는 읽기만, 권한 모드는 「기본」+여섯 — 상한(default) 위는 막고 사유 한 줄", async () => {
     stubServer({ agents: [coder()], runners: routes("default") });
     renderPage();
     const row = await openEdit();
@@ -157,6 +163,8 @@ describe("새 세션 시작값 고치기", () => {
         { value: "dontAsk", disabled: false },
         { value: "default", disabled: false },
         { value: "acceptEdits", disabled: true },
+        { value: "auto", disabled: true },
+        { value: "bypassPermissions", disabled: true },
       ]),
     );
     expect(within(row).getByRole("combobox", { name: "권한 모드" })).toHaveAccessibleDescription(
@@ -164,11 +172,29 @@ describe("새 세션 시작값 고치기", () => {
     );
   });
 
+  it("상한(bypassPermissions)이 열린 러너 — auto·bypassPermissions 를 고르고 「승인 카드 없이 실행됩니다」 안내가 칸에 붙는다", async () => {
+    const server = stubServer({ agents: [coder()], runners: routes("bypassPermissions") });
+    renderPage();
+    const row = await openEdit();
+    await waitFor(() => expect(modeOptions(row).every((o) => !o.disabled)).toBe(true));
+    const select = within(row).getByRole("combobox", { name: "권한 모드" });
+    expect(within(row).getByRole("option", { name: PERMISSION_MODE_LABEL.auto })).toHaveValue("auto");
+    expect(select).not.toHaveAccessibleDescription(expect.stringContaining(NO_APPROVAL_HINT));
+    for (const mode of ["auto", "bypassPermissions"] as const) {
+      await userEvent.selectOptions(select, mode);
+      expect(select).toHaveAccessibleDescription(expect.stringContaining(NO_APPROVAL_HINT));
+    }
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() =>
+      expect(server.bodies("PATCH")).toEqual([{ sessionDefaults: { permissionMode: "bypassPermissions" } }]),
+    );
+  });
+
   it("셋을 고쳐 저장하면 PATCH 본문은 { sessionDefaults } — 바뀐 칸만, 프로그램·프로젝트는 싣지 않는다", async () => {
     const server = stubServer({ agents: [coder({}, true, { effort: "low" })], runners: routes() });
     renderPage();
     const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(7));
     await userEvent.type(within(row).getByLabelText("모델"), "opus");
     // 선택지는 한글 이름, 값은 영문 그대로
     expect(within(row).getByRole("option", { name: "최대" })).toHaveValue("max");
@@ -189,7 +215,7 @@ describe("새 세션 시작값 고치기", () => {
     });
     renderPage();
     const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(7));
     await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     await waitFor(() =>
@@ -197,12 +223,12 @@ describe("새 세션 시작값 고치기", () => {
     );
   });
 
-  it("러너가 끊겨 있으면 상한을 모른다 — 넷 다 고를 수 있다", async () => {
+  it("러너가 끊겨 있으면 상한을 모른다 — 여섯 다 고를 수 있다", async () => {
     stubServer({ agents: [coder()], runners: routes("default", false) });
     renderPage();
     const row = await openEdit();
     await waitFor(() => expect(modeOptions(row).every((o) => !o.disabled)).toBe(true));
-    expect(modeOptions(row)).toHaveLength(5);
+    expect(modeOptions(row)).toHaveLength(7);
   });
 
   it("서버가 천장으로 거절하면 권한 칸 아래 고정 문구", async () => {
@@ -225,7 +251,7 @@ describe("새 세션 시작값 고치기", () => {
     );
     renderPage();
     const row = await openEdit();
-    await waitFor(() => expect(modeOptions(row)).toHaveLength(5));
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(7));
     await userEvent.selectOptions(within(row).getByRole("combobox", { name: "권한 모드" }), "acceptEdits");
     await userEvent.click(within(row).getByRole("button", { name: "저장" }));
     await waitFor(() =>

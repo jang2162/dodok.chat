@@ -25,7 +25,7 @@ const ProgramCeiling = z.strictObject({
   configDir: z.string().min(1).optional(),
   // 없으면 러너 PATH 의 claude, 그것도 없으면 SDK 번들 CLI. 적으면 그 실행 파일(없거나 실행할 수 없으면 그 프로그램을 못 쓴다). 빈 문자열은 거절
   executable: z.string().min(1).optional(),
-  // bypassPermissions 는 받지 않는다 — 승인 카드가 아예 뜨지 않는다(스펙 2장)
+  // 없으면 default. auto·bypassPermissions 는 승인 카드 없이 돈다 — 이 머신의 사람이 적어야만 열린다(채널 UI·권한 모드 스펙 1장)
   maxPermissionMode: RunnerPermissionMode.default("default"),
   disallowedTools: ToolNames.default([]),
   allowedToolsCeiling: ToolNames.nullable().default(null),

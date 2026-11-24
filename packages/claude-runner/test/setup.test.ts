@@ -146,6 +146,35 @@ describe("runSetupWizard", () => {
     expect(w.printed).toContain("로그인: 없음 — claude 를 열어 /login 하세요");
   });
 
+  it("권한 상한 선택지 — auto·bypassPermissions 는 끝에, 기본(빈 입력)은 여전히 default", async () => {
+    const w = wizard(["https://chat.example.com", TOKEN, "", "", "", "", ""]);
+    expect((await w.run).status).toBe("saved");
+    const start = w.printed.indexOf("권한 상한:");
+    expect(w.printed.slice(start + 1, start + 6)).toEqual([
+      "  1) default — 편집·명령마다 승인",
+      "  2) acceptEdits — 편집은 바로, 명령은 승인",
+      "  3) plan — 읽기·계획만",
+      "  4) auto — 모델 분류기가 승인(승인 카드 없음)",
+      "  5) bypassPermissions — 묻지 않고 실행(승인 카드 없음)",
+    ]);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).programs.claude.maxPermissionMode).toBe("default");
+    expect(w.printed.join("\n")).not.toContain("승인 카드 없이 실행됩니다");
+  });
+
+  it.each([
+    ["4", "auto"],
+    ["bypassPermissions", "bypassPermissions"],
+  ] as const)("%s 를 고르면 경고를 보이고 y 확인을 받는다 — 아니면 다시 묻는다", async (answer, mode) => {
+    const w = wizard(["https://chat.example.com", TOKEN, "", "", "", answer, "", answer, "y", ""]);
+    expect((await w.run).status).toBe("saved");
+    const warning = "승인 카드 없이 실행됩니다 — 이 상한을 연 사람이 책임집니다";
+    expect(w.printed.filter((line) => line === warning)).toHaveLength(2);
+    const questions = w.asked.map((a) => a.question);
+    expect(questions.filter((q) => q === "선택 [1]: ")).toHaveLength(2);
+    expect(questions.filter((q) => q === "이 상한으로 할까요? (y/N) ")).toHaveLength(2);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).programs.claude.maxPermissionMode).toBe(mode);
+  });
+
   it("틀린 URL·빈 토큰·없는 디렉터리·틀린 선택은 다시 묻는다", async () => {
     const w = wizard([
       "chat.example.com",
@@ -158,7 +187,7 @@ describe("runSetupWizard", () => {
       "",
       "",
       "9",
-      "bypassPermissions",
+      "yolo",
       "plan",
       "y",
     ]);

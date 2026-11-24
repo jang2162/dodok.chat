@@ -7,6 +7,7 @@ import {
   RunnerFsListResult,
   RunnerHelloResult,
   RunnerHello,
+  RunnerPermissionMode,
   RunnerProgram,
   RunnerProjectCheckResult,
   RunnerCeilingItem,
@@ -121,15 +122,28 @@ describe("RunnerRootId", () => {
 });
 
 describe("권한 모드 순서 — 묻지 않고 돌 수 있는 것이 많은 순(스펙 2장)", () => {
-  it("plan < dontAsk < default < acceptEdits, bypassPermissions 는 없다", () => {
-    expect(RUNNER_PERMISSION_MODES).toEqual(["plan", "dontAsk", "default", "acceptEdits"]);
+  it("plan < dontAsk < default < acceptEdits < auto < bypassPermissions — 끝 둘은 상한이 열어야 쓴다", () => {
+    expect(RUNNER_PERMISSION_MODES).toEqual([
+      "plan",
+      "dontAsk",
+      "default",
+      "acceptEdits",
+      "auto",
+      "bypassPermissions",
+    ]);
     expect(permissionModeRank("plan")).toBeLessThan(permissionModeRank("dontAsk"));
     expect(permissionModeRank("dontAsk")).toBeLessThan(permissionModeRank("default"));
     expect(permissionModeRank("default")).toBeLessThan(permissionModeRank("acceptEdits"));
-    expect(
-      RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, permissionMode: "bypassPermissions" } })
-        .success,
-    ).toBe(false);
+    expect(permissionModeRank("auto")).toBeGreaterThan(permissionModeRank("acceptEdits"));
+    expect(permissionModeRank("bypassPermissions")).toBeGreaterThan(permissionModeRank("auto"));
+    expect(RunnerPermissionMode.parse("bypassPermissions")).toBe("bypassPermissions");
+    for (const mode of ["auto", "bypassPermissions"] as const)
+      expect(
+        RunnerRunStart.parse({ ...START, agent: { ...AGENT, permissionMode: mode } }).agent.permissionMode,
+      ).toBe(mode);
+    expect(RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, permissionMode: "yolo" } }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -181,14 +195,13 @@ describe("RunnerHello", () => {
     expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(false);
   });
 
-  it("상한 권한 모드에 bypassPermissions 는 없다", () => {
-    const programs = [
-      {
-        ...HELLO.programs[0],
-        ceiling: { maxPermissionMode: "bypassPermissions", allowedToolsCeiling: null },
-      },
+  it("상한 권한 모드는 auto·bypassPermissions 까지 받는다, 모르는 값은 거절", () => {
+    const withMax = (maxPermissionMode: string) => [
+      { ...HELLO.programs[0], ceiling: { maxPermissionMode, allowedToolsCeiling: null } },
     ];
-    expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(false);
+    for (const mode of ["auto", "bypassPermissions"])
+      expect(RunnerHello.safeParse({ ...HELLO, programs: withMax(mode) }).success, mode).toBe(true);
+    expect(RunnerHello.safeParse({ ...HELLO, programs: withMax("yolo") }).success).toBe(false);
   });
 
   it("hello 결과 — 받음·판본 불일치", () => {

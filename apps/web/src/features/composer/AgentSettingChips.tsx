@@ -11,6 +11,7 @@ import {
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
+import { isNoApprovalMode, NO_APPROVAL_HINT } from "@/features/runners/copy";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import {
@@ -129,6 +130,7 @@ export function AgentSettingChips({
     lock: permissionLock(mode, { canRaise, ceiling }),
   }));
   const reasons = [...new Set(locks.flatMap((l) => (l.lock ? [l.lock] : [])))];
+  const noApproval = isNoApprovalMode(row.permissionMode);
 
   const pick = (patch: AgentSettingsPatch) => void onSave(patch);
   // Radix 라디오 값은 문자열이다 — 「기본」(null)을 빈 글로 싣는다
@@ -244,10 +246,11 @@ export function AgentSettingChips({
             type="button"
             variant="ghost"
             size="sm"
-            className={CHIP}
+            className={cn(CHIP, noApproval && "border-destructive/60 text-destructive")}
             disabled={saving}
-            aria-label={`@${handle} 권한: ${row.permissionMode ?? DEFAULT_LABEL}`}
+            aria-label={`@${handle} 권한: ${row.permissionMode ?? DEFAULT_LABEL}${noApproval ? ` — ${NO_APPROVAL_HINT}` : ""}`}
           >
+            {noApproval && <TriangleAlertIcon className="size-3" aria-hidden />}
             <ChipText name="권한" value={row.permissionMode ?? DEFAULT_LABEL} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
@@ -264,6 +267,9 @@ export function AgentSettingChips({
             {locks.map(({ mode, lock }) => (
               <DropdownMenuRadioItem key={mode} value={mode} disabled={lock !== undefined}>
                 {mode}
+                {isNoApprovalMode(mode) && (
+                  <span className="text-xs text-destructive"> — {NO_APPROVAL_HINT}</span>
+                )}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

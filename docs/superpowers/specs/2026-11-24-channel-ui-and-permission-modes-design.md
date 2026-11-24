@@ -54,5 +54,7 @@
 ## 빌더에게 남긴 것
 
 - `auto` 를 지원하지 않는 모델에서의 동작, 옛 러너가 넓어진 enum 을 받을 때의 실패 꼴.
+  - **확인함(A 줄, 2026-11-24)** — `auto` 미지원 모델: CLI 가 거절하지 않고 말없이 `default` 로 내린다(init `auto` → `system/status` `permissionMode: "default"`, 쓰기 도구는 승인 카드). 런 0회 하네스 — SDK 0.3.283 내장 CLI 2.1.283 + `haiku`(→ `claude-haiku-4-5-20251001`, `supportsAutoMode` 없음). 거절 카드는 두지 않았다 — 더 묻는 쪽이라 안전해서, 남은 것(칩이 `auto` 그대로)은 plan.md 8장 「이월」. 절차는 `docs/guides/live-smoke.md` 11절 「권한 auto·bypassPermissions 재기」.
+  - **확인함** — 옛 러너(0.10.0): `permissionMode: "auto"` 가 실린 `run.start` 를 dispatch 로 받고 `run.error VALIDATION`(「run.start 형식이 틀렸습니다 — agent.permissionMode」)으로 닫는다. CLI 는 뜨지 않고, 서버 카드는 「@x 실행이 실패했습니다: VALIDATION」(사유 없음). 그래서 어댑터 `send` 가 `acceptEdits` 위 모드를 hello 상한 위면 보내지 않고 `RUNNER_CEILING(permissionMode)` 로 닫는다 — 옛 러너는 이 둘을 상한으로 알릴 수 없으니 언제나 이 길이다.
 - 초대 대화상자의 세부 꼴(검색 결과 정렬, 다중 추가 중 일부 실패 표시).
 - 격자 머리 단추의 정확한 모양.
