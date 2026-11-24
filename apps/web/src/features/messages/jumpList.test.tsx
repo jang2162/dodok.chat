@@ -1,14 +1,15 @@
-import type { Message } from "@dodok/shared";
+import type { Agent, Message } from "@dodok/shared";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { getTimeline, setChannelSeq } from "@/realtime/timelineCache";
-import { AGENT, CH, msg } from "../../../test/fixtures";
-import { authorsClient, renderWithClient } from "../../../test/messages";
+import { AGENT, CH, msg, uid, USER } from "../../../test/fixtures";
+import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { json } from "../../../test/shellApi";
+import { useBundleExpansion } from "./bundleExpansion";
 import { HIGHLIGHT_MS, requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
@@ -46,8 +47,11 @@ afterEach(() => {
 });
 
 /** 세션 타임라인을 채우고 그 채널을 구독한 것으로(채널 커서) — `subscribed: false` 면 구독 전(사본에서 복원한 목록) */
-function setup(t: Timeline, { subscribed = true } = {}) {
-  const qc = authorsClient();
+function setup(
+  t: Timeline,
+  { subscribed = true, agents = [DEV] }: { subscribed?: boolean; agents?: Agent[] } = {},
+) {
+  const qc = authorsClient(agents);
   qc.setQueryData(qk.timeline(CH, CH), t);
   if (subscribed) setChannelSeq(qc, CH, t.lastSeq);
   const view = renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
@@ -249,5 +253,40 @@ describe("떨어진 창(hasNewer)", () => {
     // 붙은 행을 따라 끝으로 가지 않는다 — 따라가면 또 아래 끝이라 다음 쪽이 연달아 불린다
     await new Promise((r) => setTimeout(r, 100));
     expect(fetched()).not.toContain(url("limit=50&afterSeq=30"));
+  });
+});
+
+describe("결과로 가기 — 답 묶음 안", () => {
+  const FIN = uid(12);
+  const [RA, RB] = [uid(301), uid(302)];
+  afterEach(() => useBundleExpansion.getState().reset());
+
+  it("묶음 안 메시지로 가면 그 줄이 펼쳐지고 강조된다", async () => {
+    const root = msg(1, { authorType: "user", authorId: USER, bodyMd: "@dev 봐줘" });
+    const answer = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd,
+        runRoot: { runId, agentId, rootMessageId: root.id },
+      });
+    const target = answer(3, FIN, RB, "fin 의 답");
+    // 묶음은 맨 위 — 처음에는 끝에 붙어 그려지지 않는다
+    setup(
+      timelineOf([root, answer(2, AGENT, RA, "dev 의 답"), target, ...range(4, 100)], { hasOlder: false }),
+      {
+        agents: [DEV, { ...DEV, id: FIN, handle: "fin", name: "Fin", providerAgentId: "fin" }],
+      },
+    );
+    await waitFor(() => expect(screen.queryByRole("group", { name: /답$/ })).toBeNull());
+    act(() => requestJump({ conversationId: CH, messageId: target.id, seq: 3 }));
+    const lane = await screen.findByRole("button", { name: /^@fin / });
+    await waitFor(() => expect(lane).toHaveAttribute("aria-expanded", "true"));
+    const lit = (await screen.findByText("fin 의 답", { selector: "p" })).closest("[data-message-id]");
+    expect(lit).toHaveAttribute("data-highlighted", "true");
+    // 다른 줄은 그대로 접힘
+    expect(screen.getByRole("button", { name: /^@dev / })).toHaveAttribute("aria-expanded", "false");
+    expect(fetched().filter((u) => u.includes("/messages"))).toEqual([]);
   });
 });

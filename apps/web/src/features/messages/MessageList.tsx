@@ -1,6 +1,6 @@
 import type { Message } from "@dodok/shared";
 import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import {
   type FocusEvent,
   memo,
@@ -24,7 +24,8 @@ import { useRunStore } from "@/features/runs/runStore";
 import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { type Bundle, type BundleRun, computeBundles } from "./bundles";
+import { type Bundle, type BundleRun, bundleIndex, computeBundles } from "./bundles";
+import { useBundleExpansion } from "./bundleExpansion";
 import { groupRows, type Row } from "./groupRows";
 import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
@@ -33,7 +34,8 @@ import { PendingItem } from "./PendingItem";
 import { ReplyBundle } from "./ReplyBundle";
 import { SystemCard } from "./SystemCard";
 import { HIGHLIGHT_MS } from "./jumpTarget";
-import { useJump } from "./useJump";
+import { useAuthors } from "./useAuthors";
+import { rowHolds, useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
 import { NEW_CONVERSATION, type Timeline } from "./timeline";
@@ -153,6 +155,7 @@ function ChannelMessages({
   );
   const messagesById = useMemo(() => new Map((timelineItems ?? []).map((m) => [m.id, m])), [timelineItems]);
   const bubbleSet = useMemo(() => new Set(bubbleRunIds), [bubbleRunIds]);
+  const bundled = useMemo(() => bundleIndex(bundles), [bundles]);
   /**
    * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
    * 페이지 경계가 우연히 맞았으면 배너 대신 구분선에서 연다. `done` 이 되기 전에는 첫 위치를 잡지 않고 자리표시를 그린다.
@@ -244,7 +247,7 @@ function ChannelMessages({
     stuckRef.current = next;
     setStuckState(next);
   }, []);
-  const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef);
+  const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef, bundled.byMessage);
   const older = useOlderPages(channelId, conversationId, threadRootId);
   const newer = useNewerPages(channelId, conversationId, threadRootId, hasNewer);
   const qc = useQueryClient();
@@ -276,10 +279,60 @@ function ChannelMessages({
     },
     [arrive],
   );
+  const highlighted = jump.highlighted;
   const bundleView = useMemo(
-    (): BundleView => ({ messagesById, bubbleRunIds: bubbleSet, bubbles, onApproval: toApproval }),
-    [messagesById, bubbleSet, bubbles, toApproval],
+    (): BundleView => ({
+      messagesById,
+      bubbleRunIds: bubbleSet,
+      bubbles,
+      onApproval: toApproval,
+      highlighted,
+    }),
+    [messagesById, bubbleSet, bubbles, toApproval, highlighted],
   );
+  /** 그 행이 지금 뷰포트에 걸쳐 있는가 — 잰 자리(추정 포함)와 스크롤 위치로 본다 */
+  const rowInView = useCallback(
+    (index: number): boolean => {
+      const el = scrollRef.current;
+      const m = virtualizer.measurementsCache[index];
+      if (!el || !m) return false;
+      return m.end > el.scrollTop && m.start < el.scrollTop + el.clientHeight;
+    },
+    [virtualizer],
+  );
+  /**
+   * 「답 도착」 칩(답 묶음 설계) — 이 탭에서 새로 받은 에이전트 답이 묶음으로 들어갔는데 그 묶음 행이 화면 밖이면 띄운다. 묶음 안 글은
+   * 루트 자리에 있어 바닥 따라가기·「새 메시지」 칩이 맡지 않는다. 새로 받은 것 = 지금까지 본 가장 큰 seq 뒤의 글(과거 페이지·around 로
+   * 받은 옛 글은 아니다)
+   */
+  const [arrival, setArrival] = useState<{ rootId: string; runId: string; agentId?: string }>();
+  const topSeq = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!timelineItems) return;
+    const last = timelineItems.at(-1)?.seq ?? 0;
+    const before = topSeq.current;
+    topSeq.current = Math.max(before ?? 0, last);
+    if (before === undefined) return;
+    for (const m of timelineItems) {
+      if (m.seq <= before || m.authorType !== "agent") continue;
+      const rootId = bundled.byMessage.get(m.id);
+      const runId = m.runId;
+      if (rootId === undefined || runId === undefined) continue;
+      const index = rowsRef.current.findIndex((r) => r.key === `bundle:${rootId}`);
+      if (index >= 0 && !rowInView(index)) setArrival({ rootId, runId, agentId: m.authorId });
+    }
+  }, [timelineItems, bundled, rowInView]);
+  const toArrival = () => {
+    if (!arrival) return;
+    setArrival(undefined);
+    useBundleExpansion.getState().set(arrival.runId, true);
+    const index = rowsRef.current.findIndex((r) => r.key === `bundle:${arrival.rootId}`);
+    if (index >= 0) arrive(index);
+  };
+  const { author } = useAuthors();
+  const arrivalHandle = arrival
+    ? (author({ authorType: "agent", authorId: arrival.agentId }).handle ?? "?")
+    : undefined;
   // 묻는 것은 처음 위치를 잡기 전 한 번 — 배너가 뜰 경계(`showBanner` 와 같은 조건)이고 받은 목록에 구분선이 없을 때만.
   // 결과로 가기 목표를 안고 열렸으면 그리로 가므로 묻지 않는다
   const probing =
@@ -322,7 +375,7 @@ function ChannelMessages({
     let raf = 0;
     const doc = el.ownerDocument;
     const tick = () => {
-      const index = rowsRef.current.findIndex((r) => r.kind === "message" && r.message.id === focusId);
+      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId));
       const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
       if (doc.activeElement !== row && !focusIsFree(doc, el)) {
         focused();
@@ -582,6 +635,10 @@ function ChannelMessages({
     setStuck(fromBottom <= STICK_PX && !hasNewer && awaitRef.current === undefined);
     older.onScrollTop(el.scrollTop);
     newer.onScrollBottom(fromBottom);
+    if (arrival) {
+      const index = rowsRef.current.findIndex((r) => r.key === `bundle:${arrival.rootId}`);
+      if (index < 0 || rowInView(index)) setArrival(undefined);
+    }
   };
 
   // 초점이 든 행을 기억한다(`rangeExtractor`). 영역을 떠나면 잊는다 — 떠나는 순간(focusout)에는 아직 새 자리가 정해지지 않았으므로
@@ -691,7 +748,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
-                tabIndex={row.kind === "message" && row.message.id === landed ? -1 : undefined}
+                tabIndex={landed !== undefined && rowHolds(row, landed) ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",
@@ -736,6 +793,11 @@ function ChannelMessages({
           >
             최신 메시지로
             <ArrowDownIcon aria-hidden />
+          </Button>
+        ) : arrival ? (
+          <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toArrival}>
+            @{arrivalHandle} 답 도착 — 보기
+            <ArrowUpIcon aria-hidden />
           </Button>
         ) : (
           unseen > 0 && (
@@ -868,6 +930,8 @@ function useUnseen(
   timeline: Timeline | undefined,
   stuck: boolean,
   stuckRef: { readonly current: boolean },
+  /** 답 묶음에 든 메시지 — 루트 자리에 있는 것으로 봐 세지 않는다(「답 도착」 칩이 맡는다) */
+  bundled: ReadonlyMap<string, string>,
 ): [number, (seq: number) => void] {
   const me = useMe().data?.user.id;
   const lastSeq = timeline?.items.at(-1)?.seq ?? 0;
@@ -879,7 +943,8 @@ function useUnseen(
   const unseen =
     stuck || !timeline
       ? 0
-      : timeline.items.filter((m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me))
-          .length;
+      : timeline.items.filter(
+          (m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me) && !bundled.has(m.id),
+        ).length;
   return [unseen, setSeenSeq];
 }
