@@ -5,7 +5,12 @@ import { channels, memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
 import { channelParticipants } from "../modules/channels/service";
 import { connectionOwners, readableConnections } from "../modules/connections/owner";
-import { hydrateForClient, withAutomationNames, withInteractions } from "../modules/messages/service";
+import {
+  hydrateForClient,
+  withAutomationNames,
+  withInteractions,
+  withRunRoots,
+} from "../modules/messages/service";
 import { setupStatusFor } from "../modules/setup/status";
 import { withReactions } from "../modules/reactions/service";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
@@ -126,9 +131,14 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   // 룸이 비면 io.to([]) 는 전체로 내보낸다 — 받을 사람이 없으면 아예 내지 않는다
   const toAudience = (rooms: string[]) => (rooms.length > 0 ? io.to(rooms) : undefined);
 
-  // 자동화 이름도 붙인다 — 안 붙이면 member 화면의 새 자동화 글이 다시 불러오기 전까지 「⚙ 자동화」로만 보인다
+  // 자동화 이름도 붙인다 — 안 붙이면 member 화면의 새 자동화 글이 다시 불러오기 전까지 「⚙ 자동화」로만 보인다. 런 루트(runRoot)도 —
+  // 웹이 run.state 를 못 받은 탭(오프라인 사본 복원 직후 등)에서도 실시간 답을 루트 아래 묶는다(답 묶음 설계). 대상이 아니면 질의 없음.
+  // 루트 글의 rootRuns 는 싣지 않는다 — 새 글에는 아직 런이 없고 뒤 상태는 run.state 가 맡는다
   const hydrate = (message: Message): Message =>
-    withAutomationNames(opts.db, withReactions(opts.db, withInteractions(opts.db, [message])))[0] ?? message;
+    withRunRoots(
+      opts.db,
+      withAutomationNames(opts.db, withReactions(opts.db, withInteractions(opts.db, [message]))),
+    )[0] ?? message;
   // 갱신은 루트일 수 있다(카드 상호작용 등) — 요약을 빼고 보내면 웹 칩이 사라진다. 새 메시지는 답글이 있을 수 없어 요약을 보지 않는다
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 

@@ -89,6 +89,38 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     await aborted;
   });
 
+  it("실시간 message.created 의 에이전트 글에 runRoot", async () => {
+    const socket = await connect();
+    const conversationId = channelConversation(app.db, channel.id);
+    const rootId = uuid();
+    const source = insertRun(app.db, {
+      channelId: channel.id,
+      conversationId,
+      agentId: dev.id,
+      triggerKind: "mention",
+      triggerMessageId: rootId,
+      rootMessageId: rootId,
+      relayDepth: 0,
+      sessionKey: `agent:dev:dodok:channel:${conversationId}`,
+      createdAt: new Date(),
+    });
+    const externalId = `root-${++n}`;
+    const created = waitFor(socket, "message.created", (p) => p.message.externalId === externalId);
+    createAgentMessage(app.db, app.bus, {
+      conversationId,
+      agentId: dev.id,
+      runId: source.id,
+      externalId,
+      bodyMd: "답",
+    });
+    expect((await created).message.runRoot).toEqual({
+      runId: source.id,
+      agentId: dev.id,
+      rootMessageId: rootId,
+      triggerMessageId: rootId,
+    });
+  });
+
   it("run.abort — ack null, adapter.calls.abort 에 남고 run.state aborted 팬아웃", async () => {
     const socket = await connect();
     const run = await mentionDev(socket);

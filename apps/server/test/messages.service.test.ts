@@ -1,4 +1,4 @@
-import { type Attachment, INTERACTIONS_MAX, Message } from "@dodok/shared";
+import { type Attachment, INTERACTIONS_MAX, Message, ROOT_RUNS_MAX } from "@dodok/shared";
 import { eq, inArray } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +25,7 @@ import {
   listMessages,
   withInteractions,
 } from "../src/modules/messages/service";
-import { insertRun } from "../src/modules/runs/store";
+import { insertRun, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import {
@@ -717,6 +717,42 @@ describe("hydrateForClient 의 runRoot(답 묶음 설계)", () => {
     const [a, b] = hydrateForClient(db, [root, info]);
     expect(a?.runRoot).toBeUndefined();
     expect(b?.runRoot).toBeUndefined();
+  });
+
+  it("사람 최상위 글에 rootRuns — 메시지 없이 중지된 런도 상태와 함께 런 id 순", () => {
+    const { db, root, devId, finId, run, say } = chain();
+    const a = run(devId, root.id);
+    const m1 = say(devId, a.id, "o1");
+    const b = run(finId, root.id);
+    updateRun(db, b.id, { status: "aborted" });
+    const [h, agent] = hydrateForClient(db, [root, m1]);
+    expect(h?.rootRuns).toEqual([
+      { runId: a.id, agentId: devId, status: "queued", triggerMessageId: root.id },
+      { runId: b.id, agentId: finId, status: "aborted", triggerMessageId: root.id },
+    ]);
+    expect(agent?.rootRuns).toBeUndefined();
+  });
+
+  it("rootRuns 는 스레드 답·런 없는 글에는 없고, ROOT_RUNS_MAX 를 넘으면 최근 것만", () => {
+    const { db, bus, conversationId, root, devId, run } = chain();
+    const reply = createUserMessage(db, bus, {
+      conversationId,
+      authorId: root.authorId!,
+      bodyMd: "스레드 답",
+      clientMsgId: "t",
+      threadRootId: root.id,
+    });
+    const bare = createUserMessage(db, bus, {
+      conversationId,
+      authorId: root.authorId!,
+      bodyMd: "그냥 글",
+      clientMsgId: "b",
+    });
+    const made = Array.from({ length: ROOT_RUNS_MAX + 2 }, () => run(devId, root.id).id);
+    const [h, t, n] = hydrateForClient(db, [root, reply, bare]);
+    expect(t?.rootRuns).toBeUndefined();
+    expect(n?.rootRuns).toBeUndefined();
+    expect(h?.rootRuns?.map((r) => r.runId)).toEqual(made.slice(2));
   });
 });
 

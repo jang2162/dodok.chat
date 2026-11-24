@@ -4,9 +4,12 @@ import {
   INTERACTIONS_MAX,
   Message,
   type MessageInteraction,
+  type MessageRootRun,
   neutralizeMentionTokens,
   parseMentions,
   type Participant,
+  ROOT_RUNS_MAX,
+  type RunStatus,
   type SystemKind,
   type SystemMeta,
   type ThreadSummary,
@@ -318,11 +321,56 @@ export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
+/** rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 사람 최상위 보통 글(웹 bundles.ts canRoot 와 같은 조건) */
+const canRootRuns = (m: Message): boolean =>
+  m.authorType === "user" && m.kind === "normal" && m.threadRootId === undefined;
+
+/**
+ * 사람 최상위 글에 그 글이 루트인 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계
+ * 「줄의 원천은 런」). 대상이 없으면 질의하지 않고, 있으면 runs_root 인덱스로 한 번. 글마다 최근 ROOT_RUNS_MAX 개를 런 id 순으로 싣고,
+ * 런이 없는 글에는 붙이지 않는다
+ */
+export function withRootRuns(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = [...new Set(msgs.flatMap((m) => (canRootRuns(m) ? [m.id] : [])))];
+  if (ids.length === 0) return msgs;
+  const byRoot = new Map<string, MessageRootRun[]>();
+  const rows = db
+    .select({
+      id: runs.id,
+      agentId: runs.agentId,
+      status: runs.status,
+      rootMessageId: runs.rootMessageId,
+      triggerMessageId: runs.triggerMessageId,
+    })
+    .from(runs)
+    .where(inArray(runs.rootMessageId, ids))
+    .orderBy(desc(runs.id))
+    .all();
+  for (const r of rows) {
+    const list = byRoot.get(r.rootMessageId) ?? [];
+    if (list.length >= ROOT_RUNS_MAX) continue;
+    list.push({
+      runId: r.id,
+      agentId: r.agentId,
+      status: r.status as RunStatus,
+      ...(r.triggerMessageId ? { triggerMessageId: r.triggerMessageId } : {}),
+    });
+    byRoot.set(r.rootMessageId, list);
+  }
+  return msgs.map((m) => {
+    const list = canRootRuns(m) ? byRoot.get(m.id) : undefined;
+    return list ? { ...m, rootRuns: [...list].reverse() } : m;
+  });
+}
+
 /** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름·런 루트. REST·구독 ack·wire 팬아웃이 쓴다 */
 export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
-  return withRunRoots(
+  return withRootRuns(
     db,
-    withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)))),
+    withRunRoots(
+      db,
+      withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)))),
+    ),
   );
 }
 
