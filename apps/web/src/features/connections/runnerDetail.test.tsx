@@ -32,6 +32,14 @@ afterEach(() => {
 });
 
 const detail = () => screen.findByTestId("runner-detail");
+/** 카드 제목(h2)의 차례 — 개수는 제목 옆 따로 */
+const cardOrder = (root: HTMLElement) => [...root.querySelectorAll("h2")].map((el) => el.textContent);
+/** 「⋯」 메뉴 — 초점을 준 뒤 Enter 로 연다(sidebar.test 의 까닭 — jsdom 의 window blur 가 Radix 메뉴를 닫는다) */
+async function openMenu(root: HTMLElement, label: string | RegExp) {
+  within(root).getByRole("button", { name: label }).focus();
+  await userEvent.keyboard("{Enter}");
+  return screen.findByRole("menu");
+}
 
 describe("owner", () => {
   it("owner sees projects, install steps and its token — 섹션 차례대로", async () => {
@@ -41,12 +49,11 @@ describe("owner", () => {
     // 경고 줄은 걷었다(2026-11-10 문구 걷기)
     expect(within(runner).queryByRole("note")).toBeNull();
     await within(runner).findByRole("region", { name: "러너 토큰" });
-    const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
-      (el) => el.getAttribute("aria-label") ?? el.textContent,
-    );
-    expect(order).toEqual(["프로젝트 0", "봇 0", "설치 안내", "러너 토큰"]);
-    // 붙은 적이 없는 러너 — 설치 안내가 펼친 채
-    expect(within(runner).getByRole("group", { name: "설치 안내" })).toHaveAttribute("open");
+    await within(runner).findByRole("region", { name: "설치 안내" });
+    expect(cardOrder(runner)).toEqual(["에이전트 프로그램", "프로젝트", "봇", "설치 안내", "러너 토큰"]);
+    // 붙은 적이 없는 러너 — 설치 안내가 카드로 펼쳐 있고 「⋯」 메뉴에는 없다
+    expect(within(runner).getByRole("region", { name: "설치 안내" })).toBeVisible();
+    expect(within(runner).queryByRole("button", { name: "맥북 더 보기" })).toBeNull();
   });
 
   it("토큰을 폐기하면 초점이 상세 머리로 간다 — body 로 떨어지지 않는다", async () => {
@@ -77,7 +84,16 @@ describe("owner", () => {
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
     const runner = await detail();
     await within(runner).findByRole("region", { name: "러너 토큰" });
-    expect(within(runner).getByRole("group", { name: "설치 안내" })).not.toHaveAttribute("open");
+    // 설치를 마친 러너 — 설치 안내는 「⋯」 메뉴로 옮겨 가고, 고르면 대화상자로 연다
+    expect(within(runner).queryByRole("region", { name: "설치 안내" })).toBeNull();
+    const menu = await openMenu(runner, "맥북 더 보기");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["설치 안내"]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "설치 안내" }));
+    expect(await screen.findByRole("dialog", { name: "설치 안내" })).toBeInTheDocument();
   });
 
   it("unknown runner id shows not found", async () => {
@@ -103,8 +119,11 @@ describe("member", () => {
     renderRunnersPage("member", undefined, runnerPath());
     const runner = await detail();
     expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
-    expect(within(runner).getByRole("region", { name: "에이전트 1" })).toBeInTheDocument();
+    expect(within(runner).getByRole("region", { name: "에이전트" })).toHaveTextContent("에이전트1");
     expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();
+    // 관리할 수 없으면 「⋯」 메뉴도, 프로그램 카드도 없다
+    expect(within(runner).queryByRole("button", { name: /더 보기/ })).toBeNull();
+    expect(within(runner).queryByRole("region", { name: "에이전트 프로그램" })).toBeNull();
     expect(server.calls).toEqual([]);
   });
 
@@ -135,10 +154,8 @@ describe("연결의 주인(2단계)", () => {
     renderConnection(MEMBER, undefined, runnerDetailPath(tokenId(1)));
     const runner = await detail();
     await within(runner).findByRole("region", { name: "러너 토큰" });
-    const order = [...runner.querySelectorAll("h2, details[aria-label='설치 안내']")].map(
-      (el) => el.getAttribute("aria-label") ?? el.textContent,
-    );
-    expect(order).toEqual(["프로젝트 0", "봇 0", "설치 안내", "러너 토큰"]);
+    await within(runner).findByRole("region", { name: "설치 안내" });
+    expect(cardOrder(runner)).toEqual(["에이전트 프로그램", "프로젝트", "봇", "설치 안내", "러너 토큰"]);
     expect(runner).toHaveTextContent("주인 나");
   });
 
@@ -152,7 +169,8 @@ describe("연결의 주인(2단계)", () => {
     const runner = await detail();
     expect(within(runner).getByRole("heading", { level: 1, name: "맥북" })).toBeInTheDocument();
     expect(runner).toHaveTextContent("주인 mia");
-    expect(within(runner).queryByRole("group", { name: "설치 안내" })).toBeNull();
+    expect(within(runner).queryByRole("region", { name: "설치 안내" })).toBeNull();
+    expect(within(runner).queryByRole("button", { name: /더 보기/ })).toBeNull();
     expect(within(runner).queryByRole("region", { name: "러너 토큰" })).toBeNull();
     expect(within(runner).queryByRole("region", { name: /^프로젝트/ })).toBeNull();
     expect(server.calls.filter((c) => /runner-tokens|\/runners|setup\/status/.test(c.url))).toEqual([]);
@@ -222,7 +240,10 @@ describe("프로젝트 상세", () => {
     expect(within(project).getByRole("heading", { level: 1, name: "dodok" })).toBeInTheDocument();
     expect(within(project).getByRole("link", { name: "맥북" })).toHaveAttribute("href", runnerPath());
     expect(project).toHaveTextContent("내 저장소들/dodok");
-    expect(within(project).getByRole("button", { name: /^dodok \(.+\) 보관$/ })).toBeInTheDocument();
+    // 줄의 동작은 「워크트리 만들기」와 「⋯」 메뉴(확인·이름 바꾸기·옮기기·보관)
+    const menu = await openMenu(project, /^dodok \(.+\) 더 보기$/);
+    expect(within(menu).getByRole("menuitem", { name: "보관" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     expect(within(project).getByRole("button", { name: "에이전트 만들기" })).toBeEnabled();
   });
 
@@ -238,7 +259,8 @@ describe("프로젝트 상세", () => {
     vi.stubGlobal("fetch", vi.fn(server.fetch));
     const { router } = renderRunnersPage("admin", undefined, projectPath(projectOf(1).id));
     const project = await screen.findByTestId("project-detail");
-    await userEvent.click(within(project).getByRole("button", { name: /^dodok \(.+\) 보관$/ }));
+    const menu = await openMenu(project, /^dodok \(.+\) 더 보기$/);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "보관" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "보관" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(runnerPath()));
@@ -302,10 +324,11 @@ describe("러너 상세의 「봇」 묶음(러너 봇 스펙 B11)", () => {
     vi.stubGlobal("fetch", vi.fn(server.fetch));
     renderRunnersPage("admin");
     const detail = await screen.findByTestId("runner-detail");
-    const bots = await within(detail).findByRole("region", { name: "봇 1" });
+    const bots = await within(detail).findByRole("region", { name: "봇" });
+    expect(bots).toHaveTextContent("봇1");
     expect(within(bots).getByRole("link", { name: /리뷰 봇/ })).toBeInTheDocument();
     expect(bots).not.toHaveTextContent("옛 에이전트");
-    const unbound = within(detail).getByRole("region", { name: "프로젝트 밖 에이전트 1" });
+    const unbound = within(detail).getByRole("region", { name: "프로젝트 밖 에이전트" });
     expect(unbound).toHaveTextContent("옛 에이전트");
     expect(unbound).not.toHaveTextContent("리뷰 봇");
     expect(within(detail).getByRole("button", { name: "봇 만들기" })).toBeEnabled();
@@ -331,6 +354,8 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     });
   }
   const group = async () => within(await detail()).findByRole("group", { name: "러너 업데이트" });
+  /** 머리 오른쪽의 「러너 업데이트」(연결 재설계 스펙 목표 2) — 상태 줄(group)은 머리 아래 */
+  const headButton = async () => within(await detail()).queryByRole("button", { name: "러너 업데이트" });
 
   it("판 · 최신과 업데이트 — 확인하면 POST 하고 「업데이트 중…」", async () => {
     let update: RunnerSummary["update"] = null;
@@ -352,13 +377,13 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
     const box = await group();
     expect(box).toHaveTextContent("판 0.8.0 · 최신 0.9.0");
-    await userEvent.click(within(box).getByRole("button", { name: "업데이트" }));
+    await userEvent.click((await headButton())!);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("러너를 0.9.0 로 업데이트할까요?");
     await userEvent.click(within(dialog).getByRole("button", { name: "업데이트" }));
     expect(await within(box).findByText("업데이트 중…")).toBeInTheDocument();
     expect(server.count("POST", `/api/v1/runners/${tokenId(1)}/update`)).toBe(1);
-    expect(within(box).getByRole("button", { name: "업데이트" })).toBeDisabled();
+    expect(await headButton()).toBeDisabled();
   });
 
   // Review Focus 5
@@ -368,14 +393,14 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     const box = await group();
     expect(box).toHaveTextContent("판 0.8.0 · 최신 알 수 없음");
     expect(box).toHaveTextContent("최신 판을 알 수 없습니다");
-    expect(within(box).queryByRole("button", { name: "업데이트" })).toBeNull();
+    expect(await headButton()).toBeNull();
   });
 
   it("끈 머신은 안내만, 옛 판은 명령 한 줄, 이미 최신이면 단추가 없다", async () => {
     stubRunner({ remoteUpdate: "off" });
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
     expect(await group()).toHaveTextContent("이 머신에서 원격 업데이트를 껐습니다");
-    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+    expect(await headButton()).toBeNull();
     cleanup();
     vi.unstubAllGlobals();
     stubRunner({ remoteUpdate: "unsupported" });
@@ -388,7 +413,7 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     stubRunner({ runnerVersion: "0.9.0" });
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
     expect(await group()).toHaveTextContent("판 0.9.0 · 최신 0.9.0");
-    expect(within(await group()).queryByRole("button", { name: "업데이트" })).toBeNull();
+    expect(await headButton()).toBeNull();
   });
 
   it("서버가 409 로 거절하면 대화상자에 그 문구(런 중)", async () => {
@@ -404,7 +429,8 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
       },
     );
     renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
-    await userEvent.click(within(await group()).getByRole("button", { name: "업데이트" }));
+    await group();
+    await userEvent.click((await headButton())!);
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "업데이트" }));
     expect(await within(dialog).findByText("런이 끝난 뒤 다시 시도하세요")).toBeInTheDocument();

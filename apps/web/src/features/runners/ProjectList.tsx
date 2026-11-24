@@ -1,8 +1,9 @@
 import type { RunnerProject, RunnerProjectCheck, RunnerSummary } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
+import { OverflowMenu, type OverflowMenuItem } from "@/features/connections/DetailCard";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
@@ -35,7 +36,8 @@ function a11yName(project: Pick<RunnerProject, "label" | "rootId" | "rootLabel" 
 }
 
 /**
- * 러너 상세의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨(그 프로젝트 상세 링크)·자리·에이전트 수와 「확인」·이름 바꾸기·옮기기·보관,
+ * 러너 상세의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨(그 프로젝트 상세 링크)·자리·에이전트 수와 「워크트리 만들기」, 드문 동작은
+ * 「⋯」 메뉴(확인·이름 바꾸기·옮기기·보관 — 연결 재설계 스펙 목표 3),
  * 보관한 것은 아래 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove()`(「프로젝트 추가」, 잠겼으면 상세 머리)로 옮긴다
  */
 export function ProjectList({
@@ -116,10 +118,26 @@ export function ProjectRow({
   const check = useCheckRunnerProject();
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
   const [renaming, setRenaming] = useState(false);
-  const renameButton = useRef<HTMLButtonElement>(null);
+  const [moving, setMoving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  // 「⋯」 — 메뉴로 연 동작(이름 바꾸기 칸·대화상자)이 닫히면 초점이 돌아올 자리
+  const menuButton = useRef<HTMLButtonElement>(null);
   const live = runner.connected && !runner.revoked;
   const rootMissing = live && project.rootLabel === null;
   const isWorktree = project.parentProjectId !== null;
+  // 러너가 폐기된 워크트리는 폴더를 지울 수 없다 — 「보관」 대신 「폴더를 남기고 보관」만(ArchiveProject)
+  const archiveBlocked = isWorktree && runner.revoked;
+  const menuItems: OverflowMenuItem[] = [
+    {
+      label: check.isPending ? "확인하는 중…" : "확인",
+      disabled: check.isPending || !live,
+      onSelect: runCheck,
+    },
+    { label: "이름 바꾸기", onSelect: () => setRenaming(true) },
+    // 워크트리는 옮기지 않는다(W9)
+    ...(isWorktree ? [] : [{ label: "옮기기", onSelect: () => setMoving(true) }]),
+    ...(archiveBlocked ? [] : [{ label: "보관", danger: true, onSelect: () => setArchiving(true) }]),
+  ];
 
   function runCheck() {
     if (check.isPending) return;
@@ -138,8 +156,8 @@ export function ProjectRow({
           project={project}
           onClose={() => {
             setRenaming(false);
-            // 이름 칸이 사라진다 — 초점을 다시 그려지는 「이름 바꾸기」로
-            requestAnimationFrame(() => renameButton.current?.focus());
+            // 이름 칸이 사라진다 — 초점을 다시 그려지는 「⋯」로
+            requestAnimationFrame(() => menuButton.current?.focus());
           }}
         />
       ) : (
@@ -169,43 +187,33 @@ export function ProjectRow({
               {project.isGit && " · git"} · 에이전트 {project.agentCount}
             </p>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              aria-label={`${a11yName(project)} 확인`}
-              disabled={check.isPending || !live}
-              onClick={runCheck}
-            >
-              {check.isPending ? "확인하는 중…" : "확인"}
-            </Button>
-            <Button
-              ref={renameButton}
-              type="button"
-              size="sm"
-              variant="outline"
-              aria-label={`${a11yName(project)} 이름 바꾸기`}
-              onClick={() => setRenaming(true)}
-            >
-              이름 바꾸기
-            </Button>
+          <div className="flex flex-wrap items-center gap-1">
             {!isWorktree && (
               <CreateWorktreeDialog parent={project} runner={runner} a11yName={a11yName(project)} />
             )}
-            {/* 워크트리는 옮기지 않는다(W9) */}
-            {!isWorktree && (
-              <MoveProjectDialog
-                project={project}
-                runner={runner}
-                runners={runners}
-                afterMove={afterRemove}
-              />
-            )}
-            <ArchiveProjectButton project={project} runner={runner} afterArchive={afterRemove} />
+            <OverflowMenu label={`${a11yName(project)} 더 보기`} items={menuItems} triggerRef={menuButton} />
           </div>
         </div>
       )}
+      {!isWorktree && (
+        <MoveProjectDialog
+          project={project}
+          runner={runner}
+          runners={runners}
+          afterMove={afterRemove}
+          open={moving}
+          onOpenChange={setMoving}
+          returnFocus={menuButton}
+        />
+      )}
+      <ArchiveProject
+        project={project}
+        runner={runner}
+        afterArchive={afterRemove}
+        open={archiving}
+        onOpenChange={setArchiving}
+        returnFocus={menuButton}
+      />
       <p
         aria-live="polite"
         className={cn("text-xs empty:hidden", result?.ok === false && "text-destructive")}
@@ -286,26 +294,33 @@ function RenameForm({ project, onClose }: { project: RunnerProject; onClose: () 
 }
 
 /**
- * 보관 — 확인을 거친다. 일반 프로젝트의 이미 있는 에이전트는 남고 계속 답한다(스펙 8장) — 멈추려면 에이전트를 삭제한다. 워크트리는
+ * 보관 — 줄의 「⋯」 메뉴가 열고 확인을 거친다. 일반 프로젝트의 이미 있는 에이전트는 남고 계속 답한다(스펙 8장) — 멈추려면 에이전트를 삭제한다. 워크트리는
  * 러너가 폴더를 지워야 보관된다(W7) — 정리가 실패하면(409) 그 줄에 사유와 「폴더를 남기고 보관」(W12). 러너가 폐기됐으면 처음부터
  * 그 단추만. 보관이 막힌 사유(워크트리·에이전트가 남음)도 그 줄에
  */
-function ArchiveProjectButton({
+function ArchiveProject({
   project,
   runner,
   afterArchive,
+  open,
+  onOpenChange: setOpen,
+  returnFocus: menuButton,
 }: {
   project: RunnerProject;
   runner: RunnerSummary;
   afterArchive: () => HTMLElement | null;
+  /** 「⋯」 메뉴의 「보관」이 연다 */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  returnFocus: RefObject<HTMLElement | null>;
 }) {
   const archive = useArchiveRunnerProject({ silent: true });
-  const [open, setOpen] = useState(false);
   const [failure, setFailure] = useState<{ text: string; keepFolder: boolean }>();
-  const trigger = useRef<HTMLButtonElement>(null);
   const sending = useRef(false);
-  // 보관에 성공하면 줄과 이 버튼이 사라진다 — 초점은 카드의 「프로젝트 추가」(잠겼으면 카드 머리)로
+  // 대화상자가 닫힌 뒤의 초점 — 취소면 「⋯」, 보관에 성공하면 줄이 사라지므로 카드의 「프로젝트 추가」(잠겼으면 카드 머리)
+  const archived = useRef(false);
   const returnFocus = useRef<HTMLElement | null>(null);
+  if (!archived.current) returnFocus.current = menuButton.current;
   const isWorktree = project.parentProjectId !== null;
   const revoked = isWorktree && runner.revoked;
   // 지난 시도의 정리 실패 사유(서버가 그 줄에 남겼다) — 이번 시도의 사유가 있으면 그것
@@ -325,6 +340,7 @@ function ArchiveProjectButton({
     archive.mutateAsync({ id: project.id, ...(keepFolder ? { keepFolder: true } : {}) }).then(
       () => {
         sending.current = false;
+        archived.current = true;
         returnFocus.current = afterArchive();
         setOpen(false);
         requestAnimationFrame(() => afterArchive()?.focus());
@@ -339,21 +355,6 @@ function ArchiveProjectButton({
 
   return (
     <>
-      {!revoked && (
-        <Button
-          ref={trigger}
-          type="button"
-          size="sm"
-          variant="outline"
-          aria-label={`${a11yName(project)} 보관`}
-          onClick={() => {
-            returnFocus.current = trigger.current;
-            setOpen(true);
-          }}
-        >
-          보관
-        </Button>
-      )}
       {shown?.keepFolder && (
         <Button
           type="button"
@@ -366,7 +367,7 @@ function ArchiveProjectButton({
           {KEEP_FOLDER}
         </Button>
       )}
-      {shown && <p className="basis-full text-xs text-destructive">{shown.text}</p>}
+      {shown && <p className="text-xs text-destructive">{shown.text}</p>}
       <ConfirmDialog
         open={open}
         onOpenChange={setOpen}

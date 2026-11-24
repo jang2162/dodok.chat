@@ -261,10 +261,10 @@ describe("러너", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    // 그 러너 상세로 — 아직 붙은 적이 없어 설치 안내가 펼친 채, 토큰 줄에는 prefix 만
+    // 그 러너 상세로 — 아직 붙은 적이 없어 설치 안내가 카드로 펼쳐 있다, 토큰 줄에는 prefix 만
     await waitFor(() => expect(qc.router.state.location.pathname).toBe(runnerDetailPath(tokenId(8))));
     const detail = await screen.findByTestId("runner-detail");
-    expect(within(detail).getByRole("group", { name: "설치 안내" })).toHaveAttribute("open");
+    expect(await within(detail).findByRole("region", { name: "설치 안내" })).toBeVisible();
     const row = await within(detail).findByRole("listitem", { name: "맥북" });
     expect(row).toHaveTextContent(`drn_${RAW_RUNNER_TOKEN.slice(4, 10)}…`);
     expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
@@ -306,7 +306,7 @@ describe("러너", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(qc.router.state.location.pathname).toBe(runnerDetailPath(tokenId(8))));
     const detail = await screen.findByTestId("runner-detail");
-    expect(await within(detail).findByRole("group", { name: "설치 안내" })).toBeInTheDocument();
+    expect(await within(detail).findByRole("region", { name: "설치 안내" })).toBeInTheDocument();
     expect(screen.queryByText("이 연결을 찾을 수 없습니다")).toBeNull();
   });
 });

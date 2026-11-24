@@ -265,9 +265,24 @@ describe("워크트리 만들기 대화상자", () => {
 });
 
 describe("워크트리 보관", () => {
+  /** 워크트리 줄의 「⋯」 메뉴 — 초점을 준 뒤 Enter 로 연다(sidebar.test 의 까닭 — jsdom 의 window blur 가 Radix 메뉴를 닫는다) */
+  async function worktreeMenu(row: HTMLElement) {
+    within(row)
+      .getByRole("button", { name: /^feat \(.+\) 더 보기$/ })
+      .focus();
+    await userEvent.keyboard("{Enter}");
+    return screen.findByRole("menu");
+  }
   async function archiveWorktree() {
     const row = await rowOf(/^feat \(/);
-    await userEvent.click(within(row).getByRole("button", { name: /^feat \(.+\) 보관$/ }));
+    const menu = await worktreeMenu(row);
+    // 워크트리는 옮기지 않는다(W9) — 메뉴에도 없다
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["확인", "이름 바꾸기", "보관"]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "보관" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("무시된 파일(node_modules 등)은 함께 지워집니다");
     await userEvent.click(within(dialog).getByRole("button", { name: "보관" }));
@@ -314,6 +329,10 @@ describe("워크트리 보관", () => {
     const row = await rowOf(/^feat \(/);
     expect(within(row).getByRole("button", { name: /^feat \(.+\) 폴더를 남기고 보관$/ })).toBeEnabled();
     expect(within(row).queryByRole("button", { name: /^feat \(.+\) 보관$/ })).toBeNull();
+    // 폴더를 지울 수 없으니 「⋯」 메뉴에도 「보관」이 없다
+    const menu = await worktreeMenu(row);
+    expect(within(menu).queryByRole("menuitem", { name: "보관" })).toBeNull();
+    await userEvent.keyboard("{Escape}");
     expect(within(row).getByText(WORKTREE_CLEANUP_REASON.runner_revoked!)).toBeInTheDocument();
   });
 });
