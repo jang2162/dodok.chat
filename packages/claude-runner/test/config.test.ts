@@ -164,12 +164,15 @@ describe("loadRunnerConfig", () => {
     expect(e.message).toContain("programs.claude.executable");
   });
 
-  it("권한 상한에 bypassPermissions 는 받지 않는다", () => {
+  it("권한 상한 — 적지 않으면 default, auto·bypassPermissions 는 받고 모르는 값은 거절", () => {
+    const { config } = load({ ...baseConfig, programs: { claude: { configDir: "~/c" } } });
+    expect(config.programs.claude?.maxPermissionMode).toBe("default");
+    for (const maxPermissionMode of ["auto", "bypassPermissions"] as const) {
+      const opened = load({ ...baseConfig, programs: { claude: { configDir: "~/c", maxPermissionMode } } });
+      expect(opened.config.programs.claude?.maxPermissionMode).toBe(maxPermissionMode);
+    }
     const e = errorOf(() =>
-      load({
-        ...baseConfig,
-        programs: { claude: { configDir: "~/c", maxPermissionMode: "bypassPermissions" } },
-      }),
+      load({ ...baseConfig, programs: { claude: { configDir: "~/c", maxPermissionMode: "yolo" } } }),
     );
     expect(e.message).toContain("programs.claude.maxPermissionMode");
   });

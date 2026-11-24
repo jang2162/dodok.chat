@@ -121,6 +121,20 @@ describe("buildQueryOptions", () => {
     expect(buildQueryOptions(runSpec(), deps(false))).not.toHaveProperty("effort");
   });
 
+  it("bypassPermissions 일 때만 allowDangerouslySkipPermissions — auto 는 SDK 에 그대로 넘긴다 [채널 UI·권한 모드 스펙 1장]", () => {
+    const bypass = buildQueryOptions(runSpec({ permissionMode: "bypassPermissions" }), deps(false));
+    expect(bypass).toMatchObject({
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+    });
+    const auto = buildQueryOptions(runSpec({ permissionMode: "auto" }), deps(false));
+    expect(auto.permissionMode).toBe("auto");
+    for (const mode of ["plan", "dontAsk", "default", "acceptEdits", "auto"] as const)
+      expect(buildQueryOptions(runSpec({ permissionMode: mode }), deps(false)), mode).not.toHaveProperty(
+        "allowDangerouslySkipPermissions",
+      );
+  });
+
   it("allowedTools null — 미리 허용한 도구 없음, dodok 도구만(태스크 2 리뷰 M2)", () => {
     const o = buildQueryOptions(runSpec({ allowedTools: null }), deps(false));
     expect(o.allowedTools).toEqual([POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]);
@@ -1319,6 +1333,14 @@ describe("에이전트 명령(에이전트 명령 스펙 5.3·C14·C15·C17)", (
   const DENY = {
     hookSpecificOutput: expect.objectContaining({ hookEventName: "PreToolUse", permissionDecision: "deny" }),
   };
+
+  it("PreToolUse — auto·bypassPermissions 는 손대지 않는다(CLI 판단 그대로 — 끼어들면 그 모드가 다시 카드를 띄운다)", async () => {
+    for (const mode of ["auto", "bypassPermissions"] as const)
+      for (const tool of ["Bash", "Edit", "WebFetch", "mcp__gh__delete"]) {
+        expect(preToolDecision(tool, mode), `${mode} ${tool}`).toBeNull();
+        expect(await preToolUse(mode, tool)).toEqual({});
+      }
+  });
 
   it("PreToolUse — Read 는 어느 모드에서도 손대지 않는다(카드 없음)", async () => {
     for (const mode of ["default", "acceptEdits", "dontAsk", "plan"])

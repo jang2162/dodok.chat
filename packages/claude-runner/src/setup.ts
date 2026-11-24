@@ -147,7 +147,13 @@ const PERMISSION_CHOICES: { mode: RunnerPermissionMode; label: string }[] = [
   { mode: "default", label: "default — 편집·명령마다 승인" },
   { mode: "acceptEdits", label: "acceptEdits — 편집은 바로, 명령은 승인" },
   { mode: "plan", label: "plan — 읽기·계획만" },
+  // 끝의 둘은 승인 카드 없이 돈다 — 고르면 경고하고 한 번 더 묻는다(채널 UI·권한 모드 스펙 1장). 번호는 옛 셋 뒤에 붙여 그대로 둔다
+  { mode: "auto", label: "auto — 모델 분류기가 승인(승인 카드 없음)" },
+  { mode: "bypassPermissions", label: "bypassPermissions — 묻지 않고 실행(승인 카드 없음)" },
 ];
+/** 승인 카드 없이 도는 상한 — 이 상한을 열면 그 러너의 에이전트가 사람에게 묻지 않고 쓰기 도구를 쓸 수 있다 */
+const NO_APPROVAL_MODES: ReadonlySet<RunnerPermissionMode> = new Set(["auto", "bypassPermissions"]);
+const NO_APPROVAL_WARNING = "승인 카드 없이 실행됩니다 — 이 상한을 연 사람이 책임집니다";
 
 /** 라벨에서 루트 id — RunnerRootId([a-z0-9-]{1,32}) 꼴로 줄이고 겹치면 -2, -3… 을 붙인다 */
 export function rootIdFromLabel(label: string, taken: ReadonlySet<string>): string {
@@ -372,11 +378,16 @@ export async function runSetupWizard(opts: SetupOptions): Promise<SetupResult> {
       const answer = (await p.ask(`선택 [${fallbackChoice}]: `)).trim() || String(fallbackChoice);
       const byNumber = /^\d+$/.test(answer) ? PERMISSION_CHOICES[Number(answer) - 1] : undefined;
       const chosen = PERMISSION_CHOICES.find((c) => c.mode === answer) ?? byNumber;
-      if (chosen) {
-        maxPermissionMode = chosen.mode;
-        break;
+      if (!chosen) {
+        p.print(`1~${PERMISSION_CHOICES.length} 중에서 고르세요.`);
+        continue;
       }
-      p.print(`1~${PERMISSION_CHOICES.length} 중에서 고르세요.`);
+      if (NO_APPROVAL_MODES.has(chosen.mode)) {
+        p.print(NO_APPROVAL_WARNING);
+        if (!isYes(await p.ask("이 상한으로 할까요? (y/N) "), false)) continue;
+      }
+      maxPermissionMode = chosen.mode;
+      break;
     }
 
     // 묻지 않는 키 — 지금 설정에 있으면 그대로(maxConcurrentRuns·browse·remoteUpdate·도구 상한·configDir·executable), 없으면 스키마 기본값을 적는다

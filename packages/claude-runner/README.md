@@ -21,7 +21,7 @@ npm 판은 서버와 다른 빌드일 수 있다 — 설정 → 연결의 러너
 
 1. **러너 토큰** — dodok 앱 설정 → 연결(`/settings/connection`)의 「＋ 연결 추가 → 러너」. 원문 `drn_…` 은 한 번만 보인다. 그 대화상자의 「서버 주소」 값도 함께 둔다.
 2. **실행** — `dodok-runner`. 설정 파일(`~/.dodok-runner/config.json`)이 없으면 터미널에서 차례로 묻는다.
-   - 서버 주소 · 러너 토큰(화면에 찍히지 않는다 — 설정 파일 옆 `token`, 기본 `~/.dodok-runner/token` 0600 에 쓴다) · 루트(에이전트가 돌 디렉터리 — 경로와 라벨, 여럿 가능) · 권한 상한(`default`·`acceptEdits`·`plan`)
+   - 서버 주소 · 러너 토큰(화면에 찍히지 않는다 — 설정 파일 옆 `token`, 기본 `~/.dodok-runner/token` 0600 에 쓴다) · 루트(에이전트가 돌 디렉터리 — 경로와 라벨, 여럿 가능) · 권한 상한(`default`·`acceptEdits`·`plan`·`auto`·`bypassPermissions` — 끝의 둘은 승인 카드 없이 돌아 경고 뒤 `y` 로 한 번 더 확인한다)
    - 러너가 쓸 Claude Code(설치본·내장)와 로그인 유무도 보여 준다. 로그인이 없으면 다른 터미널에서 `claude` 를 열어 `/login` 한다 — 러너는 이 머신의 평소 Claude Code 로그인(`~/.claude`)을 쓴다.
    - 「저장하고 시작할까요?」에 Enter 면 저장하고 곧바로 붙는다. `연결됨(서버 …)` 이 보이면 붙은 것이다. 끄기는 `Ctrl+C`.
 3. **토큰을 다시 발급했으면** — `dodok-runner token`. 새 토큰만 묻고(화면에 찍히지 않는다) 설정의 `tokenFile` 자리에 쓴다 — 설정 파일은 그대로다. 그다음 러너를 다시 띄운다. 설정이 없거나 `tokenFile` 대신 env `DODOK_RUNNER_TOKEN` 을 쓰면 무엇을 할지 한 줄로 알리고 끝난다.

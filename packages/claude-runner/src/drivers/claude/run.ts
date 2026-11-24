@@ -223,7 +223,8 @@ export const hasRunnerControl = (spec: RunSpec): boolean =>
  * 명령·스킬 파일의 frontmatter `allowed-tools` 가 권한 모드를 뚫지 않게(에이전트 명령 C15) PreToolUse 훅이 내릴 판정. 실측(보고서):
  * `ask` 는 CLI 가 원래 묻지 않던 도구도 canUseTool(승인 카드)로 보내고, plan·dontAsk 에서는 거절되던 도구를 카드로 연다. 그래서
  * default → 안전 도구 밖이면 ask, acceptEdits → 안전·편집 도구 밖이면 ask, dontAsk → 안전 도구 밖이면 deny(묻지 않고 거절 — 모드
- * 뜻 그대로), plan → 손대지 않는다(CLI 가 이미 막는다). null 이면 CLI 판단 그대로
+ * 뜻 그대로), plan → 손대지 않는다(CLI 가 이미 막는다). auto(모델 분류기가 승인)·bypassPermissions(묻지 않음)도 손대지 않는다 —
+ * `ask` 를 내면 승인 카드 없이 돌라고 상한을 연 모드에서 카드가 다시 뜬다(채널 UI·권한 모드 스펙 1장). null 이면 CLI 판단 그대로
  */
 export function preToolDecision(
   toolName: string,
@@ -238,6 +239,9 @@ export function preToolDecision(
       return EDIT_TOOLS.has(toolName) ? null : "ask";
     case "dontAsk":
       return "deny";
+    case "auto":
+    case "bypassPermissions":
+      return null;
     default:
       return null;
   }
@@ -285,6 +289,8 @@ export function buildQueryOptions(
     // null·없음이면 CLI 기본 effort(세션 설정 스펙 5.6)
     ...(spec.effort === null || spec.effort === undefined ? {} : { effort: spec.effort }),
     permissionMode: spec.permissionMode,
+    // SDK 는 bypassPermissions 에 이 확인 깃발을 함께 요구한다 — 러너 상한이 bypassPermissions 를 열었을 때만 이 값이 온다(ceiling.ts)
+    ...(spec.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
     // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2). 제어 도구의 쓰기는
     // 서버의 확인 카드가 묻는다(CONTROL_TOOL_FULL_NAMES)
     allowedTools: [
