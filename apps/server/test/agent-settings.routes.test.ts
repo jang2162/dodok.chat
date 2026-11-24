@@ -44,7 +44,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
   ] satisfies RunnerModelOption[];
   /** 새 러너 — default 줄에 「기본」이 지금 도는 모델의 표시 이름(채널 UI·권한 모드 스펙 2장). MODELS 는 그 필드가 없는 옛 러너의 꼴 */
-  const LABELED = [{ ...MODELS[0], resolvedLabel: "Opus 5.5" }, MODELS[1]] satisfies RunnerModelOption[];
+  const LABELED: RunnerModelOption[] = [{ ...MODELS[0]!, resolvedLabel: "Opus 5.5" }, MODELS[1]!];
   let n = 0;
 
   beforeAll(async () => {
