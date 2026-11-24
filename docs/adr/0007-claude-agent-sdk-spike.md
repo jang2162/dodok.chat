@@ -4,7 +4,7 @@
 - 날짜: 2026-09-27
 - 대상: `docs/guides/plan.md` 「5.7 에이전트 어댑터 인터페이스 (후속 연동 대비)」 절·기술 표의 「에이전트 이벤트 표준」, `packages/openclaw-adapter/src/adapter-types.ts` 의 `AgentAdapter`·`AdapterEvent`
 - 산출 코드: 스파이크의 것은 없다 — 가짜 CLI·드라이버·스크래치 설치본·스파이크 세션 전사는 버렸다. 가짜 Messages API 는 러너 구현의 하네스로 다시 만들어 `packages/claude-runner/scripts/fake-messages-api.ts` 에 있다(「다시 재는 법」 6)
-- 근거 원장(git 제외): `.superpowers/sdd/2026-09-27-claude-runner-spike/` 의 `p4c-spike-report.md`(모델 없이 잰 것)·`p4c-spike2-report.md`(모델 런 1~3)·`p4c-spike3-report.md`(채널 규칙 전달 경로·`alwaysLoad`, 모델 런 4·5), `.superpowers/sdd/2026-09-30-runner-rule-change/p4r-spike-report.md`(규칙 변경 뒤 이어 간 세션 — 변형별 요청 본문과 모델 런 6회)
+- 근거 원장(git 제외): `.superpowers/sdd/2026-09-27-claude-runner-spike/` 의 `p4c-spike-report.md`(모델 없이 잰 것)·`p4c-spike2-report.md`(모델 런 1~3)·`p4c-spike3-report.md`(채널 규칙 전달 경로·`alwaysLoad`, 모델 런 4·5), `.superpowers/sdd/2026-09-30-runner-rule-change/p4r-spike-report.md`(규칙 변경 뒤 이어 간 세션 — 변형별 요청 본문과 모델 런 6회), `.superpowers/sdd/2026-11-24-runner-bg-spike/spike-report.md`(백그라운드 작업과 붙든 프로세스 — 시나리오별 SDK 메시지·요청 본문, 모델 런 0회)
 
 ## 1. 결론
 
@@ -13,13 +13,14 @@
 | 1 | 스트리밍 모양, 최종 답 가르기 | `includePartialMessages: true` 면 Anthropic 스트리밍 이벤트가 **`stream_event` 로 그대로** 온다. 실제 모델에서 텍스트 델타는 약 11자씩, 간격 중앙값 Sonnet 5 46ms·Haiku 4.5 26ms. **`thinking` 블록은 글자가 비어 온다**(`thinking_delta` 의 텍스트가 빈 문자열, 끝에 `signature_delta` 하나) — 대신 CLI 가 `system/thinking_tokens`(추정 토큰 수)를 약 1초마다 낸다. 완성본은 블록마다 `assistant`(같은 `message.id`), 턴 끝은 `result`. **최종 답은 `result.result`** |
 | 2 | 권한 콜백 | `canUseTool(toolName, input, { signal, toolUseID, requestId, displayName, description, suggestions, blockedPath, mcpServer, decisionReason, … })`. **SDK·CLI 어느 쪽에도 기한이 없다**. 실제 모델 런에서 콜백이 온 것은 미리 허용되지 않은 **쓰기** 도구뿐이다 — 미리 허용한 dodok 도구, 규칙이 맞은 `git status`, 규칙이 없는 읽기 전용 명령(`git log`·`sleep`)에는 오지 않았다. 콜백은 **입력 검증보다 먼저** 온다 |
 | 3 | 세션 | 세션 id 는 러너가 정한다 — 첫 런 `sessionId: <UUID>`, 다음 런 `resume: <id>`. 전사는 `CLAUDE_CONFIG_DIR/projects/<cwd 경로>/<id>.jsonl`. `query()` 하나가 CLI 프로세스 하나 |
-| 4 | 중지 | `q.interrupt()` 는 프로세스를 살린 채 그 턴만 끝낸다 — `result` 는 `error_during_execution`, `errors` 는 진단 문자열 하나(`[ede_diagnostic] … stop_reason=…`), 전사에는 사용자 메시지 `[Request interrupted by user]`(도구 중이면 `… for tool use]` 와 거절된 `tool_result`)가 남아 다음 턴·`resume` 에서 모델이 그것을 본다. 중지는 **백그라운드 셸도 죽인다** |
+| 4 | 중지 | `q.interrupt()` 는 프로세스를 살린 채 그 턴만 끝낸다 — `result` 는 `error_during_execution`, `errors` 는 진단 문자열 하나(`[ede_diagnostic] … stop_reason=…`), 전사에는 사용자 메시지 `[Request interrupted by user]`(도구 중이면 `… for tool use]` 와 거절된 `tool_result`)가 남아 다음 턴·`resume` 에서 모델이 그것을 본다. `interrupt()` 는 **백그라운드 셸을 죽이지 않는다**(셸은 프로세스를 닫을 때 죽는다 — 옛 「셸도 죽인다」 측정은 프로세스 종료와 섞인 관찰로 보인다, 「백그라운드 작업과 붙든 프로세스」 절 5.11) |
 | 5 | 채널 프롬프트·문맥 | `append` 는 프로세스 시작 때 한 번 가고, **기본값(`snapshot` 생략)은 첫 요청의 시스템 프롬프트를 전사에 기록해 `resume` 에서도 그것을 보낸다 — 바뀐 `append` 는 요청에 실리지 않는다**(실측, 이 계정·가짜 키 둘 다). **`snapshot: false` 면 바뀐 `append` 가 요청에 실린다.** 채널 규칙은 **출처·권한을 밝히는 틀**(4.5 「채널 규칙 틀」)에 담으면 Sonnet 5 가 새 세션에서 따른다 — 틀을 갖춘 `append`(가)와 `UserPromptSubmit` 훅 `additionalContext`(나) 둘 다 네 턴 모두 따랐고, 훅으로 바꾼 규칙은 다음 턴부터 따랐다. **맨 문장만 넣으면 「주입된 지시」로 보고 따르지 않는다**(5.5). 추천은 (가) — 6의 2 |
 | 6 | 채널로 쓰는 도구 | 된다 — `createSdkMcpServer` 도구가 러너 프로세스 안에서 돈다. 모델이 components 모양 카드를 **스키마대로** 보냈다. **SDK MCP 도구는 기본으로 지연 로드(ToolSearch 뒤)된다** — 스키마를 못 본 첫 호출은 틀린다. **`alwaysLoad: true` 를 주면 지연 목록에서 빠지고, Sonnet 5 가 ToolSearch 없이 첫 호출부터 스키마대로 불렀다**(5.7) |
 | 7 | 자원 | 런 중 CLI RSS 약 **190 MiB 로 시작해 290~325 MiB**(모델 런, 전사가 쌓인 뒤). `query()` → `system/init` 약 0.55초, 첫 API 응답 시작 1.3~2.4초, 첫 텍스트는 사고 길이에 달려 5.8~17초 |
 | 8 | usage·비용 | 토큰 수는 믿을 수 있다 — 스트림의 `message_delta.usage` 와 `result.usage`(턴 안 API 호출의 합)가 맞고, `total_cost_usd` 는 **토큰 × 공시 단가와 정확히 같다**. 단 `total_cost_usd`·`modelUsage` 는 **세션 누적이고 `resume` 하면 앞 프로세스 몫까지 이어진다** — 런 비용은 차이로 잰다. 구독 로그인에서는 청구액이 아니라 공시 단가 환산값이다 |
 | 9 | 인증 | 러너 전용 `CLAUDE_CONFIG_DIR` 로그인이 SDK 에서 그대로 먹는다(`accountInfo`·`system/init` — 모델 호출 없이도 확인된다). 그 계정의 **claude.ai 커넥터와 이메일이 에이전트 문맥에 따라 들어온다**(5.6) |
 | 10 | 모델 런이 있어야 아는 것 중 남은 것 | 「확인 못 한 것」 절 |
+| 11 | 백그라운드 작업을 붙든 프로세스로 이어 받기 | 입력을 열어 두면 **CLI 가 작업 알림 뒤 사용자 입력 없이 턴을 연다**(셸·서브에이전트 완료, 서브에이전트 끄기 — `stopTask` 로 끈 셸은 턴을 열지 않는다). 도는 턴에 넣은 사용자 글은 그 턴에 합쳐진다. `stopTask` 는 셸·서브에이전트 둘 다 끈다. `interrupt()` 는 백그라운드 셸을 죽이지 않는다(설치본 2.1.331·내장 CLI 2.1.283 둘 다 — 셸이 죽는 것은 프로세스를 닫을 때다). 「백그라운드 작업과 붙든 프로세스」 절 |
 
 ## 2. 환경
 
@@ -119,7 +120,7 @@ result     success  result="…"  usage  total_cost_usd  modelUsage
 | `q.close()` | abort 와 같은 종료 순서, 반복자는 조용히 끝남 | 같음 | 같음 |
 
 - 종료 단계(SDK `ProcessTransport`): stdin EOF → 2초 → SIGTERM → 5초 → SIGKILL.
-- **interrupt 는 그 프로세스의 백그라운드 셸도 죽인다**(`system/task_updated { status: "killed" }`). 모델은 긴 명령을 스스로 `run_in_background: true` 로 돌리기도 한다(5.8).
+- ~~interrupt 는 그 프로세스의 백그라운드 셸도 죽인다~~ — 5.11 이 바로잡았다: interrupt 는 그 턴만 끝내고 셸은 남으며, 셸은 프로세스를 닫을 때(`close()`·CLI 종료) 죽는다(`system/task_updated { status: "killed" }` 는 그때의 관찰로 보인다). 모델은 긴 명령을 스스로 `run_in_background: true` 로 돌리기도 한다(5.8).
 - interrupt 로 끝난 턴 뒤 스트리밍 입력을 닫자 **CLI 가 exit code 1 로 끝났고 반복자가 `Claude Code process exited with code 1` 을 던졌다**(마지막 `result` 를 받은 뒤). 러너는 마지막 `result` 뒤의 비정상 종료를 런 실패로 읽지 않는다.
 - 이 스파이크에서 `aborted: true` 가 붙은 `assistant` 는 보지 못했다 — 사고 중 interrupt 는 사고 블록 완성본을 내지 않고 끝났다.
 
@@ -234,7 +235,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 
 ### 5.8 모델이 긴 명령을 백그라운드로 돌린다
 
-`sleep 45 && echo done` 을 시키자 Haiku 4.5 가 `run_in_background: true` 로 돌렸다 — 도구는 즉시 「Command running in background with ID …」를 돌려주고 턴이 끝났다. 그 셸은 interrupt 나 프로세스 종료 때 죽고, 다음 `resume` 에서 「didn't finish before the previous session ended」 알림으로 나타난다(4.3). 런마다 프로세스가 끝나는 러너에서는 백그라운드 작업이 런을 넘어 살지 못한다. CLI 에 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` 가 있다(정적 조회 — 효과는 재지 않았다).
+`sleep 45 && echo done` 을 시키자 Haiku 4.5 가 `run_in_background: true` 로 돌렸다 — 도구는 즉시 「Command running in background with ID …」를 돌려주고 턴이 끝났다. 그 셸은 프로세스 종료 때 죽고(interrupt 만으로는 죽지 않는다 — 5.11), 다음 `resume` 에서 「didn't finish before the previous session ended」 알림으로 나타난다(4.3). 런마다 프로세스가 끝나는 러너에서는 백그라운드 작업이 런을 넘어 살지 못한다. CLI 에 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` 가 있다(정적 조회 — 효과는 재지 않았다).
 
 ### 5.9 `total_cost_usd` 는 세션 누적이다
 
@@ -243,6 +244,46 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 ### 5.10 자동 메모리가 켜져 있다 — 작업 디렉터리가 같은 채널끼리 공유한다
 
 `settingSources: []` 여도 시스템 프롬프트에 「# auto memory — You have a persistent, file-based memory system at `<CLAUDE_CONFIG_DIR>/projects/<cwd 경로>/memory/`」 절이 들어가고 CLI 가 그 디렉터리를 만든다(가짜 Messages API). 메모리 자리는 **`cwd` 로 정해지므로 같은 작업 디렉터리를 쓰는 채널·스레드가 한 메모리를 나눠 쓴다** — 한 채널에서 에이전트가 적은 것이 다른 채널의 문맥에 들어간다. env `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` 이면 그 절이 요청에서 빠진다(가짜 Messages API — 모델 런 둘도 이 값으로 돌렸다).
+
+### 5.11 백그라운드 작업과 붙든 프로세스
+
+설계 `docs/superpowers/specs/2026-11-24-runner-background-tasks-design.md` 「먼저 잴 것 — 스파이크」 절의 다섯 질문을 잰 것이다. 설치본 `claude` 2.1.331, SDK 0.3.283, 가짜 Messages API(`HX-BG-*` 대본 — 그 파일 머리 주석의 표), 모델 런 0회. 드라이버는 러너를 거치지 않고 `query()` 를 직접 열어 스트리밍 입력을 닫지 않은 채 첫 `result` 뒤 15~60초를 더 읽었다(끈 셸 판정은 리뷰 재현의 15초 관찰로 확인했다 — `permissionMode: "bypassPermissions"` — 권한 콜백은 재지 않았다). 「없었다」는 그 관찰 시간 안의 일이다.
+
+| # | 질문 | 답 |
+| --- | --- | --- |
+| 1 | 셸이 끝나면 사용자 입력 없이 턴을 여는가 | **예.** `task_updated { patch.status: completed }` → `task_notification { status: completed, summary, output_file }` → 빈 `background_tasks_changed` 가 같은 시각에 오고, 약 10ms 뒤 `system/init` → `system/status requesting` → `stream_event` … → `assistant` → `result`(`num_turns: 1`, `total_cost_usd` 는 세션 누적). 셸에는 `task_progress` 가 오지 않았다 |
+| 2 | 도는 추가 응답 턴에 사용자 글을 넣으면 | **턴에 API 요청 경계가 남아 있으면 합쳐진다** — 다음 요청에 `role: "system"` 글 「The user sent a new message while you were working: …」로 들어가고 `result` 는 하나다. 글 하나로 끝나는 턴이면 끝난 뒤 따로 턴이 된다 |
+| 3 | `stopTask` 가 셸·서브에이전트를 끄는가 | **예, 둘 다.** `task_updated { patch.status: killed }` → `task_notification { status: stopped }` → 빈 `background_tasks_changed`, 셸 프로세스는 2초 안에 없어진다(`stopTask` 가 돌아온 순간에는 아직 있다). **끈 서브에이전트는 턴을 열고, 끈 셸은 열지 않는다** — 그 알림은 다음 사용자 입력 요청에 `role: "system"` 글로 붙는다 |
+| 4 | 백그라운드 서브에이전트 | **예.** `task_started { task_type: local_agent, is_backgrounded: true, subagent_type }`, 끝나면 1 처럼 턴을 연다. `task_notification.summary` 는 서브에이전트의 마지막 글 전체, `usage { total_tokens, tool_uses, duration_ms }` 가 붙는다. 서브에이전트 쪽은 `parent_tool_use_id` 달린 `assistant` 만 오고 `stream_event` 는 오지 않는다 |
+| 5 | 턴 도중 `interrupt()` 가 백그라운드 작업을 죽이는가 | **아니오.** 첫 프롬프트 턴 도중·뒤 사람 턴 도중 어느 쪽이든 `result error_during_execution` 뒤에도 셸이 살아 있고 작업 메시지가 오지 않는다. 입력을 닫고 `close()` 하면 셸도 함께 끝난다 — 그때 `task_notification` 은 오지 않는다 |
+
+시나리오 1 의 메시지 순서(ms 는 드라이버 시작부터, `stream_event` 생략):
+
+```
+ 314 system/init
+ 400 assistant            tool_use Bash { run_in_background: true }
+ 456 system/background_tasks_changed  [local_bash]
+ 456 system/task_started  task_type=local_bash is_backgrounded=true
+ 459 user                 tool_result "Command running in background with ID: …"
+ 551 result/success       num_turns=2
+3478 system/task_updated  patch.status=completed
+3478 system/task_notification status=completed
+3478 system/background_tasks_changed  []
+3490 system/init          ← 사용자 입력 없이 연 턴
+8598 result/success       num_turns=1
+```
+
+모델에 가는 알림 글은 user 메시지 하나다 — `<system-reminder>` 안에 「[SYSTEM NOTIFICATION - NOT USER INPUT] … NOT a message from the user」 머리와 `<task-notification><task-id>…<tool-use-id>…<output-file>…<status>…<summary>…</task-notification>`. 끈 작업이면 모델 글의 `<status>` 는 `killed` 다(SDK 메시지는 `stopped`).
+
+함정:
+
+- **스크래치 `HOME`·`CLAUDE_CONFIG_DIR` 만으로는 사람의 설정을 막지 못한다.** CLI 는 `cwd` 의 조상 디렉터리마다 `CLAUDE.md`·`.claude/`(스킬)·`.mcp.json` 을 읽는다 — `cwd` 가 홈 아래면 `~/.claude/CLAUDE.md` 가 「project instructions」로, 저장소 루트의 `.mcp.json` 서버가 도구로 요청에 실린다. 하네스의 `cwd` 는 홈 밖(`/private/tmp` 아래)에 둔다.
+- **`output_file` 은 `TMPDIR` 을 따르지 않는다** — `/private/tmp/claude-<uid>/<cwd 슬러그>/<세션 id>/tasks/<작업 id>.output`.
+- **전경 Bash 도 작업 메시지를 낸다** — `task_started { is_backgrounded: false }`·`task_notification { output_file: "" }`, `background_tasks_changed` 는 없다. 백그라운드 작업 목록은 `background_tasks_changed` 로 잡는다.
+- 스스로 연 턴의 첫 메시지는 `assistant`·`stream_event` 가 아니라 `system/init` 이다. init 은 사람 입력 턴마다도 다시 온다.
+- 「중지 (질문 4)」 절과 「모델이 긴 명령을 백그라운드로 돌린다」 절의 「interrupt 가 백그라운드 셸을 죽인다」는 설치본 2.1.331 과 내장 CLI 2.1.283 둘 다에서 재현되지 않았다(판 차이가 아니다). 그때의 측정은 프로세스 종료와 섞인 관찰로 보이며, 모델 경로 차이는 배제하지 못했다.
+
+다시 재는 법: 가짜 API 를 `--out <스크래치>/api` 로 띄우고, 러너의 SDK `sdk.mjs` 로 `query({ prompt: <닫지 않는 async 반복자>, options: { pathToClaudeCodeExecutable, cwd: <홈 밖 빈 git 저장소>, env: <PATH·스크래치 HOME·TMPDIR·CLAUDE_CONFIG_DIR·ANTHROPIC_BASE_URL·가짜 키·끄기 변수 넷>, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, includePartialMessages: true } })` 를 열어 `[dodok context] channel=spike` + `\n---\n` + `HX-BG-BASH`(또는 `HX-BG-FOREVER`·`HX-BG-AGENT`)를 넣고 첫 `result` 뒤에도 읽는다. 2 를 재려면 추가 응답 턴이 도구를 하나 내게 대본을 바꾼 스크래치 사본을 쓴다. 끝나면 `pgrep -f hx-bg-forever` 가 비었는지 본다.
 
 ## 6. 설계에 주는 제약과 추천
 

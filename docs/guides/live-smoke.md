@@ -850,7 +850,9 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 | 러너 | owner 로 `POST /api/v1/setup/runner-tokens` → 원문은 스크래치 `home/.dodok-runner/token`(0600)에만, 응답의 토큰 id 가 러너 id 다 → `GET /api/v1/setup/runner.tgz`(tgz 는 `api` 가 아니라 `printf 'header = "authorization: Bearer %s"\n' "$T" | curl -s -K - -o <스크래치>/runner.tgz http://127.0.0.1:$PORT/api/v1/setup/runner.tgz` 로 받는다 — `api` 의 셋째 인자는 본문이라 curl 옵션을 넘기면 tgz 를 터미널에 쏟는다) → `npm install -g --prefix <스크래치>/runner <받은 tgz>` → 아래 감싸개 → `env -i PATH=<스크래치>/runner/bin:<node bin>:/usr/bin:/bin HOME=<스크래치>/home LANG=en_US.UTF-8 TMPDIR=<스크래치>/tmp SHELL=/bin/bash USER=$USER dodok-runner --config <스크래치>/runner-config.json`. 첫 줄 `dodok-runner <판> · Claude Agent SDK <판> · 내장 Claude Code <판> · 루트 src(smoke-src) · 프로그램 claude · 동시 1`, 이어서 `dodok-runner: Claude Code 설치본 <감싸개가 감싼 claude 의 판>`(설정 `executable` 이 감싸개다) |
 | 러너 설정 | 아래 JSON. `serverUrl` 은 서버 오리진을 직접 적는다 — 발급 응답의 `runnerConfig.serverUrl` 은 공개 주소(`BRIDGE_PUBLIC_URL`)에서, 없으면 `APP_ORIGIN`(dev 에서는 웹 오리진)에서 만든다. `tokenFile` 은 스크래치 `HOME` 기준 |
 | 루트·작업 파일 | 루트 `<스크래치>/roots/src` 안에 `proj-a`(커밋 하나 있는 git 저장소)·`proj-b`(일반 디렉터리), 루트 밖 `<스크래치>/outside/elsewhere`. `proj-a` 안 `hx-out.txt`, 루트 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
-| 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port <포트> --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표. 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
+| 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port <포트> --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표(백그라운드 대본 `HX-BG-*`·`HX-SUB-SLOW` 는 ADR 0007 「백그라운드 작업과 붙든 프로세스」 스파이크에 쓴다). 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
+
+CLI 작업 디렉터리(`cwd`)는 홈 밖에 둔다 — `HOME`·`CLAUDE_CONFIG_DIR` 을 스크래치로 해도 CLI 는 `cwd` 조상 디렉터리의 `CLAUDE.md`·`.claude/`·`.mcp.json` 을 읽는다(ADR 0007 5.11).
 
 ```json
 {
