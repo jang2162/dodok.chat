@@ -417,9 +417,53 @@ const STATUS_LABEL: Record<RunStatus, string> = {
 };
 export const runStatusLabel = (status: RunStatus): string => STATUS_LABEL[status];
 
-/** 끝난 런은 회색, 실패는 빨강, 진행 중은 강조 — Badge 의 variant 이름 */
-export function runStatusVariant(status: RunStatus): "default" | "secondary" | "destructive" {
-  if (status === "error") return "destructive";
-  if (status === "done" || status === "aborted") return "secondary";
-  return "default";
+/** 상태 칩의 빛깔 — 진행 중 primary · 승인 대기 warning · 완료 success · 실패 destructive · 중지 muted(재설계 스펙 목표 7) */
+export type RunStatusTone = "running" | "approval" | "done" | "error" | "aborted";
+export function runStatusTone(status: RunStatus): RunStatusTone {
+  switch (status) {
+    case "awaiting_approval":
+      return "approval";
+    case "done":
+      return "done";
+    case "error":
+      return "error";
+    case "aborted":
+      return "aborted";
+    default:
+      return "running";
+  }
+}
+
+/** 접힌 런 카드의 요약 — 추론 덩이 수, 도구 호출 수와 이름들(처음 나온 순, 겹치면 한 번), 답 글 수 */
+export type RunSummary = { reasoning: number; tools: number; toolNames: string[]; answers: number };
+
+/**
+ * 런의 **원본** 이벤트(REST `GET /runs/:id/events` 그대로 — 텍스트 이벤트가 있어야 답을 센다) → 요약.
+ * 추론은 REASONING_MESSAGE_START, 답은 TEXT_MESSAGE_START 를 메시지 id 로 한 번씩, 도구는 toolCallId 로 한 번씩 센다
+ */
+export function summarizeRun(events: readonly RunEvent[]): RunSummary {
+  const reasoning = new Set<string>();
+  const answers = new Set<string>();
+  const tools = new Map<string, string>();
+  for (const e of events) {
+    if (e.type === "REASONING_MESSAGE_START") reasoning.add(`${e.messageId}:${e.seq}`);
+    else if (e.type === "TEXT_MESSAGE_START") answers.add(e.messageId);
+    else if (e.type === "TOOL_CALL_START") tools.set(e.toolCallId, e.toolCallName);
+    else if (e.type === "TOOL_CALL_RESULT" && !tools.has(e.toolCallId)) tools.set(e.toolCallId, UNKNOWN_TOOL);
+  }
+  return {
+    reasoning: reasoning.size,
+    tools: tools.size,
+    toolNames: [...new Set(tools.values())],
+    answers: answers.size,
+  };
+}
+
+/** 요약 한 줄 — `생각 1 · 도구 2(Read, Bash) · 답 1`. 0 인 것은 빠지고, 다 0 이면 undefined(줄을 그리지 않는다) */
+export function runSummaryLabel(summary: RunSummary): string | undefined {
+  const parts: string[] = [];
+  if (summary.reasoning > 0) parts.push(`생각 ${summary.reasoning}`);
+  if (summary.tools > 0) parts.push(`도구 ${summary.tools}(${summary.toolNames.join(", ")})`);
+  if (summary.answers > 0) parts.push(`답 ${summary.answers}`);
+  return parts.length === 0 ? undefined : parts.join(" · ");
 }

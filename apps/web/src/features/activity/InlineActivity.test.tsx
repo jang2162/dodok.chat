@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { InlineActivity, REASONING_TRUNCATED_NOTE } from "./InlineActivity";
@@ -16,7 +16,7 @@ const tool = (n: number, over: Partial<Extract<ActivityRow, { kind: "tool" }>> =
   key: `tool:t${n}`,
   toolCallId: `t${n}`,
   name: n === 1 ? "Read" : "Bash",
-  args: "{}",
+  args: '{"path":"a.ts"}',
   result: "ok",
   ok: true,
   state: "done",
@@ -48,7 +48,15 @@ describe("InlineActivity", () => {
       "테스트 실패 원인부터 보자\n**굵게** 아님",
     );
     expect(list.querySelector("strong")).toBeNull();
-    expect(screen.getByRole("button", { name: "Read 인자 보기" })).toBeInTheDocument();
+    // 도구 줄은 활동 탭과 같은 꼴 — 줄 전체가 펼침 단추, 인자 한 줄 요약(고정폭), 누르면 인자·결과 <pre>
+    const row = screen.getByRole("button", { name: "Read 자세히" });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    expect(within(row).getByText("path=a.ts")).toHaveClass("font-mono");
+    expect(screen.queryByText('{"path":"a.ts"}')).not.toBeInTheDocument();
+    await userEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText('{"path":"a.ts"}').tagName).toBe("PRE");
+    expect(screen.getByText("ok").tagName).toBe("PRE");
   });
 
   it("행이 없으면 아무것도 그리지 않는다(바로 답한 런)", () => {

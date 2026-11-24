@@ -1790,7 +1790,7 @@ describe("MessageList 응답 안의 활동", () => {
     await userEvent.click(await screen.findByRole("button", { name: /^활동/ }));
     await waitFor(() => expect(summary()).toHaveTextContent("활동 · 추론 · 도구 1 · 3초"));
     expect(screen.getByText("먼저 파일을 읽자")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Read 결과 보기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Read 자세히" })).toBeInTheDocument();
     // 접었다 다시 펼쳐도 더 부르지 않는다
     await userEvent.click(summary());
     await userEvent.click(summary());
@@ -1867,7 +1867,7 @@ describe("MessageList 응답 안의 활동", () => {
     expect(eventCalls()).toBe(0);
     await userEvent.click(summary());
     await waitFor(() => expect(summary()).toHaveTextContent("활동 · 추론 · 도구 1 · 3초"));
-    expect(screen.getByRole("button", { name: "Read 결과 보기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Read 자세히" })).toBeInTheDocument();
     expect(eventCalls()).toBe(1);
   });
 

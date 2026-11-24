@@ -4,20 +4,20 @@ import { useShallow } from "zustand/react/shallow";
 import { useChannelRuns } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
-import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
-import { RunList } from "./RunList";
-import { RunTimeline } from "./RunTimeline";
+import { selectChannelRuns, useRunStore } from "@/features/runs/runStore";
+import { Notice } from "./Notice";
+import { RunCards } from "./RunCard";
 import { freezeDurations, mergeRuns } from "./timeline";
 import { useSettledRuns } from "./useSettledRuns";
 
 /**
- * 활동 탭(`/c/$channelId/s/$conversationId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
+ * 활동 탭(`/c/$channelId/s/$conversationId/activity`, 설계 5.1·5.2·재설계 스펙 목표 7): 런마다 펼치는 카드(안에 타임라인). 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
  * 부모인 ChannelPage 의 `PanelTabs` 가 맡는다 — 탭을 옮겨도 머리가 살아 있게(D3).
  * ChannelPage 가 채널을 확인한 뒤에만 마운트된다
  */
 export function ActivityPanel() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
-  // 채널을 옮기면 고른 런을 버린다
+  // 채널을 옮기면 펼침(과 거르기)을 버린다
   return <ActivityBody key={channelId} channelId={channelId} />;
 }
 
@@ -52,12 +52,24 @@ function ActivityBody({ channelId }: { channelId: string }) {
     void refetchRuns();
   }, [settledKey, refetchRuns]);
 
-  // 고르지 않았으면 가장 최근 런. 고른 런이 목록에서 사라지면(채널을 옮긴 뒤 등) 다시 최근 런으로 돌아간다
-  const [picked, setPicked] = useState<string>();
-  const selected = runs.find((r) => r.id === picked) ?? runs[0];
+  /**
+   * 펼침 — 손댄 카드는 그 선택(`toggled`), 손대지 않은 카드는 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
+   * 펼친 카드만). 끝난 런이 스토어에서 빠져도 목록에 남으므로(`useSettledRuns`) 펼친 카드가 접히거나 다른 런으로 넘어가지 않는다(D2)
+   */
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const latestId = runs[0]?.id;
+  const isExpanded = useCallback(
+    (runId: string) => toggled.get(runId) ?? runId === latestId,
+    [toggled, latestId],
+  );
+  const toggle = useCallback(
+    (runId: string) =>
+      setToggled((prev) => new Map(prev).set(runId, !(prev.get(runId) ?? runId === latestId))),
+    [latestId],
+  );
 
   /**
-   * 승인은 채널 것을 본다 — 고른 런으로 거르지 않는다. 옛 런을 들여다보는 동안에도 답해야 할 카드는 맨 위에 남는다.
+   * 승인은 채널 것을 본다 — 펼친 런으로 거르지 않는다. 옛 런 카드를 들여다보는 동안에도 답해야 할 카드는 맨 위에 남는다.
    * 메시지 흐름의 카드와 **같은 스토어**라 잠금·확정 표시가 함께 움직인다(설계 5.3)
    */
   const pending = useApprovalStore(selectPendingApproval(channelId));
@@ -80,23 +92,19 @@ function ActivityBody({ channelId }: { channelId: string }) {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 승인 카드는 패널 맨 위에 고정(설계 5.3) */}
       {cardId && <ApprovalCard approvalId={cardId} channelId={channelId} />}
-      <RunList
-        runs={runs}
-        selectedId={selected?.id}
-        onSelect={setPicked}
-        loading={rest.isPending}
-        error={rest.isError}
-        onRetry={() => void rest.refetch()}
-        retrying={rest.isFetching}
-      />
-      {/* 런을 바꾸면 타임라인을 새로 세운다 — 툴 행의 펼침 상태·「끝에 붙어 있다」가 앞 런에서 이어지지 않게 */}
-      {selected && (
-        <RunTimeline
-          key={selected.id}
-          runId={selected.id}
-          running={!TERMINAL.has(selected.status)}
-          approval={approvalOf}
-        />
+      {rest.isError && (
+        <Notice onRetry={() => void rest.refetch()} retrying={rest.isFetching}>
+          런 목록을 불러오지 못했습니다.
+        </Notice>
+      )}
+      {/*
+       * 조회가 실패해도 실시간으로 아는 런은 그대로 그린다(태스크 7 리뷰 이월 6) —
+       * 잠깐 끊긴 사이에 진행 중인 런이 화면에서 사라지면 「멈춘 것」처럼 보인다
+       */}
+      {runs.length > 0 ? (
+        <RunCards runs={runs} isExpanded={isExpanded} onToggle={toggle} approval={approvalOf} />
+      ) : (
+        !rest.isError && <Notice>{rest.isPending ? "불러오는 중…" : "아직 실행 기록이 없습니다."}</Notice>
       )}
     </div>
   );
