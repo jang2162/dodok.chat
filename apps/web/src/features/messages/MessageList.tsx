@@ -302,26 +302,38 @@ function ChannelMessages({
   );
   /**
    * 「답 도착」 칩(답 묶음 설계) — 이 탭에서 새로 받은 에이전트 답이 묶음으로 들어갔는데 그 묶음 행이 화면 밖이면 띄운다. 묶음 안 글은
-   * 루트 자리에 있어 바닥 따라가기·「새 메시지」 칩이 맡지 않는다. 새로 받은 것 = 지금까지 본 가장 큰 seq 뒤의 글(과거 페이지·around 로
-   * 받은 옛 글은 아니다)
+   * 루트 자리에 있어 바닥 따라가기·「새 메시지」 칩이 맡지 않는다. 새로 받은 것 = 실시간으로 받은 글 — 지금까지 본 가장 큰 seq 뒤의 글이되,
+   * 떨어진 창(`hasNewer`)이던 동안의 변화는 뺀다. 떨어진 창에는 실시간 글이 들지 않으므로(timeline.ts `applyIncoming`) 그동안 끝이
+   * 늘어난 것은 아래로 이어 받은 쪽(`useNewerPages`)이나 최신 쪽으로 갈아 끼운 것(`loadLatest`)이다 — 옛 답이라 칩을 세우지 않는다.
+   * `below` 는 칩을 띄울 때 묶음 행이 뷰포트 아래에 있었는가(화살표 방향)
    */
-  const [arrival, setArrival] = useState<{ rootId: string; runId: string; agentId?: string }>();
+  const [arrival, setArrival] = useState<{
+    rootId: string;
+    runId: string;
+    agentId?: string;
+    below: boolean;
+  }>();
   const topSeq = useRef<number | undefined>(undefined);
+  const wasDetached = useRef(hasNewer);
   useEffect(() => {
     if (!timelineItems) return;
     const last = timelineItems.at(-1)?.seq ?? 0;
     const before = topSeq.current;
-    topSeq.current = Math.max(before ?? 0, last);
-    if (before === undefined) return;
+    const detached = wasDetached.current || hasNewer;
+    wasDetached.current = hasNewer;
+    topSeq.current = detached ? last : Math.max(before ?? 0, last);
+    if (before === undefined || detached) return;
     for (const m of timelineItems) {
       if (m.seq <= before || m.authorType !== "agent") continue;
       const rootId = bundled.byMessage.get(m.id);
       const runId = m.runId;
       if (rootId === undefined || runId === undefined) continue;
       const index = rowsRef.current.findIndex((r) => r.key === `bundle:${rootId}`);
-      if (index >= 0 && !rowInView(index)) setArrival({ rootId, runId, agentId: m.authorId });
+      if (index < 0 || rowInView(index)) continue;
+      const below = (virtualizer.measurementsCache[index]?.start ?? 0) >= (scrollRef.current?.scrollTop ?? 0);
+      setArrival({ rootId, runId, agentId: m.authorId, below });
     }
-  }, [timelineItems, bundled, rowInView]);
+  }, [timelineItems, bundled, rowInView, hasNewer, virtualizer]);
   const toArrival = () => {
     if (!arrival) return;
     setArrival(undefined);
@@ -797,7 +809,7 @@ function ChannelMessages({
         ) : arrival ? (
           <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toArrival}>
             @{arrivalHandle} 답 도착 — 보기
-            <ArrowUpIcon aria-hidden />
+            {arrival.below ? <ArrowDownIcon aria-hidden /> : <ArrowUpIcon aria-hidden />}
           </Button>
         ) : (
           unseen > 0 && (

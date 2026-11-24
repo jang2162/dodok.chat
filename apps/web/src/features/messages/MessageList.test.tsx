@@ -2014,9 +2014,9 @@ describe("MessageList 「답 도착」 칩", () => {
     useRunStore.getState().reset();
     useBundleExpansion.getState().reset();
   });
-  const draw = (items: Message[]) => {
+  const draw = (items: Message[] | Timeline) => {
     const qc = authorsClient([DEV, FIN_AGENT]);
-    subscribedWith(qc, qk.timeline(CH, CH), timelineOf(items));
+    subscribedWith(qc, qk.timeline(CH, CH), Array.isArray(items) ? timelineOf(items) : items);
     const view = renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
     const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
     const atEnd = () => scroller().scrollTop === scroller().scrollHeight - scroller().clientHeight;
@@ -2035,6 +2035,8 @@ describe("MessageList 「답 도착」 칩", () => {
     expect(screen.queryByRole("group", { name: /답$/ })).toBeNull();
     act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, answer(61, FIN, RB, "fin 둘째 답"))));
     const chip = await screen.findByRole("button", { name: "@fin 답 도착 — 보기" });
+    // 묶음이 위에 있으면 위 화살표
+    expect(chip.querySelector(".lucide-arrow-up")).not.toBeNull();
     // 바닥 따라가기·「새 메시지」 칩은 없다 — 묶음 안 글은 루트 자리에 있다
     expect(atEnd()).toBe(true);
     expect(screen.queryByRole("button", { name: /^새 메시지/ })).toBeNull();
@@ -2044,6 +2046,61 @@ describe("MessageList 「답 도착」 칩", () => {
     await waitFor(() => expect(lane).toHaveAttribute("aria-expanded", "true"));
     expect(scroller().scrollTop).toBeLessThan(top);
     expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+  });
+
+  it("떨어진 창을 최신 쪽으로 갈아 끼우면 옛 답에 칩이 없다 — 그 뒤 실시간 답에는 뜬다", async () => {
+    const top = msg(100, { bodyMd: "@dev @fin 봐줘" });
+    const old = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `옛 답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc } = draw({ ...timelineOf(range(1, 20)), hasNewer: true, lastSeq: 160 });
+    await screen.findByText("본문 20");
+    const latest = [
+      top,
+      old(101, AGENT, RA),
+      old(102, FIN, RB),
+      ...range(103, 160, { authorType: "user", authorId: USER }),
+    ];
+    act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(latest)));
+    await screen.findByText("본문 160");
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, old(161, FIN, RB))));
+    expect(await screen.findByRole("button", { name: "@fin 답 도착 — 보기" })).toBeInTheDocument();
+  });
+
+  it("묶음이 화면 아래에 있으면 칩 화살표가 아래", async () => {
+    const top = msg(60, { bodyMd: "@dev @fin 봐줘" });
+    const a = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc, atEnd, scroller } = draw([
+      ...range(1, 59, { authorType: "user", authorId: USER }),
+      top,
+      a(61, AGENT, RA),
+      a(62, FIN, RB),
+    ]);
+    await waitFor(() => expect(atEnd()).toBe(true));
+    await act(async () => {
+      scroller().dispatchEvent(new Event("wheel"));
+      scroller().scrollTop = 0;
+      scroller().dispatchEvent(new Event("scroll"));
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, a(63, FIN, RB))));
+    const chip = await screen.findByRole("button", { name: "@fin 답 도착 — 보기" });
+    expect(chip.querySelector(".lucide-arrow-down")).not.toBeNull();
+    expect(chip.querySelector(".lucide-arrow-up")).toBeNull();
   });
 
   it("묶음이 화면 안이면 칩이 없다", async () => {
