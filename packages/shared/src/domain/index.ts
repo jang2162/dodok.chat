@@ -56,6 +56,19 @@ export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
 export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
 export const permissionModeRank = (mode: RunnerPermissionMode): number =>
   RUNNER_PERMISSION_MODES.indexOf(mode);
+/**
+ * 권한 「기본」(null) — default 와 그 러너가 그 프로그램에 알린 상한 가운데 낮은 쪽(세션 설정 스펙 S5). 사람이 고른 값은 상한을 넘어도
+ * 깎지 않는다 — 러너가 RUNNER_CEILING 으로 거절해 카드가 된다. 상한을 모르면 default(러너가 program 천장으로 닫는다). 런을 보내는
+ * runner-adapter 와 「기본 · <모드>」를 보이는 웹이 같은 값을 쓰게 여기 둔다
+ */
+export function resolvePermissionMode(
+  chosen: RunnerPermissionMode | null,
+  ceiling: RunnerPermissionMode | undefined,
+): RunnerPermissionMode {
+  if (chosen !== null) return chosen;
+  if (ceiling === undefined) return "default";
+  return permissionModeRank(ceiling) < permissionModeRank("default") ? ceiling : "default";
+}
 /** 러너 실행의 노력치(effort) — SDK query() 의 effort 옵션. null 이면 프로그램 기본 */
 export const RUNNER_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const RunnerEffort = z.enum(RUNNER_EFFORTS);
