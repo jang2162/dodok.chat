@@ -316,6 +316,8 @@ describe("트리 꼴(연결 재설계 스펙 목표 1)", () => {
     // 찾는 동안은 접힌 연결도 펼쳐 맞는 에이전트를 보인다
     expect(within(nav).getByRole("link", { name: /Dev/ })).toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: /Coder/ })).toBeNull();
+    // 찾는 동안 접기 단추는 효과가 없으므로 숨긴다 — 눌러 숨은 접힘 상태만 바꾸는 일이 없다
+    expect(within(nav).queryByRole("button", { name: /^사무실 (접기|펼치기)$/ })).toBeNull();
     await userEvent.clear(search);
     expect(within(nav).getAllByRole("link")).toHaveLength(before);
     expect(within(nav).getByRole("button", { name: "사무실 펼치기" })).toHaveAttribute(

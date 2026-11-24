@@ -141,13 +141,13 @@ export function pluginInstallCommand(origin: string, token: string): string {
 
 /**
  * 플러그인 설치 상자 — Gateway 상세의 「플러그인」 섹션 안(연결 탭 통합 스펙 3.3). 설치·업데이트는 「브리지 토큰」의 「새 토큰 발급」이
- * 주는 한 줄로 한다(tgz 는 서버에 하나 — 같은 명령을 Gateway 마다 돌린다). 플러그인이 안 붙었으면 펼친 채(`open`), 붙었으면 「다시 설치」로
+ * 주는 한 줄로 한다(tgz 는 서버에 하나 — 같은 명령을 Gateway 마다 돌린다). 플러그인이 안 붙었으면 펼친 채(`open`), 붙었으면 「다시 설치 방법」으로
  * 접는다. 서버에 파일이 없으면 만드는 법을 보인다
  */
 export function PluginInstall({ status, open }: { status: SetupStatus; open: boolean }) {
   return (
     <details aria-label="플러그인 설치" open={open || undefined} className="rounded-md border p-3 text-sm">
-      <summary className="cursor-pointer font-medium">{open ? "플러그인 설치" : "다시 설치"}</summary>
+      <summary className="cursor-pointer font-medium">{open ? "플러그인 설치" : "다시 설치 방법"}</summary>
       <div className="mt-2 flex flex-col gap-1.5">
         {status.pluginFile.available ? (
           <p className="text-muted-foreground">

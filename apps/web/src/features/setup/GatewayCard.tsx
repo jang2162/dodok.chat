@@ -136,7 +136,7 @@ function StatusCell({ title, children }: { title: string; children: ReactNode })
 /**
  * 「상태」 카드(연결 재설계 스펙 목표 3) — Gateway·플러그인 두 칸(좁으면 한 칸씩). Gateway 칸: 판, 페어링 대기면 승인 블록(상태 칩은 머리).
  * 플러그인 칸: 접속 칩·판 한 줄·같은 빌드인가(아니면 안내 띠)·원격 업데이트·설치 상자. 설치 상자는 플러그인이 아직 안 붙었으면
- * 펼쳐 두고, 붙어 있으면 「다시 설치」로 접는다
+ * 펼쳐 두고, 붙어 있으면 「다시 설치 방법」으로 접는다
  */
 export function GatewayStatusCard({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const plugin = gateway.bridge.plugin;

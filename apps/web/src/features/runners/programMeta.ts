@@ -1,4 +1,9 @@
-import { RUNNER_PROGRAM_NAME, RunnerProgram, type RunnerProgramStatus } from "@dodok/shared";
+import {
+  RUNNER_NO_DRIVER_REASON,
+  RUNNER_PROGRAM_NAME,
+  RunnerProgram,
+  type RunnerProgramStatus,
+} from "@dodok/shared";
 
 /**
  * 러너 프로그램의 웹 표 한 곳(연결 재설계 스펙 목표 4) — 이름·배지 글자·색. 새 프로그램은 여기에 한 줄 더하면
@@ -16,7 +21,7 @@ export const PROGRAM_META: Record<
 
 /**
  * 프로그램 카드 한 줄의 상태 — 쓸 수 있음 · 로그인 필요(auth missing) · 설치 안 됨(available false) ·
- * 로그인 확인 안 됨(auth unknown, 칩 없음) · 지원 예정(enum 에 있는데 이 러너 판이 알리지 않음)
+ * 로그인 확인 안 됨(auth unknown, 칩 없음) · 지원 예정(enum 에 있는데 이 러너 판이 알리지 않거나, 드라이버가 없다는 사유로 알림)
  */
 export type ProgramRowState = "available" | "login" | "not-installed" | "unknown-auth" | "unsupported";
 
@@ -28,7 +33,8 @@ export type ProgramRows =
     };
 
 function stateOf(status: RunnerProgramStatus): ProgramRowState {
-  if (!status.available) return "not-installed";
+  // 실제 러너는 드라이버가 없는 프로그램도 hello 에 싣는다 — 설치해도 안 되므로 설치 안내를 보이지 않는다(스펙 「「지원 예정」 판정」)
+  if (!status.available) return status.reason === RUNNER_NO_DRIVER_REASON ? "unsupported" : "not-installed";
   if (status.auth === "missing") return "login";
   if (status.auth === "unknown") return "unknown-auth";
   return "available";

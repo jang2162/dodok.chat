@@ -1,5 +1,5 @@
 import type { GatewaySetup } from "@dodok/shared";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useAgents } from "@/api/queries";
 import { Button } from "@/ui/button";
 import { useDeleteGateway } from "./mutations";
@@ -17,7 +17,7 @@ export function DeleteGatewayConfirm({
   onCancel,
   onDeleted,
 }: {
-  /** 「삭제」 메뉴 버튼의 aria-controls 가 가리킨다 */
+  /** 「더 보기」 메뉴 단추의 aria-controls 가 가리킨다 */
   id: string;
   gateway: GatewaySetup;
   onCancel: () => void;
@@ -27,6 +27,8 @@ export function DeleteGatewayConfirm({
   const tokens = useBridgeTokens(gateway.id);
   const remove = useDeleteGateway(gateway.id);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const questionId = useId();
+  const effectId = useId();
   useEffect(() => cancelRef.current?.focus(), []);
   // 같은 틱의 둘째 클릭은 렌더된 `isPending` 이 아직 false 라 통과한다(GatewayForm 과 같은 까닭). 성공하면 카드째 사라진다
   const sending = useRef(false);
@@ -48,11 +50,15 @@ export function DeleteGatewayConfirm({
       id={id}
       role="group"
       aria-label={`「${gateway.name}」 Gateway 삭제`}
+      // 묻는 말과 지워지는 것(수)이 그 줄의 설명 — 초점이 「취소」로 와도 무엇을 묻는지 읽힌다
+      aria-describedby={`${questionId} ${effectId}`}
       className="flex flex-col gap-3 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
     >
-      <p className="font-medium">「{gateway.name}」 Gateway 를 삭제할까요?</p>
+      <p id={questionId} className="font-medium">
+        「{gateway.name}」 Gateway 를 삭제할까요?
+      </p>
       {ready ? (
-        <p>
+        <p id={effectId}>
           이 Gateway 의 에이전트 {agentCount}개는 남고 브리지 토큰 {tokenCount}개가 지워집니다
         </p>
       ) : agents.data === undefined ? (

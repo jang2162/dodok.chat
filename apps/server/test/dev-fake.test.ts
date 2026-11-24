@@ -13,6 +13,7 @@ import {
   type RunState,
   type ServerToClientEvents,
   WIRE_PROTOCOL,
+  RUNNER_NO_DRIVER_REASON,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -2739,6 +2740,8 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
         ceiling: expect.objectContaining({ maxPermissionMode: "acceptEdits" }),
       }),
       expect.objectContaining({ program: "codex", available: false, reason: "설치되지 않음" }),
+      // 드라이버가 없는 프로그램 — 웹은 「지원 예정」으로 그린다(설치 안 됨 Codex 와 두 길을 다 본다)
+      expect.objectContaining({ program: "opencode", available: false, reason: RUNNER_NO_DRIVER_REASON }),
     ]);
     expect(limited).toMatchObject({
       connected: true,

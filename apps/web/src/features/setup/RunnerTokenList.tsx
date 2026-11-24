@@ -1,6 +1,7 @@
 import type { RunnerConnection, RunnerTokenRecord, SetupStatus } from "@dodok/shared";
 import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
+import { StatusChip } from "@/features/connections/DetailCard";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { useRevokeRunnerToken } from "./mutations";
@@ -99,7 +100,7 @@ export function RunnerTokenList({
                     {token.label}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">drn_{token.prefix}…</span>
-                  {connectedIds.has(token.id) && <Badge>지금 접속 중</Badge>}
+                  {connectedIds.has(token.id) && <StatusChip tone="success" label="지금 접속 중" />}
                   {revoked && <Badge variant="outline">폐기됨</Badge>}
                 </div>
                 <p className="text-xs text-muted-foreground">

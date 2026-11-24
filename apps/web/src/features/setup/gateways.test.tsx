@@ -81,7 +81,7 @@ describe("Gateway 상세", () => {
     ).toEqual(["끄기", "삭제"]);
     await userEvent.keyboard("{Escape}");
     // 설치 상자는 상세마다 하나 — 설치 명령은 그 상세의 「새 토큰 발급」이 준다
-    expect(within(card).getAllByText(/^(플러그인 설치|다시 설치)$/)).toHaveLength(1);
+    expect(within(card).getAllByText(/^(플러그인 설치|다시 설치 방법)$/)).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
     if (name === "사무실") {
       expect(card).toHaveTextContent("연결됨");
@@ -278,14 +278,18 @@ describe("삭제", () => {
     renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    // 메뉴는 닫히고 확인 줄이 상세 안에 열린다(대화상자가 아니다)
+    // 메뉴는 닫히고 확인 줄이 상세 안에 열린다(대화상자가 아니다) — 「더 보기」가 그 줄을 가리킨다
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(within(home).getByRole("button", { name: "집 더 보기" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    const menu = within(home).getByRole("button", { name: "집 더 보기" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    expect(confirm.id).not.toBe("");
+    expect(menu).toHaveAttribute("aria-controls", confirm.id);
     await waitFor(() =>
       expect(confirm).toHaveTextContent("이 Gateway 의 에이전트 2개는 남고 브리지 토큰 3개가 지워집니다"),
+    );
+    // 묻는 말과 지워지는 수가 그 줄의 설명
+    expect(confirm).toHaveAccessibleDescription(
+      "「집」 Gateway 를 삭제할까요? 이 Gateway 의 에이전트 2개는 남고 브리지 토큰 3개가 지워집니다",
     );
     expect(within(confirm).getByRole("button", { name: "취소" })).toHaveFocus();
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);
@@ -295,6 +299,11 @@ describe("삭제", () => {
     const server = stubSetupServer({ status: TWO, gatewayTokens: { [gatewayId(2)]: HOME_TOKENS } });
     renderConnection(undefined, undefined, HOME);
     const { home, confirm } = await openDelete();
+    // 열린 동안은 가리키고 있다 — 아래 「접힌 동안에는 없다」가 공허하지 않게
+    expect(within(home).getByRole("button", { name: "집 더 보기" })).toHaveAttribute(
+      "aria-controls",
+      confirm.id,
+    );
     await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
     expect(within(home).queryByRole("group", { name: "「집」 Gateway 삭제" })).not.toBeInTheDocument();
     expect(within(home).getByRole("button", { name: "집 더 보기" })).toHaveFocus();

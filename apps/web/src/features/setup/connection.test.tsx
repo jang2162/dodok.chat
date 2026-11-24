@@ -32,7 +32,7 @@ const region = (name: string) => screen.findByRole("region", { name });
 const detail = () => screen.findByTestId("gateway-detail");
 /** 「플러그인」 섹션 안의 설치 상자(접힘 `details`) */
 const installBox = async () =>
-  (await within(await region("플러그인")).findByText(/^(플러그인 설치|다시 설치)$/)).closest(
+  (await within(await region("플러그인")).findByText(/^(플러그인 설치|다시 설치 방법)$/)).closest(
     "details",
   ) as HTMLElement;
 
@@ -43,7 +43,11 @@ describe("권한", () => {
     const gw = await detail();
     expect(within(gw).getByRole("heading", { level: 1, name: "사무실" })).toBeInTheDocument();
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
-    expect(await within(gw).findByRole("region", { name: "에이전트" })).toBeInTheDocument();
+    const agents = await within(gw).findByRole("region", { name: "에이전트" });
+    // 개수는 카드 머리의 제목 옆 — 이 Gateway 의 에이전트 0
+    expect(
+      within(agents).getByRole("heading", { level: 2, name: "에이전트" }).nextElementSibling,
+    ).toHaveTextContent(/^0$/);
     expect(screen.queryByRole("region", { name: "플러그인" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "브리지 토큰" })).not.toBeInTheDocument();
     expect(gw).not.toHaveTextContent("wss://");
@@ -212,7 +216,7 @@ describe("Gateway 머리", () => {
 });
 
 describe("플러그인", () => {
-  it("접속·SDK·Gateway 버전 한 줄, 같은 빌드 — 붙어 있으면 설치 상자는 「다시 설치」로 접혀 「새 토큰 발급」의 설치 명령을 가리킨다", async () => {
+  it("접속·SDK·Gateway 버전 한 줄, 같은 빌드 — 붙어 있으면 설치 상자는 「다시 설치 방법」으로 접혀 「새 토큰 발급」의 설치 명령을 가리킨다", async () => {
     stubSetupServer();
     renderConnection();
     const pl = await region("플러그인");
@@ -223,7 +227,7 @@ describe("플러그인", () => {
     expect(pl).not.toHaveTextContent(SHA_FILE);
     const head = await installBox();
     expect(head).not.toHaveAttribute("open");
-    expect(within(head).getByText("다시 설치")).toBeInTheDocument();
+    expect(within(head).getByText("다시 설치 방법")).toBeInTheDocument();
     // 받기 버튼·sha·크기·/tmp 설치 명령은 없다 — 설치는 「새 토큰 발급」이 주는 한 줄로 한다
     expect(within(head).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
     expect(head).not.toHaveTextContent(SHA_FILE);
@@ -308,6 +312,8 @@ describe("브리지 토큰", () => {
     const envRow = await within(br).findByRole("listitem", { name: "env" });
     expect(envRow).toHaveTextContent("dbt_abc123…");
     expect(envRow).toHaveTextContent("지금 접속 중");
+    // 상태 색(success 점 + 글) — 강조색 배지가 아니다(연결 재설계 스펙 「상태 색」)
+    expect(within(envRow).getByText("지금 접속 중")).toHaveAttribute("data-tone", "success");
     const row2 = within(br).getByRole("listitem", { name: "노트북" });
     expect(row2).toHaveTextContent("dbt_xyz789…");
     expect(row2).not.toHaveTextContent("지금 접속 중");

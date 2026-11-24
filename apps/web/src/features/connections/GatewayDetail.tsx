@@ -89,6 +89,7 @@ function ManagedGateway({ id, entry }: { id: string; entry: ListedGateway | unde
           <OverflowMenu
             label={`${gateway.name} 더 보기`}
             triggerRef={menuButton}
+            controls={confirming ? confirmId : undefined}
             items={[
               {
                 label: gateway.enabled ? "끄기" : "켜기",

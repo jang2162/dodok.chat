@@ -1,4 +1,4 @@
-import type { RunnerProgramStatus } from "@dodok/shared";
+import { RUNNER_NO_DRIVER_REASON, type RunnerProgramStatus } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { PROGRAM_META, programRows } from "./programMeta";
 
@@ -55,6 +55,24 @@ describe("programRows", () => {
     expect(rowOf(status({ auth: "unknown" }))).toBe("unknown-auth");
     // 못 쓰는 것이 먼저 — 설치가 안 됐으면 로그인은 따지지 않는다
     expect(rowOf(status({ available: false, auth: "missing" }))).toBe("not-installed");
+  });
+
+  it("드라이버가 없다는 사유로 알린 프로그램은 설치 안 됨이 아니라 unsupported — 그 줄의 status 는 남긴다", () => {
+    const opencode = status({
+      program: "opencode",
+      available: false,
+      auth: "unknown",
+      reason: RUNNER_NO_DRIVER_REASON,
+    });
+    const res = programRows([status(), opencode], true);
+    expect(res.kind === "rows" && res.rows[2]).toEqual({
+      program: "opencode",
+      state: "unsupported",
+      status: opencode,
+    });
+    // 다른 사유로 못 쓰는 것은 그대로 설치 안 됨
+    const codex = status({ program: "codex", available: false, reason: "설치되지 않음" });
+    expect(programRows([codex], true)).toMatchObject({ rows: [{}, { state: "not-installed" }, {}] });
   });
 
   it("같은 프로그램이 두 번 오면 앞의 것", () => {

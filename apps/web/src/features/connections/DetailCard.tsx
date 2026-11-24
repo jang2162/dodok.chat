@@ -1,5 +1,5 @@
 import { EllipsisIcon } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useId, useRef } from "react";
+import { type ReactNode, type RefObject, useCallback, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
@@ -93,17 +93,21 @@ export type OverflowMenuItem = {
 /**
  * 「⋯」 메뉴 — 드물거나 위험한 동작(끄기·삭제·설치 안내 등). 버튼 이름은 「<대상> 더 보기」. 항목이 없으면 버튼도 그리지 않는다.
  * 고른 동작은 메뉴가 닫히고 초점이 「⋯」로 돌아온 뒤에 부른다(HeaderOverflow 와 같은 까닭 — 여는 대화상자가 사라질 메뉴 줄을 초점 복귀
- * 자리로 기억하지 않게). `triggerRef` 는 확인 줄을 취소했을 때 초점을 돌려줄 자리
+ * 자리로 기억하지 않게). `triggerRef` 는 확인 줄을 취소했을 때 초점을 돌려줄 자리. `controls` 는 메뉴가 연 확인 줄의 id — 메뉴가
+ * 닫혀 있는 동안 단추가 그 줄을 aria-controls 로 가리킨다(열려 있으면 Radix 가 메뉴를 가리킨다)
  */
 export function OverflowMenu({
   label,
   items,
   triggerRef,
+  controls,
 }: {
   label: string;
   items: readonly OverflowMenuItem[];
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  controls?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const pending = useRef<(() => void) | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const setTrigger = useCallback(
@@ -115,9 +119,17 @@ export function OverflowMenu({
   );
   if (items.length === 0) return null;
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button ref={setTrigger} type="button" variant="ghost" size="icon-sm" aria-label={label}>
+        <Button
+          ref={setTrigger}
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          // 키를 아예 빼야 Radix 의 메뉴 aria-controls 를 덮지 않는다(undefined 도 덮는다)
+          {...(controls && !open ? { "aria-controls": controls } : {})}
+        >
           <EllipsisIcon />
         </Button>
       </DropdownMenuTrigger>

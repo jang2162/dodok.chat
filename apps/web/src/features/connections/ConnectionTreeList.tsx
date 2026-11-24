@@ -71,7 +71,7 @@ export function ConnectionTreeList({
       return next;
     });
   const open = (key: string) => searching || !collapsed.has(key);
-  const nodeProps = { onNavigate, open, toggle };
+  const nodeProps = { onNavigate, open, toggle, searching };
 
   const grouped = full.mine.length > 0;
   const empty = tree.mine.length === 0 && tree.others.length === 0 && tree.orphaned.length === 0;
@@ -117,6 +117,8 @@ type NodeProps = {
   onNavigate: () => void;
   open: (key: string) => boolean;
   toggle: (key: string) => void;
+  /** 검색 중에는 접힘을 무시하고 펼치므로 접기 단추를 숨긴다 — 눌러도 보이는 것이 바뀌지 않는다 */
+  searching: boolean;
 };
 
 function GroupHeading({ id, children }: { id?: string; children: React.ReactNode }) {
@@ -191,7 +193,7 @@ function summaryOf(node: TreeConnection): string {
   return parts.join(" · ");
 }
 
-function ConnectionNode({ node, onNavigate, open, toggle }: { node: TreeConnection } & NodeProps) {
+function ConnectionNode({ node, onNavigate, open, toggle, searching }: { node: TreeConnection } & NodeProps) {
   const key = `${node.kind}:${node.id}`;
   const name = node.kind === "gateway" ? node.name : node.label;
   const projects = node.kind === "runner" ? node.projects : [];
@@ -233,7 +235,7 @@ function ConnectionNode({ node, onNavigate, open, toggle }: { node: TreeConnecti
   return (
     <>
       <div className="flex items-center">
-        {hasChildren ? (
+        {hasChildren && !searching ? (
           <button
             type="button"
             aria-expanded={expanded}

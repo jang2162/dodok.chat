@@ -131,13 +131,13 @@ describe("머리·메뉴·카드(연결 재설계 스펙 목표 2·3)", () => {
     );
   });
 
-  it("플러그인 빌드를 모르면 상태 카드 안 노란 안내 띠와 「다시 설치」 접힘", async () => {
+  it("플러그인 빌드를 모르면 상태 카드 안 노란 안내 띠와 「다시 설치 방법」 접힘", async () => {
     stubSetupServer({ status: statusOf({ plugin: { bundleSha256: null }, pluginMatches: null }) });
     renderConnection();
     const status = within(await detail()).getByRole("region", { name: "상태" });
     const band = within(status).getByText(/빌드를 알 수 없습니다/);
     expect(band.className).toMatch(/bg-warning/);
-    const box = within(status).getByText("다시 설치").closest("details");
+    const box = within(status).getByText("다시 설치 방법").closest("details");
     expect(box).not.toHaveAttribute("open");
   });
 });
