@@ -149,10 +149,13 @@ export function MessageItem({
   message,
   head,
   inThread = false,
+  activity = true,
 }: {
   message: Message;
   head: boolean;
   inThread?: boolean;
+  /** 활동 요약 줄을 붙여도 되는가 — 목록은 한 런의 메시지 가운데 가장 앞 것에만 준다(`groupRows`) */
+  activity?: boolean;
 }) {
   const author = useAuthors().author(message);
   const openProfile = useOpenProfile();
@@ -202,7 +205,7 @@ export function MessageItem({
           </AuthorLine>
         )}
         {/* 에이전트 답의 활동(스펙 「모양」) — 요약 줄만, 이벤트는 펼칠 때 */}
-        {message.authorType === "agent" && message.runId !== undefined && (
+        {activity && message.authorType === "agent" && message.runId !== undefined && (
           <MessageActivity runId={message.runId} />
         )}
         {message.bodyMd !== "" && <MessageBody bodyMd={message.bodyMd} />}

@@ -92,6 +92,22 @@ describe("groupRows", () => {
     expect(rows[4]).toMatchObject({ kind: "pending", pending: { clientMsgId: "p1" } });
   });
 
+  it("한 런의 에이전트 메시지 여럿 → 활동 요약 줄은 가진 것 가운데 seq 가 가장 작은 것 하나만", () => {
+    const items = [
+      msg(1, { authorType: "agent", authorId: AGENT, runId: RUN }),
+      msg(2, { authorType: "agent", authorId: AGENT, runId: RUN2 }),
+      msg(3, { authorType: "agent", authorId: AGENT, runId: RUN }),
+      msg(4, { authorId: USER }),
+    ];
+    const activity = (rows: Row[]) => rows.flatMap((r) => (r.kind === "message" ? [r.activity] : []));
+    expect(activity(groupRows(timeline({ items }), [], [], TZ))).toEqual([true, true, false, false]);
+    // 앞 메시지가 아직 안 불린 범위면 보이는 것 가운데 가장 앞 것
+    expect(activity(groupRows(timeline({ items: items.slice(2), hasOlder: true }), [], [], TZ))).toEqual([
+      true,
+      false,
+    ]);
+  });
+
   it("빈 타임라인은 빈 목록", () => {
     expect(groupRows(emptyTimeline(), [], [], TZ)).toEqual([]);
   });

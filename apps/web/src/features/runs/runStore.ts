@@ -48,22 +48,31 @@ export function reduceReplay(state: RunState, events: readonly RunEvent[], now: 
 
 /**
  * 런 하나의 활동 이벤트(추론·도구 등 행이 되는 것만 — 텍스트 델타는 빼서 델타마다 참조가 바뀌지 않게).
- * `complete` 는 처음(seq 1)부터 본 런인가 — 확정 메시지는 이것일 때만 REST 없이 그린다(스펙 「모양」 막 끝난 런).
- * 처음부터 못 봤으면(재생 실패 등) 버블은 가진 것만 그리고, 메시지는 펼칠 때 받는다
+ * `fromStart` 는 처음(seq 1)부터 보고 있는가, `complete` 는 거기에 더해 끝 이벤트(RUN_FINISHED·RUN_ERROR·RUN_ABORTED)까지
+ * 직접 봤는가 — 확정 메시지는 `complete` 일 때만 REST 없이 그린다(스펙 「모양」 막 끝난 런). 상태(run.state)로만 끝을 알았거나
+ * 끝을 못 본 채 지운 런(끊긴 사이 끝남)은 사이 이벤트를 놓쳤을 수 있어 미완으로 남고, 메시지는 펼칠 때 받는다
  */
-export type RunActivity = { events: readonly RunEvent[]; complete: boolean };
+export type RunActivity = { events: readonly RunEvent[]; fromStart: boolean; complete: boolean };
 
 /** `remove` 뒤에도 남기는 활동 기록 수 — 지운 런 가운데 최근 것만(긴 탭이 기록을 끝없이 쌓지 않게) */
 export const ACTIVITY_KEEP = 50;
 
-const EMPTY_ACTIVITY: RunActivity = { events: [], complete: true };
+const EMPTY_ACTIVITY: RunActivity = { events: [], fromStart: true, complete: false };
 
-/** 활동 이벤트 하나를 잇는다(seq 가 이미 있으면 그대로). 행이 아닌 이벤트는 참조를 바꾸지 않는다 */
+const END_TYPES: ReadonlySet<RunEvent["type"]> = new Set(["RUN_FINISHED", "RUN_ERROR", "RUN_ABORTED"]);
+const isEndEvent = (event: RunEvent): boolean => END_TYPES.has(event.type);
+
+/** 활동 이벤트 하나를 잇는다(seq 가 이미 있으면 그대로). 행도 끝도 아닌 이벤트는 참조를 바꾸지 않는다 */
 function addActivity(prev: RunActivity | undefined, event: RunEvent): RunActivity | undefined {
-  if (!isTimelineEvent(event)) return prev;
-  const base = prev ?? { events: [], complete: false };
-  if (base.events.some((e) => e.seq === event.seq)) return base;
-  return { ...base, events: [...base.events, event] };
+  const base = prev ?? { events: [], fromStart: false, complete: false };
+  const ended = base.fromStart && !base.complete && isEndEvent(event);
+  const row = isTimelineEvent(event) && !base.events.some((e) => e.seq === event.seq);
+  if (!ended && !row) return prev;
+  return {
+    ...base,
+    ...(row && { events: [...base.events, event] }),
+    ...(ended && { complete: true }),
+  };
 }
 
 type RunStore = {
@@ -110,7 +119,7 @@ export const useRunStore = create<RunStore>()((set) => ({
   applyState: (state) =>
     set((s) => {
       const next = put(s, reduceState(s.runs[state.id], state, Date.now()));
-      // 대기로 처음 본 런은 처음부터 보는 것이다(런은 queued 로 생긴다) — 이벤트가 하나도 없어도 빈 기록이 사실이다
+      // 대기로 처음 본 런은 처음부터 보는 것이다(런은 queued 로 생긴다) — 끝 이벤트까지 보면 빈 기록도 사실이다
       if (s.runs[state.id] || s.activity[state.id] || state.status !== "queued") return next;
       return { ...next, activity: { ...s.activity, [state.id]: EMPTY_ACTIVITY } };
     }),
@@ -129,7 +138,14 @@ export const useRunStore = create<RunStore>()((set) => ({
     set((s) => ({
       ...put(s, reduceReplay(state, events, Date.now())),
       // 처음부터(afterSeq 0) 재생했다 — 앞서 모은 것보다 이쪽이 온전하다
-      activity: { ...s.activity, [state.id]: { events: events.filter(isTimelineEvent), complete: true } },
+      activity: {
+        ...s.activity,
+        [state.id]: {
+          events: events.filter(isTimelineEvent),
+          fromStart: true,
+          complete: events.some(isEndEvent),
+        },
+      },
     })),
   remove: (runId) =>
     set((s) => {

@@ -180,12 +180,13 @@ describe("런의 스레드 소속(판정 R3′)", () => {
 describe("활동 기록(응답 안의 활동)", () => {
   const tool = (seq: number) =>
     ev({ type: "TOOL_CALL_START", seq, toolCallId: `t${seq}`, toolCallName: "Read" });
+  const finished = (seq: number) => ev({ type: "RUN_FINISHED", seq, messageIds: [] });
   beforeEach(() => useRunStore.getState().reset());
 
-  it("대기로 처음 본 런은 처음부터 본 것(complete) — 행이 되는 이벤트만 모은다", () => {
+  it("대기로 처음 본 런은 처음부터 본 것 — 행이 되는 이벤트만 모으고, 끝 이벤트를 보면 complete", () => {
     const s = useRunStore.getState();
     s.applyState(state({ status: "queued" }));
-    expect(useRunStore.getState().activity[R1]).toEqual({ events: [], complete: true });
+    expect(useRunStore.getState().activity[R1]).toEqual({ events: [], fromStart: true, complete: false });
     s.applyEvent(ev({ type: "REASONING_MESSAGE_CONTENT", seq: 1, messageId: "r", delta: "생각" }));
     s.applyEvent(tool(2));
     const before = useRunStore.getState().activity;
@@ -193,16 +194,49 @@ describe("활동 기록(응답 안의 활동)", () => {
     // 텍스트 델타는 활동 기록의 참조를 바꾸지 않는다 — 버블이 델타마다 행을 다시 접지 않게
     expect(useRunStore.getState().activity).toBe(before);
     expect(useRunStore.getState().activity[R1]?.events.map((e) => e.seq)).toEqual([1, 2]);
+    expect(useRunStore.getState().activity[R1]?.complete).toBe(false);
+    s.applyEvent(finished(4));
+    expect(useRunStore.getState().activity[R1]).toMatchObject({ fromStart: true, complete: true });
+    expect(useRunStore.getState().activity[R1]?.events.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it.each([
+    ["RUN_ERROR", { type: "RUN_ERROR", seq: 2, message: "실패" }],
+    ["RUN_ABORTED", { type: "RUN_ABORTED", seq: 2, by: "user" }],
+  ])("%s 도 끝 이벤트다", (_, end) => {
+    const s = useRunStore.getState();
+    s.applyState(state({ status: "queued" }));
+    s.applyEvent(tool(1));
+    s.applyEvent(ev(end));
     expect(useRunStore.getState().activity[R1]?.complete).toBe(true);
   });
 
-  it("도중에 처음 본 런은 모으되 complete 가 아니다 — 처음부터 재생하면 complete", () => {
+  it("끝을 상태로만 알았거나 끝 이벤트 없이 지운 런(끊긴 사이 끝남)은 complete 가 아니다", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ status: "queued" }));
+    s.applyEvent(tool(1));
+    s.applyState(state({ status: "done" }));
+    expect(useRunStore.getState().activity[R1]?.complete).toBe(false);
+    s.remove(R1);
+    expect(useRunStore.getState().activity[R1]).toMatchObject({ fromStart: true, complete: false });
+  });
+
+  it("도중에 처음 본 런은 모으되 complete 가 아니다 — 처음부터 재생해도 끝 이벤트가 있어야 complete", () => {
     const s = useRunStore.getState();
     s.applyState(state({ status: "tool" }));
     s.applyEvent(tool(5));
-    expect(useRunStore.getState().activity[R1]).toMatchObject({ complete: false });
+    expect(useRunStore.getState().activity[R1]).toMatchObject({ fromStart: false, complete: false });
+    // 처음부터가 아니면 끝 이벤트를 봐도 사이를 놓쳤을 수 있다
+    s.applyEvent(finished(6));
+    expect(useRunStore.getState().activity[R1]?.complete).toBe(false);
     s.applyReplay(state({ status: "tool" }), [text(1, "가"), tool(2), tool(5)]);
-    expect(useRunStore.getState().activity[R1]).toEqual({ events: [tool(2), tool(5)], complete: true });
+    expect(useRunStore.getState().activity[R1]).toEqual({
+      events: [tool(2), tool(5)],
+      fromStart: true,
+      complete: false,
+    });
+    s.applyReplay(state({ status: "done" }), [text(1, "가"), tool(2), tool(5), finished(6)]);
+    expect(useRunStore.getState().activity[R1]).toMatchObject({ fromStart: true, complete: true });
   });
 
   it("런을 지워도 활동 기록은 남는다 — 최근 ACTIVITY_KEEP 개까지", () => {

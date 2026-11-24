@@ -1765,6 +1765,8 @@ describe("MessageList 응답 안의 활동", () => {
   const answer = (over: Partial<Message> = {}) =>
     msg(1, { authorType: "agent", authorId: AGENT, bodyMd: "답 본문", runId: RUN, ...over });
   const summary = () => screen.getByRole("button", { name: /^활동/ });
+  const finishedEvent = (seq: number) =>
+    RunEvent.parse({ type: "RUN_FINISHED", runId: RUN, seq, ts: "2027-01-15T08:00:04.000Z", messageIds: [] });
 
   beforeEach(() => useRunStore.getState().reset());
   afterEach(() => useRunStore.getState().reset());
@@ -1823,6 +1825,7 @@ describe("MessageList 응답 안의 활동", () => {
       store.applyState(runState({ status: "queued" }));
       for (const e of TOOL_EVENTS) store.applyEvent(RunEvent.parse(e));
       store.applyEvent(textDelta(6, "답"));
+      store.applyEvent(finishedEvent(7));
       store.applyState(runState({ status: "done" }));
       store.remove(RUN);
     });
@@ -1838,10 +1841,48 @@ describe("MessageList 응답 안의 활동", () => {
     act(() => {
       store.applyState(runState({ status: "queued" }));
       store.applyEvent(textDelta(1, "답"));
+      store.applyEvent(finishedEvent(2));
     });
     setup(timelineOf([answer()]));
     await screen.findByText("답 본문");
     expect(screen.queryByRole("button", { name: /^활동/ })).toBeNull();
+  });
+
+  it("끊긴 사이 끝난 런(끝 이벤트를 못 보고 지운 런)은 굳히지 않는다 — 펼치면 GET 한 번", async () => {
+    fetchMock.mockImplementation(async (url) =>
+      String(url).includes(`/runs/${RUN}/events`)
+        ? Response.json({ events: TOOL_EVENTS })
+        : new Response("{}", { status: 500 }),
+    );
+    const store = useRunStore.getState();
+    act(() => {
+      store.applyState(runState({ status: "queued" }));
+      store.applyEvent(RunEvent.parse(TOOL_EVENTS[0]));
+      // 재연결 구독 응답의 activeRuns 에 없다 — applySubscribed 가 지운다(사이의 이벤트·끝은 못 봤다)
+      store.remove(RUN);
+    });
+    setup(timelineOf([answer()]));
+    await screen.findByText("답 본문");
+    expect(summary()).toHaveTextContent(/^활동$/);
+    expect(eventCalls()).toBe(0);
+    await userEvent.click(summary());
+    await waitFor(() => expect(summary()).toHaveTextContent("활동 · 추론 · 도구 1 · 3초"));
+    expect(screen.getByRole("button", { name: "Read 결과 보기" })).toBeInTheDocument();
+    expect(eventCalls()).toBe(1);
+  });
+
+  it("한 런의 메시지가 여럿이면 요약 줄은 가장 앞(seq 가 작은) 메시지에 하나만", async () => {
+    setup(
+      timelineOf([
+        answer({ bodyMd: "먼저 게시" }),
+        msg(2, { authorType: "agent", authorId: AGENT, bodyMd: "마지막 답", runId: RUN }),
+      ]),
+    );
+    const first = (await screen.findByText("먼저 게시")).closest("article");
+    const last = screen.getByText("마지막 답").closest("article");
+    expect(screen.getAllByRole("button", { name: /^활동/ })).toHaveLength(1);
+    expect(within(first as HTMLElement).getByRole("button", { name: /^활동/ })).toBeInTheDocument();
+    expect(within(last as HTMLElement).queryByRole("button", { name: /^활동/ })).toBeNull();
   });
 
   it("스레드 패널의 에이전트 답글에도 같다", async () => {
