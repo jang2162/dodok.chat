@@ -25,6 +25,7 @@ import {
   listMessages,
   withInteractions,
 } from "../src/modules/messages/service";
+import { insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import {
@@ -628,6 +629,94 @@ describe("messages service", () => {
     const page = listMessages(db, channelId, { afterSeq: 0, limit: 1000 });
     expect(page.messages).toHaveLength(200);
     expect(page.hasMore).toBe(true);
+  });
+});
+
+describe("hydrateForClient 의 runRoot(답 묶음 설계)", () => {
+  function chain() {
+    const { db, bus, userId, workspaceId, channelId, devId } = setup();
+    const fin = createAgent(db, { workspaceId, providerAgentId: "fin", handle: "fin", name: "Fin" });
+    const conversationId = channelConversation(db, channelId);
+    const root = createUserMessage(db, bus, {
+      conversationId,
+      authorId: userId,
+      bodyMd: "@dev 봐줘",
+      clientMsgId: "r",
+    });
+    const run = (
+      agentId: string,
+      triggerMessageId: string,
+      extra: { parentRunId?: string; relayDepth?: number } = {},
+    ) =>
+      insertRun(db, {
+        channelId,
+        conversationId,
+        agentId,
+        triggerKind: extra.parentRunId ? "relay" : "mention",
+        triggerMessageId,
+        rootMessageId: root.id,
+        relayDepth: extra.relayDepth ?? 0,
+        parentRunId: extra.parentRunId,
+        sessionKey: `agent:${agentId}:dodok:channel:${conversationId}`,
+        createdAt: new Date(),
+      });
+    const say = (agentId: string, runId: string, externalId: string) =>
+      createAgentMessage(db, bus, { conversationId, agentId, runId, externalId, bodyMd: "답" });
+    return { db, bus, conversationId, root, devId, finId: fin.id, run, say };
+  }
+
+  it("hydrateForClient 는 에이전트 메시지에 runRoot 를 붙인다", () => {
+    const { db, root, devId, run, say } = chain();
+    const r = run(devId, root.id);
+    const [m] = hydrateForClient(db, [say(devId, r.id, "o1")]);
+    expect(m?.runRoot).toEqual({
+      runId: r.id,
+      agentId: devId,
+      rootMessageId: root.id,
+      triggerMessageId: root.id,
+    });
+  });
+
+  it("릴레이 런의 메시지는 원래 루트와 부른 글을 싣는다", () => {
+    const { db, root, devId, finId, run, say } = chain();
+    const a = run(devId, root.id);
+    const m1 = say(devId, a.id, "o1");
+    const b = run(finId, m1.id, { parentRunId: a.id, relayDepth: 1 });
+    const m2 = say(finId, b.id, "o2");
+    const [h1, h2] = hydrateForClient(db, [m1, m2]);
+    expect(h1?.runRoot?.rootMessageId).toBe(root.id);
+    expect(h2?.runRoot).toEqual({
+      runId: b.id,
+      agentId: finId,
+      rootMessageId: root.id,
+      triggerMessageId: m1.id,
+    });
+  });
+
+  it("run_error 시스템 메시지에도 붙는다", () => {
+    const { db, bus, conversationId, root, devId, run } = chain();
+    const r = run(devId, root.id);
+    const sys = createSystemMessage(db, bus, {
+      conversationId,
+      kind: "run_error",
+      bodyMd: "@dev 실행이 실패했습니다",
+      systemMeta: { runId: r.id },
+    });
+    const [m] = hydrateForClient(db, [sys]);
+    expect(m?.runRoot).toEqual({
+      runId: r.id,
+      agentId: devId,
+      rootMessageId: root.id,
+      triggerMessageId: root.id,
+    });
+  });
+
+  it("사람 글·info 시스템 글에는 붙지 않는다", () => {
+    const { db, bus, conversationId, root } = chain();
+    const info = createSystemMessage(db, bus, { conversationId, kind: "info", bodyMd: "알림" });
+    const [a, b] = hydrateForClient(db, [root, info]);
+    expect(a?.runRoot).toBeUndefined();
+    expect(b?.runRoot).toBeUndefined();
   });
 });
 

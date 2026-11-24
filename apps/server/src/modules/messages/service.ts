@@ -22,6 +22,7 @@ import {
   componentInteractions,
   conversations,
   messages,
+  runs,
 } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
@@ -274,9 +275,55 @@ export function withAutomationNames(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
-/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름. REST·구독 ack·wire 팬아웃이 쓴다 */
+/** runRoot 를 붙일 런 id — 에이전트 메시지의 runId, run_error 시스템 메시지의 systemMeta.runId */
+function runIdForRoot(m: Message): string | undefined {
+  if (m.authorType === "agent") return m.runId;
+  if (m.kind === "system" && m.systemMeta?.kind === "run_error") return m.systemMeta.runId;
+  return undefined;
+}
+
+/**
+ * 에이전트 메시지와 run_error 시스템 메시지에 그 런의 루트(runRoot)를 붙인다 — 웹이 여러 에이전트 답을 루트 글 아래 묶는다(답 묶음
+ * 설계). 대상이 없으면 질의하지 않고, 있으면 런 id 로 한 번(N+1 없음). 런 행이 없으면(지운 채널 등) 붙이지 않는다
+ */
+export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = [...new Set(msgs.flatMap((m) => runIdForRoot(m) ?? []))];
+  if (ids.length === 0) return msgs;
+  const byRun = new Map(
+    db
+      .select({
+        id: runs.id,
+        agentId: runs.agentId,
+        rootMessageId: runs.rootMessageId,
+        triggerMessageId: runs.triggerMessageId,
+      })
+      .from(runs)
+      .where(inArray(runs.id, ids))
+      .all()
+      .map((r) => [r.id, r]),
+  );
+  return msgs.map((m) => {
+    const id = runIdForRoot(m);
+    const run = id === undefined ? undefined : byRun.get(id);
+    if (!run) return m;
+    return {
+      ...m,
+      runRoot: {
+        runId: run.id,
+        agentId: run.agentId,
+        rootMessageId: run.rootMessageId,
+        ...(run.triggerMessageId ? { triggerMessageId: run.triggerMessageId } : {}),
+      },
+    };
+  });
+}
+
+/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름·런 루트. REST·구독 ack·wire 팬아웃이 쓴다 */
 export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
-  return withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs))));
+  return withRunRoots(
+    db,
+    withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)))),
+  );
 }
 
 /**
