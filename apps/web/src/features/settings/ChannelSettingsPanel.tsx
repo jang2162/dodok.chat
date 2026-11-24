@@ -4,9 +4,11 @@ import { useAgents, useChannel, useMembers } from "@/api/queries";
 import { isChannelArchived } from "@/features/channels/archived";
 import { ArchiveSection } from "./ArchiveSection";
 import { BasicSection } from "./BasicSection";
+import { DraftProvider } from "./draft";
 import { MembersSection, agentMembers } from "./MembersSection";
 import { PromptSection } from "./PromptSection";
 import { RelayPolicySection } from "./RelayPolicySection";
+import { SaveBar } from "./SaveBar";
 import { SessionSection } from "./SessionSection";
 
 /**
@@ -23,7 +25,9 @@ export function ChannelSettingsPanel() {
 
 /**
  * 섹션들. `["channel", id]` 는 `useChannel` 로만 읽는다(다른 관찰자는 silent 를 풀어 버린다).
- * 채널 목록의 자리값(isPlaceholderData)으로는 폼을 그리지 않는다 — 상세를 받은 뒤에
+ * 채널 목록의 자리값(isPlaceholderData)으로는 폼을 그리지 않는다 — 상세를 받은 뒤에.
+ * 기본·채널 프롬프트·릴레이 정책은 초안을 등록소(`DraftProvider`)에 올리고 아래 저장 막대(`SaveBar`) 하나로 저장한다 — 나머지 칸은
+ * 고르는 즉시 저장 그대로(패널 재설계 스펙 목표 6). 막대는 스크롤 상자 아래에 붙는다
  */
 function SettingsBody({ channelId }: { channelId: string }) {
   const channel = useChannel(channelId);
@@ -39,25 +43,30 @@ function SettingsBody({ channelId }: { channelId: string }) {
   }
   if (isChannelArchived(channel.data)) return <ArchivedSettings />;
   return (
-    <div className="flex flex-col divide-y">
-      <BasicSection channel={channel.data} />
-      <PromptSection channel={channel.data} />
-      <RelayPolicySection
-        channel={channel.data}
-        agents={agentMembers(members.data, agents.data).map((r) => r.agent)}
-      />
-      <SessionSection channel={channel.data} members={members.data} />
-      <MembersSection
-        channelId={channelId}
-        members={members.data}
-        agents={agents.data}
-        loadError={members.isError}
-        onRetry={() => void members.refetch()}
-        agentsError={agents.isError}
-        onRetryAgents={() => void agents.refetch()}
-      />
-      <ArchiveSection channel={channel.data} />
-    </div>
+    <DraftProvider>
+      <div className="flex min-h-full flex-col">
+        <div className="flex flex-1 flex-col divide-y">
+          <BasicSection channel={channel.data} />
+          <PromptSection channel={channel.data} />
+          <RelayPolicySection
+            channel={channel.data}
+            agents={agentMembers(members.data, agents.data).map((r) => r.agent)}
+          />
+          <SessionSection channel={channel.data} members={members.data} />
+          <MembersSection
+            channelId={channelId}
+            members={members.data}
+            agents={agents.data}
+            loadError={members.isError}
+            onRetry={() => void members.refetch()}
+            agentsError={agents.isError}
+            onRetryAgents={() => void agents.refetch()}
+          />
+          <ArchiveSection channel={channel.data} />
+        </div>
+        <SaveBar />
+      </div>
+    </DraftProvider>
   );
 }
 

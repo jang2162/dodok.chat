@@ -23,6 +23,9 @@ import {
 import { PROMPT_SAVED_NOTICE } from "./PromptSection";
 
 const region = (name: string) => screen.findByRole("region", { name });
+/** 패널 아래 저장 막대 — 바뀐 칸이 있을 때만 있다 */
+const saveBar = () => screen.getByRole("region", { name: "저장하지 않은 변경" });
+const saveBarButton = () => within(saveBar()).getByRole("button", { name: /^저장/ });
 const channelUrl = `/api/v1/channels/${CH}`;
 const apiErr = (status: number, code: string, message: string) => json(status, { code, message });
 
@@ -152,7 +155,8 @@ describe("패널", () => {
     );
     // 라우트 컴포넌트는 그대로다 — 안쪽만 새로 그렸다
     expect(screen.getByTestId("page-channel-panel")).toBe(panel);
-    expect(within(await region("기본")).getByRole("button", { name: "저장" })).toBeDisabled();
+    await region("기본");
+    expect(screen.queryByRole("region", { name: "저장하지 않은 변경" })).not.toBeInTheDocument();
     expect(server.writes()).toEqual([]);
   });
 
@@ -192,16 +196,19 @@ describe("기본", () => {
     expect(name).toHaveAttribute("maxLength", "80");
     expect(topic).toHaveValue("옛 주제");
     expect(topic).toHaveAttribute("maxLength", "500");
-    const save = within(basic).getByRole("button", { name: "저장" });
-    expect(save).toBeDisabled();
+    // 고치기 전에는 저장 막대가 없다
+    expect(screen.queryByRole("region", { name: "저장하지 않은 변경" })).not.toBeInTheDocument();
 
     await userEvent.clear(name);
     expect(within(basic).getByText("이름은 비울 수 없습니다")).toBeInTheDocument();
-    expect(save).toBeDisabled();
+    // 빈 이름은 보내지 않는다 — 막대의 「저장」을 눌러도
+    await userEvent.click(saveBarButton());
+    expect(server.writes()).toEqual([]);
     await userEvent.type(name, "  dev-talk ");
     await userEvent.clear(topic);
+    expect(within(saveBar()).getByText("바뀐 항목 2개")).toBeInTheDocument();
     const detailGets = server.count("GET", channelUrl);
-    await userEvent.click(save);
+    await userEvent.click(saveBarButton());
 
     await waitFor(() =>
       expect(server.writes()).toEqual([
@@ -210,7 +217,7 @@ describe("기본", () => {
     );
     expect(await within(basic).findByRole("status")).toHaveTextContent("저장했습니다");
     expect(within(basic).getByLabelText("이름")).toHaveValue("dev-talk");
-    expect(save).toBeDisabled();
+    expect(screen.queryByText(/바뀐 항목/)).not.toBeInTheDocument();
     const cached = queryClient.getQueryData<Channel>(qk.channel(CH));
     expect(cached?.name).toBe("dev-talk");
     expect(cached).not.toHaveProperty("topic");
@@ -229,7 +236,7 @@ describe("기본", () => {
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "!");
-    await userEvent.click(within(basic).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(await within(basic).findByRole("alert")).toHaveTextContent("body — name: 이상하다");
     // 서버 문구가 가리킨 칸에 표시가 붙는다
     expect(within(basic).getByLabelText("이름")).toHaveAttribute("aria-invalid", "true");
@@ -237,7 +244,7 @@ describe("기본", () => {
     expect(toastError).not.toHaveBeenCalled();
 
     reply = apiErr(500, "INTERNAL", "서버가 넘어졌다");
-    await userEvent.click(within(basic).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("서버가 넘어졌다"));
     expect(within(basic).queryByRole("alert")).not.toBeInTheDocument();
     expect(toastError).toHaveBeenCalledTimes(1);
@@ -256,7 +263,7 @@ describe("채널 프롬프트", () => {
 
     await userEvent.type(box, "간결하게");
     expect(within(section).getByText("19,996자 남음")).toBeInTheDocument();
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(await within(section).findByRole("status")).toHaveTextContent("다음 턴부터 반영됩니다.");
     expect(box).toHaveValue("간결하게");
 
@@ -264,7 +271,7 @@ describe("채널 프롬프트", () => {
     await userEvent.clear(box);
     expect(within(section).queryByRole("status")).not.toBeInTheDocument();
     await userEvent.type(box, "   ");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     await waitFor(() =>
       expect(server.writes().map((c) => c.body)).toEqual([{ prompt: "간결하게" }, { prompt: null }]),
     );
@@ -277,24 +284,26 @@ describe("채널 프롬프트", () => {
     renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
     const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
-    const save = within(section).getByRole("button", { name: "저장" });
-    // 보낼 것이 없을 때도 잠금은 aria-disabled 다 — 탭 차례에 남는다
-    expect(save).toHaveAttribute("aria-disabled", "true");
-    expect(save).not.toBeDisabled();
-
     await userEvent.type(box, "간결하게");
+    const save = saveBarButton();
     expect(save).not.toHaveAttribute("aria-disabled");
     save.focus();
     await userEvent.keyboard("{Enter}");
     await within(section).findByRole("status");
     expect(server.writes().map((c) => c.body)).toEqual([{ prompt: "간결하게" }]);
+    // 바뀐 것이 0 이 돼도 초점이 막대 안에 있는 동안은 막대가 남는다 — 보낼 것이 없을 때의 잠금도 aria-disabled(탭 차례에 남는다)
     expect(document.activeElement).toBe(save);
     expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).not.toBeDisabled();
+    expect(within(saveBar()).getByText("모두 저장했습니다")).toBeInTheDocument();
     expect(box).not.toBeDisabled();
 
     // 잠긴 버튼을 다시 눌러도 보내지 않는다
     await userEvent.keyboard("{Enter}");
     expect(server.writes()).toHaveLength(1);
+    // 초점이 막대를 떠나면 막대를 내린다
+    await userEvent.click(box);
+    expect(screen.queryByRole("region", { name: "저장하지 않은 변경" })).not.toBeInTheDocument();
   });
 });
 
@@ -311,10 +320,12 @@ describe("채널 프롬프트 — 저장 중", () => {
     const section = await region("채널 프롬프트");
     const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
     await userEvent.type(box, "간결하게");
-    const save = within(section).getByRole("button", { name: "저장" });
+    const save = saveBarButton();
     save.focus();
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(box).toHaveAttribute("readonly"));
+    expect(save).toHaveTextContent("저장 중…");
+    expect(save).toHaveAttribute("aria-disabled", "true");
 
     await userEvent.keyboard("{Enter}");
     await userEvent.type(box, "추가");
@@ -338,7 +349,7 @@ describe("릴레이 정책", () => {
     const daily = within(section).getByLabelText("일일 실행 상한");
     await userEvent.clear(turns);
     await userEvent.type(turns, "33");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(within(section).getByRole("alert")).toHaveTextContent("턴 상한은 0~32");
     expect(turns).toHaveAttribute("aria-invalid", "true");
     expect(turns).toHaveAccessibleDescription(/턴 상한은 0~32/);
@@ -349,7 +360,7 @@ describe("릴레이 정책", () => {
     expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
     expect(turns).not.toHaveAttribute("aria-invalid");
     await userEvent.type(daily, "0");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(within(section).getByRole("alert")).toHaveTextContent("일일 상한");
     expect(daily).toHaveAttribute("aria-invalid", "true");
     expect(daily).toHaveAccessibleDescription(/일일 상한/);
@@ -366,7 +377,7 @@ describe("릴레이 정책", () => {
     await userEvent.clear(turns);
     await userEvent.paste("100");
     expect(turns).toHaveValue("100"); // 「10」으로 잘려 조용히 유효값이 되지 않는다
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(within(section).getByRole("alert")).toHaveTextContent("턴 상한은 0~32");
 
     const daily = within(section).getByLabelText("일일 실행 상한");
@@ -375,7 +386,7 @@ describe("릴레이 정책", () => {
     daily.focus();
     await userEvent.paste("12345678901");
     expect(daily).toHaveValue("12345678901");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(within(section).getByRole("alert")).toHaveTextContent("일일 상한은 1~999,999,999");
     expect(server.writes()).toEqual([]);
   });
@@ -399,7 +410,7 @@ describe("릴레이 정책", () => {
     await userEvent.clear(turns);
     await userEvent.type(turns, "2");
     await userEvent.type(within(section).getByLabelText("일일 실행 상한"), "10");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
 
     await waitFor(() =>
       expect(server.writes()).toEqual([
@@ -445,7 +456,7 @@ describe("릴레이 정책", () => {
     it("에이전트 셋이면 3×3 표 — 대각선은 「—」(체크박스 없음), 칸을 켜면 allowPairs 에 그 쌍", async () => {
       const server = stubSettingsServer(three);
       renderRoute(`/c/${CH}/s/${CH}/settings`);
-      const { section, table } = await grid();
+      const { table } = await grid();
       const rows = within(table).getAllByRole("row");
       expect(rows).toHaveLength(4); // 머리 줄 + 셋
       for (const row of rows.slice(1)) {
@@ -457,7 +468,7 @@ describe("릴레이 정책", () => {
       expect(within(table).queryByRole("checkbox", { name: "@dev → @dev" })).not.toBeInTheDocument();
 
       await userEvent.click(within(table).getByRole("checkbox", { name: "@fin → @ops" }));
-      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await userEvent.click(saveBarButton());
       await waitFor(() => expect(server.writes()).toHaveLength(1));
       expect(pairsSent(server)).toEqual([{ from: FIN, to: OPS }]);
     });
@@ -465,7 +476,7 @@ describe("릴레이 정책", () => {
     it("행 머리는 그 에이전트가 보내는 쌍을 모두 켜고, 모두 켜져 있으면 모두 끈다 — 열 머리도 같다", async () => {
       const server = stubSettingsServer(three);
       renderRoute(`/c/${CH}/s/${CH}/settings`);
-      const { section, table } = await grid();
+      const { table } = await grid();
       const box = (name: string) => within(table).getByRole("checkbox", { name });
       const row = within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" });
 
@@ -485,7 +496,7 @@ describe("릴레이 정책", () => {
       expect(box("@fin → @ops")).toBeChecked();
       expect(box("@ops → @dev")).not.toBeChecked();
       expect(box("@ops → @fin")).not.toBeChecked();
-      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await userEvent.click(saveBarButton());
       await waitFor(() => expect(server.writes()).toHaveLength(1));
       expect(pairsSent(server)).toEqual(
         expect.arrayContaining([
@@ -528,14 +539,14 @@ describe("릴레이 정책", () => {
         members: [memberOf("user", OWNER), memberOf("agent", DEV), memberOf("agent", FIN)],
       });
       renderRoute(`/c/${CH}/s/${CH}/settings`);
-      const { section, table } = await grid();
+      const { table } = await grid();
       expect(within(table).getAllByRole("checkbox")).toHaveLength(2);
       for (const b of within(table).getAllByRole("checkbox")) expect(b).not.toBeChecked();
 
       await userEvent.click(within(table).getByRole("button", { name: "@dev 가 받는 쌍 모두" }));
       await userEvent.click(within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" }));
       await userEvent.click(within(table).getByRole("button", { name: "@dev 가 보내는 쌍 모두" }));
-      await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+      await userEvent.click(saveBarButton());
       await waitFor(() => expect(server.writes()).toHaveLength(1));
       expect(pairsSent(server)).toEqual([
         { from: GONE, to: DEV },
@@ -566,7 +577,7 @@ describe("릴레이 정책", () => {
     const daily = within(section).getByLabelText("일일 실행 상한");
     expect(daily).toHaveValue("5");
     await userEvent.clear(daily);
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     await waitFor(() =>
       expect(server.writes().map((c) => c.body)).toEqual([
         { relayPolicy: { maxRelayTurns: 4, allowPairs: "all" } },
@@ -575,8 +586,131 @@ describe("릴레이 정책", () => {
 
     reply = apiErr(400, "VALIDATION", "relayPolicy: invalid");
     await userEvent.type(daily, "7");
-    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    await userEvent.click(saveBarButton());
     expect(await within(section).findByRole("alert")).toHaveTextContent("relayPolicy: invalid");
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("저장 막대", () => {
+  const noBar = () =>
+    expect(screen.queryByRole("region", { name: "저장하지 않은 변경" })).not.toBeInTheDocument();
+
+  it("고치기 전에는 없다 — 이름을 고치면 「바뀐 항목 1개」와 그 칸에 바뀐 표시, 되돌리면 다시 없다", async () => {
+    stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    noBar();
+    const name = within(basic).getByLabelText("이름");
+    await userEvent.type(name, "x");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+    expect(name).toHaveAttribute("data-dirty", "true");
+    expect(within(basic).getByLabelText("주제")).not.toHaveAttribute("data-dirty");
+    // 손으로 원래 값으로 돌리면 바뀐 것이 아니다
+    await userEvent.type(name, "{Backspace}");
+    noBar();
+    expect(name).not.toHaveAttribute("data-dirty");
+  });
+
+  it("이름·채널 프롬프트를 고치고 저장 → PATCH 둘(기본 먼저), 두 섹션 「저장」 안내, 바뀐 항목 없음", async () => {
+    const server = stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    const prompt = await region("채널 프롬프트");
+    await userEvent.type(within(prompt).getByRole("textbox", { name: "채널 프롬프트" }), "짧게");
+    await userEvent.type(within(basic).getByLabelText("이름"), "-2");
+    expect(within(saveBar()).getByText("바뀐 항목 2개")).toBeInTheDocument();
+    await userEvent.click(saveBarButton());
+    await waitFor(() =>
+      expect(server.writes().map((c) => c.body)).toEqual([
+        { name: "general-2", topic: null },
+        { prompt: "짧게" },
+      ]),
+    );
+    expect(await within(basic).findByRole("status")).toHaveTextContent("저장했습니다");
+    expect(await within(prompt).findByRole("status")).toHaveTextContent(PROMPT_SAVED_NOTICE);
+    expect(screen.queryByText(/바뀐 항목/)).not.toBeInTheDocument();
+    // 초점이 막대를 떠나면 막대도 내린다
+    await userEvent.click(within(basic).getByLabelText("주제"));
+    noBar();
+  });
+
+  it("기본은 성공·프롬프트는 VALIDATION → 기본은 저장됨, 프롬프트 섹션 안 오류, 막대는 「바뀐 항목 1개」", async () => {
+    const server = stubSettingsServer({
+      override: ({ method, body }) =>
+        method === "PATCH" && body?.prompt !== undefined
+          ? apiErr(400, "VALIDATION", "body — prompt: 너무 이상하다")
+          : undefined,
+    });
+    const queryClient = createQueryClient(() => {});
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
+    const basic = await region("기본");
+    const prompt = await region("채널 프롬프트");
+    await userEvent.type(within(basic).getByLabelText("이름"), "-2");
+    await userEvent.type(within(prompt).getByRole("textbox", { name: "채널 프롬프트" }), "짧게");
+    await userEvent.click(saveBarButton());
+
+    expect(await within(prompt).findByRole("alert")).toHaveTextContent("body — prompt: 너무 이상하다");
+    expect(await within(basic).findByRole("status")).toHaveTextContent("저장했습니다");
+    expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.name).toBe("general-2");
+    expect(within(basic).getByLabelText("이름")).not.toHaveAttribute("data-dirty");
+    expect(within(prompt).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("짧게");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+    expect(server.writes()).toHaveLength(2);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("「되돌리기」 → 세 섹션 모두 서버 값, 막대 없음, 보내지 않는다", async () => {
+    const server = stubSettingsServer({ channel: { prompt: "원래" } });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    const prompt = await region("채널 프롬프트");
+    const relay = await region("릴레이 정책");
+    await userEvent.type(within(basic).getByLabelText("이름"), "-2");
+    await userEvent.type(within(prompt).getByRole("textbox", { name: "채널 프롬프트" }), " 더");
+    await userEvent.click(within(relay).getByRole("switch", { name: "모든 에이전트끼리 허용" }));
+    expect(within(saveBar()).getByText("바뀐 항목 3개")).toBeInTheDocument();
+
+    await userEvent.click(within(saveBar()).getByRole("button", { name: "되돌리기" }));
+    expect(within(basic).getByLabelText("이름")).toHaveValue("general");
+    expect(within(prompt).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("원래");
+    expect(within(relay).getByRole("switch", { name: "모든 에이전트끼리 허용" })).toBeChecked();
+    expect(screen.queryByText(/바뀐 항목/)).not.toBeInTheDocument();
+    expect(server.writes()).toEqual([]);
+  });
+
+  it("저장 중에 이름을 또 고치면 저장이 끝난 뒤 그 새 값이 초안으로 남는다 — 응답이 덮지 않는다", async () => {
+    const hold = gate();
+    const server = stubSettingsServer({
+      override: async ({ method }) => {
+        if (method === "PATCH") await hold.opened;
+        return undefined;
+      },
+    });
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const basic = await region("기본");
+    const name = within(basic).getByLabelText("이름");
+    await userEvent.type(name, "-a");
+    await userEvent.click(saveBarButton());
+    await waitFor(() => expect(saveBarButton()).toHaveTextContent("저장 중…"));
+    await userEvent.type(name, "b");
+
+    hold.open();
+    expect(await within(basic).findByRole("status")).toHaveTextContent("저장했습니다");
+    expect(server.writes().map((c) => c.body)).toEqual([{ name: "general-a", topic: null }]);
+    expect(name).toHaveValue("general-ab");
+    expect(name).toHaveAttribute("data-dirty", "true");
+    expect(within(saveBar()).getByText("바뀐 항목 1개")).toBeInTheDocument();
+  });
+
+  it("고르는 즉시 저장되는 칸(세션 정책)은 막대 없이 바로 PATCH", async () => {
+    const server = stubSettingsServer();
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
+    const session = await region("세션");
+    await userEvent.click(within(session).getByRole("radio", { name: "세션 관리자만" }));
+    await waitFor(() =>
+      expect(server.writes().map((c) => c.body)).toEqual([{ sessionPolicy: { create: "managers" } }]),
+    );
+    noBar();
   });
 });

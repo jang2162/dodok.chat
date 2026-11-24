@@ -1,5 +1,5 @@
 import type { Agent, Channel } from "@dodok/shared";
-import { type FormEvent, useId, useState } from "react";
+import { useId, useState } from "react";
 import { formError, validationField } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
 import { Button } from "@/ui/button";
@@ -9,10 +9,11 @@ import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { usePatchChannel } from "./mutations";
 import { type RelayForm, type RelayFormField, fromForm, toForm } from "./relayPolicyForm";
-import { Saved, Section } from "./Section";
+import { useRegisterDraft } from "./draft";
+import { DIRTY_FIELD, Saved, Section } from "./Section";
 
 /**
- * 릴레이 정책(스펙 6.3): 턴 상한, 일일 실행 상한(빈칸 = 없음), 허용 쌍. 「모든 에이전트끼리 허용」을 끄면
+ * 릴레이 정책(스펙 6.3): 턴 상한, 일일 실행 상한(빈칸 = 없음), 허용 쌍. 저장은 패널 아래 저장 막대가 한다(`useRegisterDraft`). 「모든 에이전트끼리 허용」을 끄면
  * 채널 에이전트의 보내는 쪽(행) × 받는 쪽(열) 격자(대각선 없음). 검증 오류·서버 VALIDATION·CONFLICT 는 섹션 안, 그 밖은 전역 토스트.
  * admin 미만이면 값만 보이고 잠근다(팀 스펙 2장 — 릴레이 정책·일일 한도는 비용 설정이다)
  */
@@ -53,31 +54,36 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
     edit({ pairs: on ? [...rest, ...targets] : rest });
   }
 
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (draft === undefined || disabled) return;
-    const parsed = fromForm(draft);
+  async function submit() {
+    if (draft === undefined || locked) throw new Error("저장할 수 없는 초안");
+    const sent = draft;
+    const parsed = fromForm(sent);
     if (!parsed.ok) {
       setError({ message: parsed.error, field: parsed.field });
-      return;
+      throw new Error(parsed.error);
     }
     setError(undefined);
-    save.mutate(
-      { relayPolicy: parsed.policy },
-      {
-        onSuccess: () => {
-          setDraft(undefined);
-          setSaved(true);
-        },
-        onError: (err) => {
-          const message = formError(err);
-          if (message === undefined) return;
-          // 서버 VALIDATION 도 가리킨 칸이 있으면 그 칸에 표시한다(`body — relayPolicy.dailyRunLimit: …`)
-          setError({ message, field: validationField(message, ["dailyRunLimit", "maxRelayTurns"]) });
-        },
-      },
-    );
+    try {
+      await save.mutateAsync({ relayPolicy: parsed.policy });
+    } catch (err) {
+      const message = formError(err);
+      // 서버 VALIDATION 도 가리킨 칸이 있으면 그 칸에 표시한다(`body — relayPolicy.dailyRunLimit: …`)
+      if (message !== undefined)
+        setError({ message, field: validationField(message, ["dailyRunLimit", "maxRelayTurns"]) });
+      throw err;
+    }
+    setDraft((cur) => (cur === sent ? undefined : cur));
+    setSaved(true);
   }
+
+  const dirty = dirtyFields(form, toForm(channel.relayPolicy));
+  const changed = Object.values(dirty).filter(Boolean).length;
+  useRegisterDraft(
+    "relay",
+    locked || changed === 0
+      ? null
+      : { changed, save: submit, reset: () => (setDraft(undefined), setError(undefined)) },
+  );
 
   /** 그 칸의 오류면 표시와 설명을 잇는다 */
   const fieldProps = (field: RelayFormField, hintId: string) =>
@@ -87,7 +93,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
 
   return (
     <Section title="릴레이 정책" locked={locked}>
-      <form onSubmit={submit} noValidate className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${id}-turns`}>턴 상한</Label>
@@ -95,6 +101,8 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               id={`${id}-turns`}
               inputMode="numeric"
               value={form.maxRelayTurns}
+              data-dirty={dirty.maxRelayTurns || undefined}
+              className={DIRTY_FIELD}
               {...fieldProps("maxRelayTurns", `${id}-turns-hint`)}
               disabled={disabled}
               onChange={(e) => edit({ maxRelayTurns: e.target.value })}
@@ -110,6 +118,8 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               inputMode="numeric"
               value={form.dailyRunLimit}
               placeholder="없음"
+              data-dirty={dirty.dailyRunLimit || undefined}
+              className={DIRTY_FIELD}
               {...fieldProps("dailyRunLimit", `${id}-daily-hint`)}
               disabled={disabled}
               onChange={(e) => edit({ dailyRunLimit: e.target.value })}
@@ -143,16 +153,22 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
           </p>
         )}
         {saved && <Saved />}
-        {!locked && (
-          <div className="flex items-center justify-end gap-3">
-            <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
-              {save.isPending ? "저장 중…" : "저장"}
-            </Button>
-          </div>
-        )}
-      </form>
+      </div>
     </Section>
   );
+}
+
+/** 서버 값과 다른 칸 — 저장 막대의 수와 바뀐 칸 표시. 쌍은 순서를 보지 않고, 모두 허용이면 세지 않는다(보내지 않는다) */
+function dirtyFields(form: RelayForm, server: RelayForm) {
+  const key = (p: { from: string; to: string }) => `${p.from}>${p.to}`;
+  const a = new Set(form.pairs.map(key));
+  const b = new Set(server.pairs.map(key));
+  return {
+    maxRelayTurns: form.maxRelayTurns !== server.maxRelayTurns,
+    dailyRunLimit: form.dailyRunLimit !== server.dailyRunLimit,
+    allowAll: form.allowAll !== server.allowAll,
+    pairs: !form.allowAll && (a.size !== b.size || [...a].some((p) => !b.has(p))),
+  };
 }
 
 /**
