@@ -22,6 +22,8 @@ import { detailField, formError } from "@/api/formErrors";
 import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import { type BotTools, BotToolsFields, botToolsOf, EMPTY_BOT_TOOLS } from "./BotToolsFields";
 import {
+  isNoApprovalMode,
+  NO_APPROVAL_HINT,
   PERMISSION_MODE_LABEL,
   ROOT_MISSING,
   projectPlace,
@@ -797,6 +799,7 @@ export function SessionDefaultsForm({
       ? detailField(serverError, ["permissionMode", "sessionDefaults"])
       : undefined;
   const permissionError = server === "permissionMode" ? CEILING_REFUSED : undefined;
+  const noApproval = isNoApprovalMode(permissionMode);
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -872,8 +875,13 @@ export function SessionDefaultsForm({
               value={draft.permissionMode}
               aria-invalid={permissionError !== undefined}
               aria-describedby={
-                [describedBy, blocked && ceiling ? `${ids}-ceiling` : undefined].filter(Boolean).join(" ") ||
-                undefined
+                [
+                  describedBy,
+                  blocked && ceiling ? `${ids}-ceiling` : undefined,
+                  noApproval ? `${ids}-no-approval` : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
               }
               disabled={pending || ceilingPending}
               onChange={(e) =>
@@ -888,6 +896,12 @@ export function SessionDefaultsForm({
               ))}
             </select>
             {blocked && ceiling && <ReasonHint id={`${ids}-ceiling`} text={ABOVE_CEILING(ceiling)} />}
+            {noApproval && (
+              <p id={`${ids}-no-approval`} className="text-xs text-destructive">
+                {NO_APPROVAL_HINT} — 이 에이전트는 이 세션 시작값으로 도는 동안 사람에게 묻지 않고 도구를
+                씁니다
+              </p>
+            )}
           </>
         )}
       </Row>

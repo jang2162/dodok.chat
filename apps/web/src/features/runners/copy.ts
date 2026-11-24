@@ -66,6 +66,11 @@ export const PERMISSION_MODE_LABEL: Record<RunnerPermissionMode, string> = {
   bypassPermissions: "bypassPermissions — 묻지 않고 실행(승인 카드 없음)",
 };
 
+/** 승인 카드 없이 도는 권한 모드 — 러너 상한이 열 때만 고를 수 있다(채널 UI·권한 모드 스펙 1장). 고르는 곳·칩이 이 안내를 붙인다 */
+export const NO_APPROVAL_HINT = "승인 카드 없이 실행됩니다";
+export const isNoApprovalMode = (mode: RunnerPermissionMode | null | undefined): boolean =>
+  mode === "auto" || mode === "bypassPermissions";
+
 /** 프로그램 로그인 상태(hello `programs[].auth`) */
 export const AUTH_LABEL = { ok: "로그인됨", missing: "로그인 안 됨", unknown: "로그인 모름" } as const;
 

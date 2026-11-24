@@ -101,6 +101,23 @@ describe("러너 카드", () => {
     );
   });
 
+  it("프로그램 줄 — 상한을 연 러너는 auto·bypassPermissions 를 그대로 보인다", async () => {
+    for (const maxPermissionMode of ["auto", "bypassPermissions"] as const) {
+      stub({
+        runners: [
+          runnerOf(1, {
+            label: "맥북",
+            programs: [programOf({ ceiling: { maxPermissionMode, allowedToolsCeiling: null } })],
+          }),
+        ],
+      });
+      renderRunnersPage();
+      const line = within(await card("맥북")).getByRole("listitem", { name: "Claude Code" });
+      expect(line).toHaveTextContent(`· 권한 상한 ${maxPermissionMode}`);
+      cleanup();
+    }
+  });
+
   it("프로그램 줄 — login dedicated 면 (전용 로그인)", async () => {
     stub({ runners: [runnerOf(1, { label: "맥북", programs: [programOf({ login: "dedicated" })] })] });
     renderRunnersPage();
