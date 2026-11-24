@@ -24,7 +24,8 @@ import { stubMedia } from "../../../test/media";
 import { agentColorVar } from "../../theme/agentColor";
 import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
-import { ABOVE_CEILING, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
+import { ABOVE_CEILING, EFFORT_DEFAULT_LABEL, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
+import { PANEL_COLUMNS, SHEET_COLUMNS } from "./AgentPills";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -635,27 +636,27 @@ describe("노력치 칩 [작성기 칩 스펙 5.4]", () => {
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet", models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
     let { menu } = await openChip("coder", "노력치");
-    expect(names(menu)).toEqual(["기본", "낮음", "보통", "높음"]);
+    expect(names(menu)).toEqual([EFFORT_DEFAULT_LABEL, "낮음", "보통", "높음"]);
     await userEvent.keyboard("{Escape}");
     cleanup();
     // 「기본」 — default 줄의 둘만(대체값 다섯이 아니다 — C9)
     serve({ settings: { [CONV]: [row(CODER, { models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
     ({ menu } = await openChip("coder", "노력치"));
-    expect(names(menu)).toEqual(["기본", "낮음", "높음"]);
+    expect(names(menu)).toEqual([EFFORT_DEFAULT_LABEL, "낮음", "높음"]);
     await userEvent.keyboard("{Escape}");
     cleanup();
     serve({ settings: { [CONV]: [row(CODER, { model: "sonnet" })] } });
     renderAt(CONV, { agents: [CODER] });
     ({ menu } = await openChip("coder", "노력치"));
-    expect(names(menu)).toEqual(["기본", "낮음", "보통", "높음", "매우 높음", "최대"]);
+    expect(names(menu)).toEqual([EFFORT_DEFAULT_LABEL, "낮음", "보통", "높음", "매우 높음", "최대"]);
   });
 
   it("노력치를 안 받는 모델(빈 efforts)은 「기본」만 — 저장된 값은 범위 밖 경고", async () => {
     serve({ settings: { [CONV]: [row(CODER, { model: "haiku", models: MODELS })] } });
     renderAt(CONV, { agents: [CODER] });
     let { menu } = await openChip("coder", "노력치");
-    expect(names(menu)).toEqual(["기본"]);
+    expect(names(menu)).toEqual([EFFORT_DEFAULT_LABEL]);
     await userEvent.keyboard("{Escape}");
     cleanup();
     serve({ settings: { [CONV]: [row(CODER, { model: "haiku", effort: "high", models: MODELS })] } });
@@ -663,7 +664,7 @@ describe("노력치 칩 [작성기 칩 스펙 5.4]", () => {
     await waitFor(() => expect(chip("coder", "노력치")).toHaveAttribute("aria-invalid", "true"));
     ({ menu } = await openChip("coder", "노력치"));
     expect(optionsOf(menu)).toEqual([
-      { name: "기본", disabled: false, checked: false },
+      { name: EFFORT_DEFAULT_LABEL, disabled: false, checked: false },
       { name: `높음 — ${EFFORT_UNSUPPORTED}`, disabled: true, checked: true },
     ]);
     expect(patches()).toEqual([]);
@@ -699,7 +700,7 @@ describe("권한 칩 [S2]", () => {
     renderAt(CONV, { agents: [CODER] });
     const { menu } = await openChip("coder", "권한");
     expect(optionsOf(menu).map((o) => [o.name, o.disabled])).toEqual([
-      ["기본", false],
+      ["기본 · default", false],
       ["plan", false],
       ["dontAsk", false],
       ["default", false],
@@ -743,7 +744,7 @@ describe("권한 칩 [S2]", () => {
       const picked = await waitFor(() => chip("coder", "권한"));
       expect(picked).toHaveAccessibleName(`@coder 권한: ${permissionMode} — 승인 카드 없이 실행됩니다`);
       expect(picked.className).toContain("text-destructive");
-      expect(chip("reviewer", "권한")).toHaveAccessibleName("@reviewer 권한: 기본");
+      expect(chip("reviewer", "권한")).toHaveAccessibleName("@reviewer 권한: 기본 · default");
       expect(chip("reviewer", "권한").className).not.toContain("text-destructive");
     },
   );
@@ -873,5 +874,108 @@ describe("스레드 작성기 [S9 · Review Focus 5]", () => {
     expect(calls.map((c) => c.url)).toContain(
       `/api/v1/conversations/${CONV}/agent-settings?threadRootId=${ROOT}`,
     );
+  });
+});
+
+describe("「기본」의 실제 값 [채널 UI·권한 모드 스펙 2장]", () => {
+  /** 새 러너 — default 줄에 「기본」이 지금 도는 모델의 표시 이름 */
+  const LABELED: RunnerModelOption[] = [{ ...MODELS[0]!, resolvedLabel: "Opus 5.5" }, ...MODELS.slice(1)];
+
+  it("모델 「기본」은 default 줄의 resolvedLabel 로 「기본 · Opus 5.5」 — 칩·메뉴·알약이 같은 글", async () => {
+    serve({ settings: { [CONV]: [row(CODER, { models: LABELED }), row(REVIEWER, { models: MODELS })] } });
+    renderAt(CONV, { agents: [CODER, REVIEWER] });
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-pill-coder")).toHaveAccessibleName(
+        "@coder 설정 — 모델 기본 · Opus 5.5, 컨텍스트 —",
+      ),
+    );
+    // 옛 러너(resolvedLabel 없음)는 「기본」 그대로
+    expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
+      "@reviewer 설정 — 모델 기본, 컨텍스트 —",
+    );
+    await openPanel();
+    expect(chip("coder", "모델")).toHaveAccessibleName("@coder 모델: 기본 · Opus 5.5");
+    expect(chip("reviewer", "모델")).toHaveAccessibleName("@reviewer 모델: 기본");
+    const { menu } = await openChip("coder", "모델");
+    expect(names(menu)).toEqual(["기본 · Opus 5.5", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"]);
+  });
+
+  it("노력치 「기본」은 「기본 · 모델 기본」 — 칩과 메뉴", async () => {
+    serve({ settings: { [CONV]: [row(CODER, { models: LABELED })] } });
+    renderAt(CONV, { agents: [CODER] });
+    await waitFor(() =>
+      expect(chip("coder", "노력치")).toHaveAccessibleName("@coder 노력치: 기본 · 모델 기본"),
+    );
+    expect(chip("coder", "노력치")).toHaveTextContent("노력 기본 · 모델 기본");
+    const { menu } = await openChip("coder", "노력치");
+    expect(names(menu)[0]).toBe("기본 · 모델 기본");
+  });
+
+  it.each([
+    ["plan", "plan"],
+    ["dontAsk", "dontAsk"],
+    ["default", "default"],
+    ["acceptEdits", "default"],
+    ["bypassPermissions", "default"],
+    // 러너가 끊겨 상한을 모르면 default — runner-adapter 와 같다
+    [null, "default"],
+  ] as const)("권한 「기본」 + 상한 %s → 「기본 · %s」 — 칩과 메뉴", async (ceiling, expected) => {
+    serve({ settings: { [CONV]: [row(CODER, { ceiling })] } });
+    renderAt(CONV, { agents: [CODER] });
+    await waitFor(() =>
+      expect(chip("coder", "권한")).toHaveAccessibleName(`@coder 권한: 기본 · ${expected}`),
+    );
+    expect(chip("coder", "권한")).toHaveTextContent(`권한 기본 · ${expected}`);
+    const { menu } = await openChip("coder", "권한");
+    expect(names(menu)[0]).toBe(`기본 · ${expected}`);
+  });
+});
+
+describe("설정 패널의 열 정렬 [채널 UI·권한 모드 스펙 2장]", () => {
+  /** 패널의 줄이 한 grid 의 칸이다 — 줄은 상자 없는 contents, 칸은 줄마다 다섯(핸들·모델·노력·권한·컨텍스트) */
+  function expectAligned(dialog: HTMLElement, handles: string[], columns = PANEL_COLUMNS) {
+    const grid = within(dialog).getByTestId("agent-panel-grid");
+    expect(grid.className).toMatch(/(^|\s)grid(\s|$)/);
+    expect(grid.style.gridTemplateColumns).toBe(columns);
+    const lines = handles.map((h) => within(dialog).getByTestId(`agent-settings-${h}`));
+    for (const line of lines) {
+      expect(line.parentElement).toBe(grid);
+      expect(line.className).toMatch(/(^|\s)contents(\s|$)/);
+      expect(line.children).toHaveLength(5);
+    }
+    return grid;
+  }
+
+  it("넓은 화면 팝오버 — 줄들이 한 grid 의 자식, 줄마다 칸 다섯", async () => {
+    serve({ settings: { [CONV]: [row(CODER, { model: "claude-custom-long-name" }), row(REVIEWER)] } });
+    renderAt(CONV, { agents: [CODER, REVIEWER] });
+    const dialog = await openPanel();
+    expectAligned(dialog, ["coder", "reviewer"]);
+  });
+
+  it("오류는 그 줄 아래 한 줄을 다 쓴다 — 칸 다섯은 그대로", async () => {
+    serve({
+      settings: { [CONV]: [row(CODER), row(REVIEWER)] },
+      patchFails: { status: 500, code: "INTERNAL" },
+    });
+    renderAt(CONV, { agents: [CODER, REVIEWER] });
+    const dialog = await openPanel();
+    await pick("coder", "권한", "plan");
+    const alert = await within(lineOf("coder")).findByRole("alert");
+    expect(alert.parentElement?.className).toContain("col-span-full");
+    expect(lineOf("coder").children).toHaveLength(6);
+    expect(Array.from(lineOf("coder").children).indexOf(alert.parentElement!)).toBe(5);
+    expectAligned(dialog, ["reviewer"]);
+  });
+
+  it("좁은 화면 시트도 같은 grid — 열은 줄지 않고 표만 가로 스크롤, 줄 높이 44px 이상", async () => {
+    stubMedia(true);
+    serve({ settings: { [CONV]: [row(CODER), row(REVIEWER), row(TESTER)] } });
+    renderAt(CONV, { agents: [CODER, REVIEWER, TESTER] });
+    await userEvent.click(await screen.findByTestId("agent-pill-summary"));
+    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    const grid = expectAligned(dialog, ["coder", "reviewer", "tester"], SHEET_COLUMNS);
+    expect(grid.style.gridAutoRows).toBe("minmax(2.75rem, auto)");
+    expect(grid.parentElement?.className).toContain("overflow-x-auto");
   });
 });

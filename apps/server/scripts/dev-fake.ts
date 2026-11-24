@@ -280,6 +280,8 @@ export const DEV_FAKE_MODELS: RunnerModelOption[] = [
     value: "default",
     displayName: "Default (recommended)",
     efforts: ["low", "medium", "high", "xhigh", "max"],
+    // 「기본 · Opus 5.5」 — 실제 러너가 default 줄의 resolvedModel 로 채우는 값(채널 UI·권한 모드 스펙 2장)
+    resolvedLabel: "Opus 5.5",
   },
   { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
   { value: "sonnet", displayName: "Sonnet 5.5", efforts: ["low", "medium", "high"] },

@@ -62,6 +62,7 @@ import {
 import { VERSION_TIMEOUT_MS } from "../src/drivers/claude/executable";
 import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
 import { createFakeSdk, FAKE_MODELS, script, type FakeSdk } from "./helpers/fake-query";
+import type { SdkModelInfo } from "../src/drivers/claude/sdk";
 import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
 
 // 태스크 3 의 러너 어댑터 대신 shared 러너 계약(RUNNER_NAMESPACE·이벤트 Zod)으로 말하는 가짜 서버.
@@ -1504,6 +1505,32 @@ describe("hello 의 모델 목록(작성기 칩 스펙 C3·C4)", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
     expect(env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CONFIG_DIR: AGENT.configDir });
+  });
+
+  it("default 줄의 resolvedLabel 이 hello 계약(RunnerHello)을 지나 서버까지 간다 [채널 UI·권한 모드 스펙 2장]", async () => {
+    const { server } = await setup({
+      sdk: (fake) => {
+        fake.models = async () =>
+          [
+            {
+              value: "default",
+              resolvedModel: "claude-opus-5-5[1m]",
+              displayName: "Default (recommended)",
+              description: "Use the default model",
+            },
+            {
+              value: "opus[1m]",
+              resolvedModel: "claude-opus-5-5[1m]",
+              displayName: "Opus (1M context)",
+              description: "Opus 5.5 with 1M context",
+            },
+          ] as SdkModelInfo[];
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    const models = server.hellos[0]!.programs[0]!.models!;
+    expect(models[0]).toMatchObject({ value: "default", resolvedLabel: "Opus (1M context)" });
+    expect(models[1]).not.toHaveProperty("resolvedLabel");
   });
 
   it("listModels failure → hello without models", async () => {

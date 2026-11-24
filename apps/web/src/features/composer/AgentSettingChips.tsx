@@ -7,6 +7,7 @@ import {
   type RunnerEffort,
   type RunnerModelOption,
   type RunnerPermissionMode,
+  resolvePermissionMode,
 } from "@dodok/shared";
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -28,6 +29,11 @@ import { Input } from "@/ui/input";
 
 /** 「기본」 — 모델·effort 는 프로그램 기본, 권한은 실행 때 min(default, 러너 상한)(세션 설정 스펙 S5) */
 export const DEFAULT_LABEL = "기본";
+/**
+ * 노력치 「기본」 — SDK 가 모델의 기본 노력치를 알리지 않고, 고정표는 판이 바뀌면 틀린 값을 보여서 두지 않는다(채널 UI·권한 모드 스펙
+ * 2장)
+ */
+export const EFFORT_DEFAULT_LABEL = `${DEFAULT_LABEL} · 모델 기본`;
 /** 러너가 모델 목록을 알리지 않을 때(옛 러너·끊김)의 고정 목록 — 그 밖은 「직접 입력」(작성기 칩 스펙 C4) */
 export const MODEL_PRESETS = ["sonnet", "opus", "haiku"] as const;
 /** default 보다 높은 권한(acceptEdits)은 러너 주인·admin 만(S2) */
@@ -40,6 +46,20 @@ const CUSTOM_LABEL = "직접 입력";
 const DEFAULT_MODEL_VALUE = "default";
 
 export type ModelChoice = { value: string | null; label: string };
+
+/**
+ * 모델 「기본」의 글 — 러너가 default 줄에 지금 도는 모델(resolvedLabel)을 실었으면 「기본 · <이름>」, 옛 러너·끊김·고정 목록이면
+ * 「기본」(채널 UI·권한 모드 스펙 2장)
+ */
+export function defaultModelLabel(models: readonly RunnerModelOption[]): string {
+  const resolved = models.find((m) => m.value === DEFAULT_MODEL_VALUE)?.resolvedLabel;
+  return resolved ? `${DEFAULT_LABEL} · ${resolved}` : DEFAULT_LABEL;
+}
+
+/** 권한 「기본」의 글 — 실행 때 쓰는 값(min(default, 상한) — runner-adapter 와 같은 계산)을 붙인다 */
+export function defaultPermissionLabel(ceiling: RunnerPermissionMode | undefined): string {
+  return `${DEFAULT_LABEL} · ${resolvePermissionMode(null, ceiling)}`;
+}
 
 /** 권한 선택지 하나가 막힌 사유 — 상한 위가 먼저(누구도 못 고른다), 그다음 올리기 권한 */
 export function permissionLock(
@@ -63,7 +83,7 @@ export function modelChoices(models: readonly RunnerModelOption[], saved: string
       : models
           .filter((m) => m.value !== DEFAULT_MODEL_VALUE)
           .map((m) => ({ value: m.value, label: m.displayName || m.value }));
-  const choices: ModelChoice[] = [{ value: null, label: DEFAULT_LABEL }, ...listed];
+  const choices: ModelChoice[] = [{ value: null, label: defaultModelLabel(models) }, ...listed];
   if (saved !== null && !choices.some((c) => c.value === saved))
     return [{ value: saved, label: saved }, ...choices];
   return choices;
@@ -79,9 +99,12 @@ export function effortChoices(models: readonly RunnerModelOption[], model: strin
   return row ? row.efforts : [...RUNNER_EFFORTS];
 }
 
-/** 칩이 보이는 모델 값 — 「기본」(null)·러너가 알린 표시 이름·목록에 없으면 저장값 그대로(알약도 같은 값 — 작성기 도구 줄 스펙 T3) */
+/**
+ * 칩이 보이는 모델 값 — 「기본」(null)이면 defaultModelLabel, 러너가 알린 표시 이름, 목록에 없으면 저장값 그대로(알약도 같은 값 —
+ * 작성기 도구 줄 스펙 T3)
+ */
 export function modelLabelOf(row: ConversationAgentSettings, models: readonly RunnerModelOption[]): string {
-  if (row.model === null) return DEFAULT_LABEL;
+  if (row.model === null) return defaultModelLabel(models);
   return modelChoices(models, row.model).find((c) => c.value === row.model)?.label ?? row.model;
 }
 
@@ -94,12 +117,14 @@ function ChipText({ name, value }: { name: string; value: string }) {
   );
 }
 
+// 최대폭은 12rem 과 칸 폭 가운데 작은 쪽 — 패널 grid 의 열이 좁으면 칸 안에서 줄임표(채널 UI·권한 모드 스펙 2장)
 const CHIP =
-  "h-6 max-w-48 gap-1 rounded-full border border-input bg-background px-2 text-xs font-normal text-foreground";
+  "h-6 min-w-0 max-w-[min(12rem,100%)] gap-1 rounded-full border border-input bg-background px-2 text-xs font-normal text-foreground";
 
 /**
  * 작성기 위 칩 셋(작성기 칩 스펙 5.4) — 모델·노력치(effort)·권한. 칩을 누르면 그 칩의 선택지만 뜨고, 고르면 바로 저장한다(부르는 쪽이 대화면
- * PATCH, 새 세션 창이면 보류 값). 실패·잠금 사유는 칩 옆에(부르는 쪽이 `error` 로 돌려준다)
+ * PATCH, 새 세션 창이면 보류 값). 실패·잠금 사유는 부르는 쪽이 그린다. 내는 요소는 셋(모델 칸 — 직접 입력 칸을 품는다·노력·권한) —
+ * 설정 패널의 grid 가 이 셋을 한 칸씩 열로 맞춘다(채널 UI·권한 모드 스펙 2장)
  */
 export function AgentSettingChips({
   handle,
@@ -107,7 +132,6 @@ export function AgentSettingChips({
   models,
   canRaise,
   saving = false,
-  error,
   onSave,
 }: {
   handle: string;
@@ -116,7 +140,6 @@ export function AgentSettingChips({
   models: readonly RunnerModelOption[];
   canRaise: boolean;
   saving?: boolean;
-  error?: string | undefined;
   onSave: (patch: AgentSettingsPatch) => Promise<boolean>;
 }) {
   const [custom, setCustom] = useState<string | null>(null);
@@ -131,6 +154,9 @@ export function AgentSettingChips({
   }));
   const reasons = [...new Set(locks.flatMap((l) => (l.lock ? [l.lock] : [])))];
   const noApproval = isNoApprovalMode(row.permissionMode);
+  const effortLabel = row.effort === null ? EFFORT_DEFAULT_LABEL : EFFORT_LABEL[row.effort];
+  const permissionDefault = defaultPermissionLabel(ceiling);
+  const permissionLabel = row.permissionMode ?? permissionDefault;
 
   const pick = (patch: AgentSettingsPatch) => void onSave(patch);
   // Radix 라디오 값은 문자열이다 — 「기본」(null)을 빈 글로 싣는다
@@ -146,60 +172,62 @@ export function AgentSettingChips({
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={CHIP}
-            disabled={saving}
-            aria-label={`@${handle} 모델: ${modelLabel}`}
-          >
-            <ChipText name="모델" value={modelLabel} />
-            <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuRadioGroup
-            value={toValue(row.model)}
-            onValueChange={(v) => {
-              const next = fromValue(v);
-              if (next !== row.model) pick({ model: next });
-            }}
-          >
-            {choices.map((c) => (
-              <DropdownMenuRadioItem key={c.value ?? ""} value={toValue(c.value)}>
-                {c.label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setCustom(row.model ?? "")}>{CUSTOM_LABEL}</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {custom !== null && (
-        <form className="flex items-center gap-1" onSubmit={(e) => void saveCustom(e)}>
-          <Input
-            aria-label="모델 이름"
-            className="h-6 w-36 px-2 text-xs"
-            value={custom}
-            maxLength={128}
-            autoFocus
-            autoCapitalize="none"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={saving}
-            onChange={(e) => setCustom(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setCustom(null);
-            }}
-          />
-          <Button type="submit" size="sm" className="h-6 px-2 text-xs" disabled={saving}>
-            저장
-          </Button>
-        </form>
-      )}
+      <span className="flex min-w-0 items-center gap-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={CHIP}
+              disabled={saving}
+              aria-label={`@${handle} 모델: ${modelLabel}`}
+            >
+              <ChipText name="모델" value={modelLabel} />
+              <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuRadioGroup
+              value={toValue(row.model)}
+              onValueChange={(v) => {
+                const next = fromValue(v);
+                if (next !== row.model) pick({ model: next });
+              }}
+            >
+              {choices.map((c) => (
+                <DropdownMenuRadioItem key={c.value ?? ""} value={toValue(c.value)}>
+                  {c.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setCustom(row.model ?? "")}>{CUSTOM_LABEL}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {custom !== null && (
+          <form className="flex items-center gap-1" onSubmit={(e) => void saveCustom(e)}>
+            <Input
+              aria-label="모델 이름"
+              className="h-6 w-36 px-2 text-xs"
+              value={custom}
+              maxLength={128}
+              autoFocus
+              autoCapitalize="none"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={saving}
+              onChange={(e) => setCustom(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setCustom(null);
+              }}
+            />
+            <Button type="submit" size="sm" className="h-6 px-2 text-xs" disabled={saving}>
+              저장
+            </Button>
+          </form>
+        )}
+      </span>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -209,11 +237,11 @@ export function AgentSettingChips({
             size="sm"
             className={cn(CHIP, effortOff && "border-amber-500/70")}
             disabled={saving}
-            aria-label={`@${handle} 노력치: ${row.effort === null ? DEFAULT_LABEL : EFFORT_LABEL[row.effort]}${effortOff ? ` — ${EFFORT_UNSUPPORTED}` : ""}`}
+            aria-label={`@${handle} 노력치: ${effortLabel}${effortOff ? ` — ${EFFORT_UNSUPPORTED}` : ""}`}
             aria-invalid={effortOff || undefined}
           >
             {effortOff && <TriangleAlertIcon className="size-3 text-amber-600" aria-hidden />}
-            <ChipText name="노력" value={row.effort === null ? DEFAULT_LABEL : EFFORT_LABEL[row.effort]} />
+            <ChipText name="노력" value={effortLabel} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -225,7 +253,7 @@ export function AgentSettingChips({
               if (next !== row.effort) pick({ effort: next });
             }}
           >
-            <DropdownMenuRadioItem value="">{DEFAULT_LABEL}</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="">{EFFORT_DEFAULT_LABEL}</DropdownMenuRadioItem>
             {efforts.map((level) => (
               <DropdownMenuRadioItem key={level} value={level}>
                 {EFFORT_LABEL[level]}
@@ -248,10 +276,10 @@ export function AgentSettingChips({
             size="sm"
             className={cn(CHIP, noApproval && "border-destructive/60 text-destructive")}
             disabled={saving}
-            aria-label={`@${handle} 권한: ${row.permissionMode ?? DEFAULT_LABEL}${noApproval ? ` — ${NO_APPROVAL_HINT}` : ""}`}
+            aria-label={`@${handle} 권한: ${permissionLabel}${noApproval ? ` — ${NO_APPROVAL_HINT}` : ""}`}
           >
             {noApproval && <TriangleAlertIcon className="size-3" aria-hidden />}
-            <ChipText name="권한" value={row.permissionMode ?? DEFAULT_LABEL} />
+            <ChipText name="권한" value={permissionLabel} />
             <ChevronDownIcon className="size-3 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -263,7 +291,7 @@ export function AgentSettingChips({
               if (next !== row.permissionMode) pick({ permissionMode: next });
             }}
           >
-            <DropdownMenuRadioItem value="">{DEFAULT_LABEL}</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="">{permissionDefault}</DropdownMenuRadioItem>
             {locks.map(({ mode, lock }) => (
               <DropdownMenuRadioItem key={mode} value={mode} disabled={lock !== undefined}>
                 {mode}
@@ -280,11 +308,6 @@ export function AgentSettingChips({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      {error && (
-        <span role="alert" className="text-destructive">
-          {error}
-        </span>
-      )}
     </>
   );
 }

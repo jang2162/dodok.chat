@@ -23,6 +23,7 @@ import {
   type InboundDeliver,
   type OutboundMessage,
   permissionModeRank,
+  resolvePermissionMode,
   type RunEventBody,
   type RunEventType,
   RUNNER_BOT_MCP_UPDATE_MESSAGE,
@@ -117,18 +118,8 @@ export type RunnerAgentDefinition = {
   agent: Omit<RunnerRunAgent, "permissionMode"> & { permissionMode: RunnerPermissionMode | null };
 };
 
-/**
- * 권한 「기본」(null) — default 와 그 러너가 그 프로그램에 알린 상한 가운데 낮은 쪽. 사람이 고른 값은 상한을 넘어도 깎지 않는다 —
- * 러너가 RUNNER_CEILING 으로 거절해 카드가 된다(S5). 프로그램을 알리지 않았으면 default(러너가 program 천장으로 닫는다)
- */
-export function resolvePermissionMode(
-  chosen: RunnerPermissionMode | null,
-  ceiling: RunnerPermissionMode | undefined,
-): RunnerPermissionMode {
-  if (chosen !== null) return chosen;
-  if (ceiling === undefined) return "default";
-  return permissionModeRank(ceiling) < permissionModeRank("default") ? ceiling : "default";
-}
+// 권한 「기본」 계산은 웹(「기본 · <모드>」)과 같은 값이어야 해 shared 로 옮겼다 — 이 패키지의 내보내기는 그대로 둔다
+export { resolvePermissionMode };
 
 /** fs.list·project.check 의 ack 상한 — 러너가 디렉터리 하나를 읽는 시간 */
 export const RUNNER_FS_ACK_TIMEOUT_MS = 10_000;

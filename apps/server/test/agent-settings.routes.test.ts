@@ -38,11 +38,13 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
    * 주인 없는 러너(상한 acceptEdits), mia 의 러너(상한 acceptEdits), 상한 default 인 러너, 모델 목록을 알린 admin 의 러너,
    * 상한을 bypassPermissions 까지 연 주인 없는 러너·mia 의 러너
    */
-  const runner = { open: "", mine: "", low: "", models: "", wide: "", wideMine: "" };
+  const runner = { open: "", mine: "", low: "", models: "", labeled: "", wide: "", wideMine: "" };
   const MODELS = [
     { value: "default", displayName: "Default (recommended)", efforts: ["low", "medium", "high"] },
     { value: "opus", displayName: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"] },
   ] satisfies RunnerModelOption[];
+  /** 새 러너 — default 줄에 「기본」이 지금 도는 모델의 표시 이름(채널 UI·권한 모드 스펙 2장). MODELS 는 그 필드가 없는 옛 러너의 꼴 */
+  const LABELED: RunnerModelOption[] = [{ ...MODELS[0]!, resolvedLabel: "Opus 5.5" }, MODELS[1]!];
   let n = 0;
 
   beforeAll(async () => {
@@ -80,6 +82,7 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
     runner.mine = await connect("mine", mia.id, "acceptEdits");
     runner.low = await connect("low", null, "default");
     runner.models = await connect("models", admin.id, "acceptEdits", MODELS);
+    runner.labeled = await connect("labeled", admin.id, "acceptEdits", LABELED);
     runner.wide = await connect("wide", null, "bypassPermissions");
     runner.wideMine = await connect("wide-mine", mia.id, "bypassPermissions");
   });
@@ -520,6 +523,18 @@ describe("세션 설정 REST·첫 글 [세션 설정 스펙 5.2·5.3]", () => {
       expect(await ceilingsOf(noah.token, fx.channel.id)).toEqual([
         { agentId: fx.agent.id, ceiling: "acceptEdits", models: MODELS },
       ]);
+    });
+
+    it("default 줄의 resolvedLabel 을 그대로 싣고, 그 필드가 없는 옛 러너의 목록도 그대로 [채널 UI·권한 모드 스펙 2장]", async () => {
+      const fx = setup(runner.labeled);
+      expect((await settingsOf(noah.token, fx.conversationId))[0]?.models).toEqual(LABELED);
+      expect(await ceilingsOf(noah.token, fx.channel.id)).toEqual([
+        { agentId: fx.agent.id, ceiling: "acceptEdits", models: LABELED },
+      ]);
+      const old = setup(runner.models);
+      const [got] = await settingsOf(owner, old.conversationId);
+      expect(got?.models).toEqual(MODELS);
+      expect(got?.models[0]).not.toHaveProperty("resolvedLabel");
     });
 
     it("disconnected runner → models []", async () => {

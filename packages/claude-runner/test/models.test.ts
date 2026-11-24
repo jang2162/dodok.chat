@@ -55,6 +55,44 @@ describe("toModelOptions(작성기 칩 스펙 C3)", () => {
     expect(toModelOptions(FAKE_MODELS).map((m) => m.value)).toEqual(["default", "sonnet", "haiku"]);
   });
 
+  describe("default 줄의 resolvedLabel [채널 UI·권한 모드 스펙 2장]", () => {
+    const def = (over: Partial<SdkModelInfo>) =>
+      info({ value: "default", displayName: "Default (recommended)", ...over });
+
+    it("resolvedModel 을 value 로 가진 줄의 표시 이름을 default 줄에만 싣는다", () => {
+      const got = toModelOptions([
+        def({ resolvedModel: "claude-opus-5-5" }),
+        info({ value: "claude-opus-5-5", displayName: "Opus 5.5", resolvedModel: "claude-opus-5-5" }),
+      ]);
+      expect(got[0]!.resolvedLabel).toBe("Opus 5.5");
+      expect(got[1]).not.toHaveProperty("resolvedLabel");
+    });
+
+    it("resolvedModel 이 같은 줄(별칭)의 표시 이름 — 실제 CLI 의 꼴", () => {
+      const got = toModelOptions([
+        def({ resolvedModel: "claude-opus-5-5[1m]" }),
+        info({ value: "opus[1m]", displayName: "Opus (1M context)", resolvedModel: "claude-opus-5-5[1m]" }),
+        info({ value: "sonnet", displayName: "Sonnet", resolvedModel: "claude-sonnet-5" }),
+      ]);
+      expect(got[0]!.resolvedLabel).toBe("Opus (1M context)");
+    });
+
+    it("맞는 줄이 없으면 resolvedModel 글자 그대로, resolvedModel 이 없으면 키 없음", () => {
+      expect(toModelOptions([def({ resolvedModel: "claude-x-9" })])[0]!.resolvedLabel).toBe("claude-x-9");
+      // 옛 CLI(resolvedModel 없음) — description 이 있어도 싣지 않는다
+      expect(toModelOptions(FAKE_MODELS)[0]).not.toHaveProperty("resolvedLabel");
+    });
+
+    it("80자로 자른다", () => {
+      const long = "가".repeat(120);
+      expect(toModelOptions([def({ resolvedModel: long })])[0]!.resolvedLabel).toBe("가".repeat(80));
+      expect(
+        toModelOptions([def({ resolvedModel: "m" }), info({ value: "m", displayName: "나".repeat(120) })])[0]!
+          .resolvedLabel,
+      ).toBe("나".repeat(80));
+    });
+  });
+
   it("caps at 32", () => {
     const many = Array.from({ length: 40 }, (_, i) => info({ value: `m${i}` }));
     expect(toModelOptions(many)).toHaveLength(32);
