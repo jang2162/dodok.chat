@@ -119,11 +119,13 @@ describe("pendingThreadUpdatesFor", () => {
     expect(out.latestAt).toEqual(at(100));
   });
 
-  it("latestAt 은 밀린 스레드의 답글이 가장 늦어도 그 시각 — 보이지 않은 것도 외 N개로 알렸다", () => {
+  it("스레드가 밀려도 latestAt 은 고려한 답글 전체의 최댓값 — 밀린 스레드(활동이 가장 오래됨)는 최댓값을 바꾸지 않는다", () => {
     const c = setup();
     const roots = Array.from({ length: 6 }, () => post(c));
     roots.forEach((r, i) => reply(c, r, 10 + i));
     const out = pending(c, at(0));
+    expect(out.omitted).toBe(1);
+    expect(out.updates.map((u) => u.rootId)).not.toContain(roots[0]);
     expect(out.latestAt).toEqual(at(15));
   });
 

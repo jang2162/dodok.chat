@@ -4,7 +4,9 @@
  * OpenClawAdapter) + 가짜 Gateway·플러그인 + owner wire 소켓. 기다림은 wire 이벤트(WireLog.until)로 한다.
  */
 import type { Channel, InboundDeliver, Message, RunState } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { agentSessions } from "../../src/db/schema.sqlite";
 import { FAKE_PLUGIN_HELLO } from "../fakes/fake-plugin";
 import { createScenario, type Scenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveApp, type LiveAppOptions, waitForAdapterConnected } from "../helpers/live-app";
@@ -152,6 +154,63 @@ describe("통합 — 스레드 소식", () => {
     await waitForAdapterConnected(live.app);
     const upgraded = await turn(t, "@dev 새 플러그인");
     expect(texts(upgraded.delivery)).toEqual([[root, 1, ["옛 플러그인 동안의 답글"]]]);
+  });
+
+  it("ack 를 기다리는 사이 달린 답글은 다음 채널 런에 실린다 — 커서는 실은 것 가운데 가장 늦은 시각까지만", async () => {
+    const t = await start();
+    await turn(t, "@dev 시작");
+    const root = await thread(t, "루트", ["실린 답글"]);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const play = live.plugin.onInbound;
+    live.plugin.onInbound = async (delivery) => {
+      await gate;
+      return play(delivery);
+    };
+    const seen = new Set(t.owner.states.map((s) => s.id));
+    await sendMessage(t.owner.socket, t.channel.id, "@dev 현황", { conversationId: t.conversationId });
+    const held = await t.owner.until(() => t.owner.states.find((s) => !seen.has(s.id)), "붙잡힌 런");
+    await vi.waitFor(() => expect(live.plugin.received.some((d) => d.runId === held.id)).toBe(true));
+    expect(texts(live.plugin.received.find((d) => d.runId === held.id))).toEqual([[root, 1, ["실린 답글"]]]);
+
+    await say(t, "ack 전 답글", { threadRootId: root });
+    release();
+    live.plugin.onInbound = play;
+    expect((await t.owner.terminal(held.id)).status).toBe("done");
+    await t.owner.until(
+      () => t.owner.created.find((m) => m.authorType === "agent" && m.runId === held.id),
+      "붙잡힌 런의 답",
+    );
+
+    const next = await turn(t, "@dev 다음");
+    expect(texts(next.delivery)).toEqual([[root, 1, ["ack 전 답글"]]]);
+  });
+
+  it("커서가 null 인 세션이면 싣지 않고 커서를 지금으로 채운다 — 그 뒤 달린 답글만 다음 런에 실린다", async () => {
+    const t = await start();
+    await turn(t, "@dev 시작");
+    const root = await thread(t, "루트", ["옛 답글"]);
+    live.app.db
+      .update(agentSessions)
+      .set({ threadRepliesSeenAt: null })
+      .where(eq(agentSessions.conversationId, t.conversationId))
+      .run();
+
+    const first = await turn(t, "@dev 커서 없음");
+    expect(first.delivery?.context).not.toHaveProperty("threadUpdates");
+    const row = live.app.db
+      .select({ seen: agentSessions.threadRepliesSeenAt })
+      .from(agentSessions)
+      .where(eq(agentSessions.conversationId, t.conversationId))
+      .all();
+    expect(row.map((r) => r.seen)).not.toContain(null);
+
+    await say(t, "새 답글", { threadRootId: root });
+    const second = await turn(t, "@dev 다음");
+    expect(texts(second.delivery)).toEqual([[root, 1, ["새 답글"]]]);
   });
 
   it("send 가 drop 되면 커서가 그대로라 다음 런에 다시 실린다", async () => {
