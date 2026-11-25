@@ -297,6 +297,50 @@ describe("채널 타임라인의 칩·메뉴", () => {
   });
 });
 
+describe("채널에도 보낸 답글(스레드 글 채널에도 보이기 설계)", () => {
+  const ALSO = reply(4, { bodyMd: "채널에도 올린 답", alsoInChannel: true });
+  const LONG_ROOT = { ...ROOT, bodyMd: "가".repeat(45) };
+
+  it("세션 타임라인 행: 글 위에 「스레드에 댓글 남김: 」+ 루트 발췌 링크, 칩·「스레드에서 답하기」 없음", async () => {
+    const qc = channelClient([{ ...LONG_ROOT, threadSummary: summary }, ALSO]);
+    renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    const link = await screen.findByRole("link", { name: /스레드에 댓글 남김/ });
+    expect(link).toHaveAttribute("href", `/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(link).toHaveTextContent(`스레드에 댓글 남김: ${"가".repeat(40)}…`);
+    const row = link.closest("article");
+    if (!row) throw new Error("행이 없다");
+    expect(within(row).getByText("채널에도 올린 답")).toBeInTheDocument();
+    expect(within(row).queryByRole("link", { name: "스레드에서 답하기" })).toBeNull();
+    expect(row.querySelector('[data-slot="thread-chip"]')).toBeNull();
+  });
+
+  it("루트가 어느 캐시에도 없으면 「원래 글」", () => {
+    renderWithClient(<MessageItem message={ALSO} head />);
+    expect(screen.getByRole("link", { name: /스레드에 댓글 남김/ })).toHaveTextContent(
+      "스레드에 댓글 남김: 원래 글",
+    );
+  });
+
+  it("링크 줄을 누르면 그 스레드가 열린다", async () => {
+    renderRoute(`/c/${CH}/s/${CH}`, channelClient([ROOT, ALSO]));
+    const list = within(await screen.findByRole("region", { name: "메시지" }));
+    await userEvent.click(await list.findByRole("link", { name: /스레드에 댓글 남김/ }));
+    await panel();
+  });
+
+  it("스레드 안의 같은 글: 링크 줄 없이 작은 「채널에도 보냄」", () => {
+    renderWithClient(<MessageItem message={ALSO} head inThread />);
+    expect(screen.getByText("채널에도 보냄")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /스레드에 댓글 남김/ })).toBeNull();
+  });
+
+  it("보통 답글·루트에는 둘 다 없다", () => {
+    renderWithClient(<MessageItem message={reply(2)} head inThread />);
+    expect(screen.queryByText("채널에도 보냄")).toBeNull();
+    expect(screen.queryByRole("link", { name: /스레드에 댓글 남김/ })).toBeNull();
+  });
+});
+
 /**
  * 스레드를 닫으면 초점을 연 자리로(p4t-c1, T6/T7 리뷰 m5). 칩·「스레드에서 답하기」로 열었으면 그것, 그 자리가 화면에서
  * 사라졌거나 주소로 들어왔으면 헤더의 「채널 설정」(D14). 설정·활동 탭은 그대로 헤더다

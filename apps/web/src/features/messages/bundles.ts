@@ -153,3 +153,17 @@ export function bundleIndex(bundles: ReadonlyMap<string, Bundle>): {
 export function laneOfMessage(bundle: Bundle, messageId: string): string | undefined {
   return bundle.lanes.find((l) => l.messageIds.includes(messageId) || l.systemIds.includes(messageId))?.runId;
 }
+
+/** 접힌 줄의 미리보기 — 마크다운 표시를 걷은 첫 줄. 멘션 토큰은 @핸들로 */
+export function previewOf(
+  bodyMd: string,
+  mention: (kind: "a" | "u", id: string) => string | undefined,
+): string {
+  const line = bodyMd.split("\n").find((l) => l.trim() !== "") ?? "";
+  return line
+    .replace(/<@([au]):([0-9a-f-]+)>/gi, (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+}

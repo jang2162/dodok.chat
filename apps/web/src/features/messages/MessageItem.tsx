@@ -1,6 +1,8 @@
 import type { Message } from "@dodok/shared";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useMe } from "@/api/queries";
-import { BotIcon } from "lucide-react";
+import { BotIcon, CornerDownRightIcon } from "lucide-react";
 import { type MouseEvent, type PointerEvent, type ReactNode, useRef } from "react";
 import { toast } from "sonner";
 import { MessageActivity } from "@/features/activity/InlineActivity";
@@ -19,10 +21,13 @@ import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
 import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
+import { useNoteThreadOpener, useThreadOpenSearch } from "@/features/threads/threadOpener";
+import { getThread, getTimeline } from "@/realtime/timelineCache";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { IdentityAvatar } from "@/ui/identity-avatar";
+import { previewOf } from "./bundles";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
 
@@ -192,6 +197,48 @@ export function AuthorLine({
   );
 }
 
+/** 「스레드에 댓글 남김」 줄의 루트 발췌 글자 수 */
+const ROOT_EXCERPT_MAX = 40;
+
+/**
+ * 채널에도 보낸 답글의 루트 발췌 — 세션 캐시에 루트가 있으면 그 본문, 없으면 스레드 캐시, 둘 다 없으면 「원래 글」. 캐시는 읽기만 한다
+ * (루트가 세션 목록에 있으면 같은 목록이 다시 그릴 때 따라온다)
+ */
+function useRootExcerpt(message: Message, rootId: string): string {
+  const qc = useQueryClient();
+  const { mention } = useAuthors();
+  const { channelId, conversationId } = message;
+  const root =
+    getTimeline(qc, channelId, conversationId)?.items.find((m) => m.id === rootId) ??
+    getThread(qc, channelId, conversationId, rootId)?.items.find((m) => m.id === rootId);
+  const text = root ? previewOf(root.bodyMd, mention) : "";
+  if (text === "") return "원래 글";
+  const chars = [...text];
+  return chars.length > ROOT_EXCERPT_MAX ? `${chars.slice(0, ROOT_EXCERPT_MAX).join("")}…` : text;
+}
+
+/** 세션 타임라인의 채널에도 보낸 답글 위 줄(UI 시안 05) — 「↳ 스레드에 댓글 남김: <루트 발췌>」, 누르면 그 스레드(마지막으로 쓴 보기) */
+function AlsoInChannelLink({ message, rootId }: { message: Message; rootId: string }) {
+  const excerpt = useRootExcerpt(message, rootId);
+  const noteOpener = useNoteThreadOpener(rootId);
+  const search = useThreadOpenSearch();
+  return (
+    <Link
+      to="/c/$channelId/s/$conversationId/t/$rootId"
+      params={{ channelId: message.channelId, conversationId: message.conversationId, rootId }}
+      search={search}
+      onClick={noteOpener}
+      data-slot="also-in-channel-link"
+      className="flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      <CornerDownRightIcon aria-hidden className="size-3.5 shrink-0" />
+      <span className="truncate">
+        스레드에 댓글 남김: <span className="font-semibold">{excerpt}</span>
+      </span>
+    </Link>
+  );
+}
+
 /**
  * 마우스 없는 기기(`hover: none`)에서는 동작 버튼이 늘 보여 머리 줄이 없는 이어진 메시지의 본문 첫 줄들 위에 뜬다 —
  * 그 조건에서만 본문 칸 오른쪽을 버튼 폭만큼 비운다(행 `px-4` 를 뺀 값: 스레드 답하기 right-3 + 28px 이면 24px,
@@ -212,7 +259,9 @@ function touchGutter(inThread: boolean, hasPicker: boolean): string | undefined 
  * 채널 타임라인에서는 루트 아래에 답글 요약 칩과 「스레드에서 답하기」가 붙는다(스레드·검색 스펙 4.2) — 스레드 패널
  * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다.
  * 반응(리액션 스펙 「웹」 장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음).
- * DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7) — 칩·「스레드에서 답하기」 없이 스레드 패널 안처럼 그린다. 읽기 전용 DM 은 반응을 달 수 없다(서버 409)
+ * DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7) — 칩·「스레드에서 답하기」 없이 스레드 패널 안처럼 그린다. 읽기 전용 DM 은 반응을 달 수 없다(서버 409).
+ * 채널에도 보낸 답글(`alsoInChannel`)은 세션 타임라인에서 글 위에 「스레드에 댓글 남김」 줄을 두고 칩·「스레드에서 답하기」는 없다(링크
+ * 줄이 그 스레드로 간다). 스레드 안에서는 머리 줄 옆에 작은 「채널에도 보냄」
  */
 export function MessageItem({
   message,
@@ -237,8 +286,10 @@ export function MessageItem({
   const closed = useConversationClosed();
   const dm = useDmView();
   const archived = channelArchived || closed || (dm !== null && dm.readOnly !== null);
+  // 채널(세션) 타임라인에 그린 채널에도 보낸 답글 — 그 스레드로 가는 길은 링크 줄 하나
+  const alsoRootId = !inThread && message.alsoInChannel ? message.threadRootId : undefined;
   // 스레드 행동이 없는 자리 — 스레드 패널 안, 그리고 에이전트 DM(사람 DM·그룹 DM 은 스레드를 연다 — 사람 간 DM 스펙 결정 10)
-  const noThreads = inThread || dm?.kind === "dm";
+  const noThreads = inThread || dm?.kind === "dm" || alsoRootId !== undefined;
   // 에이전트 이름 메뉴의 「멘션」(UI 시안 02) — 이 글이 보이는 자리의 작성기로(스레드 패널이면 그 스레드). 글을 쓸 수 없는 자리·에이전트 DM 은 없다
   const handle = author.isAgent && !author.archived ? author.handle : undefined;
   const mentionAuthor =
@@ -281,10 +332,22 @@ export function MessageItem({
           head || touchGutter(noThreads, reactable && !archived),
         )}
       >
+        {alsoRootId !== undefined && <AlsoInChannelLink message={message} rootId={alsoRootId} />}
         {head && (
           <AuthorLine author={author} onOpen={openAuthor} onMention={mentionAuthor}>
             <MessageTime iso={message.createdAt} />
+            {inThread && message.alsoInChannel && (
+              <>
+                <span aria-hidden className="mx-1">
+                  ·
+                </span>
+                <span>채널에도 보냄</span>
+              </>
+            )}
           </AuthorLine>
+        )}
+        {!head && inThread && message.alsoInChannel && (
+          <span className="text-xs text-muted-foreground">채널에도 보냄</span>
         )}
         {/* 에이전트 답의 활동(스펙 「모양」) — 요약 줄만, 이벤트는 펼칠 때 */}
         {activity && message.authorType === "agent" && message.runId !== undefined && (

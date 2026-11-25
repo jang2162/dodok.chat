@@ -7,7 +7,7 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { cn } from "@/lib/utils";
 import { IdentityAvatar } from "@/ui/identity-avatar";
 import { useBundleExpansion } from "./bundleExpansion";
-import type { Bundle, BundleLane } from "./bundles";
+import { type Bundle, type BundleLane, previewOf } from "./bundles";
 import { MessageItem } from "./MessageItem";
 import { SystemCard } from "./SystemCard";
 import { useAuthors } from "./useAuthors";
@@ -43,17 +43,6 @@ export function hasLiveCard(m: Message, now: number): boolean {
 
 /** setTimeout 최대 지연(약 24.8일) — 그보다 먼 만료는 그때 다시 잰다 */
 const MAX_TIMER_MS = 2_147_483_647;
-
-/** 접힌 줄의 미리보기 — 마크다운 표시를 걷은 첫 줄. 멘션 토큰은 @핸들로 */
-function previewOf(bodyMd: string, mention: (kind: "a" | "u", id: string) => string | undefined): string {
-  const line = bodyMd.split("\n").find((l) => l.trim() !== "") ?? "";
-  return line
-    .replace(/<@([au]):([0-9a-f-]+)>/gi, (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`)
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
-    .replace(/[*_`~]/g, "")
-    .trim();
-}
 
 /** 묶음의 이름 — 「@dev·@fin 답」, 셋 이상이면 「@dev 외 2 답」(서로 다른 에이전트 수) */
 function groupName(handles: string[]): string {
