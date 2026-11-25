@@ -1,6 +1,13 @@
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type Agent, ComponentsV1, type Message, type RelayPolicy, type Run } from "@dodok/shared";
+import {
+  type Agent,
+  ComponentsV1,
+  type Message,
+  messageLinkPath,
+  type RelayPolicy,
+  type Run,
+} from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
@@ -505,7 +512,7 @@ describe("router service — 세션에 초대한 에이전트 [세션 에이전�
 });
 
 describe("createServices — 라우터·오케스트레이터 상호 참조", () => {
-  function boot() {
+  function boot(opts: { appOrigin?: string } = {}) {
     const t = setup();
     const adapter = new FakeAdapter();
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
@@ -515,6 +522,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
       logger: logger as unknown as Logger,
       registry: createAdapterRegistry([adapter]),
       workspaceId: t.workspaceId,
+      ...opts,
     });
     return { ...t, adapter, services };
   }
@@ -558,6 +566,23 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
       );
     } finally {
       t.services.orchestrator.stop();
+    }
+  });
+  it("appOrigin 을 주면 트리거 글의 메시지 링크가 send 의 context.linkedMessages 로 실리고, 없으면 키가 없다(메시지 링크 스펙)", async () => {
+    const origin = "https://app.test";
+    for (const appOrigin of [origin, undefined]) {
+      const t = boot(appOrigin === undefined ? {} : { appOrigin });
+      try {
+        const target = t.human("링크할 글");
+        const link = `${origin}${messageLinkPath({ channelId: target.channelId, conversationId: target.conversationId, messageId: target.id })}`;
+        await t.services.router.routeMessage(t.human(`@dev ${link} 봐 줘`));
+        expect(t.adapter.calls.send).toHaveLength(1);
+        const context = t.adapter.calls.send[0]?.context;
+        if (appOrigin === undefined) expect(context).not.toHaveProperty("linkedMessages");
+        else expect(context?.linkedMessages).toMatchObject([{ messageId: target.id, text: "링크할 글" }]);
+      } finally {
+        t.services.orchestrator.stop();
+      }
     }
   });
 });

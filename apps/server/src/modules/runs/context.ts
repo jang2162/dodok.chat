@@ -1,14 +1,21 @@
 import {
   type Attachment,
+  findMessageLinks,
   InboundDeliver,
+  LINKED_MESSAGE_ATTACHMENTS_MAX,
+  LINKED_MESSAGE_ROOT_TEXT_MAX,
+  LINKED_MESSAGE_TEXT_MAX,
+  type LinkedMessage,
   type Message,
   type Participant,
   type RelayPolicy,
   type Run,
+  type RunTriggerKind,
   renderForAgent,
 } from "@dodok/shared";
 import { and, desc, eq, inArray, isNull, lt, lte } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
+import { readableChannelSqlFor } from "../../auth/channel-access";
 import type { DbOrTx } from "../../db/client";
 import {
   agents,
@@ -22,6 +29,7 @@ import { apiError } from "../../http/errors";
 import { getChannel } from "../channels/service";
 import { invitedAgentIds, sessionParticipants } from "../conversations/invited-agents";
 import { getConversation } from "../conversations/store";
+import { getMessage, getReadableMessage } from "../messages/service";
 import type { AgentSessionRow } from "../sessions/service";
 import * as store from "./store";
 
@@ -89,6 +97,8 @@ export type BuildInboundInput = {
   session: AgentSessionRow;
   needsPromptContext: boolean;
   now?: Date;
+  /** 웹 오리진(APP_ORIGIN) — 트리거 글의 같은 오리진 메시지 링크를 펼친다(linkedMessagesFor). 없으면 펼치지 않는다 */
+  origin?: string;
 };
 
 type InboundAuthor = InboundDeliver["message"]["author"];
@@ -239,9 +249,87 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
         : relayRulesFor(channel.relayPolicy, run.agentId, participants, invited),
       ...(input.needsPromptContext && channel.prompt ? { channelPrompt: channel.prompt } : {}),
       ...(override ? { promptOverride: override } : {}),
+      ...linkedField(db, run, trigger.message, input.origin),
     },
     options: {},
   });
+}
+
+function linkedField(
+  db: DbOrTx,
+  run: Run,
+  trigger: Message | undefined,
+  origin: string | undefined,
+): { linkedMessages?: LinkedMessage[] } {
+  if (trigger === undefined || origin === undefined) return {};
+  const linkedMessages = linkedMessagesFor(db, { run, text: trigger.bodyMd, origin });
+  return linkedMessages.length > 0 ? { linkedMessages } : {};
+}
+
+/** 링크한 메시지를 펼치는 런 종류(메시지 링크 스펙 「에이전트 문맥」) — 상호작용·이어가기·명령·추가 응답은 트리거 글이 사람의 새 글이 아니다 */
+const LINK_EXPANDING_RUNS: ReadonlySet<RunTriggerKind> = new Set<RunTriggerKind>([
+  "mention",
+  "auto_respond",
+  "relay",
+]);
+
+/**
+ * 트리거 글이 링크한 같은 앱의 메시지를 그 런의 주체가 읽을 수 있는 것만 펼친다(메시지 링크 스펙). 읽기 판정은 제어 도구와 같은
+ * readableChannelSqlFor — 시킨 사람(릴레이는 사슬을 시작한 사람, 사람 없는 자동화는 null)으로 보되 DM·그룹 DM 은 그 런이 도는 바로 그
+ * DM 일 때만. 그래서 자기 DM 의 링크를 일반 채널에 붙여도 채널의 에이전트에게는 펼치지 않는다(에이전트 DM 계획 PD3). 못 읽거나 없는
+ * 메시지·시스템 글은 조용히 뺀다. 런 행이 있어야 DM 판정이 선다(runs 를 읽는다)
+ */
+export function linkedMessagesFor(
+  db: DbOrTx,
+  input: { run: Run; text: string; origin: string },
+): LinkedMessage[] {
+  const { run } = input;
+  if (!LINK_EXPANDING_RUNS.has(run.triggerKind)) return [];
+  const ids = findMessageLinks(input.text, input.origin);
+  if (ids.length === 0) return [];
+  const workspaceId = getChannel(db, run.channelId)?.workspaceId;
+  if (workspaceId === undefined) return [];
+  const reader = readableChannelSqlFor({
+    userId: store.getRunRequestedBy(db, run.id),
+    via: "agent",
+    runId: run.id,
+  });
+  const out: LinkedMessage[] = [];
+  for (const id of ids) {
+    const found = getReadableMessage(db, id, workspaceId, reader);
+    if (!found || found.message.kind !== "normal") continue;
+    const m = found.message;
+    const root = m.threadRootId === undefined ? undefined : getMessage(db, m.threadRootId);
+    const renderable = sessionParticipants(
+      db,
+      { channelId: m.channelId, conversationId: m.conversationId },
+      { includeInactive: true },
+    );
+    const authorOf = resolveAuthors(db, root ? [m, root] : [m]);
+    const linkedAuthor = (r: Message) => ({ type: r.authorType, handle: authorOf(r).handle });
+    out.push({
+      messageId: m.id,
+      channelName: found.channelName,
+      conversationTitle: found.conversationTitle,
+      ...(m.threadRootId === undefined ? {} : { threadRootId: m.threadRootId }),
+      author: linkedAuthor(m),
+      text: clip(renderForAgent(m.bodyMd, renderable), LINKED_MESSAGE_TEXT_MAX),
+      ts: m.createdAt,
+      attachments: m.attachments.slice(0, LINKED_MESSAGE_ATTACHMENTS_MAX).map((a) => a.name),
+      ...(root
+        ? {
+            root: {
+              author: linkedAuthor(root),
+              text: clip(
+                withPlaceholder(renderForAgent(root.bodyMd, renderable), root.attachments),
+                LINKED_MESSAGE_ROOT_TEXT_MAX,
+              ),
+            },
+          }
+        : {}),
+    });
+  }
+  return out;
 }
 
 function dmOwnerOf(db: DbOrTx, ownerId: string | null): { id: string; handle: string } {

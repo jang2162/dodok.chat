@@ -209,6 +209,8 @@ export type OrchestratorDeps = {
   onRunEnded?: (runId: string) => void;
   now?: () => Date;
   timeouts?: Partial<RunTimeouts>;
+  /** 웹 오리진(APP_ORIGIN) — buildInboundDeliver 가 트리거 글의 메시지 링크를 펼친다(메시지 링크 스펙). 없으면 펼치지 않는다 */
+  appOrigin?: string;
 };
 
 /** usage CUSTOM 이벤트 — OpenClaw 어댑터와 러너 어댑터(판정 P8)가 같은 모양으로 낸다 */
@@ -1023,6 +1025,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         session,
         needsPromptContext: needsPromptContext || capabilities.promptEveryRun,
         now: now(),
+        ...(deps.appOrigin === undefined ? {} : { origin: deps.appOrigin }),
       });
       // 매 런 규칙을 싣는 어댑터(러너)는 채널 규칙이나 에이전트 지시가 바뀐 뒤면 새 세션으로 연다 — 세션 큐가 같은 세션의 런을
       // 하나씩 보내므로 같은 리비전 변화에 한 번만 걸린다. OpenClaw 는 세션 키로 이어 가고 리셋은 Gateway 가 한다

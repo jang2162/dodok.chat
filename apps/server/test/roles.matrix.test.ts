@@ -694,6 +694,12 @@ describe("역할 매트릭스(스펙 2장)", () => {
         return { method: "GET", url: `/api/v1/conversations/${conversationId}/threads/${root.id}/messages` };
       },
     },
+    {
+      name: "GET /messages/:id",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/messages/${ownerConversation().root.id}` }),
+    },
     // 러너 에이전트의 세션 설정(세션 설정 스펙 S2) — default 이하는 누구나, acceptEdits 는 러너 주인·admin 이상
     {
       name: "GET /conversations/:id/agent-settings",
@@ -1714,6 +1720,11 @@ describe("역할 매트릭스(스펙 2장)", () => {
           method: "GET",
           url: `/api/v1/conversations/${fx.conversationId}/threads/${fx.rootId}/messages`,
         }),
+      },
+      {
+        name: "GET /messages/:id",
+        owner: 200,
+        request: (fx) => ({ method: "GET", url: `/api/v1/messages/${fx.rootId}` }),
       },
       {
         name: "GET /channels/:id/runs",

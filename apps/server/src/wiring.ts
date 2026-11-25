@@ -26,6 +26,8 @@ export type ServicesDeps = {
   /** 런·메시지의 채널이 이 워크스페이스에 있어야 wire 가 다룬다(REST 와 같은 경계) */
   workspaceId: string;
   timeouts?: Partial<RunTimeouts> | undefined;
+  /** 웹 오리진(APP_ORIGIN) — 런의 트리거 글에서 같은 앱의 메시지 링크를 펼친다(메시지 링크 스펙). 없으면 펼치지 않는다 */
+  appOrigin?: string;
   /** 러너 에이전트의 사람 스킬 별칭 — 라우터가 명령을 막을지 본다(에이전트 명령 C4). 없으면 별칭을 보지 않는다 */
   skillAliases?: RouterDeps["skillAliases"];
   /** 러너가 다시 붙은 뒤 백그라운드 작업 목록을 기다리는 시간 — 시험이 줄인다 */
@@ -122,6 +124,7 @@ export function createServices(deps: ServicesDeps): Services {
     logger,
     approvals,
     timeouts: deps.timeouts,
+    ...(deps.appOrigin === undefined ? {} : { appOrigin: deps.appOrigin }),
     onAgentMessage: (message) => router.routeMessage(message),
     onRunEnded: (runId) => control?.onRunEnded(runId),
   });

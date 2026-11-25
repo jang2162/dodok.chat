@@ -9,11 +9,18 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
 import { getReadableConversation } from "../conversations/store";
-import { getThreadRoot, hydrateForClient, listMessages, MESSAGE_PAGE_MAX } from "./service";
+import {
+  getReadableMessage,
+  getThreadRoot,
+  hydrateForClient,
+  listMessages,
+  MESSAGE_PAGE_MAX,
+} from "./service";
 
 export type MessageRouteContext = { auth: Auth; db: Db; workspaceId: string };
 
 const ConversationParams = z.object({ id: Id });
+const MessageParams = z.object({ id: Id });
 const ThreadParams = z.object({ id: Id, rootId: Id });
 export const HistoryQuery = z
   .object({
@@ -74,4 +81,15 @@ export function registerMessageRoutes(fastify: FastifyInstance, ctx: MessageRout
       return { root: hydrateForClient(ctx.db, [root])[0], ...page };
     },
   );
+  /**
+   * 메시지 하나와 그 자리(메시지 링크 스펙 「주소」) — 링크를 열 때 seq·대화를 얻고, 인용 카드가 그린다. 읽기 판정은 세션 타임라인과 같고
+   * 못 읽거나 없으면 404(남의 DM 의 메시지도 없는 메시지와 같다)
+   */
+  fastify.get("/api/v1/messages/:id", { preHandler: requirePolicy(ctx, authorizeRead) }, async (request) => {
+    const { id } = parseParams(MessageParams, request.params);
+    const user = sessionUser(request);
+    const found = getReadableMessage(ctx.db, id, user.workspaceId, user.id);
+    if (!found) throw apiError("NOT_FOUND", "message not found");
+    return { ...found, message: hydrateForClient(ctx.db, [found.message])[0] };
+  });
 }

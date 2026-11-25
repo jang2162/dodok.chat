@@ -18,6 +18,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, type SQL, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { z } from "zod";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import type { Db, DbOrTx } from "../../db/client";
 import {
   automations,
@@ -857,6 +858,46 @@ export function runErrorMessages(db: DbOrTx, channelId: string, runId: string): 
 export function getMessage(db: DbOrTx, id: string): Message | undefined {
   const row = db.select().from(messages).where(eq(messages.id, id)).get();
   return row ? rowToMessage(row) : undefined;
+}
+
+/** 읽을 수 있는 메시지 한 개와 그 자리(메시지 링크 스펙) — 채널 이름은 DM·그룹 DM 이면 그 종류의 이름 */
+export type ReadableMessage = {
+  message: Message;
+  channelKind: "channel" | "dm" | "direct";
+  channelName: string;
+  conversationTitle: string;
+};
+
+/**
+ * id 로 메시지를 읽기 판정과 함께 — 그 워크스페이스이고 reader 가 그 채널을 읽을 수 있을 때만(getReadableConversation 과 같은 판정).
+ * 못 읽거나 없으면 undefined. `GET /messages/:id` 와 런의 링크 펼치기(runs/context.ts linkedMessagesFor)가 같이 쓴다
+ */
+export function getReadableMessage(
+  db: DbOrTx,
+  id: string,
+  workspaceId: string,
+  reader: ChannelReader,
+): ReadableMessage | undefined {
+  const row = db
+    .select({
+      message: messages,
+      channelKind: channels.kind,
+      channelName: channels.name,
+      conversationTitle: conversations.title,
+    })
+    .from(messages)
+    .innerJoin(channels, eq(channels.id, messages.channelId))
+    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+    .where(and(eq(messages.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
+    .get();
+  if (!row) return undefined;
+  const kind = row.channelKind as ReadableMessage["channelKind"];
+  return {
+    message: rowToMessage(row.message),
+    channelKind: kind,
+    channelName: kind === "dm" ? "DM" : kind === "direct" ? "그룹 DM" : row.channelName,
+    conversationTitle: row.conversationTitle,
+  };
 }
 
 /** 이 채널의 루트(thread_root_id 가 null) 메시지 — 스레드 REST 가 루트를 확인할 때. 답글·다른 채널이면 undefined */
