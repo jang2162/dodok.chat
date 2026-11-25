@@ -1,9 +1,11 @@
 import type { Message } from "@dodok/shared";
 import { useMe } from "@/api/queries";
 import { BotIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type MouseEvent, type PointerEvent, type ReactNode, useRef } from "react";
+import { toast } from "sonner";
 import { MessageActivity } from "@/features/activity/InlineActivity";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
+import { insertMention } from "@/features/composer/insertMention";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
@@ -19,6 +21,7 @@ import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { IdentityAvatar } from "@/ui/identity-avatar";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
@@ -76,20 +79,86 @@ export function AuthorAvatar({ author, onOpen }: { author: Author; onOpen?: () =
   );
 }
 
+/** 에이전트 이름 메뉴(UI 시안 02) — 「멘션」·「프로필」. macOS 는 ⌘+클릭, 그 밖은 Ctrl+클릭이면 메뉴 없이 바로 멘션 */
+export const NOT_MENTIONABLE = "이 자리의 작성기에서 부를 수 없는 에이전트입니다";
+/** macOS·iOS 인가 — 부를 때마다 본다(시험이 플랫폼을 바꿔 잰다) */
+export const isApplePlatform = (): boolean => {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return /mac|iphone|ipad|ipod/i.test(nav.userAgentData?.platform ?? nav.platform ?? "");
+};
+// macOS 의 Ctrl+클릭은 컨텍스트 메뉴라 바로 멘션으로 잡지 않는다
+const directMention = (e: { metaKey: boolean; ctrlKey: boolean }) =>
+  isApplePlatform() ? e.metaKey : e.ctrlKey;
+
+function AgentNameMenu({
+  name,
+  onMention,
+  onOpen,
+}: {
+  name: string;
+  onMention: () => void;
+  onOpen?: (() => void) | undefined;
+}) {
+  // 항목을 골라 닫혔으면 초점을 이름에 되돌리지 않는다(작성기·프로필이 가져간다). Esc 로 닫으면 Radix 기본대로 이름 단추로
+  const picked = useRef(false);
+  const pick = (fn: () => void) => () => {
+    picked.current = true;
+    fn();
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="truncate font-semibold hover:underline"
+          title={`${isApplePlatform() ? "⌘" : "Ctrl"}+클릭으로 바로 멘션`}
+          // 메뉴는 누르는 순간(pointerdown) 열린다 — 바로 멘션 수정 키가 있으면 막고 클릭에서 바로 멘션
+          onPointerDown={(e: PointerEvent) => {
+            if (directMention(e)) e.preventDefault();
+          }}
+          onClick={(e: MouseEvent) => {
+            if (!directMention(e)) return;
+            e.preventDefault();
+            onMention();
+          }}
+        >
+          {name}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        onCloseAutoFocus={(e) => {
+          if (!picked.current) return;
+          picked.current = false;
+          e.preventDefault();
+        }}
+      >
+        <DropdownMenuItem onSelect={pick(onMention)}>멘션</DropdownMenuItem>
+        {onOpen && <DropdownMenuItem onSelect={pick(onOpen)}>프로필</DropdownMenuItem>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** 머리 줄: 이름 · 에이전트면 「AI」 배지(보관했으면 「삭제됨」도) · 비활성 멤버면 「비활성」 · 시각(또는 상태) */
 export function AuthorLine({
   author,
   children,
   onOpen,
+  onMention,
 }: {
   author: Author;
   children: ReactNode;
   /** 이름을 누르면 프로필(프로필 스펙 3.1) — 세션 화면에서만 */
-  onOpen?: () => void;
+  onOpen?: (() => void) | undefined;
+  /** 에이전트 이름을 누르면 「멘션」·「프로필」 메뉴(UI 시안 02) — 이 자리 작성기에 멘션을 넣는다 */
+  onMention?: (() => void) | undefined;
 }) {
   return (
     <div className="flex items-baseline gap-2 text-[15px] leading-snug">
-      {onOpen ? (
+      {author.isAgent && onMention ? (
+        <AgentNameMenu name={author.name} onMention={onMention} onOpen={onOpen} />
+      ) : onOpen ? (
         <button type="button" onClick={onOpen} className="truncate font-semibold hover:underline">
           {author.name}
         </button>
@@ -170,6 +239,19 @@ export function MessageItem({
   const archived = channelArchived || closed || (dm !== null && dm.readOnly !== null);
   // 스레드 행동이 없는 자리 — 스레드 패널 안, 그리고 에이전트 DM(사람 DM·그룹 DM 은 스레드를 연다 — 사람 간 DM 스펙 결정 10)
   const noThreads = inThread || dm?.kind === "dm";
+  // 에이전트 이름 메뉴의 「멘션」(UI 시안 02) — 이 글이 보이는 자리의 작성기로(스레드 패널이면 그 스레드). 글을 쓸 수 없는 자리·에이전트 DM 은 없다
+  const handle = author.isAgent && !author.archived ? author.handle : undefined;
+  const mentionAuthor =
+    handle !== undefined && !archived && dm?.kind !== "dm"
+      ? () => {
+          const scope = {
+            channelId: message.channelId,
+            conversationId: message.conversationId,
+            ...(inThread ? { threadRootId: threadRootOf(message) } : {}),
+          };
+          if (!insertMention(scope, handle)) toast.info(NOT_MENTIONABLE, { id: "mention-author" });
+        }
+      : undefined;
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
   const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
@@ -200,7 +282,7 @@ export function MessageItem({
         )}
       >
         {head && (
-          <AuthorLine author={author} onOpen={openAuthor}>
+          <AuthorLine author={author} onOpen={openAuthor} onMention={mentionAuthor}>
             <MessageTime iso={message.createdAt} />
           </AuthorLine>
         )}

@@ -1,3 +1,4 @@
+import type { JSONContent } from "@tiptap/core";
 import type { Agent, ChannelMember, Person } from "@dodok/shared";
 import type { MeResponse } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
@@ -110,4 +111,26 @@ export function matchMentions(
   return candidates
     .filter((c) => [c.label, c.name, ...c.aliases].some((s) => s.toLowerCase().startsWith(q)))
     .slice(0, limit);
+}
+
+/** 초안의 멘션 노드 id(`a:…`·`u:…`, 목록·인용 안 중첩 포함) — @ 단추가 이미 든 후보를 잠그는 데 쓴다 */
+export function mentionIdsIn(doc: JSONContent): ReadonlySet<string> {
+  const ids = new Set<string>();
+  const walk = (node: JSONContent) => {
+    if (node.type === "mention") {
+      const id = node.attrs?.["id"];
+      if (typeof id === "string") ids.add(id);
+    }
+    for (const child of node.content ?? []) walk(child);
+  };
+  walk(doc);
+  return ids;
+}
+
+/** 커서 자리에 넣을 내용 — 자동완성이 만드는 것과 같은 멘션 노드, 노드마다 뒤에 공백 하나 */
+export function mentionContent(picked: readonly Pick<MentionCandidate, "id" | "label">[]): JSONContent[] {
+  return picked.flatMap((c): JSONContent[] => [
+    { type: "mention", attrs: { id: c.id, label: c.label } },
+    { type: "text", text: " " },
+  ]);
 }

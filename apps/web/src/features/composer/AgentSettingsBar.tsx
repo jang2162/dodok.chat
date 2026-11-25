@@ -5,7 +5,7 @@ import {
   roleAtLeast,
   type SessionDefaults,
 } from "@dodok/shared";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents, useCachedMe, useMembers, useRole } from "@/api/queries";
 import { useConnectionList } from "@/features/connections/queries";
@@ -20,8 +20,9 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { agentColorVar } from "@/theme/agentColor";
 import { AgentSettingChips, RAISE_LOCKED } from "./AgentSettingChips";
-import { AgentPills, type PillItem } from "./AgentPills";
-import { CONTEXT_WARN_PERCENT, ContextGauge } from "./ContextGauge";
+import { AgentPills, contextWarn, type PillItem } from "./AgentPills";
+import { ContextGauge } from "./ContextGauge";
+import { onAgentSettingsRequest } from "./insertMention";
 
 const SAVE_FAILED = "저장하지 못했습니다";
 const CEILING_REFUSED = "러너 상한 위의 권한 모드입니다";
@@ -38,7 +39,7 @@ const NO_DEFAULTS: SessionDefaults = { model: null, effort: null, permissionMode
 export function orderForPills<T extends { agent: Agent; row: ConversationAgentSettings }>(
   items: readonly T[],
 ): T[] {
-  const warn = (i: T) => i.row.contextPercent !== null && i.row.contextPercent >= CONTEXT_WARN_PERCENT;
+  const warn = (i: T) => contextWarn(i.row);
   return [...items.filter(warn), ...items.filter((i) => !warn(i))];
 }
 
@@ -93,6 +94,24 @@ export function AgentSettingsBar({
   const settings = useAgentSettings(conversationId, threadRootId, { enabled: runnerAgents.length > 0 });
   // 대화가 없는 새 세션 창은 상한을 채널 단위로 받는다 — 대화가 있으면 줄에 실려 온다
   const ceilings = useAgentCeilings(channelId, { enabled: isNew && runnerAgents.length > 0 });
+  // 참여자 목록의 ⚙(UI 시안 03) — 이 자리 작성기의 설정을 그 에이전트 줄에 초점을 두고 연다
+  const subscribe = useCallback(
+    (open: (agentId: string) => void) =>
+      onAgentSettingsRequest(
+        { channelId, conversationId, ...(threadRootId === undefined ? {} : { threadRootId }) },
+        open,
+      ),
+    [channelId, conversationId, threadRootId],
+  );
+  const single = useRef<HTMLDivElement>(null);
+  const singleId = runnerAgents.length === 1 ? runnerAgents[0]!.id : undefined;
+  // 1명이면 패널이 없다 — 펼친 칩의 첫 칩으로 초점만
+  useEffect(() => {
+    if (singleId === undefined) return;
+    return subscribe((agentId) => {
+      if (agentId === singleId) single.current?.querySelector<HTMLElement>("button")?.focus();
+    });
+  }, [subscribe, singleId]);
   if (runnerAgents.length === 0) return null;
 
   const rowOf = (agent: Agent): ConversationAgentSettings => {
@@ -116,7 +135,11 @@ export function AgentSettingsBar({
   if (runnerAgents.length === 1) {
     const agent = runnerAgents[0]!;
     return (
-      <div className="flex min-w-0 flex-1 text-xs text-muted-foreground" data-testid="agent-settings-bar">
+      <div
+        ref={single}
+        className="flex min-w-0 flex-1 text-xs text-muted-foreground"
+        data-testid="agent-settings-bar"
+      >
         <SettingsLine
           agent={agent}
           invited={invitedIds.has(agent.id)}
@@ -130,7 +153,7 @@ export function AgentSettingsBar({
     );
   }
 
-  // 2명 이상 — 에이전트마다 알약, 누르면 설정 패널(T3·T4). 좁은 화면·스레드 작성기는 모은 알약 하나(T5)
+  // 2명 이상 — 「⚙ 에이전트 N」 + 주의가 필요한 알약, 누르면 전원 설정 패널(T3·T4, UI 시안 01). 좁은 화면·스레드 작성기는 단추 하나(T5)
   const items: PillItem[] = orderForPills(
     runnerAgents.map((agent) => ({ agent, row: rowOf(agent), invited: invitedIds.has(agent.id) })),
   );
@@ -142,6 +165,7 @@ export function AgentSettingsBar({
         compact={narrow || threadRootId !== undefined}
         sheet={narrow}
         isNew={isNew}
+        subscribe={subscribe}
         renderLine={(item) => (
           <SettingsLine
             agent={item.agent}

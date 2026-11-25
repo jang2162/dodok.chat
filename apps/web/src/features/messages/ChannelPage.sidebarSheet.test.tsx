@@ -120,7 +120,11 @@ it("overflow mirrors desktop actions", async () => {
   // 제목 두 줄 — 위 채널 이름, 아래 지금 세션 제목(이름 바꾸기 그대로)
   await within(header).findByTestId("conversation-title");
   expect(within(header).getByRole("heading", { level: 1 }).textContent).not.toBe("");
-  await waitFor(() => expect(headerButtons(header)).toEqual(["채널 목록 열기", "세션 목록", "더 보기"]));
+  // 참여자 단추(UI 시안 03)는 좁은 화면에도 남고 시트로 연다 — 이 서버의 채널 멤버는 없다
+  await waitFor(() =>
+    expect(headerButtons(header)).toEqual(["채널 목록 열기", "세션 목록", "참여자 0명", "더 보기"]),
+  );
+  expect(within(header).getByRole("button", { name: "참여자 0명" })).toHaveClass("min-h-11");
   expect(within(header).queryAllByRole("link")).toEqual([]);
   for (const name of ["채널 목록 열기", "세션 목록", "더 보기"])
     expect(within(header).getByRole("button", { name })).toHaveClass("size-11");
@@ -193,5 +197,9 @@ it("resize while menu open", async () => {
   expect(within(header).getByRole("link", { name: "채널 설정" })).toBeInTheDocument();
   expect(within(header).getByRole("link", { name: "새 세션" })).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "세션 닫기" })).toBeInTheDocument();
-  expect(within(header).getByRole("button", { name: "에이전트 초대" })).toBeInTheDocument();
+  // 넓은 화면의 「에이전트 초대」는 참여자 팝오버 맨 아래(UI 시안 03)
+  await user.click(within(header).getByRole("button", { name: "참여자 0명" }));
+  const participants = await screen.findByRole("dialog", { name: "참여자 0" });
+  expect(participants).toHaveAttribute("data-slot", "popover-content");
+  expect(within(participants).getByRole("button", { name: "에이전트 초대" })).toBeInTheDocument();
 });

@@ -161,8 +161,12 @@ describe("앱 셸 + 채널 화면", () => {
     renderRoute(`/c/${CH}/s/${CH}`, seedChannel());
     expect(await screen.findByText("답하는 중")).toBeInTheDocument();
     const header = screen.getByTestId("channel-header");
-    // 헤더 아바타 묶음: 넷 + 「+2」(이름이 있는 그림)
-    expect(await within(header).findByRole("img", { name: "에이전트 2명 더" })).toHaveTextContent("+2");
+    // 헤더 참여자 단추(UI 시안 03): 얼굴 셋 + 총인원 — 이름이 있는 단추, 얼굴은 장식
+    const participants = await within(header).findByRole("button", { name: /^참여자 \d+명$/ });
+    expect(participants.querySelectorAll("[data-kind]")).toHaveLength(3);
+    expect(participants.querySelector("[aria-hidden]")).toContainElement(
+      participants.querySelector("[data-kind]"),
+    );
     expect(screen.getByRole("button", { name: "이어가기" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "실행 중지" })).toBeInTheDocument();
 
