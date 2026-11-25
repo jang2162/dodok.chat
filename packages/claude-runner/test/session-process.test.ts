@@ -1,7 +1,7 @@
 import type { BackgroundTask, ErrorCode, RunEventBody, RunnerFollowupRequest } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { createClaudeDriver } from "../src/drivers/claude";
-import { HELD_SETTINGS_EVENT, type ClaudeRunSpec } from "../src/drivers/claude/run";
+import { HELD_SETTINGS_EVENT, stoppedByPersonNote, type ClaudeRunSpec } from "../src/drivers/claude/run";
 import { FOLLOWUP_UNBOUND_MESSAGE, type BackgroundHooks } from "../src/drivers/claude/session-process";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
@@ -119,6 +119,13 @@ const shellStopped = (id = "b1"): SdkMessage[] => [
   script.taskNotification(id, "stopped"),
   script.tasksChanged([]),
 ];
+
+/** 프롬프트의 글 — 이미지가 있으면 글 블록 */
+const promptText = (m: { message: { content: unknown } }): string => {
+  const c = m.message.content;
+  if (typeof c === "string") return c;
+  return (c as Array<{ type: string; text?: string }>).find((b) => b.type === "text")?.text ?? "";
+};
 
 async function until(check: () => boolean, ms = 2000) {
   const deadline = Date.now() + ms;
@@ -877,6 +884,98 @@ describe("세션 프로세스 — 스스로 연 턴·한 번에 한 턴·끄기(
     expect(hooks.followups).toEqual([]);
     expect(hooks.tasksLog.at(-1)).toEqual([key, []]);
     expect(driver.background?.held()).toEqual([]);
+  });
+
+  it("adds a stopped-by-person note to the next human prompt of that session", async () => {
+    const fake = createFakeSdk();
+    const { start, driver } = runner(fake);
+    fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["띄웠어요"]), {
+      waitStopTask: "b1",
+      emit: shellStopped(),
+    });
+    await start(runSpec()).done;
+    const key = runSpec().start.deliver.sessionKey;
+    expect(await driver.background?.stopTask(key, "b1")).toBe(true);
+    await until(() => fake.calls[0]!.finished);
+    // 프로세스는 닫혔다 — 다음 런은 새 프로세스(resume)로 열려도 그 줄을 받는다
+    fake.script(script.init(), ...script.textTurn("msg_2", ["둘째"]));
+    await start(spec2()).done;
+    expect(fake.calls).toHaveLength(2);
+    expect(promptText(fake.calls[0]!.prompts[0]!)).not.toContain("「종료」로 끈");
+    expect(promptText(fake.calls[1]!.prompts[0]!)).toContain(`\n${stoppedByPersonNote(["pnpm dev"])}`);
+    expect(stoppedByPersonNote(["pnpm dev", "훑기"])).toBe(
+      "사람이 화면에서 「종료」로 끈 백그라운드 작업: pnpm dev, 훑기. 그 작업의 꺼짐 알림에는 따로 답하지 않는다.",
+    );
+  });
+
+  it("does not add the note for tasks that ended on their own", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake);
+    // 하나는 스스로 끝나고 하나는 CLI 가 껐다(사람의 「종료」가 아니다)
+    fake.script(
+      script.init(),
+      script.tasksChanged([
+        { task_id: "b1", task_type: "local_bash", description: "pnpm dev" },
+        { task_id: "b2", task_type: "local_bash", description: "pnpm test" },
+      ]),
+      script.taskStarted("b1", { description: "pnpm dev" }),
+      script.taskStarted("b2", { description: "pnpm test" }),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      script.taskUpdated("b1", { status: "completed" }),
+      script.taskNotification("b1", "completed"),
+      script.tasksChanged([{ task_id: "b2", task_type: "local_bash", description: "pnpm test" }]),
+      ...shellStopped("b2"),
+    );
+    await start(runSpec()).done;
+    await until(() => fake.calls[0]!.finished);
+    fake.script(script.init(), ...script.textTurn("msg_2", ["둘째"]));
+    await start(spec2()).done;
+    expect(fake.calls).toHaveLength(2);
+    expect(promptText(fake.calls[1]!.prompts[0]!)).not.toContain("「종료」로 끈");
+  });
+
+  it("adds the note once", async () => {
+    const fake = createFakeSdk();
+    const { start, driver, hooks } = runner(fake);
+    fake.script(
+      script.init(),
+      script.tasksChanged([
+        { task_id: "b1", task_type: "local_bash", description: "pnpm dev" },
+        { task_id: "b2", task_type: "local_bash", description: "pnpm test" },
+      ]),
+      script.taskStarted("b1", { description: "pnpm dev" }),
+      script.taskStarted("b2", { description: "pnpm test" }),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      {
+        waitStopTask: "b1",
+        emit: [
+          script.taskUpdated("b1", { status: "killed" }),
+          script.taskNotification("b1", "stopped"),
+          script.tasksChanged([{ task_id: "b2", task_type: "local_bash", description: "pnpm test" }]),
+        ],
+      },
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_2", ["둘째"]),
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_3", ["셋째"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    const key = runSpec().start.deliver.sessionKey;
+    expect(await driver.background?.stopTask(key, "b1")).toBe(true);
+    await until(() => hooks.tasksLog.at(-1)?.[1].length === 1);
+    // b2 가 남아 같은 프로세스에 이어 넣는다 — 둘째 런에만 붙는다
+    await start(spec2()).done;
+    await start({ ...runSpec({ runId: RUN_3 }) }).done;
+    const prompts = fake.calls[0]!.prompts.map(promptText);
+    expect(fake.calls).toHaveLength(1);
+    expect(prompts).toHaveLength(3);
+    expect(prompts[1]).toContain(stoppedByPersonNote(["pnpm dev"]));
+    expect(prompts[2]).not.toContain("「종료」로 끈");
+    driver.background?.release(key);
   });
 
   it("release closes the process and clears tasks", async () => {

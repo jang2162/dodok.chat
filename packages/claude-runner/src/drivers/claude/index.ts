@@ -162,6 +162,9 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   const costs = new Map<string, number>();
   // 세션 키 → 도는·붙든 CLI 프로세스(run.ts 가 넣고 프로세스가 끝나면 뺀다)
   const sessions = new Map<string, SessionProcess>();
+  // 세션 키 → 사람이 화면의 「종료」로 끈 작업의 설명(가린 값) — 그 세션의 다음 사람 런 프롬프트에 한 줄로 붙고 지워진다(run.ts
+  // takeStoppedNote). 프로세스가 닫혀도 남아 resume 한 런에 붙는다. 러너 메모리에만 있다 — 러너가 다시 시작하면 사라져도 된다
+  const stoppedByPerson = new Map<string, string[]>();
   const hooks = opts.hooks;
   const isExecutable = opts.isExecutable ?? isExecutableFile;
   const readVersion = opts.readVersion ?? readClaudeVersion;
@@ -333,7 +336,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         signal,
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
         ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
-        ...(hooks ? { background: { hooks, sessions } } : {}),
+        ...(hooks ? { background: { hooks, sessions, stoppedByPerson } } : {}),
         ...(opts.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: opts.selfTurnWaitMs }),
         ...(opts.spawnCli ? { spawnCli: opts.spawnCli } : {}),
       });
@@ -344,14 +347,20 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
             async stopTask(sessionKey: string, taskId: string) {
               const sp = sessions.get(sessionKey);
               if (!sp || !sp.tracker.has(taskId)) return false;
+              const description = sp.tracker.list().find((t) => t.taskId === taskId)?.description;
               try {
                 await sp.query().stopTask(taskId);
+                // 그 작업의 꺼짐 알림을 CLI 가 다음 런 입력에 함께 싣는다(ADR 0007 5.11 질문 3) — 다음 사람 런에 「사람이 껐다」를 알린다
+                if (description !== undefined)
+                  stoppedByPerson.set(sessionKey, [...(stoppedByPerson.get(sessionKey) ?? []), description]);
                 return true;
               } catch {
                 return false;
               }
             },
             release(sessionKey: string) {
+              // 세션 닫기·보관·리셋 — 작업과 그 알림이 함께 버려지니 알릴 것도 없다
+              stoppedByPerson.delete(sessionKey);
               sessions.get(sessionKey)?.release();
             },
             held: () =>
