@@ -13,7 +13,9 @@ import type { SdkSpawnedProcess, SdkSpawnOptions } from "./sdk";
 // 않는다. 대신 CLI 는 SIGTERM 을 받으면 자기 백그라운드 셸을 스스로 정리한다(같은 실측). 그래서 CLI pid 에 SIGTERM 을 보내고, 보내기
 // 직전에 뜬 CLI 의 자손 트리(ppid 기준) 가운데 유예 뒤에도 남은 것을 SIGKILL 한다 — 그룹 리더인 자손은 그 그룹째. 자손은 기록하지
 // 않는다(그때그때 바뀐다).
-// 남는 틈: CLI 가 먼저 죽고 셸만 남으면(셸의 ppid 가 1 로 바뀐다) 트리에서 찾지 못해 끄지 못한다.
+// 남는 틈: CLI 가 먼저 죽고 셸만 남으면(셸의 ppid 가 1 로 바뀐다) 트리에서 찾지 못해 끄지 못한다. 감싸개 스크립트(exec 로 바뀌는
+// 실행 파일)로 띄운 CLI 는 첫 COMMAND_REFRESH_MS(1초) 동안 기록의 command 가 감싸개의 것이다 — 그 사이 러너가 kill -9 되면 다음
+// 시작이 command 가 다른 「다른 프로세스」로 보고 기록만 지우고 CLI 는 남는다(설치본 claude 가 감싸개가 아니면 해당 없음).
 //
 // Windows 는 쓰지 않는다 — 프로세스 그룹·시작 시각을 얻는 길이 달라 pid 재사용 확인을 할 수 없다. 거기서는 SDK 기본 spawn 그대로다
 // (main.ts 가 이 모듈을 부르지 않는다).
@@ -24,7 +26,7 @@ export const LEFTOVER_KILL_GRACE_MS = 2000;
 /** SDK 기본 spawn 과 같은 값 — exit 뒤 stderr 가 닫히기를 기다리는 시간, 꼬리 길이(sdk.mjs aFe·Gx) */
 const STDERR_DRAIN_MS = 200;
 const STDERR_TAIL = 2048;
-/** spawn 직후의 command 는 감싸개 스크립트일 수 있다 — exec 를 마쳤을 만한 때 한 번 더 읽는다 */
+/** spawn 직후의 command 는 감싸개 스크립트일 수 있다 — exec 를 마쳤을 만한 때 한 번 더 읽는다(그 전의 틈은 머리 주석) */
 const COMMAND_REFRESH_MS = 1000;
 
 const CliProcessEntry = z.object({
@@ -233,20 +235,25 @@ export function createCliProcessRegistry(opts: CliProcessRegistryOptions): CliPr
     let tail = "";
     const decoder = new StringDecoder("utf8");
     child.stderr.on("data", (chunk: Buffer) => {
+      if (delivered) return;
       tail += decoder.write(chunk);
       if (tail.length > 2 * STDERR_TAIL) tail = tail.slice(-STDERR_TAIL);
     });
     child.stderr.on("error", () => {});
+    let delivered = false;
     const exitBus = new EventEmitter();
     let stderrClosed = false;
     let exited = false;
-    let delivered = false;
     let drain: ReturnType<typeof setTimeout> | undefined;
     const deliver = () => {
       if (delivered) return;
       delivered = true;
       clearTimeout(drain);
       exitBus.emit("exit", child.exitCode, child.signalCode);
+      // 기본 spawn 처럼 stderr 를 놓는다 — 손자가 CLI 의 stderr 를 쥐고 있으면 파이프가 닫히지 않아 러너를 붙든다
+      const stderr = child.stderr as typeof child.stderr & { unref?: () => void };
+      if (typeof stderr.unref === "function") stderr.unref();
+      else stderr.destroy();
     };
     child.stderr.once("close", () => {
       tail += decoder.end();
@@ -353,21 +360,32 @@ export async function cleanupLeftoverClis(opts: {
   const stale = entries.filter((e) => e.runnerPid === selfPid || !ops.alive(e.runnerPid));
   if (stale.length === 0) return { killed: 0, dropped: 0 };
 
+  // 손으로 고친 기록이 init·나·내 그룹을 가리켜도 끄지 않는다(내 그룹 리더는 대개 러너를 띄운 셸)
+  const table = ops.table();
+  const selfPgid = table.find((r) => r.pid === selfPid)?.pgid;
+  const protectedPid = (pid: number) => pid <= 1 || pid === selfPid || pid === selfPgid;
+
   const targets = stale.filter((e) => {
+    if (protectedPid(e.pid)) return false;
     const info = ops.info(e.pid);
     return info !== undefined && info.startedAt === e.startedAt && info.command === e.command;
   });
-  const table = targets.length > 0 ? ops.table() : [];
-  const trees = targets.map((e) => treeOf(e.pid, e.pgid, table));
+  // 자손마다 시작 시각을 지금 잡아 둔다 — 유예 사이에 pid 가 재사용되면 SIGKILL 하지 않는다
+  const rows = targets
+    .flatMap((e) => treeOf(e.pid, e.pgid, table))
+    .filter((r) => !protectedPid(r.pid) && r.pgid !== selfPgid)
+    .flatMap((r) => {
+      const startedAt = ops.info(r.pid)?.startedAt;
+      return startedAt === undefined ? [] : [{ ...r, startedAt }];
+    });
   for (const e of targets) ops.kill(e.pid, "SIGTERM");
 
-  const rows = trees.flat();
   const deadline = Date.now() + graceMs;
   while (rows.some((r) => ops.alive(r.pid)) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   for (const r of rows) {
-    if (!ops.alive(r.pid)) continue;
+    if (!ops.alive(r.pid) || ops.info(r.pid)?.startedAt !== r.startedAt) continue;
     ops.kill(r.pgid === r.pid ? -r.pid : r.pid, "SIGKILL");
   }
 

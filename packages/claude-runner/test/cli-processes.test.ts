@@ -11,6 +11,7 @@ import {
   realProcessOps,
   writeCliProcesses,
   type CliProcessEntry,
+  type ProcessOps,
 } from "../src/drivers/claude/cli-processes";
 
 // 실제 프로세스·ps 로 잰다(가짜 OS 로는 pid 재사용·자손 트리를 잴 수 없다). Windows 는 이 정리를 하지 않는다
@@ -84,6 +85,37 @@ describe.skipIf(!POSIX)("cli-processes", () => {
     expect(readCliProcesses(dir)).toEqual([]);
   });
 
+  it("does not leak the runner env into the cli", async () => {
+    // 러너 env 허용 목록(ANTHROPIC_* 를 넘기지 않는다) — 자식은 SDK 가 넘긴 env 만 본다
+    process.env.ANTHROPIC_PROBE = "leaked";
+    try {
+      const registry = createCliProcessRegistry({ stateDir: dir });
+      const p = registry.spawn({
+        command: "/bin/sh",
+        args: ["-c", 'echo "[$ANTHROPIC_PROBE]" >&2'],
+        env: { PATH: "/usr/bin:/bin" },
+        signal: new AbortController().signal,
+      });
+      await new Promise((r) => p.once("exit", r));
+      expect(p.stderrTail().trim()).toBe("[]");
+    } finally {
+      delete process.env.ANTHROPIC_PROBE;
+    }
+  });
+
+  it("delivers exit only after stderr closes, even when the tail arrives after exit", async () => {
+    const registry = createCliProcessRegistry({ stateDir: dir });
+    // 셸은 곧 끝나고, stderr 를 물려받은 자식이 조금 뒤에 쓰고 닫는다
+    const p = registry.spawn({
+      command: "/bin/sh",
+      args: ["-c", "(sleep 0.05; echo late-tail >&2) & exit 0"],
+      env: { PATH: "/usr/bin:/bin" },
+      signal: new AbortController().signal,
+    });
+    const tailAtExit = await new Promise<string>((r) => p.once("exit", () => r(p.stderrTail())));
+    expect(tailAtExit).toContain("late-tail");
+  });
+
   it("settle terminates running clis and waits for them to exit", async () => {
     const registry = createCliProcessRegistry({ stateDir: dir });
     const p = registry.spawn({
@@ -141,6 +173,18 @@ describe.skipIf(!POSIX)("cli-processes", () => {
     expect(readCliProcesses(dir)).toEqual([]);
   });
 
+  it("does not kill a pid whose command differs", async () => {
+    const other = detached("sleep", ["100000"]);
+    const entry = await entryFor(other.pid!, await deadPid());
+    writeCliProcesses(dir, [{ ...entry, command: `${entry.command} --other` }]);
+
+    const result = await cleanupLeftoverClis({ stateDir: dir, graceMs: 300 });
+
+    expect(result).toEqual({ killed: 0, dropped: 1 });
+    expect(realProcessOps.alive(other.pid!)).toBe(true);
+    expect(readCliProcesses(dir)).toEqual([]);
+  });
+
   it("leaves entries of a live runner alone", async () => {
     const runner = detached("sleep", ["100000"]);
     const cli = detached("sleep", ["100000"]);
@@ -152,6 +196,73 @@ describe.skipIf(!POSIX)("cli-processes", () => {
     expect(result).toEqual({ killed: 0, dropped: 0 });
     expect(realProcessOps.alive(cli.pid!)).toBe(true);
     expect(readCliProcesses(dir)).toEqual([entry]);
+  });
+
+  /** 가짜 OS — 보낸 신호를 적는다. info 는 시험이 바꿔 끼운다 */
+  function fakeOps(rows: { pid: number; ppid: number; pgid: number }[], info: ProcessOps["info"]) {
+    const kills: [number, string][] = [];
+    const ops: ProcessOps = {
+      info: (pid) => info(pid),
+      table: () => rows,
+      alive: (pid) => rows.some((r) => r.pid === pid),
+      kill: (pid, signal) => kills.push([pid, signal]),
+    };
+    return { ops, kills };
+  }
+  const fakeEntry = (pid: number): CliProcessEntry => ({
+    pid,
+    pgid: pid,
+    runnerPid: 999_999,
+    startedAt: "Tue Nov 24 10:00:00 2026",
+    command: "claude",
+  });
+
+  it("never signals pid 1, itself or its own process group", async () => {
+    const selfPid = 500;
+    const selfPgid = 400;
+    const rows = [
+      { pid: 1, ppid: 0, pgid: 1 },
+      { pid: selfPgid, ppid: 1, pgid: selfPgid },
+      { pid: selfPid, ppid: selfPgid, pgid: selfPgid },
+    ];
+    const { ops, kills } = fakeOps(rows, () => ({
+      startedAt: "Tue Nov 24 10:00:00 2026",
+      command: "claude",
+    }));
+    writeCliProcesses(dir, [fakeEntry(1), fakeEntry(selfPid), fakeEntry(selfPgid)]);
+
+    const result = await cleanupLeftoverClis({ stateDir: dir, ops, selfPid, graceMs: 50 });
+
+    expect(kills).toEqual([]);
+    expect(result).toEqual({ killed: 0, dropped: 3 });
+    expect(readCliProcesses(dir)).toEqual([]);
+  });
+
+  it("does not SIGKILL a descendant pid reused during the grace period", async () => {
+    // CLI 100 은 SIGTERM 을 무시하고, 자손 101 은 유예 사이에 끝나 그 pid 를 다른 프로세스가 받았다
+    const rows = [
+      { pid: 100, ppid: 1, pgid: 100 },
+      { pid: 101, ppid: 100, pgid: 101 },
+    ];
+    let termed = false;
+    const { ops, kills } = fakeOps(rows, (pid) => ({
+      startedAt: pid === 101 && termed ? "Tue Nov 24 11:00:00 2026" : "Tue Nov 24 10:00:00 2026",
+      command: "claude",
+    }));
+    const kill = ops.kill;
+    ops.kill = (pid, signal) => {
+      if (signal === "SIGTERM") termed = true;
+      kill(pid, signal);
+    };
+    writeCliProcesses(dir, [fakeEntry(100)]);
+
+    const result = await cleanupLeftoverClis({ stateDir: dir, ops, selfPid: 500, graceMs: 50 });
+
+    expect(result).toEqual({ killed: 1, dropped: 0 });
+    expect(kills).toEqual([
+      [100, "SIGTERM"],
+      [-100, "SIGKILL"],
+    ]);
   });
 
   it("writes the state file atomically with mode 0600", () => {
