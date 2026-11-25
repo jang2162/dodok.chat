@@ -464,7 +464,36 @@ export type BackgroundContext = {
   hooks: BackgroundHooks;
   /** 세션 키 → 그 세션의 CLI 프로세스(도는 것·붙든 것). 프로세스가 끝나면 빠진다 */
   sessions: Map<string, SessionProcess>;
+  /**
+   * 세션 키 → 사람이 화면의 「종료」로 끈 작업의 설명(가린 값). 드라이버의 stopTask 가 넣고, 그 세션의 다음 사람 런(명령 런·추가 응답
+   * 턴이 아닌 프롬프트 런)이 꺼내 프롬프트 끝에 한 줄로 붙인다 — 프로세스보다 오래 산다(닫힌 뒤 resume 한 런에도 붙는다)
+   */
+  stoppedByPerson?: Map<string, string[]>;
 };
+
+/**
+ * 사람이 끈 작업의 한 줄(백그라운드 작업 스펙 이월 — ADR 0007 5.11 질문 3). CLI 는 끈 작업의 `task_notification(stopped)` 을 그
+ * 세션의 다음 런 입력에 함께 실어 모델이 거기에도 답한다 — 막을 수 없으니 사람이 껐다는 것과 답하지 말라는 것을 프롬프트에 적는다
+ */
+export const stoppedByPersonNote = (descriptions: readonly string[]): string =>
+  `사람이 화면에서 「종료」로 끈 백그라운드 작업: ${descriptions.join(", ")}. 그 작업의 꺼짐 알림에는 따로 답하지 않는다.`;
+
+function restoreStoppedByPerson(
+  bg: BackgroundContext | undefined,
+  sessionKey: string,
+  taken: string[],
+): void {
+  const map = bg?.stoppedByPerson;
+  if (map) map.set(sessionKey, [...taken, ...(map.get(sessionKey) ?? [])]);
+}
+
+/** 그 세션의 「사람이 끈 작업」을 꺼낸다(꺼내면 지운다) — 없으면 undefined */
+function takeStoppedByPerson(bg: BackgroundContext | undefined, sessionKey: string): string[] | undefined {
+  const taken = bg?.stoppedByPerson?.get(sessionKey);
+  if (taken === undefined) return undefined;
+  bg?.stoppedByPerson?.delete(sessionKey);
+  return taken;
+}
 
 /** 붙든 프로세스에 이어 넣은 런의 설정 가운데 도는 중에 못 바꾼 것 — 웹이 그 런 카드에 D6 문구를 붙인다 */
 export const HELD_SETTINGS_EVENT = "dodok.held_settings";
@@ -752,11 +781,14 @@ export function isSkillAlias(name: string, list: readonly SdkSlashCommand[]): bo
 function promptContent(
   start: ClaudeRunSpec["start"],
   images: { blocks: SdkImageBlock[]; failed: number },
+  stopped?: readonly string[],
 ): SdkUserMessage["message"]["content"] {
   // 명령 런은 머리말 없이 `/<name>[ <args>]` 그대로 — CLI 가 명령으로 처리한다(에이전트 명령 C1). 턴 사실은 훅 문맥으로 그대로 붙는다
   if (start.deliver.command !== undefined) return formatCommandText(start.deliver.command);
   const text =
-    renderRunnerPrompt(start.deliver) + (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "");
+    renderRunnerPrompt(start.deliver) +
+    (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "") +
+    (stopped !== undefined ? `\n${stoppedByPersonNote(stopped)}` : "");
   return images.blocks.length > 0 ? [...images.blocks, { type: "text", text }] : text;
 }
 
@@ -1060,6 +1092,8 @@ async function runTurn(
   let ended = false;
   let holding = false;
   let sawMessage = false;
+  /** 이 턴의 프롬프트에 붙인 「사람이 끈 작업」 — 프롬프트가 닿지 않은 재시도면 돌려놓는다 */
+  let stoppedTaken: string[] | undefined;
   let costKind: RunnerRunFinal["costKind"] = opened?.costKind ?? "subscription_estimate";
   const end = () => {
     ended = true;
@@ -1102,9 +1136,11 @@ async function runTurn(
       sink.error("VALIDATION", COMMAND_BLOCKED_MESSAGE);
       end();
     } else if (o.prompt !== false) {
+      // 명령 런은 글을 바꾸지 않으므로 꺼내지 않는다 — 다음 프롬프트 런에 붙는다
+      if (command === undefined) stoppedTaken = takeStoppedByPerson(ctx.background, start.deliver.sessionKey);
       sp.send({
         type: "user",
-        message: { role: "user", content: promptContent(start, images) },
+        message: { role: "user", content: promptContent(start, images, stoppedTaken) },
         parent_tool_use_id: null,
       });
     }
@@ -1149,8 +1185,12 @@ async function runTurn(
     // 마지막 result 뒤에 CLI 가 exit 1 로 끝나 반복자가 던질 수 있다(ADR 0007 4.4) — 런은 이미 끝났다
     if (!ended) {
       if (interrupted) sink.final(abortedFinal(costKind, signal.reason));
-      else if (!sawMessage && o.retryable(error)) return "session-in-use";
-      else failedRun(sink, error, opened?.stderrTail());
+      else if (!sawMessage && o.retryable(error)) {
+        // 그 프롬프트는 닿지 않았다 — resume 으로 다시 여는 같은 런이 다시 붙이게 돌려놓는다
+        if (stoppedTaken !== undefined)
+          restoreStoppedByPerson(ctx.background, start.deliver.sessionKey, stoppedTaken);
+        return "session-in-use";
+      } else failedRun(sink, error, opened?.stderrTail());
     }
   } finally {
     ended = true;

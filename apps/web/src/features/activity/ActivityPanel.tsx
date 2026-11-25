@@ -64,7 +64,8 @@ function ActivityBody({ channelId }: { channelId: string }) {
   const [filter, setFilter] = useState<RunFilter>("all");
   /**
    * 작업이 남았는데 받은 런 목록(REST 최근 50 + 실시간·끝난 런 기억)에 없는 원래 런(리뷰 B1) — 붙을 카드가 없으니 패널 맨 위 묶음에
-   * 따로 보이고, 「진행 중」 수에도 든다. 원래 런이 나중에 목록에 들어오면(재조회·실시간) 묶음에서 빠져 그 카드로 옮겨 간다
+   * 따로 보이고, 「진행 중」·「전체」 수에도 든다(묶음이 「전체」에도 보이니 「전체」가 「진행 중」보다 작으면 안 된다). 원래 런이
+   * 나중에 목록에 들어오면(재조회·실시간) 묶음에서 빠져 그 카드로 옮겨 간다
    */
   const earlier = useMemo(() => {
     const known = new Set(runs.map((r) => r.id));
@@ -72,7 +73,7 @@ function ActivityBody({ channelId }: { channelId: string }) {
   }, [runs, background.activeRunIds]);
   const counts = useMemo(() => {
     const c = countRuns(runs, background.activeRunIds);
-    return { ...c, running: c.running + earlier.length };
+    return { ...c, all: c.all + earlier.length, running: c.running + earlier.length };
   }, [runs, background.activeRunIds, earlier]);
   const showEarlier = earlier.length > 0 && (filter === "all" || filter === "running");
   const visible = useMemo(

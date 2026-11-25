@@ -14,7 +14,9 @@ import {
   type RunState,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { opsEvents } from "../src/db/schema.sqlite";
 import { patchOpsSettings } from "../src/modules/ops/settings";
 import { getRun } from "../src/modules/runs/store";
 import { BACKGROUND_LOST_TEXT, followupRefusedText } from "../src/modules/runs/background";
@@ -266,6 +268,10 @@ describe("러너 백그라운드 작업 — 서버", () => {
           .length === 1,
       "한도 거절 알림",
     );
+    // 그 스레드의 시스템 글은 거절 글 하나 — 관문의 run_limit 알림이 따로 붙지 않는다(운영 사건은 남는다)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(ctx.log.created.filter((m) => m.kind === "system" && m.threadRootId === reply.id)).toHaveLength(1);
+    expect(live.app.db.select().from(opsEvents).where(eq(opsEvents.kind, "run_limit")).all()).toHaveLength(1);
   });
 
   it("rejects followup for a run of another runner", async () => {
