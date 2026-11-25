@@ -744,6 +744,33 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     expect(errors(emitted)).toEqual([]);
   });
 
+  // 커스텀 spawn 이면 SDK 의 exit 오류 글에 stderr 가 없다 — 실패 카드에 꼬리를 붙이고, 로그인 문구가 꼬리에만 있어도 PROVIDER_AUTH
+  it("spawn 훅이 쥔 stderr 꼬리를 실패 글에 붙이고 그 글로 로그인 실패를 가른다", async () => {
+    const fake = createFakeSdk();
+    fake.script({ throw: new Error("Claude Code process exited with code 1") });
+    const spawnCli = () => ({ stderrTail: () => "Error: Invalid API key\n" }) as TrackedCliProcess;
+    const { ctx, emitted } = harness(
+      {
+        ...fake,
+        query: (args) => {
+          args.options.spawnClaudeCodeProcess?.({
+            command: "claude",
+            args: [],
+            env: {},
+            signal: new AbortController().signal,
+          });
+          return fake.query(args);
+        },
+      },
+      { spawnCli },
+    );
+    await runOnce(runSpec(), ctx);
+    expect(fake.calls).toHaveLength(1);
+    const [e] = errors(emitted);
+    expect(e).toMatchObject({ code: "PROVIDER_AUTH" });
+    expect(e!.message).toContain("process exited with code 1. stderr: Error: Invalid API key");
+  });
+
   it("거절과 다시 열기 사이에 중지되면 다시 열지 않고 final aborted", async () => {
     const fake = createFakeSdk();
     let calls = 0;

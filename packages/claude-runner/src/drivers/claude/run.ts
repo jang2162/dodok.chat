@@ -658,6 +658,8 @@ type OpenedSettings = {
   dodokServer: SdkMcpServer;
   plugins: CommandWrapperPlugin[];
   costKind: RunnerRunFinal["costKind"];
+  /** spawn 훅이 쥔 CLI stderr 꼬리 — 훅이 없으면 빈 글(SDK 기본 spawn 은 exit 오류 글에 꼬리를 스스로 붙인다) */
+  stderrTail: () => string;
   /** 마지막으로 이 프로세스에 넣은 런 — 스스로 연 턴(추가 응답)이 그 정의·문맥을 잇는다 */
   last: { spec: ClaudeRunSpec; ctx: RunContext };
 };
@@ -839,7 +841,7 @@ async function attempt(
     q = ctx.sdk.query({ prompt: sp.input(), options });
   } catch (error) {
     if (retryable(error)) return { result: "session-in-use" };
-    failedRun(ctx.sink, error);
+    failedRun(ctx.sink, error, stderrTail());
     return { result: "done" };
   }
   openedOf.set(sp, {
@@ -856,6 +858,7 @@ async function attempt(
     dodokServer,
     plugins,
     costKind: "subscription_estimate",
+    stderrTail: () => stderrTail(),
     last: { spec, ctx },
   });
   if (bg) {
@@ -1000,8 +1003,11 @@ async function applyRunSettings(
 
 type TurnResult = "done" | "held" | "session-in-use";
 
-function failedRun(sink: RunSink, error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
+function failedRun(sink: RunSink, error: unknown, stderrTail = "") {
+  const message = error instanceof Error ? error.message : String(error);
+  // 커스텀 spawn 이면 SDK 의 exit 오류 글에 stderr 꼬리가 없다 — 로그인 안내(PROVIDER_AUTH)를 가르는 문구가 꼬리에만 있을 수 있다
+  const tail = stderrTail.trim();
+  const text = tail && !message.includes(tail) ? `${message}. stderr: ${tail}` : message;
   const code: ErrorCode = isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL";
   const head =
     code === "PROVIDER_AUTH" ? `러너의 ${CLAUDE_CODE_LABEL} 로그인을 확인하세요` : "Claude Code 실행 실패";
@@ -1144,7 +1150,7 @@ async function runTurn(
     if (!ended) {
       if (interrupted) sink.final(abortedFinal(costKind, signal.reason));
       else if (!sawMessage && o.retryable(error)) return "session-in-use";
-      else failedRun(sink, error);
+      else failedRun(sink, error, opened?.stderrTail());
     }
   } finally {
     ended = true;
