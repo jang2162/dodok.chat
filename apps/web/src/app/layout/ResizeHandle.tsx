@@ -32,7 +32,8 @@ export function ResizeHandle({
   value: number;
   range: Range;
   grow: 1 | -1;
-  onDrag: (raw: number) => void;
+  /** `start` 는 끌기 시작 때 너비 */
+  onDrag: (raw: number, start: number) => void;
   onCommit: () => void;
   /** 키보드·더블클릭 — 바로 저장한다 */
   onSet: (value: number) => void;
@@ -106,7 +107,7 @@ export function ResizeHandle({
       onPointerMove={(e) => {
         const s = start.current;
         if (s?.id !== e.pointerId) return;
-        onDrag(s.value + (e.clientX - s.x) * grow);
+        onDrag(s.value + (e.clientX - s.x) * grow, s.value);
       }}
       onPointerUp={end}
       onPointerCancel={end}

@@ -94,12 +94,15 @@ export const layoutStore = {
     listeners.add(l);
     return () => listeners.delete(l);
   },
-  /** 끄는 동안 — 상태만. 범위 밖이면 범위 안으로, `COLLAPSE_AT` 아래면 접는다(너비 저장값은 그대로) */
-  dragSidebar(raw: number) {
-    if (raw < COLLAPSE_AT) update({ collapsed: true }, false);
+  /**
+   * 끄는 동안 — 상태만. 범위 밖이면 범위 안으로, `COLLAPSE_AT` 아래면 접는다. 접을 때는 끌기 시작 때 너비(`start`)로 되돌려 둔다 —
+   * 접히기 전에 최솟값을 지나오므로 그대로 두면 다시 펼 때 늘 최솟값이다
+   */
+  dragSidebar(raw: number, start: number) {
+    if (raw < COLLAPSE_AT) update({ collapsed: true, sidebar: clamp(start, SIDEBAR) }, false);
     else update({ sidebar: clamp(raw, SIDEBAR), collapsed: false }, false);
   },
-  dragPanel(raw: number) {
+  dragPanel(raw: number, _start?: number) {
     update({ panel: clamp(raw, PANEL) }, false);
   },
   /** 놓을 때 저장한다 */

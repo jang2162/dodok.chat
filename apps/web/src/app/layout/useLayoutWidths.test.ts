@@ -66,7 +66,7 @@ describe("layoutStore", () => {
   });
 
   it("끄는 동안은 상태만, 놓을 때(commit) 저장한다", () => {
-    layoutStore.dragSidebar(300);
+    layoutStore.dragSidebar(300, 260);
     layoutStore.dragPanel(500);
     expect(layoutStore.get()).toMatchObject({ sidebar: 300, panel: 500 });
     expect(saved()).toBeNull();
@@ -75,9 +75,9 @@ describe("layoutStore", () => {
   });
 
   it("끄는 값도 범위 안으로 — 넘겨 끌면 끝에서 멈춘다", () => {
-    layoutStore.dragSidebar(999);
+    layoutStore.dragSidebar(999, 260);
     expect(layoutStore.get().sidebar).toBe(SIDEBAR.max);
-    layoutStore.dragSidebar(COLLAPSE_AT + 1);
+    layoutStore.dragSidebar(COLLAPSE_AT + 1, 260);
     expect(layoutStore.get()).toMatchObject({ sidebar: SIDEBAR.min, collapsed: false });
     layoutStore.dragPanel(0);
     expect(layoutStore.get().panel).toBe(PANEL.min);
@@ -85,11 +85,13 @@ describe("layoutStore", () => {
     expect(layoutStore.get().panel).toBe(PANEL.max);
   });
 
-  it("왼쪽을 최소보다 더 끌면 접힌다 — 너비 저장값은 그대로, 다시 끌어 나오면 펼친다", () => {
+  it("왼쪽을 최소보다 더 끌면 접힌다 — 지나온 최솟값이 아니라 끌기 시작 때 너비를 남기고, 다시 끌어 나오면 펼친다", () => {
     layoutStore.setSidebar(300);
-    layoutStore.dragSidebar(COLLAPSE_AT - 1);
+    // 실제 끌기처럼 최솟값을 지나 접힌다
+    layoutStore.dragSidebar(SIDEBAR.min, 300);
+    layoutStore.dragSidebar(COLLAPSE_AT - 1, 300);
     expect(layoutStore.get()).toMatchObject({ collapsed: true, sidebar: 300 });
-    layoutStore.dragSidebar(250);
+    layoutStore.dragSidebar(250, 300);
     expect(layoutStore.get()).toMatchObject({ collapsed: false, sidebar: 250 });
   });
 

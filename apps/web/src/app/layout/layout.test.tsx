@@ -769,6 +769,9 @@ describe("사이드바·패널 너비(UI 시안 04)", () => {
     await screen.findByTestId("channel-header");
     expect(screen.queryByRole("button", { name: "채널 목록 열기" })).toBeNull();
     fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 260 });
+    // 최솟값(200)을 지나 접힌다
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 180 });
+    expect(sidebar()).toHaveStyle({ width: "200px" });
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 100 });
     expect(sidebar()).toHaveAttribute("data-collapsed");
     expect(sidebar()).toHaveStyle({ width: "0px" });

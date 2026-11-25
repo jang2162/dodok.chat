@@ -13,7 +13,6 @@ import {
   XIcon,
 } from "lucide-react";
 import {
-  type KeyboardEvent,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -194,16 +193,34 @@ export function PanelTabs({
     const focused = document.activeElement;
     if (focused === null || focused === document.body) toggleRef.current?.focus();
   }, [mainMode]);
+  // 메인 보기의 Esc — 세션으로. 가운데 칸에 캡처 단계로 단다: 작성기 편집기(ProseMirror)는 빈 채여도 Esc 를 먹어(preventDefault)
+  // 버블 단계에서는 받을 수 없다. 대신 먼저 Esc 를 써야 하는 것은 여기서 양보한다 — `@`·`/` 제안 목록이 열린 편집기(`aria-controls`),
+  // 입력 칸(작성기의 사용자 지정 칸처럼 Esc 로 닫는 것), 다른 대화상자·시트. 메뉴는 포털이라 이 칸 밖에서 Esc 를 받는다.
+  // 초점이 없을 때(body)는 문서 단계에서 — 열린 메뉴가 먼저 쓰면(Radix 가 preventDefault) 두고 간다
   const mainRef = useRef(main);
   mainRef.current = mainMode ? main : undefined;
-  // 메인 보기의 Esc — 세션으로. 메뉴·제안 목록·대화상자가 먼저 Esc 를 쓰면(preventDefault) 두고 간다. 입력 칸의 Esc 는 그 칸의
-  // 몫이다(작성기의 사용자 지정 칸처럼 막지 않고 쓰는 것이 있다)
-  const onMainKey = useCallback((e: KeyboardEvent) => {
-    const m = mainRef.current;
-    if (!m || e.key !== "Escape" || e.defaultPrevented || otherModalOpen()) return;
-    if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select")) return;
-    e.preventDefault();
-    m.onBack();
+  const mainSection = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const m = mainRef.current;
+      if (!m || e.key !== "Escape" || e.defaultPrevented || otherModalOpen()) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, select")) return;
+      if (target?.closest('[role="textbox"]')?.hasAttribute("aria-controls")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      m.onBack();
+    };
+    // 본문 글자를 눌러 초점이 아무 데도 없을 때(body)도 — 그때 키는 이 칸을 지나지 않는다
+    const onBodyKey = (e: globalThis.KeyboardEvent) => {
+      if (e.target === document.body) onKey(e);
+    };
+    el.addEventListener("keydown", onKey, true);
+    document.addEventListener("keydown", onBodyKey);
+    return () => {
+      el.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("keydown", onBodyKey);
+    };
   }, []);
   const navigate = useNavigate();
   const titleId = useId();
@@ -220,14 +237,7 @@ export function PanelTabs({
     },
     [host],
   );
-  // 감싸는 div 는 늘 같은 꼴이다(보기를 바꿔도 안쪽이 다시 마운트되지 않게). 포털 내용의 React 이벤트는 이 나무를 따라 올라오므로
-  // 메인 보기의 Esc 를 여기서 받는다 — 안쪽 처리기(편집 취소 등)가 먼저 돈다
-  const body = createPortal(
-    <div className="contents" onKeyDown={onMainKey}>
-      {children}
-    </div>,
-    host,
-  );
+  const body = createPortal(children, host);
   const tab = tabOf(active);
   // 다른 스레드가 열렸으면(주소·검색·푸시 — 칩이 적지 않는 길) 앞 스레드를 연 자리는 잊는다. 닫는 순간에는 비교하지 않는다:
   // 주소가 먼저 바뀌어 스레드 탭의 마지막 렌더에는 rootId 가 없다
@@ -317,7 +327,7 @@ export function PanelTabs({
           data-panel-tab={active}
           aria-labelledby={titleId}
           className="flex min-w-0 flex-1 flex-col"
-          onKeyDown={onMainKey}
+          ref={mainSection}
         >
           <div className="flex h-12 shrink-0 items-center gap-1 border-b px-2">
             <OpenSidebarButton />

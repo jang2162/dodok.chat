@@ -600,6 +600,26 @@ describe("스레드 메인 보기(UI 시안 06)", () => {
     });
   });
 
+  it("초점이 아무 데도 없어도(body) Esc 는 세션으로", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    await within(await main()).findByText("답글 3");
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(document.activeElement).toBe(document.body);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
+  it("Esc 는 먼저 쓸 자리에 양보한다 — @ 제안 목록이 열린 편집기(aria-controls)면 그대로 남는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    box.setAttribute("aria-controls", "mention-list");
+    box.focus();
+    await userEvent.keyboard("{Escape}");
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(screen.getByTestId("thread-main")).toBeInTheDocument();
+  });
+
   it("← 「채널로 돌아가기」도 같다 · 보기 기억(메인)은 그대로", async () => {
     window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
     layoutStore.reset();
