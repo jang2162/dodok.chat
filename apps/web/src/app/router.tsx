@@ -17,7 +17,6 @@ import { CONNECTION_DETAIL_SCROLL_ID } from "@/features/connections/context";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
 import { AppShell, PAGE_SCROLL_ID } from "./layout/AppShell";
-import { preferredThreadView } from "./layout/useLayoutWidths";
 
 type Ctx = { queryClient: QueryClient };
 
@@ -195,23 +194,14 @@ const threadSearch = (s: Record<string, unknown>): ThreadSearch =>
 /**
  * 스레드 패널(스레드·검색 스펙 4.2) — 설정·활동과 같은 오른쪽 패널 자리의 탭 하나. 새로고침·푸시 링크로 바로 열린다.
  * `rootId` 는 그 세션의 루트 메시지 id — 답글 id·다른 세션의 루트면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」).
- * `?view=main` 이면 메인 보기(UI 시안 06). 주소에 `view` 가 없으면 이 기기에서 마지막으로 고른 보기로 연다 — 메인이었으면
- * `view=main` 을 붙여 바꿔 쓴다(칩·「스레드에서 답하기」·검색·푸시가 보기를 몰라도 같은 보기로, 그리고 그 주소를 공유하면 같은 보기로).
- * 「패널로 보기」는 이동 전에 기억을 패널로 바꾸므로 여기서 다시 메인으로 넘겨지지 않는다
+ * `?view=main` 이면 메인 보기(UI 시안 06), 없으면 패널 — 주소가 보기를 정한다. 마지막으로 고른 보기는 여기서 넘기지 않고 스레드를
+ * **여는 자리**(칩·「스레드에서 답하기」 — `useThreadOpenSearch`)가 주소에 싣는다. 여기서 바꿔 쓰면 「크게 보기」 뒤 뒤로 가기가 패널
+ * 주소로 돌아오자마자 다시 메인으로 넘겨졌다 — 기록 이동은 주소 그대로 연다
  */
 export const channelThreadRoute = createRoute({
   getParentRoute: () => conversationRoute,
   path: "t/$rootId",
   validateSearch: threadSearch,
-  beforeLoad: ({ params, search }) => {
-    if (search.view === undefined && preferredThreadView() === "main")
-      throw redirect({
-        to: "/c/$channelId/s/$conversationId/t/$rootId",
-        params,
-        search: { view: "main" },
-        replace: true,
-      });
-  },
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
 });
 /**

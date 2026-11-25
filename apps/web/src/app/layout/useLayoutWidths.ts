@@ -132,9 +132,6 @@ export const layoutStore = {
   },
 };
 
-/** 라우터 `beforeLoad` 가 쓴다 — 주소에 `view` 가 없을 때 연 스레드를 어느 보기로 열까 */
-export const preferredThreadView = (): ThreadView => current().threadView;
-
 export function useLayout(): State {
   return useSyncExternalStore(layoutStore.subscribe, current, current);
 }

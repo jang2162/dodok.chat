@@ -40,26 +40,30 @@ export function ResizeHandle({
   className?: string;
   ref?: RefObject<HTMLDivElement | null>;
 }) {
-  const start = useRef<{ x: number; value: number; id: number } | null>(null);
+  // `moved` — 손이 실제로 움직였는가. 단순 클릭(이동 0)은 상태도 저장값도 건드리지 않는다: `value` 는 창에 맞춰 줄인 그린 값일 수
+  // 있어(가운데 최소 폭) 그대로 적으면 저장된 너비가 줄어든 값으로 덮인다
+  const start = useRef<{ x: number; value: number; id: number; moved: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   // 끄는 중에 사라지면(최솟값 아래로 끌어 사이드바가 접혔다) 놓기가 오지 않는다 — 잠금을 풀고 그때까지를 저장한다
   useEffect(
     () => () => {
-      if (!start.current) return;
+      const s = start.current;
+      if (!s) return;
       start.current = null;
       lockDocument(false);
-      onCommit();
+      if (s.moved) onCommit();
     },
     [onCommit],
   );
 
   const end = (e: PointerEvent<HTMLDivElement>) => {
-    if (start.current?.id !== e.pointerId) return;
+    const s = start.current;
+    if (s?.id !== e.pointerId) return;
     start.current = null;
     setDragging(false);
     lockDocument(false);
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-    onCommit();
+    if (s.moved) onCommit();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -94,12 +98,14 @@ export function ResizeHandle({
       data-dragging={dragging || undefined}
       className={cn(
         "group absolute inset-y-0 z-10 w-[9px] cursor-col-resize touch-none outline-none select-none",
+        // 초점 표시는 앱의 초점 토큰(`ring`)으로 2px 링, 흐리게 섞지 않는다(9px 칸이라 옅으면 안 보인다) — 가운데 1px 선만으로는 키보드 초점이 보이지 않는다
+        "focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
-        start.current = { x: e.clientX, value, id: e.pointerId };
+        start.current = { x: e.clientX, value, id: e.pointerId, moved: false };
         e.currentTarget.setPointerCapture?.(e.pointerId);
         lockDocument(true);
         setDragging(true);
@@ -107,6 +113,8 @@ export function ResizeHandle({
       onPointerMove={(e) => {
         const s = start.current;
         if (s?.id !== e.pointerId) return;
+        if (!s.moved && e.clientX === s.x) return;
+        s.moved = true;
         onDrag(s.value + (e.clientX - s.x) * grow, s.value);
       }}
       onPointerUp={end}

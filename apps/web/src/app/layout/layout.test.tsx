@@ -801,6 +801,54 @@ describe("사이드바·패널 너비(UI 시안 04)", () => {
     expect(sidebar()).not.toHaveAttribute("data-collapsed");
   });
 
+  it("⌘\\ 로 펴도 초점은 그대로 — 작성기에서 누르면 계속 작성기", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a");
+    await sidebarHandle();
+    const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+    box.focus();
+    await userEvent.keyboard("{Meta>}\\{/Meta}");
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+    expect(box).toHaveFocus();
+    await userEvent.keyboard("{Meta>}\\{/Meta}");
+    expect(sidebar()).not.toHaveAttribute("data-collapsed");
+    // 펴는 쪽의 초점 옮기기는 다음 프레임 — 그 뒤에도 작성기
+    await act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+    expect(box).toHaveFocus();
+  });
+
+  it("창에 맞춰 줄여 그린 패널은 누르기·초점만으로 저장값이 줄지 않는다 — 실제로 끌었을 때만 저장", async () => {
+    wide();
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ panel: 500 }));
+    layoutStore.reset();
+    stubChannels();
+    renderRoute("/c/a/s/a/settings");
+    const panel = await screen.findByTestId("page-channel-panel");
+    const handle = within(panel).getByRole("separator", { name: "패널 너비" });
+    wide(1024);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(panel).toHaveStyle({ width: "344px" });
+    // 누르기(같은 자리의 이동 포함)·초점
+    fireEvent.pointerDown(handle, { pointerId: 3, button: 0, clientX: 600 });
+    fireEvent.pointerMove(handle, { pointerId: 3, clientX: 600 });
+    fireEvent.pointerUp(handle, { pointerId: 3, clientX: 600 });
+    handle.focus();
+    expect(layoutStore.get().panel).toBe(500);
+    expect(stored()).toMatchObject({ panel: 500 });
+    // 넓히면 저장값이 돌아온다
+    wide(1440);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(panel).toHaveStyle({ width: "500px" });
+    // 실제로 끌면 그때 저장 — 그린 값에서 시작한다
+    wide(1024);
+    act(() => window.dispatchEvent(new Event("resize")));
+    fireEvent.pointerDown(handle, { pointerId: 4, button: 0, clientX: 600 });
+    fireEvent.pointerMove(handle, { pointerId: 4, clientX: 610 });
+    fireEvent.pointerUp(handle, { pointerId: 4, clientX: 610 });
+    expect(stored()).toMatchObject({ panel: 334 });
+  });
+
   it("오른쪽 패널 — 왼쪽으로 끌면 넓어지고, 창이 모자라면 저장값은 두고 그리는 너비만 줄인다", async () => {
     wide();
     stubChannels();

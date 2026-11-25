@@ -569,6 +569,34 @@ describe("스레드 메인 보기(UI 시안 06)", () => {
     await waitFor(() => expect(within(back).getByRole("link", { name: "크게 보기" })).toHaveFocus());
   });
 
+  it("뒤로 가기는 기록 그대로 — 패널 → 크게 보기 → 뒤로 = 패널, 앞으로 = 메인", async () => {
+    const { router, history } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const panelHead = await screen.findByTestId("page-channel-panel");
+    await userEvent.click(within(panelHead).getByRole("link", { name: "크게 보기" }));
+    await main();
+    expect(stored()).toMatchObject({ threadView: "main" });
+
+    act(() => history.back());
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
+    // 기억이 메인이어도 패널 주소를 다시 메인으로 넘기지 않는다
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.state.location.search).toEqual({});
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+
+    act(() => history.forward());
+    expect(await main()).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({ view: "main" });
+  });
+
+  it("기억이 메인이어도 view 없는 주소는 패널로 연다 — 보기는 주소가 정한다", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({});
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+  });
+
   it("마지막으로 고른 보기로 다음 스레드를 연다 — 칩을 눌러도 메인", async () => {
     window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
     layoutStore.reset();
@@ -600,6 +628,22 @@ describe("스레드 메인 보기(UI 시안 06)", () => {
     });
   });
 
+  it("편집기가 Esc 를 먹어도(ProseMirror 가 keyCode 27 을 preventDefault) 세션으로 — 캡처 단계에서 받는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    box.focus();
+    const ev = new KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true, cancelable: true });
+    // 편집기 자신의 처리기가 먼저 막는 것을 그대로 — 버블 단계 처리기는 defaultPrevented 를 본다
+    let editorPrevented = false;
+    box.addEventListener("keydown", (e) => (editorPrevented = e.defaultPrevented));
+    act(() => {
+      box.dispatchEvent(ev);
+    });
+    expect(editorPrevented || ev.defaultPrevented).toBe(true);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
   it("초점이 아무 데도 없어도(body) Esc 는 세션으로", async () => {
     const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
     await within(await main()).findByText("답글 3");
@@ -620,10 +664,33 @@ describe("스레드 메인 보기(UI 시안 06)", () => {
     expect(screen.getByTestId("thread-main")).toBeInTheDocument();
   });
 
+  it("후보가 0개인 @ 제안이 열려 있으면 Esc 는 제안만 닫고, 그다음 Esc 에서 세션으로", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    const editor = (box as unknown as { editor: Editor }).editor;
+    act(() => {
+      editor.commands.focus();
+      editor.commands.insertContent("@없는이름zz");
+    });
+    // 제안은 열렸지만(쿼리 장식) 후보가 없어 목록·aria-controls 가 없다
+    await waitFor(() => expect(box.querySelector("[data-decoration-id]")).not.toBeNull());
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(box).not.toHaveAttribute("aria-controls");
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(box.querySelector("[data-decoration-id]")).toBeNull());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(screen.getByTestId("thread-main")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
   it("← 「채널로 돌아가기」도 같다 · 보기 기억(메인)은 그대로", async () => {
     window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
     layoutStore.reset();
-    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
     const view = await main();
     await within(view).findByText("답글 3");
     await userEvent.click(within(view).getByRole("button", { name: "채널로 돌아가기" }));

@@ -83,7 +83,12 @@ export function AppShell() {
       e.preventDefault();
       const next = !layoutStore.get().collapsed;
       layoutStore.setCollapsed(next);
-      if (!next) requestAnimationFrame(() => handleRef.current?.focus());
+      // 펴도 초점은 그대로(작성기에서 누르면 계속 쓴다) — 누른 자리가 사라져 초점이 떨어졌을 때만(머리의 메뉴 버튼) 손잡이로
+      if (!next)
+        requestAnimationFrame(() => {
+          const active = document.activeElement;
+          if (active === null || active === document.body) handleRef.current?.focus();
+        });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

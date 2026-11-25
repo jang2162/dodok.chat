@@ -194,7 +194,7 @@ export function PanelTabs({
     if (focused === null || focused === document.body) toggleRef.current?.focus();
   }, [mainMode]);
   // 메인 보기의 Esc — 세션으로. 가운데 칸에 캡처 단계로 단다: 작성기 편집기(ProseMirror)는 빈 채여도 Esc 를 먹어(preventDefault)
-  // 버블 단계에서는 받을 수 없다. 대신 먼저 Esc 를 써야 하는 것은 여기서 양보한다 — `@`·`/` 제안 목록이 열린 편집기(`aria-controls`),
+  // 버블 단계에서는 받을 수 없다. 대신 먼저 Esc 를 써야 하는 것은 여기서 양보한다 — `@`·`/` 제안이 열린 편집기(후보 0개 포함),
   // 입력 칸(작성기의 사용자 지정 칸처럼 Esc 로 닫는 것), 다른 대화상자·시트. 메뉴는 포털이라 이 칸 밖에서 Esc 를 받는다.
   // 초점이 없을 때(body)는 문서 단계에서 — 열린 메뉴가 먼저 쓰면(Radix 가 preventDefault) 두고 간다
   const mainRef = useRef(main);
@@ -206,7 +206,10 @@ export function PanelTabs({
       if (!m || e.key !== "Escape" || e.defaultPrevented || otherModalOpen()) return;
       const target = e.target instanceof Element ? e.target : null;
       if (target?.closest("input, textarea, select")) return;
-      if (target?.closest('[role="textbox"]')?.hasAttribute("aria-controls")) return;
+      // 제안이 열린 편집기 — 후보가 0개면 목록(`aria-controls`)이 없으므로 suggestion 플러그인이 쿼리에 다는 장식으로도 본다.
+      // 그 Esc 는 제안만 닫고, 닫힌 뒤의 Esc 에서 떠난다
+      const box = target?.closest('[role="textbox"]');
+      if (box?.hasAttribute("aria-controls") || box?.querySelector("[data-decoration-id]")) return;
       e.preventDefault();
       e.stopPropagation();
       m.onBack();

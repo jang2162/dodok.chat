@@ -134,14 +134,14 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
       expect(screen.queryByTestId("thread-main")).toBeNull();
     });
 
-    it("주소에 view 가 없으면 마지막으로 고른 보기 — 메인이면 view=main 을 붙여 바꿔 쓴다", async () => {
+    it("주소에 view 가 없으면 패널 — 마지막으로 고른 보기가 메인이어도 바꿔 쓰지 않는다(뒤로 가기가 튕기지 않게)", async () => {
       window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
       layoutStore.reset();
       serve([{ id: SESSION }]);
       const router = renderAt(`/c/abc/s/${SESSION}/t/root1`);
-      await waitFor(() => expect(router.state.location.search).toEqual({ view: "main" }));
-      expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/t/root1`);
-      expect(await screen.findByTestId("thread-main")).toBeInTheDocument();
+      expect(await screen.findByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "thread");
+      expect(router.state.location.search).toEqual({});
+      expect(screen.queryByTestId("thread-main")).toBeNull();
     });
   });
 
