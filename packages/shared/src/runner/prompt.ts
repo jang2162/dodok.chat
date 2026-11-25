@@ -10,6 +10,7 @@ import {
   type InboundThreadUpdate,
 } from "../bridge";
 import type { RunnerBotDefinition } from "../domain";
+import { formatLinkedMessages } from "../messages/links";
 import { formatReactionFacts } from "../reactions";
 import { formatThreadUpdates } from "../thread-updates";
 
@@ -282,6 +283,9 @@ export function renderRunnerPrompt(deliver: InboundDeliver): string {
     lines.push("최근 대화:");
     for (const m of deliver.context.recentMessages) lines.push(line(m));
   }
+  // 링크한 메시지(메시지 링크 스펙)는 남이 쓴 글이라 「대화 상대가 쓴 글이 아닙니다」로 시작하는 buildTurnFacts 가 아니라 여기에 싣는다
+  const linked = formatLinkedMessages(deliver.context.linkedMessages ?? [], hhmm);
+  if (linked !== null) lines.push(linked);
   const names = (kind: "image" | "file") =>
     deliver.message.attachments.filter((a) => a.kind === kind).map((a) => oneLine(a.name));
   const images = names("image");

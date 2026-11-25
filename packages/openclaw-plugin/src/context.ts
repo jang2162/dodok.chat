@@ -1,6 +1,7 @@
 import {
   formatDmLine,
   formatGroupDmLine,
+  formatLinkedMessages,
   formatParticipantLabel,
   formatReactionFacts,
   formatSessionInviteLine,
@@ -60,6 +61,9 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
     );
     if (threadUpdates) lines.push(threadUpdates);
   }
+  // 트리거 글이 링크한 메시지(메시지 링크 스펙) — 대화·스레드 블록 다음, 반응 앞. 본문은 들여써 `---` 줄로 읽히지 않는다
+  const linked = formatLinkedMessages(d.context.linkedMessages ?? [], (iso) => hhmm(iso, tz));
+  if (linked !== null) lines.push(linked);
   const reactionFacts = formatReactionFacts(d.context.reactions ?? [], d.context.reactionsOmitted);
   if (reactionFacts) lines.push(reactionFacts);
   lines.push("---");
