@@ -23,6 +23,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -97,10 +98,17 @@ function runChild(cmd, args, opts) {
 // `pnpm run` 이 의존성 확인에서 `pnpm install --production` 을 시도하고, CI=true 셸에서는 확인 없이 devDependency 를 전부 지운다.
 // 저장·되돌림은 신호가 쓰기와 되돌림 사이에 떨어지면 못 되돌리므로, 매니페스트만 복사한 사본에서 deploy 해 원본을 아예 안 만진다.
 // 사본에 필요한 것: 루트 package.json(packageManager 핀)·pnpm-workspace.yaml(allowBuilds)·pnpm-lock.yaml·.npmrc 와 워크스페이스
-// 패키지마다 package.json — 번들이 @dodok/* 를 품으므로 deploy 가 옮기는 @dodok/* 는 package.json 뿐인 껍데기여도 된다
+// 패키지마다 package.json — 번들이 @dodok/* 를 품으므로 deploy 가 옮기는 @dodok/* 는 package.json 뿐인 껍데기여도 된다.
+// 루트 package.json 은 scripts 를 뺀 채 쓴다 — legacy deploy 는 사본 워크스페이스를 설치하며 루트의 수명주기(prepare: guideline apply)를
+// 돌리는데, 사본에는 .guideline/ 이 없어 「아직 받지 않음」으로 deploy 가 실패한다. 루트 스크립트는 deploy 산출물과 무관하고
+// 의존성의 빌드 스크립트(better-sqlite3 등)는 그대로 돈다. 이미지(Dockerfile)는 컨텍스트에 .guideline/ 이 있어 그대로 둔다
 function copyManifests(dest) {
-  for (const f of ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".npmrc"])
+  for (const f of ["pnpm-workspace.yaml", "pnpm-lock.yaml", ".npmrc"])
     if (existsSync(join(repoRoot, f))) cpSync(join(repoRoot, f), join(dest, f));
+  const { scripts: _rootScripts, ...rootManifest } = JSON.parse(
+    readFileSync(join(repoRoot, "package.json"), "utf8"),
+  );
+  writeFileSync(join(dest, "package.json"), `${JSON.stringify(rootManifest, null, 2)}\n`);
   // pnpm-workspace.yaml 의 packages 글롭(apps/*·packages/*)과 맞춘다
   for (const group of ["apps", "packages"])
     for (const name of readdirSync(join(repoRoot, group))) {
