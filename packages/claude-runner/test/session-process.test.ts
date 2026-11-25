@@ -2,7 +2,7 @@ import type { BackgroundTask, ErrorCode, RunEventBody, RunnerFollowupRequest } f
 import { describe, expect, it } from "vitest";
 import { createClaudeDriver } from "../src/drivers/claude";
 import { HELD_SETTINGS_EVENT, type ClaudeRunSpec } from "../src/drivers/claude/run";
-import type { BackgroundHooks } from "../src/drivers/claude/session-process";
+import { FOLLOWUP_UNBOUND_MESSAGE, type BackgroundHooks } from "../src/drivers/claude/session-process";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, type FakeSdk, type ScriptStep, script } from "./helpers/fake-query";
@@ -347,6 +347,34 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     });
   });
 
+  it("sends an allow-always to the cli as before when the server does not announce support", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake, { ...hooksSpy(), canHold: () => false });
+    const suggestions = [
+      {
+        type: "addRules",
+        rules: [{ toolName: "Bash", ruleContent: "npm test:*" }],
+        behavior: "allow",
+        destination: "localSettings",
+      },
+    ] as never;
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      { askPermission: { toolName: "Bash", input: { command: "npm test" }, toolUseID: "t1", suggestions } },
+      ...script.textTurn("msg_1", ["첫째"]),
+      { waitInput: true },
+    );
+    const b1 = createFakeBridge();
+    const first = start(runSpec(), b1);
+    await b1.decide("t1", { decision: "allow-always" });
+    await first.done;
+    expect(fake.calls[0]!.permissions[0]).toMatchObject({
+      behavior: "allow",
+      updatedPermissions: [{ type: "addRules", destination: "session" }],
+    });
+  });
+
   it("interrupt on a held process stops only the turn", async () => {
     const fake = createFakeSdk();
     const { start, driver } = runner(fake);
@@ -597,6 +625,93 @@ describe("세션 프로세스 — 스스로 연 턴·한 번에 한 턴·끄기(
     expect(b1.controls).toEqual([]);
     const run = hooks.followupRuns.get(FOLLOW)!;
     expect(run.bridge.controls.map((c) => [c.tool, c.runId])).toEqual([["get_channel", FOLLOW]]);
+  });
+
+  it("a dodok tool call before the followup ack waits and uses the new run", async () => {
+    const fake = createFakeSdk();
+    // 서버의 답을 붙잡아 둔다 — 그 사이 CLI 가 dodok 도구를 부른다
+    let ack!: () => void;
+    const gate = new Promise<void>((r) => (ack = r));
+    const ok = followupOk();
+    const hooks = hooksSpy(async (req) => {
+      await gate;
+      return ok(req);
+    });
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellDone(),
+      script.init(),
+      { callTool: { name: "post", input: { text: "끝났어요" } } },
+      { callTool: { name: "get_channel", input: { channelId: RUN_1 } } },
+      { askPermission: { toolName: "Bash", input: { command: "npm test" }, toolUseID: "f1" } },
+      ...script.textTurn("msg_f", ["다 끝났어요"]),
+      { waitInput: true },
+    );
+    const b1 = createFakeBridge();
+    await start(runSpec(), b1).done;
+    await until(() => hooks.followups.length === 1);
+    // 답 전 — 앞 런으로 아무것도 나가지 않았고 도구는 기다린다
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fake.calls[0]!.toolResults).toEqual([]);
+    expect(b1.posts).toEqual([]);
+    ack();
+    await until(() => hooks.followupRuns.get(FOLLOW)?.bridge.requested.length === 1);
+    const run = hooks.followupRuns.get(FOLLOW)!;
+    await run.bridge.decide("f1", { decision: "allow-once" });
+    await until(() => fake.calls[0]!.finished);
+    expect(b1.posts).toEqual([]);
+    expect(b1.controls).toEqual([]);
+    expect(b1.requested).toEqual([]);
+    expect(run.bridge.posts.map((p) => [p.text, p.runId])).toEqual([["끝났어요", FOLLOW]]);
+    expect(run.bridge.controls.map((c) => [c.tool, c.runId])).toEqual([["get_channel", FOLLOW]]);
+    expect(run.bridge.requested.map((r) => [r.providerApprovalId, r.runId])).toEqual([["f1", FOLLOW]]);
+    expect(finals(run.emitted)).toMatchObject([{ final: { text: "다 끝났어요" } }]);
+  });
+
+  it("a dodok tool call is refused when the followup is rejected", async () => {
+    const fake = createFakeSdk();
+    let ack!: () => void;
+    const gate = new Promise<void>((r) => (ack = r));
+    const hooks = hooksSpy(async () => {
+      await gate;
+      return { ok: false, reason: "closed" };
+    });
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellDone(),
+      script.init(),
+      { callTool: { name: "post", input: { text: "끝났어요" } } },
+      { callTool: { name: "get_channel", input: { channelId: RUN_1 } } },
+      { askPermission: { toolName: "Bash", input: { command: "npm test" }, toolUseID: "f1" } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["[ede_diagnostic] interrupted"])] },
+      { waitInput: true },
+    );
+    const b1 = createFakeBridge();
+    await start(runSpec(), b1).done;
+    await until(() => hooks.followups.length === 1);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fake.calls[0]!.toolResults).toEqual([]);
+    ack();
+    const call = fake.calls[0]!;
+    await until(() => call.finished);
+    expect(b1.posts).toEqual([]);
+    expect(b1.controls).toEqual([]);
+    expect(b1.requested).toEqual([]);
+    expect(call.toolResults).toHaveLength(2);
+    for (const r of call.toolResults) {
+      expect(r).toMatchObject({ isError: true });
+      expect(JSON.stringify(r)).toContain(FOLLOWUP_UNBOUND_MESSAGE);
+    }
+    expect(call.permissions).toEqual([{ behavior: "deny", message: FOLLOWUP_UNBOUND_MESSAGE }]);
+    expect(hooks.followupRuns.size).toBe(0);
   });
 
   it("interrupts a follow-up turn when the followup request fails", async () => {

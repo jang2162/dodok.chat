@@ -40,7 +40,12 @@ import type {
   SdkUserMessage,
 } from "./sdk";
 import type { BackgroundHooks } from "../../driver";
-import { createSessionProcess, type RunBinding, type SessionProcess } from "./session-process";
+import {
+  createSessionProcess,
+  FOLLOWUP_UNBOUND_MESSAGE,
+  type RunBinding,
+  type SessionProcess,
+} from "./session-process";
 import { createStreamMapper, isAuthFailureText } from "./stream-map";
 
 /** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) */
@@ -683,7 +688,7 @@ function bindingFor(spec: ClaudeRunSpec, ctx: RunContext, alwaysAllowed: AlwaysA
         signal: ctx.signal,
         alwaysAllowed,
       }),
-      ctx.background !== undefined,
+      () => ctx.background?.hooks.canHold() === true,
       alwaysAllowed,
       spec.workdir,
     ),
@@ -693,17 +698,18 @@ function bindingFor(spec: ClaudeRunSpec, ctx: RunContext, alwaysAllowed: AlwaysA
 /**
  * 「항상 허용」을 런 단위로 묶는다(백그라운드 작업 스펙 5.2). 제안이 있는 승인은 CLI 의 세션 규칙(updatedPermissions destination
  * session)으로 가는데, 붙든 프로세스에서는 그 규칙이 다음 런까지 남는다 — 붙들 수 있는 프로세스면 규칙을 CLI 로 보내지 않고 그 요청
- * 그대로를 이 런의 alwaysAllowed 에 넣는다(제안의 넓은 규칙보다 좁다). 붙들지 않는 프로세스는 런이 끝나면 CLI 도 끝나 지금 그대로다
+ * 그대로를 이 런의 alwaysAllowed 에 넣는다(제안의 넓은 규칙보다 좁다). 붙들지 않는 프로세스는 런이 끝나면 CLI 도 끝나 지금 그대로다.
+ * 붙들 수 있는가는 훅이 있는가가 아니라 서버가 지원을 알렸는가(canHold — finishTurn 과 같은 판정)로 본다. 승인 때마다 다시 본다
  */
 function runScopedAllowAlways(
   canUseTool: CanUseTool,
-  holdable: boolean,
+  holdable: () => boolean,
   alwaysAllowed: AlwaysAllowed,
   workdir: string,
 ): CanUseTool {
-  if (!holdable) return canUseTool;
   return async (toolName, input, options) => {
     const result = await canUseTool(toolName, input, options);
+    if (!holdable()) return result;
     if (result?.behavior !== "allow" || !("updatedPermissions" in result)) return result;
     alwaysAllowed.add(alwaysAllowKey(toolName, input, workdir));
     const { updatedPermissions: _session, ...rest } = result as typeof result & {
@@ -771,14 +777,19 @@ async function attempt(
   });
   const retryable = (error: unknown) =>
     !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
-  // dodok 도구·승인 콜백은 지금 턴의 런으로 — 제어 호출의 runId 도 지금 런으로 바꿔 싣는다
+  // dodok 도구·승인 콜백은 지금 턴의 런으로 — 제어 호출의 runId 도 지금 런으로 바꿔 싣는다. 스스로 연 턴의 런이 정해지기 전이면
+  // 기다리고, 못 정해졌으면 앞 런으로 보내지 않고 거절한다(liveBinding)
   const dodokServer = createDodokMcpServer({
     sdk: ctx.sdk,
-    post: (input) => sp.bindingRef.current.post(input),
+    post: async (input) => {
+      const b = await sp.liveBinding();
+      return b ? b.post(input) : { error: FOLLOWUP_UNBOUND_MESSAGE };
+    },
     tools: createControlTools({
       runId: start.deliver.runId,
-      call: (call) => {
-        const b = sp.bindingRef.current;
+      call: async (call) => {
+        const b = await sp.liveBinding();
+        if (!b) return { ok: false, error: { code: "INTERNAL", message: FOLLOWUP_UNBOUND_MESSAGE } };
         return b.sink.control({ ...call, runId: b.runId });
       },
       runnerControl: hasRunnerControl(spec),
@@ -789,7 +800,12 @@ async function attempt(
     ...(ctx.executable === undefined ? {} : { executable: ctx.executable }),
     thinkingDisplay: supportsThinkingDisplay(ctx.cliVersion),
     mcpServer: dodokServer,
-    canUseTool: (toolName, input, opts) => sp.bindingRef.current.canUseTool(toolName, input, opts),
+    canUseTool: async (toolName, input, opts) => {
+      const b = await sp.liveBinding();
+      return b
+        ? b.canUseTool(toolName, input, opts)
+        : { behavior: "deny", message: FOLLOWUP_UNBOUND_MESSAGE };
+    },
     resume,
     plugins,
     alwaysAllowed,

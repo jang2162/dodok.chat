@@ -23,6 +23,12 @@ export const SELF_TURN_WAIT_MS = 10_000;
 // 훅 계약은 프로그램 공통(driver.ts) — 연결이 채운다
 export type { BackgroundHooks, FollowupRun } from "../../driver";
 
+/**
+ * 스스로 연 턴의 dodok 도구·승인이 그 턴의 런을 못 얻었을 때(서버가 추가 응답 런을 거절·시간 초과, 프로세스를 놓음)의 답 — 앞 런으로
+ * 보내지 않는다
+ */
+export const FOLLOWUP_UNBOUND_MESSAGE = "이어서 답할 런을 만들지 못했습니다";
+
 /** 지금 턴의 런 — 도구·승인·훅이 이 값을 읽는다 */
 export type RunBinding = {
   runId: string;
@@ -48,6 +54,11 @@ export type SessionProcess = {
   readonly sessionKey: string;
   readonly sessionId: string;
   readonly bindingRef: { current: RunBinding };
+  /**
+   * dodok 도구·승인 콜백이 보낼 런. 스스로 연 턴의 추가 응답 런이 정해지기 전이면 그 결정을 기다린다 — 받아 주면 새 런, 거절·시간
+   * 초과·놓음이면 undefined(그 호출은 FOLLOWUP_UNBOUND_MESSAGE 로 끝난다). bindingRef 를 바로 읽으면 그 틈에 앞 런으로 나간다
+   */
+  liveBinding(): Promise<RunBinding | undefined>;
   readonly tracker: TaskTracker;
   /** query() 의 prompt — send 로 넣고 endInput 으로 닫는다 */
   input(): AsyncIterable<SdkUserMessage>;
@@ -161,6 +172,16 @@ export function createSessionProcess(o: {
   // 거절된 스스로 연 턴 — interrupt 뒤 그 result 까지 버린다
   let dropping = false;
   let selfWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  // 추가 응답 런이 정해지기를 기다리는 도구·승인 호출. 있으면(배열) 바인딩이 「대기」다
+  let bindingWaiters: Array<(b: RunBinding | undefined) => void> | undefined;
+  // 스스로 연 턴을 거절해 interrupt 한 뒤 — 그 턴의 남은 호출은 다음 턴이 열릴 때까지 거절한다
+  let unbound = false;
+  function settleBinding(b: RunBinding | undefined) {
+    const ws = bindingWaiters;
+    bindingWaiters = undefined;
+    unbound = b === undefined;
+    for (const w of ws ?? []) w(b);
+  }
 
   // ── 한 번에 한 턴 — 기다리는 사람 런
   type Waiter = { resolve(ok: boolean): void };
@@ -193,6 +214,7 @@ export function createSessionProcess(o: {
 
   function openTurn(binding: RunBinding): Turn {
     bindingRef.current = binding;
+    settleBinding(binding);
     turnOpen = true;
     reserved = false;
     // 사람 턴이 알림보다 먼저 열리면 CLI 가 그 알림을 이 턴에 붙인다 — 따로 추가 응답을 만들지 않는다(스펙 5.3)
@@ -296,6 +318,7 @@ export function createSessionProcess(o: {
     pendingNotices = [];
     if (selfWaitTimer) clearTimeout(selfWaitTimer);
     selfBuffer = [first];
+    bindingWaiters ??= [];
     const origin = opening[0];
     if (!o.hooks || !selfTurnHandler || origin === undefined) {
       // 어느 런에도 이을 수 없는 턴 — 멈추고 버린다
@@ -340,6 +363,7 @@ export function createSessionProcess(o: {
   function rejectSelfTurn() {
     const buf = selfBuffer ?? [];
     selfBuffer = undefined;
+    settleBinding(undefined);
     // 이미 끝난 턴이면(쥔 것에 result 가 있다) 멈출 것이 없다
     if (buf.some((m) => isType(m, "result"))) {
       settle();
@@ -406,6 +430,7 @@ export function createSessionProcess(o: {
     current?.end(failure);
     current = undefined;
     turnOpen = false;
+    if (bindingWaiters) settleBinding(undefined);
     setHeld(false);
     freeSlot();
     tracker.reset();
@@ -424,6 +449,13 @@ export function createSessionProcess(o: {
     sessionKey: o.sessionKey,
     sessionId: o.sessionId,
     bindingRef,
+    liveBinding() {
+      if (bindingWaiters) {
+        const ws = bindingWaiters;
+        return new Promise((resolve) => ws.push(resolve));
+      }
+      return Promise.resolve(unbound ? undefined : bindingRef.current);
+    },
     tracker,
     input,
     attach(query) {
@@ -490,6 +522,7 @@ export function createSessionProcess(o: {
       if (current || selfBuffer !== undefined || selfRunning) q?.interrupt().catch(() => {});
       selfBuffer = undefined;
       pendingNotices = [];
+      if (bindingWaiters) settleBinding(undefined);
       closeIdle();
     },
     closeLater,
