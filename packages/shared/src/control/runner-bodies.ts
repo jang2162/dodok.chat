@@ -39,6 +39,8 @@ export const RunnerSummary = z.object({
    * 서버가 웹 「업데이트」와 같은 요청을 보낸다. 없으면 null
    */
   updateQueued: z.object({ requestedAt: IsoDateTime }).nullable().optional(),
+  /** 그 러너가 쥔 백그라운드 작업 수(백그라운드 작업 스펙 5.6) — 업데이트 확인 「백그라운드 작업 N개가 꺼집니다」. 옛 서버는 싣지 않는다 */
+  backgroundTasks: z.int().min(0).optional(),
 });
 export type RunnerSummary = z.infer<typeof RunnerSummary>;
 

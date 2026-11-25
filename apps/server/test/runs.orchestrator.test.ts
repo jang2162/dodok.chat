@@ -11,6 +11,7 @@ import {
   agents,
   attachments,
   componentInteractions,
+  conversations,
   messageReactions,
   messages,
   users,
@@ -214,6 +215,129 @@ describe("orchestrator", () => {
     await t.orch.signal(first.id, { kind: "canonical_received" });
     expect(t.runOf(first.id)).toMatchObject({ status: "done", finalSource: "plugin" });
     expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id, second.id]);
+    t.orch.stop();
+  });
+
+  it("adoptRun puts waiting runs of the session behind it", async () => {
+    const t = setup();
+    const first = await t.enqueue(t.say("@dev 하나"));
+    const second = await t.enqueue(t.say("@dev 둘"));
+    await t.flush();
+    expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id]);
+    const root = t.say("응답 스레드 루트");
+    const adopted = await t.orch.adoptRun(
+      {
+        agentId: t.agentId,
+        channelId: t.channelId,
+        conversationId: t.conversationId,
+        triggerKind: "background",
+        rootMessageId: first.rootMessageId,
+        relayDepth: 0,
+      },
+      {
+        message: root,
+        requestedBy: null,
+        backgroundOriginRunId: first.id,
+        threadRootId: root.id,
+        sessionKey: t.sessionKey,
+        connectionId: FAKE_GATEWAY_ID,
+      },
+    );
+    // 큐에 서지 않고 곧바로 도는 중 — send 없이(러너가 이미 턴을 열었다)
+    expect(adopted).toMatchObject({
+      status: "streaming",
+      triggerKind: "background",
+      backgroundOriginRunId: first.id,
+      threadRootId: root.id,
+      sessionKey: t.sessionKey,
+      providerRunId: adopted.id,
+    });
+    expect(adopted.startedAt).toBeDefined();
+    expect(t.eventsOf(adopted.id).map((e) => e.type)).toEqual(["RUN_STARTED", "STATE_SNAPSHOT"]);
+    expect(t.adapter.calls.send).toHaveLength(1);
+
+    // 앞 런이 끝나도 기다리던 런은 추가 응답 런 뒤다
+    await t.orch.signal(first.id, { kind: "gateway_final" });
+    await t.orch.signal(first.id, { kind: "canonical_received" });
+    await t.flush();
+    expect(t.runOf(first.id).status).toBe("done");
+    expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id]);
+    expect(t.runOf(second.id).status).toBe("queued");
+
+    await t.orch.signal(adopted.id, { kind: "gateway_final" });
+    await t.orch.signal(adopted.id, { kind: "canonical_received" });
+    await t.flush();
+    expect(t.runOf(adopted.id).status).toBe("done");
+    expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id, second.id]);
+
+    // 추가 응답 런에도 런 상한이 걸린다(그 턴의 시간 — 스펙 5.5)
+    const again = await t.orch.adoptRun(
+      {
+        agentId: t.agentId,
+        channelId: t.channelId,
+        conversationId: t.conversationId,
+        triggerKind: "background",
+        rootMessageId: first.rootMessageId,
+        relayDepth: 0,
+      },
+      {
+        message: root,
+        backgroundOriginRunId: first.id,
+        threadRootId: root.id,
+        sessionKey: t.sessionKey,
+        connectionId: FAKE_GATEWAY_ID,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs);
+    expect(t.runOf(again.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    t.orch.stop();
+  });
+
+  it("adoptRun refuses a closed session without making a run", async () => {
+    const t = setup();
+    const first = await t.enqueue(t.say("@dev 하나"));
+    const root = t.say("루트");
+    t.db
+      .update(conversations)
+      .set({ closedAt: new Date() })
+      .where(eq(conversations.id, t.conversationId))
+      .run();
+    await expect(
+      t.orch.adoptRun(
+        {
+          agentId: t.agentId,
+          channelId: t.channelId,
+          conversationId: t.conversationId,
+          triggerKind: "background",
+          rootMessageId: first.rootMessageId,
+          relayDepth: 0,
+        },
+        {
+          message: root,
+          backgroundOriginRunId: first.id,
+          threadRootId: root.id,
+          sessionKey: t.sessionKey,
+          connectionId: FAKE_GATEWAY_ID,
+        },
+      ),
+    ).rejects.toMatchObject({ body: { code: "FORBIDDEN" } });
+    expect(t.states.filter((s) => s.id !== first.id)).toEqual([]);
+    t.orch.stop();
+  });
+
+  it("queued event carries heldSlots", async () => {
+    const t = setup();
+    const run = await t.enqueue();
+    await t.flush();
+    // 러너 어댑터가 러너 ack 의 heldSlots 를 RUN_QUEUED 에 싣는다 — 서버는 그대로 저장·팬아웃한다(D7)
+    t.adapter.emit({
+      kind: "run_event",
+      runId: run.id,
+      event: { type: "RUN_QUEUED", runId: run.id, position: 1, heldSlots: 2 },
+    });
+    await t.flush();
+    expect(t.eventsOf(run.id).at(-1)).toMatchObject({ type: "RUN_QUEUED", position: 1, heldSlots: 2 });
+    expect(t.events.at(-1)).toMatchObject({ type: "RUN_QUEUED", heldSlots: 2 });
     t.orch.stop();
   });
 

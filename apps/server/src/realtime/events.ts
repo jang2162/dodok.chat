@@ -207,6 +207,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       io.to(channelRoom(p.run.channelId)).emit("run.state", p);
     }),
     on("run.event", ({ event, channelId }) => fanoutRunEvent(event, channelId)),
+    on("tasks.updated", (p) => io.to(channelRoom(p.channelId)).emit("tasks.updated", p)),
     // 승인은 채널 룸이 아니다 — 웹은 한 번에 한 채널만 구독하므로 채널 룸이면 다른 채널을 보고 있을 때 승인 카드도 알림도 아예
     // 닿지 않는다(브라우저 검증 D1·판정 7). 일반 채널은 워크스페이스 룸이어도 노출이 늘지 않는다: 누구나 그 채널을 구독해 같은
     // 페이로드를 받을 수 있다. DM 은 주인만, direct 는 참여자만 구독할 수 있으므로 그들에게만(channelAudience)

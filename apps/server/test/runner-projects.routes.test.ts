@@ -151,6 +151,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       remoteUpdate: "unsupported",
       update: null,
       updateQueued: null,
+      backgroundTasks: 0,
     });
     expect(list.find((r) => r.id === quiet.record.id)).toEqual({
       id: quiet.record.id,
@@ -167,6 +168,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       remoteUpdate: null,
       update: null,
       updateQueued: null,
+      backgroundTasks: 0,
     });
     expect(list.find((r) => r.id === revoked.record.id)).toMatchObject({ connected: false, revoked: true });
   });

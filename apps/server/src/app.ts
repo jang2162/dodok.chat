@@ -87,6 +87,7 @@ import { apnsTransport } from "./modules/push/transports/apns";
 import type { PushTransports } from "./modules/push/transports/types";
 import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
+import type { BackgroundService } from "./modules/runs/background";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import {
   registerRunnerAdminRoutes,
@@ -184,6 +185,8 @@ export type AppDeps = {
   runnerDirs?: string[];
   /** 러너 도구 승인 기한(기본 RUNNER_APPROVAL_TTL_MS 10분) — 통합 테스트가 실제 시계로 잴 만큼 줄인다 */
   runnerApprovalTtlMs?: number;
+  /** 러너가 다시 붙은 뒤 백그라운드 작업 목록을 기다리는 시간(기본 BACKGROUND_RESYNC_MS) — 시험이 줄인다 */
+  backgroundResyncMs?: number;
   /** 제어 도구 확인 카드 기한(기본 CONTROL_CONFIRM_TTL_MS 10분) — 테스트가 실제 시계로 잴 만큼 줄인다 */
   controlConfirmTtlMs?: number;
   /** 레이트리밋 숫자(기본 LIMITS, 얕게 덮는다) — 테스트가 수백 번 되풀이할 상한을 줄인다 */
@@ -346,6 +349,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     // 정본 훅은 오케스트레이터를 부르는데 오케스트레이터는 어댑터를 받아 뒤에 만들어진다 — 브리지 연결은 listen 뒤라 그때는 있다
     let orchestrator: Orchestrator;
+    // 백그라운드 작업 서비스도 같다 — 러너가 붙어 run.followup·tasks.update 를 보낼 때는 있다
+    let background: BackgroundService;
     // 제어 도구 호출도 같다 — 제어 서비스는 라우트 문맥을 받아 어댑터 뒤에 만들어진다. 주체는 그 연결의 열린 런에서 찾고(스펙 「그 런을
     // 시킨 사람」 절), 없으면 끝난 런의 이름이라 실행하지 않는다
     let control: ControlService;
@@ -411,6 +416,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         tokenCount: () => activeRunnerTokenCount(db, workspaceId),
         onControlCall: (connectionId, call) =>
           controlCall(principalForRunner(db, connectionId, call.runId), call),
+        // 백그라운드 작업(백그라운드 작업 스펙 5.5) — 둘 다 있어야 어댑터가 hello 결과에 backgroundTasks 를 알린다
+        onFollowup: (connectionId, req) => background.onFollowup(connectionId, req),
+        onTasks: (connectionId, update) => background.onTasks(connectionId, update),
         agentDefinition: (agentId, tokenId, conversationId) =>
           runnerAgentDefinition(db, workspaceId, agentId, tokenId, conversationId),
         // 러너 소켓마다 버킷(러너 스펙 밖 — 이월 「러너 프레임 속도 제한」). 사건은 어댑터가 주소별 1분에 한 번만 부른다
@@ -453,12 +461,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       timeouts: deps.timeouts,
       skillAliases: (agent) => agentCommands.skillAliases(db, agent),
+      ...(deps.backgroundResyncMs === undefined ? {} : { backgroundResyncMs: deps.backgroundResyncMs }),
     });
     orchestrator = services.orchestrator;
+    background = services.background;
     ops = services.ops;
     // requireSession·업로드가 request.server.restLimits 로 찾는다(http-limits.ts)
     fastify.decorate("restLimits", createRestLimits({ limits, ops, now: limitClock }));
     undo.push({ step: "orchestrator", run: () => services.orchestrator.stop() });
+    undo.push({ step: "background", run: () => services.background.close() });
     // 운영 사건 보존: 30일 지난 줄을 지금 한 번, 그 뒤 하루 한 번 지운다. 실패는 로그만 남기고 부팅·주기를 막지 않는다
     const sweepOps = () => {
       try {
@@ -743,6 +754,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       latest: latestRunner,
       remoteUpdates,
       updateQueue,
+      background: services.background,
     };
     const runnerDetail = () => {
       const detail = registry.forProvider("runner")?.setupDetail();
@@ -853,6 +865,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       latest: latestRunner,
       remoteUpdates,
       updateQueue,
+      background: services.background,
     });
     // 자동화(자동화 스펙): 예약 틱·웹훅·「지금 실행」이 같은 게시(라우터로 멘션 런)와 같은 워크스페이스 시간대를 쓴다
     const automationPost: PostDeps = {
@@ -1107,6 +1120,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("presence", closePresence);
       await step("ops", closeOps);
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
+      await step("background", () => services.background.close());
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
       await step("adapter", closeAdapters);
       await step("fanout", () => fanout.close());

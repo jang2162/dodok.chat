@@ -15,6 +15,7 @@ import {
   RunAbort,
   RunEventsReplay,
   roleAtLeast,
+  TaskStop,
   Typing,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
@@ -90,6 +91,7 @@ export const WIRE_BUCKET = {
   "message.send": "heavy",
   "component.interact": "heavy",
   "run.abort": "heavy",
+  "task.stop": "heavy",
   "run.events.replay": "replay",
   "approval.resolve": "approval",
   typing: "chatter",
@@ -251,6 +253,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
           latestSeq: channelLastSeq(ctx.db, channel.id),
           activeRuns: ctx.runs?.activeRuns(channel.id) ?? [],
           pendingApprovals: ctx.runs?.pendingApprovals(channel.id) ?? [],
+          tasks: ctx.runs?.backgroundTasks(channel.id) ?? [],
           // 끊긴 사이 옛 루트에 붙은 답글이면 그 루트의 새 요약 — 루트 message.updated 를 못 받았다
           ...(lastSeq === undefined ? {} : { threadRoots: threadRootsOf(ctx.db, channel.id, page.messages) }),
         };
@@ -350,6 +353,17 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       const res = await settle(ctx.logger, "run.abort", async () => {
         const { runId } = parsePayload(RunAbort, raw);
         await runs().abort(runId, userId);
+        return null;
+      });
+      reply(ack, res);
+    });
+
+    // 백그라운드 작업 끄기 — 권한은 그 런의 중지와 같다(스펙 9장). 끈 결과는 러너의 tasks.update 로 tasks.updated 가 된다
+    socket.on("task.stop", async (raw: unknown, ack: unknown) => {
+      if (limited("task.stop")) return reply(ack, RATE_LIMITED);
+      const res = await settle(ctx.logger, "task.stop", async () => {
+        const { runId, taskId } = parsePayload(TaskStop, raw);
+        await runs().stopTask(runId, taskId, userId);
         return null;
       });
       reply(ack, res);

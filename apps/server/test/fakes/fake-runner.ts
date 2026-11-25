@@ -5,7 +5,8 @@
  * `fs.list`·`project.check` 에 onFsList·onProjectCheck 로 답하고, `run.start` 를 받으면 대본(script)
  * 대로 `run.event`(텍스트·도구) → `run.final`. 대본은 승인 요청(`approval.requested` → `approval.resolve` 대기)·`outbound.post`·
  * 끊기를 부를 수 있다. `run.abort` 를 받으면 실제 러너처럼 `run.final { text: "", stopReason: "aborted" }` 로 끝낸다.
- * 통합 시나리오와 dev:fake 가 함께 쓴다
+ * 백그라운드 작업(능력 backgroundTasks 를 hello 에 실을 때)은 시험이 tasks·followup 으로 부르고, 서버의 task.stop·session.release 는
+ * 기록한다. 통합 시나리오와 dev:fake 가 함께 쓴다
  */
 import {
   type ComponentsV1,
@@ -41,6 +42,12 @@ import {
   type RunnerWorktreeRemoveResult,
   RunnerUpdate,
   type RunnerUpdateResult,
+  type BackgroundTask,
+  type RunnerFollowupRequest,
+  RunnerFollowupResult,
+  RunnerSessionRelease,
+  RunnerTaskStop,
+  type RunnerTaskStopResult,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { io, type Socket } from "socket.io-client";
@@ -320,6 +327,21 @@ export type FakeRunner = {
   readonly runStarts: RunnerRunStart[];
   readonly aborts: RunnerRunAbort[];
   readonly resolves: RunnerApprovalResolve[];
+  /** task.stop(서버의 「종료」)에 무엇으로 답할지 — 기본은 ok. undefined 면 ack 하지 않는다 */
+  onTaskStop: (req: RunnerTaskStop) => RunnerTaskStopResult | undefined;
+  /** 스키마를 통과한 task.stop·session.release, 도착 순서 */
+  readonly taskStops: RunnerTaskStop[];
+  readonly releases: RunnerSessionRelease[];
+  /** tasks.update — 그 세션의 작업 전체(바꿔 끼우는 값) */
+  tasks(sessionKey: string, tasks: BackgroundTask[]): void;
+  /**
+   * run.followup — CLI 가 스스로 연 턴처럼 서버에 추가 응답 런을 청한다. 받아 주면 그 런을 script(없으면 지금 script)로 돌린다 —
+   * run.start 는 오지 않으므로 손잡이의 start 는 같은 세션의 마지막 run.start 에 받은 deliver 를 끼운 것이다
+   */
+  followup(
+    req: RunnerFollowupRequest,
+    script?: FakeRunnerScript,
+  ): Promise<{ result: RunnerFollowupResult; run?: FakeRunnerRun }>;
   /** 지금 알리는 hello(기본 위에 덮은 것) — reconnect 의 hello 로 바뀐다 */
   readonly hello: RunnerHello;
   /** 옵션 tree 그대로(같은 객체) — 시험이 고쳐 「디렉터리가 나중에 링크로 바뀜」 따위를 만든다 */
@@ -418,6 +440,8 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const commandsRequests: RunnerCommandsList[] = [];
   const worktreeRequests: FakeRunner["worktreeRequests"] = [];
   const updateRequests: RunnerUpdate[] = [];
+  const taskStops: RunnerTaskStop[] = [];
+  const releases: RunnerSessionRelease[] = [];
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
 
@@ -440,6 +464,22 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         : { ok: true, created: true, adopted: false, base: "fa1e000" },
     onWorktreeRemove: (req) => (tree ? fakeWorktreeRemove(fakeRunnerHello(hello), tree, req) : { ok: true }),
     worktreeRequests,
+    onTaskStop: () => ({ ok: true }),
+    taskStops,
+    releases,
+    tasks(sessionKey, list) {
+      if (socket?.connected) socket.emit("tasks.update", { sessionKey, tasks: list });
+    },
+    async followup(req, script) {
+      const s = socket;
+      if (!s?.connected) throw new Error("fake runner is not connected");
+      const result = RunnerFollowupResult.parse(await s.emitWithAck("run.followup", req));
+      if (!result.ok) return { result };
+      const origin = [...runStarts].reverse().find((r) => r.deliver.sessionKey === req.sessionKey);
+      if (!origin) throw new Error(`no run.start for ${req.sessionKey}`);
+      const run = handleRun(s, { ...origin, deliver: result.deliver }, script);
+      return { result, run };
+    },
     tree,
     get hello() {
       return fakeRunnerHello(hello);
@@ -491,7 +531,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     }, delay);
   }
 
-  function handleRun(s: Socket, start: RunnerRunStart) {
+  function handleRun(s: Socket, start: RunnerRunStart, script?: FakeRunnerScript): FakeRunnerRun {
     const runId = start.deliver.runId;
     let released = () => {};
     let isAborted = false;
@@ -602,13 +642,15 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     // 실제 러너: interrupt 로 끝난 턴은 빈 답 + stopReason "aborted"(조율자 판정 R1). 비용·토큰 없이 costKind 는
     // abortedFinal() 기본값 그대로 — 대기열에서 중지된 런과 같은 모양(최종 리뷰 M2)
     void aborted.then(() => run.final("", { stopReason: "aborted", costKind: "subscription_estimate" }));
+    const play = script ?? runner.script;
     void (async () => {
       try {
-        await runner.script(run);
+        await play(run);
       } catch (error) {
         run.error("INTERNAL", error instanceof Error ? error.message : String(error));
       }
     })();
+    return run;
   }
 
   function connect(): Promise<RunnerHelloResult> {
@@ -677,6 +719,17 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     s.on("run.abort", (p: RunnerRunAbort) => {
       aborts.push(p);
       abortHandlers.get(p.runId)?.();
+    });
+    s.on("task.stop", (raw: unknown, ack: (r: RunnerTaskStopResult) => void) => {
+      const parsed = RunnerTaskStop.safeParse(raw);
+      if (!parsed.success) return ack({ ok: false });
+      taskStops.push(parsed.data);
+      const res = runner.onTaskStop(parsed.data);
+      if (res !== undefined) ack(res);
+    });
+    s.on("session.release", (raw: unknown) => {
+      const parsed = RunnerSessionRelease.safeParse(raw);
+      if (parsed.success) releases.push(parsed.data);
     });
     s.on("approval.resolve", (p: RunnerApprovalResolve) => {
       resolves.push(p);

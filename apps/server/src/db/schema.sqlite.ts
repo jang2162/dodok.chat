@@ -463,6 +463,8 @@ export const runs = sqliteTable(
     // 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절) — 채널 안 에이전트의 제어 도구가 이 사람의 지금 역할을 빌린다.
     // null 이면 시킨 사람이 없다(자동화 글로 시작한 사슬·이 열 전의 런) — 읽기 도구만. 정하는 곳은 runs/orchestrator.ts requesterOf
     requestedBy: text("requested_by"),
+    // 추가 응답 런(trigger_kind background)이면 그 작업을 띄운 원래 런(백그라운드 작업 스펙 5.5) — 그 밖은 null
+    backgroundOriginRunId: text("background_origin_run_id"),
     createdAt: ts("created_at").notNull(),
     startedAt: ts("started_at"),
     endedAt: ts("ended_at"),

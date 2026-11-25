@@ -231,7 +231,11 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
   it("붙은 러너는 목록 connected·SetupStatus.runners.list 에 보이고, 폐기하면 그 소켓이 곧바로 끊기고 빠진다", async () => {
     const issued = await issue("desk");
     const runner = await connect(issued.token);
-    expect(runner.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
+    expect(runner.helloResult).toEqual({
+      ok: true,
+      serverVersion: expect.any(String),
+      features: ["backgroundTasks"],
+    });
     const listed = (await call(owner, "GET", "/runner-tokens")).json() as { tokens: RunnerTokenRecord[] };
     expect(listed.tokens.find((t) => t.id === issued.record.id)?.connected).toBe(true);
     expect((await status()).runners.list).toEqual([

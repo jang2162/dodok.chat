@@ -132,10 +132,30 @@ export function assertCanonicalConversation(msg: OutboundMessage): string {
   return keyConversation;
 }
 
+/** 추가 응답 런의 트리거(백그라운드 작업 스펙 5.5) — 원래 런과 그 런의 응답 스레드 루트 */
+export type AdoptTrigger = EnqueueTrigger & {
+  backgroundOriginRunId: string;
+  /** 이 런이 글을 쓸 스레드 — 세션 키는 원래 런의 것(채널 세션이면 스레드 접미사가 없다) */
+  threadRootId: string;
+  /** 원래 런의 세션 키 — 러너 안의 그 세션 프로세스가 이미 턴을 열었다 */
+  sessionKey: string;
+  /** 원래 런을 맡은 연결(러너 토큰 id) */
+  connectionId: string;
+};
+
 export interface Orchestrator {
   enqueueRun(
     plan: RunPlan & { channelId: string; conversationId: string },
     trigger: EnqueueTrigger,
+  ): Promise<Run>;
+  /**
+   * 러너가 이미 연 턴을 서버 런으로 받는다(추가 응답 런 — 백그라운드 작업 스펙 5.5). 세션 큐에 줄 세우지 않고 곧바로 「도는 중」
+   * (RUN_STARTED·startedAt·run 타이머)이고, 같은 세션 큐에서 아직 보내지 않은 런은 이 런 뒤로 선다. 보관한 에이전트·보관한 채널·
+   * 닫힌 세션·세션 밖·읽기 전용 DM 이면 런을 만들지 않고 FORBIDDEN 을 던진다(관문의 검사는 부르는 쪽이 먼저 했다)
+   */
+  adoptRun(
+    plan: RunPlan & { channelId: string; conversationId: string },
+    trigger: AdoptTrigger,
   ): Promise<Run>;
   /** 어댑터·타이머·사용자가 부른다. ctx.message 는 gateway_final 의 WS 스냅샷 본문 */
   signal(runId: string, s: RunSignal, ctx?: { message?: string }): Promise<void>;
@@ -322,6 +342,17 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   let stopped = false;
 
   // ── 어댑터 고르기 ───────────────────────────────────────────
+
+  /**
+   * 그 런의 세션(agent_sessions 행)의 스레드 — 대개 런의 스레드지만 추가 응답 런은 원래 런의 세션 키로 돌면서 응답 스레드에 쓴다
+   * (threadRootId 가 세션의 스레드가 아니다). 세션 키의 스레드 접미사가 정본이다
+   */
+  function sessionThreadOf(
+    run: Pick<Run, "triggerKind" | "sessionKey" | "threadRootId">,
+  ): string | undefined {
+    if (run.triggerKind !== "background") return run.threadRootId;
+    return parseDodokSessionKey(run.sessionKey)?.threadRootId;
+  }
 
   /** 그 에이전트의 provider 어댑터. 행이 없으면 NOT_FOUND, 어댑터가 없으면 AdapterError(ADAPTER_UNAVAILABLE) */
   function adapterForAgent(agentId: string): AgentAdapter {
@@ -1197,6 +1228,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    */
   function canonicalThread(msg: OutboundMessage, run: Run | undefined): string | undefined {
     const thread = msg.threadId?.toLowerCase();
+    // 추가 응답 런은 원래 런의 세션 키로 돌면서 그 응답 스레드에 쓴다(스펙 5.5) — 그 런의 스레드로 온 글만 키의 스레드 대조를 건너뛴다
+    if (run?.triggerKind === "background" && thread !== undefined && thread === run.threadRootId)
+      return thread;
     const keyThread = parseDodokSessionKey(msg.sessionKey)?.threadRootId;
     if (thread !== keyThread || (run !== undefined && run.threadRootId !== thread)) {
       logger.warn(
@@ -1499,6 +1533,48 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       return run;
     },
 
+    async adoptRun(plan, trigger) {
+      const ts = now();
+      const target = {
+        id: trigger.backgroundOriginRunId,
+        agentId: plan.agentId,
+        channelId: plan.channelId,
+        conversationId: plan.conversationId,
+      };
+      // 원래 런의 시킨 사람으로 dmClosedTarget 이 그룹 DM 관문을 본다 — 새 런은 아직 없다
+      if (archivedTarget(target) || dmClosedTarget(target))
+        throw apiError("FORBIDDEN", "the follow-up target is archived, closed or read-only");
+      const queueKey = queueKeyOf(trigger.connectionId, trigger.sessionKey);
+      const run = db.transaction((tx) => {
+        const inserted = store.insertRun(tx, {
+          channelId: plan.channelId,
+          conversationId: plan.conversationId,
+          agentId: plan.agentId,
+          triggerKind: "background",
+          triggerMessageId: trigger.message?.id,
+          rootMessageId: plan.rootMessageId,
+          relayDepth: plan.relayDepth,
+          sessionKey: trigger.sessionKey,
+          threadRootId: trigger.threadRootId,
+          connectionId: trigger.connectionId,
+          backgroundOriginRunId: trigger.backgroundOriginRunId,
+          requestedBy: requesterOf(tx, trigger),
+          createdAt: ts,
+        });
+        // 러너 어댑터의 제공자 런 id 는 우리 런 id 다 — abort 가 어댑터로 간다(inflight 이기도 하다)
+        return store.updateRun(tx, inserted.id, { providerRunId: inserted.id });
+      });
+      pending.set(run.id, { queueKey, order: ++order, trigger });
+      // 이미 보낸(어댑터에 간) 런 뒤, 아직 보내지 않은 런 앞 — 러너도 한 번에 한 턴이라 그 순서로 돈다
+      const queue = sessionQueues.get(queueKey) ?? [];
+      const at = queue.findIndex((id) => !inflight.has(id));
+      queue.splice(at === -1 ? queue.length : at, 0, run.id);
+      sessionQueues.set(queueKey, queue);
+      inflight.add(run.id);
+      // queued → streaming 한 번에 — RUN_STARTED·startedAt·run 타이머(runMs 는 이 턴에만 — 스펙 5.5)
+      return applySignal(run.id, { kind: "gateway_started" }) ?? run;
+    },
+
     async signal(runId, s, ctx) {
       try {
         if (s.kind === "final_timeout") {
@@ -1747,7 +1823,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         findSessionRow(db, {
           conversationId: run.conversationId,
           agentId: run.agentId,
-          threadRootId: run.threadRootId,
+          threadRootId: sessionThreadOf(run),
         });
       if (!session) {
         logger.warn({ runId }, "run session id for a run without a session — dropped");

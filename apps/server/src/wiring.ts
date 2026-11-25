@@ -12,6 +12,7 @@ import { createRunGate } from "./modules/ops/budget";
 import type { ControlService } from "./modules/control/service";
 import { createOpsService, type OpsService } from "./modules/ops/service";
 import { createRouter, type Router, type RouterDeps } from "./modules/router/service";
+import { type BackgroundService, createBackgroundService } from "./modules/runs/background";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
 import * as store from "./modules/runs/store";
 import type { ServerBus } from "./realtime/bus";
@@ -27,6 +28,8 @@ export type ServicesDeps = {
   timeouts?: Partial<RunTimeouts> | undefined;
   /** 러너 에이전트의 사람 스킬 별칭 — 라우터가 명령을 막을지 본다(에이전트 명령 C4). 없으면 별칭을 보지 않는다 */
   skillAliases?: RouterDeps["skillAliases"];
+  /** 러너가 다시 붙은 뒤 백그라운드 작업 목록을 기다리는 시간 — 시험이 줄인다 */
+  backgroundResyncMs?: number;
 };
 
 export type Services = {
@@ -35,6 +38,8 @@ export type Services = {
   runs: RunsFacade;
   approvals: ApprovalsService;
   ops: OpsService;
+  /** 러너 백그라운드 작업(백그라운드 작업 스펙 5.5) — 러너 어댑터의 onFollowup·onTasks 가 여기로 온다 */
+  background: BackgroundService;
   /**
    * 제어 서비스를 잇는다 — 제어 서비스는 이 서비스들과 앱의 운영 상태·라우트 문맥을 받아 뒤에 만들어진다. 잇기 전에는 확인 카드가 열릴
    * 일이 없다(카드를 여는 것이 제어 서비스다)
@@ -127,8 +132,24 @@ export function createServices(deps: ServicesDeps): Services {
     return run;
   };
 
+  const background = createBackgroundService({
+    db,
+    bus,
+    orchestrator,
+    gate,
+    registry,
+    logger,
+    ...(deps.backgroundResyncMs === undefined ? {} : { resyncMs: deps.backgroundResyncMs }),
+  });
+
   const runs: RunsFacade = {
     activeRuns: (channelId) => orchestrator.activeRuns(channelId),
+    backgroundTasks: (channelId) => background.snapshot(channelId),
+    async stopTask(runId, taskId, userId) {
+      visibleRun(runId, userId);
+      logger.info({ runId, taskId, userId }, "background task stop requested");
+      await background.stop(runId, taskId);
+    },
     pendingApprovals: (channelId) => approvals.pendingForChannel(channelId),
     async resolveApproval({ approvalId, decision, userId }) {
       logger.info({ approvalId, decision, userId }, "approval resolve requested");
@@ -152,6 +173,7 @@ export function createServices(deps: ServicesDeps): Services {
     runs,
     approvals,
     ops,
+    background,
     bindControl(c) {
       control = c;
     },

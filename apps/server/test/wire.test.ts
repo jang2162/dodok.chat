@@ -180,7 +180,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const channel = newChannel("wire-b");
     expect(await socket.emitWithAck("channel.subscribe", { channelId: channel.id })).toEqual({
       ok: true,
-      data: { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [] },
+      data: { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [], tasks: [] },
     });
     expect(app.io.sockets.sockets.get(socket.id as string)?.rooms.has(`channel:${channel.id}`)).toBe(true);
 
@@ -726,6 +726,8 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
         async (_input: { approvalId: string; decision: ApprovalDecision; userId: string }) => {},
       ),
       abort: vi.fn(async (_runId: string, _userId: string) => {}),
+      backgroundTasks: vi.fn((_channelId: string) => []),
+      stopTask: vi.fn(async (_runId: string, _taskId: string, _userId: string) => {}),
       replay: vi.fn(async (_runId: string, _afterSeq: number, _userId: string) => replay),
       interact: vi.fn(async () => ({ interactionId })),
     } satisfies RunsFacade;
@@ -738,6 +740,11 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
 
     expect(await socket.emitWithAck("run.abort", { runId: run.id })).toEqual({ ok: true, data: null });
     expect(runs.abort).toHaveBeenCalledWith(run.id, app.ownerUserId);
+    expect(await socket.emitWithAck("task.stop", { runId: run.id, taskId: "bash_1" })).toEqual({
+      ok: true,
+      data: null,
+    });
+    expect(runs.stopTask).toHaveBeenCalledWith(run.id, "bash_1", app.ownerUserId);
 
     expect(await socket.emitWithAck("run.events.replay", { runId: run.id } as never)).toEqual({
       ok: true,
