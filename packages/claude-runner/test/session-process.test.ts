@@ -174,6 +174,33 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     expect(driver.background?.held()).toEqual([]);
   });
 
+  it("keeps the scheduler slot until the released process exits", async () => {
+    const fake = createFakeSdk();
+    const { start, hooks } = runner(fake);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellStopped(),
+      // 입력이 닫혀도 CLI 는 close(유예 뒤)까지 산다
+      { hang: true },
+    );
+    await start(runSpec()).done;
+    const call = fake.calls[0]!;
+    const key = runSpec().start.deliver.sessionKey;
+    await until(() => hooks.tasksLog.some(([k, t]) => k === key && t.length === 0));
+    // 놓았지만 CLI 는 아직 산다 — 자리는 그대로
+    expect(call.finished).toBe(false);
+    expect(hooks.heldLog).toEqual([[key, true]]);
+    await until(() => call.finished);
+    await until(() => hooks.heldLog.length === 2);
+    expect(hooks.heldLog).toEqual([
+      [key, true],
+      [key, false],
+    ]);
+  });
+
   it("does not hold without hooks — closes on the first result as before", async () => {
     const fake = createFakeSdk();
     const { start } = runner(fake, null);

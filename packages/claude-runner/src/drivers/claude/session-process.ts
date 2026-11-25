@@ -249,11 +249,24 @@ export function createSessionProcess(o: {
   }
 
   // ── 붙들기·놓기
+  // 스케줄러 자리(hooks.held)는 프로세스가 실제로 끝날 때 돌려준다 — 놓은 뒤에도 CLI 는 유예(closeGraceMs)까지 살아 있으므로
+  // 곧바로 돌려주면 그 사이 다른 런이 시작돼 잠깐 상한을 넘는다
+  let slotHeld = false;
   function setHeld(next: boolean) {
     if (held === next) return;
     held = next;
-    o.hooks?.held(o.sessionKey, next);
-    if (!next) o.hooks?.tasksChanged(o.sessionKey, []);
+    if (next) {
+      slotHeld = true;
+      o.hooks?.held(o.sessionKey, true);
+      return;
+    }
+    o.hooks?.tasksChanged(o.sessionKey, []);
+    if (dead) freeSlot();
+  }
+  function freeSlot() {
+    if (!slotHeld) return;
+    slotHeld = false;
+    o.hooks?.held(o.sessionKey, false);
   }
   const closeLater = () => {
     closeTimer ??= setTimeout(() => q?.close(), o.closeGraceMs);
@@ -271,6 +284,9 @@ export function createSessionProcess(o: {
     closeLater();
     settle();
   }
+  // 셸 알림 순서에 기댄다 — CLI 는 task_notification 을 먼저, 빈 background_tasks_changed 를 그 뒤에 보낸다(ADR 0007 5.11 실측).
+  // 그래서 목록이 비는 때에는 그 알림이 이미 pendingNotices 에 있어 닫지 않고 스스로 열 턴을 기다린다. 빈 목록이 먼저 오면
+  // 알림 전에 닫아 추가 응답을 잃는다 — CLI 판을 올릴 때 이 순서를 다시 본다
   function maybeCloseIdle() {
     if (held && idleNow() && !reserved && tracker.size() === 0 && pendingNotices.length === 0) closeIdle();
   }
@@ -391,6 +407,7 @@ export function createSessionProcess(o: {
     current = undefined;
     turnOpen = false;
     setHeld(false);
+    freeSlot();
     tracker.reset();
     settle();
     for (const fn of exitFns.splice(0)) {
