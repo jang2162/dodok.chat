@@ -133,3 +133,20 @@ it("스레드 작성기에서 쓰던 중 패널이 그냥 빠지면(주소 이�
   await waitFor(() => expect(within(notice).getByText("닫힌 세션입니다")).toHaveFocus());
   live.detach();
 });
+
+it("메인 보기(view=main)에서 쓰던 중 세션이 닫히면 초점은 가운데 스레드의 안내로 — 숨긴 세션 칸의 안내가 아니다", async () => {
+  const qc = createQueryClient(() => {});
+  qc.setQueryData<Timeline>(qk.timeline(CH, A), { ...emptyTimeline(), items: [ROOT], lastSeq: 1 });
+  qc.setQueryData<Timeline>(qk.thread(CH, A, ROOT.id), threadFromPage(undefined, ROOT, [ROOT], false));
+  renderRoute(`/c/${CH}/s/${A}/t/${ROOT.id}?view=main`, qc);
+  const view = await screen.findByTestId("thread-main");
+  const reply = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+  const live = liveHandlers(qc);
+  act(() => reply.focus());
+
+  live.emit("conversation.updated", closeByOther());
+
+  const notice = await within(view).findByTestId("conversation-closed");
+  await waitFor(() => expect(within(notice).getByText("닫힌 세션입니다")).toHaveFocus());
+  live.detach();
+});

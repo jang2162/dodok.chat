@@ -1,20 +1,37 @@
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import {
   ActivityIcon,
+  ArrowLeftIcon,
+  ChevronRightIcon,
   FolderIcon,
   type LucideIcon,
+  Maximize2Icon,
   MessagesSquareIcon,
+  PanelRightIcon,
   SlidersHorizontalIcon,
   UserIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
+import { otherModalOpen } from "@/features/search/openSearch";
 import type { ThreadOpener } from "@/features/threads/threadOpener";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
+import { ResizeHandle } from "./ResizeHandle";
+import { OpenSidebarButton } from "./sidebarSheet";
+import { PANEL, layoutStore, useLayoutWidths } from "./useLayoutWidths";
 
 export type PanelTab = "settings" | "activity" | "files" | "thread" | "profile";
 
@@ -96,8 +113,17 @@ export function usePanelTab(): PanelTab | undefined {
   return TABS.find((t) => matchRoute({ to: t.to }))?.id;
 }
 
+/** 스레드를 메인 보기로 열 때 가운데 머리의 경로·돌아가기(UI 시안 06) — ChannelPage 가 준다 */
+export type ThreadMain = {
+  /** 경로 첫 칸 — 일반 채널은 「# 이름」, 사람 DM 은 그 제목 */
+  channelLabel: string;
+  sessionTitle?: string;
+  /** ←·Esc — 세션으로 돌아가 원글 자리로 */
+  onBack: () => void;
+};
+
 /**
- * 채널 오른쪽 패널의 바깥 틀(설계 5.1). 넓은 화면은 오른쪽 384px 패널, 좁은 화면(`useIsNarrow`)은 전체 화면 시트
+ * 채널 오른쪽 패널의 바깥 틀(설계 5.1). 넓은 화면은 오른쪽 패널(기본 384px — 왼쪽 경계 손잡이로 320–720px, UI 시안 04), 좁은 화면(`useIsNarrow`)은 전체 화면 시트
  * (스펙 2.4). 머리는 한 줄 — 탭(세그먼트 꼴)과 닫기. 지금 탭의 제목은 보이지 않게 남겨 패널의 이름으로 쓴다(패널 재설계 스펙 목표 5).
  * 내용은 `children` — 설정 패널·활동 패널이 같은 틀을 쓴다.
  *
@@ -107,7 +133,10 @@ export function usePanelTab(): PanelTab | undefined {
  * 폭이 바뀌면 담는 그릇(aside ↔ 시트)이 바뀌지만 내용은 **같은 자리에서 한 번만** 그린다 —
  * 늘 같은 `host` div 로 포털을 보내고, 그릇이 그 div 를 제 안으로 옮겨 붙인다. 그릇을 갈아 끼울 때 안쪽이
  * 다시 마운트되면 고치던 초안이 사라진다(web-t11 리뷰 Minor 7). `host` 는 `display:contents` 라
- * 자리를 차지하지 않는다 — 내용이 곧 스크롤 영역의 자식이다
+ * 자리를 차지하지 않는다 — 내용이 곧 스크롤 영역의 자식이다.
+ *
+ * 스레드 탭은 넓은 화면에서 **메인 보기**(`view="main"`, UI 시안 06)로도 연다 — 같은 host 를 가운데 칸으로 옮겨 붙이므로 스레드 작성기·
+ * 스트리밍 버블·승인 카드가 다시 마운트되지 않는다(초안이 그대로). 그때 세션 화면은 ChannelPage 가 숨긴다
  */
 export function PanelTabs({
   channelId,
@@ -120,6 +149,8 @@ export function PanelTabs({
   threadOpenerRef,
   only,
   badges,
+  view = "panel",
+  main,
 }: {
   channelId: string;
   /** 보고 있는 세션 — 탭을 옮기거나 닫아도 그 세션에 머문다(채널 머리·설정·활동은 채널 단위 그대로) */
@@ -138,8 +169,62 @@ export function PanelTabs({
   only?: readonly PanelTab[];
   /** 탭 머리의 수(활동이면 승인 대기 수) — 0 이나 없음이면 그리지 않는다 */
   badges?: Partial<Record<PanelTab, number>>;
+  /** 스레드 탭의 보기 — 주소의 `view=main` 이면 "main"(좁은 화면은 늘 시트) */
+  view?: "panel" | "main";
+  /** 메인 보기 머리 — 없으면 「크게 보기」를 그리지 않는다 */
+  main?: ThreadMain;
 }) {
   const narrow = useIsNarrow();
+  const layout = useLayoutWidths();
+  const mainMode =
+    !narrow && active === "thread" && rootId !== undefined && main !== undefined && view === "main";
+  // 넓은 화면에 오른쪽 패널이 그려져 있는가 — 사이드바가 가운데 최소 폭을 셀 때 쓴다(페인트 전에 알려 한 프레임 넘치지 않게)
+  const panelShown = !narrow && !mainMode;
+  useLayoutEffect(() => {
+    layoutStore.setPanelOpen(panelShown);
+    return () => layoutStore.setPanelOpen(false);
+  }, [panelShown]);
+  // 보기를 바꾸면 누른 단추가 사라진다 — 초점이 떨어졌으면 반대쪽 단추가 받는다(D3 와 같은 부류)
+  const toggleRef = useRef<HTMLAnchorElement>(null);
+  const wasMain = useRef(mainMode);
+  useEffect(() => {
+    if (wasMain.current === mainMode) return;
+    wasMain.current = mainMode;
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body) toggleRef.current?.focus();
+  }, [mainMode]);
+  // 메인 보기의 Esc — 세션으로. 가운데 칸에 캡처 단계로 단다: 작성기 편집기(ProseMirror)는 빈 채여도 Esc 를 먹어(preventDefault)
+  // 버블 단계에서는 받을 수 없다. 대신 먼저 Esc 를 써야 하는 것은 여기서 양보한다 — `@`·`/` 제안이 열린 편집기(후보 0개 포함),
+  // 입력 칸(작성기의 사용자 지정 칸처럼 Esc 로 닫는 것), 다른 대화상자·시트. 메뉴는 포털이라 이 칸 밖에서 Esc 를 받는다.
+  // 초점이 없을 때(body)는 문서 단계에서 — 열린 메뉴가 먼저 쓰면(Radix 가 preventDefault) 두고 간다
+  const mainRef = useRef(main);
+  mainRef.current = mainMode ? main : undefined;
+  const mainSection = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const m = mainRef.current;
+      if (!m || e.key !== "Escape" || e.defaultPrevented || otherModalOpen()) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, select")) return;
+      // 제안이 열린 편집기 — 후보가 0개면 목록(`aria-controls`)이 없으므로 suggestion 플러그인이 쿼리에 다는 장식으로도 본다.
+      // 그 Esc 는 제안만 닫고, 닫힌 뒤의 Esc 에서 떠난다
+      const box = target?.closest('[role="textbox"]');
+      if (box?.hasAttribute("aria-controls") || box?.querySelector("[data-decoration-id]")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      m.onBack();
+    };
+    // 본문 글자를 눌러 초점이 아무 데도 없을 때(body)도 — 그때 키는 이 칸을 지나지 않는다
+    const onBodyKey = (e: globalThis.KeyboardEvent) => {
+      if (e.target === document.body) onKey(e);
+    };
+    el.addEventListener("keydown", onKey, true);
+    document.addEventListener("keydown", onBodyKey);
+    return () => {
+      el.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("keydown", onBodyKey);
+    };
+  }, []);
   const navigate = useNavigate();
   const titleId = useId();
   const tabsRef = useRef<HTMLElement>(null);
@@ -236,6 +321,55 @@ export function PanelTabs({
       </>
     );
   }
+  if (mainMode && main && rootId !== undefined) {
+    return (
+      <>
+        {body}
+        <section
+          data-testid="thread-main"
+          data-panel-tab={active}
+          aria-labelledby={titleId}
+          className="flex min-w-0 flex-1 flex-col"
+          ref={mainSection}
+        >
+          <div className="flex h-12 shrink-0 items-center gap-1 border-b px-2">
+            <OpenSidebarButton />
+            <Button variant="ghost" size="icon-sm" aria-label="채널로 돌아가기" onClick={main.onBack}>
+              <ArrowLeftIcon />
+            </Button>
+            <h2 id={titleId} className="flex min-w-0 flex-1 items-center gap-1 text-sm">
+              <span className="truncate font-semibold">{main.channelLabel}</span>
+              {main.sessionTitle !== undefined && (
+                <>
+                  <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-muted-foreground">{main.sessionTitle}</span>
+                </>
+              )}
+              <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="shrink-0">스레드</span>
+            </h2>
+            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
+              <Link
+                ref={toggleRef}
+                to="/c/$channelId/s/$conversationId/t/$rootId"
+                params={{ channelId, conversationId, rootId }}
+                search={{}}
+                aria-label="패널로 보기"
+                title="패널로 보기"
+                onClick={() => layoutStore.setThreadView("panel")}
+              >
+                <PanelRightIcon />
+              </Link>
+            </Button>
+          </div>
+          {/* 본문은 가독 폭(720px) 가운데 — 긴 코드·표가 패널보다 넓게 */}
+          <div className="flex min-h-0 flex-1 justify-center">
+            <div ref={slot} className="flex min-h-0 w-full max-w-[720px] flex-1 flex-col overflow-hidden" />
+          </div>
+        </section>
+      </>
+    );
+  }
   return (
     <>
       {body}
@@ -243,8 +377,19 @@ export function PanelTabs({
         data-testid="page-channel-panel"
         data-panel-tab={active}
         aria-labelledby={titleId}
-        className="flex w-[384px] shrink-0 flex-col border-l"
+        style={{ width: layout.drawn.panel }}
+        className="relative flex shrink-0 flex-col border-l"
       >
+        <ResizeHandle
+          label="패널 너비"
+          value={layout.drawn.panel}
+          range={PANEL}
+          grow={-1}
+          className="-left-[5px]"
+          onDrag={layoutStore.dragPanel}
+          onCommit={layoutStore.commit}
+          onSet={layoutStore.setPanel}
+        />
         <div className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-2">
           <h2 id={titleId} className="sr-only">
             {tab.title}
@@ -258,6 +403,21 @@ export function PanelTabs({
             only={only}
             badges={badges}
           />
+          {active === "thread" && rootId !== undefined && main !== undefined && (
+            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
+              <Link
+                ref={toggleRef}
+                to="/c/$channelId/s/$conversationId/t/$rootId"
+                params={{ channelId, conversationId, rootId }}
+                search={{ view: "main" }}
+                aria-label="크게 보기"
+                title="크게 보기"
+                onClick={() => layoutStore.setThreadView("main")}
+              >
+                <Maximize2Icon />
+              </Link>
+            </Button>
+          )}
           <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
             {/*
              * 이 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(D3·D13·D14 와 같은 부류). 패널이 내려가기

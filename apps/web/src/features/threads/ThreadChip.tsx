@@ -8,7 +8,7 @@ import { IdentityAvatar } from "@/ui/identity-avatar";
 import { cn } from "@/lib/utils";
 import { threadRootOf } from "./queries";
 import { activeLabel, threadFaces, useThreadActiveRuns } from "./threadParticipants";
-import { useNoteThreadOpener } from "./threadOpener";
+import { useNoteThreadOpener, useThreadOpenSearch } from "./threadOpener";
 
 /** 칩에 그리는 참여자 아바타 수 — 나머지는 +N(채널 헤더의 「참여 에이전트」와 같은 모양) */
 const AVATARS_MAX = 4;
@@ -69,6 +69,7 @@ export function ThreadChip({ message, summary }: { message: Message; summary?: T
     });
   }, [agents, people, summary, active]);
   const noteOpener = useNoteThreadOpener(message.id);
+  const search = useThreadOpenSearch();
   if (summary === undefined && active.length === 0) return null;
   const shown = faces.slice(0, AVATARS_MAX);
   const hidden = faces.length - shown.length;
@@ -78,6 +79,7 @@ export function ThreadChip({ message, summary }: { message: Message; summary?: T
     <Link
       to="/c/$channelId/s/$conversationId/t/$rootId"
       params={{ channelId: message.channelId, conversationId: message.conversationId, rootId: message.id }}
+      search={search}
       onClick={noteOpener}
       data-slot="thread-chip"
       className="mt-1.5 inline-flex min-h-10 max-w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-sm transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
@@ -138,10 +140,12 @@ export function ThreadChip({ message, summary }: { message: Message; summary?: T
 export function ReplyInThread({ message }: { message: Message }) {
   const rootId = threadRootOf(message);
   const noteOpener = useNoteThreadOpener(rootId);
+  const search = useThreadOpenSearch();
   return (
     <Link
       to="/c/$channelId/s/$conversationId/t/$rootId"
       params={{ channelId: message.channelId, conversationId: message.conversationId, rootId }}
+      search={search}
       onClick={noteOpener}
       aria-label="스레드에서 답하기"
       title="스레드에서 답하기"

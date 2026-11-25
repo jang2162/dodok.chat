@@ -184,12 +184,24 @@ export const channelFilesRoute = createRoute({
   component: lazyPage(() => import("@/features/files/FilesPanel"), "FilesPanel"),
 });
 /**
+ * 스레드 주소의 검색 값 — `view=main` 이면 넓은 화면에서 가운데 칸 전체로 연다(UI 시안 06). 그 밖은 패널이다. 라우터가 위 라우트의 원문
+ * 검색 값을 섞어 두므로 이 함수는 타입을 좁힐 뿐이다 — 화면의 판정은 ChannelPage 가 "main" 과 견준다
+ */
+export type ThreadSearch = { view?: "main" };
+const threadSearch = (s: Record<string, unknown>): ThreadSearch =>
+  s.view === "main" ? { view: "main" } : {};
+
+/**
  * 스레드 패널(스레드·검색 스펙 4.2) — 설정·활동과 같은 오른쪽 패널 자리의 탭 하나. 새로고침·푸시 링크로 바로 열린다.
- * `rootId` 는 그 세션의 루트 메시지 id — 답글 id·다른 세션의 루트면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」)
+ * `rootId` 는 그 세션의 루트 메시지 id — 답글 id·다른 세션의 루트면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」).
+ * `?view=main` 이면 메인 보기(UI 시안 06), 없으면 패널 — 주소가 보기를 정한다. 마지막으로 고른 보기는 여기서 넘기지 않고 스레드를
+ * **여는 자리**(칩·「스레드에서 답하기」 — `useThreadOpenSearch`)가 주소에 싣는다. 여기서 바꿔 쓰면 「크게 보기」 뒤 뒤로 가기가 패널
+ * 주소로 돌아오자마자 다시 메인으로 넘겨졌다 — 기록 이동은 주소 그대로 연다
  */
 export const channelThreadRoute = createRoute({
   getParentRoute: () => conversationRoute,
   path: "t/$rootId",
+  validateSearch: threadSearch,
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
 });
 /**
@@ -234,10 +246,12 @@ export const legacyChannelActivityRoute = createRoute({
 export const legacyChannelThreadRoute = createRoute({
   getParentRoute: () => channelRoute,
   path: "t/$rootId",
-  beforeLoad: ({ params }) => {
+  validateSearch: threadSearch,
+  beforeLoad: ({ params, search }) => {
     throw redirect({
       to: "/c/$channelId/s/$conversationId/t/$rootId",
       params: { channelId: params.channelId, conversationId: params.channelId, rootId: params.rootId },
+      search,
       replace: true,
     });
   },

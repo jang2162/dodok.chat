@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { LAYOUT_KEY, layoutStore } from "@/app/layout/useLayoutWidths";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { MessageList } from "@/features/messages/MessageList";
@@ -509,6 +510,202 @@ describe("URL 로 열기", () => {
     await waitFor(() =>
       expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: { conversationId: CH, rootId: ROOT.id } }),
     );
+  });
+});
+
+describe("스레드 메인 보기(UI 시안 06)", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    layoutStore.reset();
+  });
+  const main = () => screen.findByTestId("thread-main");
+  const stored = () =>
+    JSON.parse(window.localStorage.getItem(LAYOUT_KEY) ?? "null") as Record<string, unknown> | null;
+  const textOf = (box: HTMLElement) => (box as unknown as { editor: Editor }).editor.getText();
+
+  it("주소의 view=main 이면 가운데 칸 전체가 그 스레드 — 경로 머리, 세션 칸은 숨긴다", async () => {
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    expect(within(view).getByRole("heading", { name: /스레드$/ })).toHaveTextContent(/^#/);
+    expect(within(view).getByRole("button", { name: "채널로 돌아가기" })).toBeInTheDocument();
+    expect(within(view).getByRole("link", { name: "패널로 보기" })).toHaveAttribute(
+      "href",
+      `/c/${CH}/s/${CH}/t/${ROOT.id}`,
+    );
+    const thread = await panel();
+    expect(view).toContainElement(thread);
+    expect(await within(thread).findByText("답글 3")).toBeInTheDocument();
+    expect(within(thread).getByRole("textbox", { name: "스레드 답글 입력" })).toBeInTheDocument();
+    // 오른쪽 패널은 없고, 세션 칸(머리·목록·작성기)은 숨긴 채 남는다
+    expect(screen.queryByTestId("page-channel-panel")).toBeNull();
+    expect(screen.getByTestId("channel-header").closest("section")).toHaveAttribute("hidden");
+  });
+
+  it("「크게 보기」↔「패널로 보기」 — 주소·기억이 바뀌고, 고치던 초안과 작성기가 그대로다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const box = await within(await panel()).findByRole("textbox", { name: "스레드 답글 입력" });
+    act(() => {
+      (box as unknown as { editor: Editor }).editor.commands.setContent("쓰던 답");
+    });
+    const panelHead = await screen.findByTestId("page-channel-panel");
+    await userEvent.click(within(panelHead).getByRole("link", { name: "크게 보기" }));
+
+    const view = await main();
+    expect(router.state.location.search).toEqual({ view: "main" });
+    expect(stored()).toMatchObject({ threadView: "main" });
+    // 같은 작성기(다시 마운트되지 않았다)라 초안이 남는다
+    expect(within(view).getByRole("textbox", { name: "스레드 답글 입력" })).toBe(box);
+    expect(textOf(box)).toBe("쓰던 답");
+    // 누른 단추가 사라졌으니 초점은 반대쪽 단추로
+    await waitFor(() => expect(within(view).getByRole("link", { name: "패널로 보기" })).toHaveFocus());
+
+    await userEvent.click(within(view).getByRole("link", { name: "패널로 보기" }));
+    const back = await screen.findByTestId("page-channel-panel");
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(router.state.location.search).toEqual({});
+    expect(stored()).toMatchObject({ threadView: "panel" });
+    expect(within(back).getByRole("textbox", { name: "스레드 답글 입력" })).toBe(box);
+    expect(textOf(box)).toBe("쓰던 답");
+    await waitFor(() => expect(within(back).getByRole("link", { name: "크게 보기" })).toHaveFocus());
+  });
+
+  it("뒤로 가기는 기록 그대로 — 패널 → 크게 보기 → 뒤로 = 패널, 앞으로 = 메인", async () => {
+    const { router, history } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const panelHead = await screen.findByTestId("page-channel-panel");
+    await userEvent.click(within(panelHead).getByRole("link", { name: "크게 보기" }));
+    await main();
+    expect(stored()).toMatchObject({ threadView: "main" });
+
+    act(() => history.back());
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
+    // 기억이 메인이어도 패널 주소를 다시 메인으로 넘기지 않는다
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.state.location.search).toEqual({});
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+
+    act(() => history.forward());
+    expect(await main()).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({ view: "main" });
+  });
+
+  it("기억이 메인이어도 view 없는 주소는 패널로 연다 — 보기는 주소가 정한다", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({});
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+  });
+
+  it("마지막으로 고른 보기로 다음 스레드를 연다 — 칩을 눌러도 메인", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
+    const chip = await within(await screen.findByRole("region", { name: "메시지" })).findByRole("link", {
+      name: /답글 2개/,
+    });
+    await userEvent.click(chip);
+    expect(await main()).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(router.state.location.search).toEqual({ view: "main" });
+  });
+
+  it("Esc 는 세션으로 — 원글 자리로 가서 그 행이 초점을 받는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    await within(view).findByText("답글 3");
+    box.focus();
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(screen.getByTestId("channel-header").closest("section")).not.toHaveAttribute("hidden");
+    await waitFor(() => {
+      const focused = document.activeElement as HTMLElement;
+      expect(channelList()).toContainElement(focused);
+      expect(focused).toHaveTextContent("루트 질문");
+    });
+  });
+
+  it("편집기가 Esc 를 먹어도(ProseMirror 가 keyCode 27 을 preventDefault) 세션으로 — 캡처 단계에서 받는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    box.focus();
+    const ev = new KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true, cancelable: true });
+    // 편집기 자신의 처리기가 먼저 막는 것을 그대로 — 버블 단계 처리기는 defaultPrevented 를 본다
+    let editorPrevented = false;
+    box.addEventListener("keydown", (e) => (editorPrevented = e.defaultPrevented));
+    act(() => {
+      box.dispatchEvent(ev);
+    });
+    expect(editorPrevented || ev.defaultPrevented).toBe(true);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
+  it("초점이 아무 데도 없어도(body) Esc 는 세션으로", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    await within(await main()).findByText("답글 3");
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(document.activeElement).toBe(document.body);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
+  it("Esc 는 먼저 쓸 자리에 양보한다 — @ 제안 목록이 열린 편집기(aria-controls)면 그대로 남는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    box.setAttribute("aria-controls", "mention-list");
+    box.focus();
+    await userEvent.keyboard("{Escape}");
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(screen.getByTestId("thread-main")).toBeInTheDocument();
+  });
+
+  it("후보가 0개인 @ 제안이 열려 있으면 Esc 는 제안만 닫고, 그다음 Esc 에서 세션으로", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    const editor = (box as unknown as { editor: Editor }).editor;
+    act(() => {
+      editor.commands.focus();
+      editor.commands.insertContent("@없는이름zz");
+    });
+    // 제안은 열렸지만(쿼리 장식) 후보가 없어 목록·aria-controls 가 없다
+    await waitFor(() => expect(box.querySelector("[data-decoration-id]")).not.toBeNull());
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(box).not.toHaveAttribute("aria-controls");
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(box.querySelector("[data-decoration-id]")).toBeNull());
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(screen.getByTestId("thread-main")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+  });
+
+  it("← 「채널로 돌아가기」도 같다 · 보기 기억(메인)은 그대로", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    await within(view).findByText("답글 3");
+    await userEvent.click(within(view).getByRole("button", { name: "채널로 돌아가기" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+    expect(stored()).toMatchObject({ threadView: "main" });
+    expect(layoutStore.get().threadView).toBe("main");
+  });
+
+  it("좁은 화면은 view=main 이어도 전체 화면 시트 — 「크게 보기」가 없다", async () => {
+    stubMedia(true);
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const sheet = await screen.findByRole("dialog");
+    expect(sheet).toHaveAttribute("data-panel-tab", "thread");
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(within(sheet).queryByRole("link", { name: "크게 보기" })).toBeNull();
   });
 });
 

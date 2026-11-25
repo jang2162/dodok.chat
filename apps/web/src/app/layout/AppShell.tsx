@@ -6,10 +6,13 @@ import { useDms } from "@/features/dms/queries";
 import { isSearchShortcut, OpenSearchContext, otherModalOpen } from "@/features/search/openSearch";
 import { SearchDialog } from "@/features/search/SearchDialog";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { Banners } from "./Banners";
+import { ResizeHandle } from "./ResizeHandle";
 import { Sidebar } from "./Sidebar";
 import { OpenSidebarContext, SidebarSheetOpenContext, SidebarTriggerContext } from "./sidebarSheet";
+import { SIDEBAR, layoutStore, useLayoutWidths } from "./useLayoutWidths";
 
 /**
  * 페이지 영역 스크롤 상자의 id — 화면이 바뀌면 라우터가 이 상자를 맨 위로 돌린다(`scrollToTopSelectors`).
@@ -20,7 +23,8 @@ export const PAGE_SCROLL_ID = "page-scroll";
 /**
  * 로그인 뒤 레이아웃(스펙 2.4): 사이드바 + 연결 배너 + 페이지. 768px 미만이면 사이드바를 왼쪽 시트로 접고,
  * 페이지 헤더가 `useOpenSidebar()` 로 여는 버튼을 그린다. 시트는 그 안에서 이동하면 닫히고, 닫히면(이동·Esc·닫기)
- * 초점은 지금 화면의 메뉴 버튼으로 돌아간다. 검색 대화상자(스레드·검색 스펙 5.4)는 어느 화면에서나 `⌘K`/`Ctrl+K` 와
+ * 초점은 지금 화면의 메뉴 버튼으로 돌아간다. 넓은 화면의 사이드바는 오른쪽 경계의 손잡이로 너비를 바꾸고(UI 시안 04 — 200–420px,
+ * 기기별 저장), 최솟값보다 더 끌거나 `⌘\`/`Ctrl+\` 로 접는다 — 접혀 있으면 같은 메뉴 버튼이 머리에 나와 다시 편다. 검색 대화상자(스레드·검색 스펙 5.4)는 어느 화면에서나 `⌘K`/`Ctrl+K` 와
  * 사이드바의 검색 칸으로 연다
  */
 export function AppShell() {
@@ -60,10 +64,49 @@ export function AppShell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const layout = useLayoutWidths();
+  const collapsed = !narrow && layout.collapsed;
+  const asideRef = useRef<HTMLElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+  // 접힌 사이드바를 다시 편다 — 머리의 메뉴 버튼은 사라지므로 초점은 다시 나온 손잡이로
+  const expandSidebar = useCallback(() => {
+    layoutStore.setCollapsed(false);
+    requestAnimationFrame(() => handleRef.current?.focus());
+  }, []);
+  useEffect(() => {
+    if (narrow) return;
+    // ⌘\(Ctrl+\) 로 접고 편다. 한국어 배열처럼 글자가 달라도 같은 키 자리(`Backslash`)면 받는다
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.key !== "\\" && e.code !== "Backslash") return;
+      if (otherModalOpen()) return;
+      e.preventDefault();
+      const next = !layoutStore.get().collapsed;
+      layoutStore.setCollapsed(next);
+      // 펴도 초점은 그대로(작성기에서 누르면 계속 쓴다) — 누른 자리가 사라져 초점이 떨어졌을 때만(머리의 메뉴 버튼) 손잡이로
+      if (!next)
+        requestAnimationFrame(() => {
+          const active = document.activeElement;
+          if (active === null || active === document.body) handleRef.current?.focus();
+        });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [narrow]);
+  // 접는 순간 초점이 사이드바 안에 있었으면 머리의 「채널 목록 열기」로 — 숨긴(inert) 칸에 초점이 남지 않게
+  const wasCollapsed = useRef(collapsed);
+  useEffect(() => {
+    const was = wasCollapsed.current;
+    wasCollapsed.current = collapsed;
+    if (!collapsed || was) return;
+    const active = document.activeElement;
+    if (active === document.body || (active && asideRef.current?.contains(active)))
+      triggerRef.current?.focus();
+  }, [collapsed]);
 
   return (
     <OpenSearchContext.Provider value={openSearch}>
-      <OpenSidebarContext.Provider value={narrow ? openSidebar : undefined}>
+      <OpenSidebarContext.Provider value={narrow ? openSidebar : collapsed ? expandSidebar : undefined}>
         <SidebarTriggerContext.Provider value={trigger}>
           <SidebarSheetOpenContext.Provider value={narrow && sheetOpen}>
             <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
@@ -86,8 +129,41 @@ export function AppShell() {
                   </SheetContent>
                 </Sheet>
               ) : (
-                <aside className="w-[260px] shrink-0 border-r">
-                  <Sidebar />
+                <aside
+                  ref={asideRef}
+                  data-testid="app-sidebar"
+                  data-collapsed={collapsed || undefined}
+                  inert={collapsed}
+                  style={{ width: layout.drawn.sidebar }}
+                  className={cn(
+                    "relative shrink-0",
+                    !collapsed && "border-r",
+                    // 접고 펼 때만 미끄러진다 — 끄는 동안(손잡이의 data-dragging)·동작 줄이기면 바로
+                    "motion-safe:transition-[width] motion-safe:duration-200 has-data-dragging:transition-none",
+                  )}
+                >
+                  <div className="h-full overflow-hidden">
+                    {/* 안쪽은 저장된 너비 그대로 — 접히는 동안 글이 다시 줄바꿈되지 않고 잘린다 */}
+                    <div
+                      className="h-full"
+                      style={{ width: collapsed ? layout.sidebar : layout.drawn.sidebar }}
+                    >
+                      <Sidebar />
+                    </div>
+                  </div>
+                  {!collapsed && (
+                    <ResizeHandle
+                      ref={handleRef}
+                      label="사이드바 너비"
+                      value={layout.drawn.sidebar}
+                      range={SIDEBAR}
+                      grow={1}
+                      className="-right-[5px]"
+                      onDrag={layoutStore.dragSidebar}
+                      onCommit={layoutStore.commit}
+                      onSet={layoutStore.setSidebar}
+                    />
+                  )}
                 </aside>
               )}
               <main className="flex min-w-0 flex-1 flex-col">

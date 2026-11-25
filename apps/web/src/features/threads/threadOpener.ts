@@ -1,4 +1,7 @@
 import { createContext, type MouseEvent, type RefObject, useContext } from "react";
+import { useLayout } from "@/app/layout/useLayoutWidths";
+import type { ThreadSearch } from "@/app/router";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 
 /** 스레드를 연 자리 — 칩 또는 행의 「스레드에서 답하기」 */
 export type ThreadOpener = { rootId: string; el: HTMLElement };
@@ -15,4 +18,13 @@ export function useNoteThreadOpener(rootId: string): (e: MouseEvent<HTMLElement>
   return (e) => {
     if (ref) ref.current = { rootId, el: e.currentTarget };
   };
+}
+
+/**
+ * 스레드를 여는 링크의 검색 값 — 이 기기에서 마지막으로 고른 보기가 메인이면 `view=main` 을 싣는다(UI 시안 06). 보기는 주소가 정하고
+ * 라우터는 바꿔 쓰지 않으므로(뒤로 가기가 기록 그대로 열리게) 기억은 여는 자리에서만 적용된다. 좁은 화면은 늘 시트라 싣지 않는다
+ */
+export function useThreadOpenSearch(): ThreadSearch {
+  const main = useLayout().threadView === "main" && !useIsNarrow();
+  return main ? { view: "main" } : {};
 }
