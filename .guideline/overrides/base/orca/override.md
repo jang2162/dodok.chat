@@ -1,7 +1,7 @@
 # orca 바꿈 — 이 프로젝트에서 바꾸는 규칙
 
 ## Orca 가 만드는 워크트리의 자리는 `.worktrees/` 로 고정하지 않는다
-바꾸는 절: `orca/05-switch.md` 「Orca 가 살아 있으면 워크트리도 Orca 로 만든다」
+바꾸는 절: `base/orca/05-switch.md` 「Orca 가 살아 있으면 워크트리도 Orca 로 만든다」
 
 그 절이 바꾸는 것 중 **위치(`.worktrees/`)만** 다시 바꾼다. Orca 로 만드는 워크트리의 자리는 Orca 설정(앱의 worktree 경로 — 기본 `~/orca/workspaces/<저장소>/<슬러그>`, repo 별 `worktreeBasePath` 가 있으면 그것)이 정한 대로 둔다 — 저장소 밖이어도 된다. 스크립트(`scripts/orca-worker.sh`)는 Orca 응답(`orca worktree create --json` 의 `.result.worktree`)과 목록(`orca worktree list`·`ps`)으로 찾는다. 생성 명령(`orca worktree create`)·환경 확인·하나의 작업 = 하나의 워크트리·브랜치·정리 규칙은 그 절과 `base/06-worktree-setup.md` 를 따른다. Orca 없이 손으로 만들 때만 `.worktrees/<슬러그>`.
 

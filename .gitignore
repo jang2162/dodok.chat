@@ -32,12 +32,14 @@ dist/
 # codegraph 인덱스 — 로컬에서 다시 만드는 생성물(codegraph init·sync)
 /.codegraph/
 
+# MCP 서버 설정 — 작업자마다 로컬에서 pick --local 로 만든다
+/.mcp.json
+
 # Orca 개인용 이슈 명령
 /.orca/issue-command
 
 # START Ruler Generated Files
 /.claude/skills
-/.mcp.json
 /.opencode/skills
 /AGENTS.md
 /opencode.json
@@ -54,15 +56,12 @@ dist/
 /.ruler/base/orca/override.md
 /.ruler/base/override.md
 /.ruler/browser/99-reference.md
-/.ruler/browser/browseros-neo/00-switch.md
-/.ruler/browser/browseros-neo/99-reference.md
-/.ruler/codegraph/99-reference.md
 /.ruler/guideline.md
 /.ruler/komodo/99-reference.md
-/.ruler/lefthook/99-reference.md
 /.ruler/mise/99-reference.md
 /.ruler/oxc/01-formatting.md
 /.ruler/oxc/99-reference.md
+/.ruler/public-docs/99-reference.md
 /.ruler/ruler.toml
 /.ruler/ruler/00-sources.md
 /.ruler/ruler/99-reference.md
@@ -74,6 +73,7 @@ dist/
 /.ruler/skills/orca-worker/dispatch.md
 /.ruler/skills/orca-worker/worker-start.md
 /.ruler/skills/orca-worker/worktree.md
+/.ruler/web/99-reference.md
 /docs/guideline/README.md
 /docs/guideline/base/03-comments.md
 /docs/guideline/base/04-citation.md
@@ -92,25 +92,24 @@ dist/
 /docs/guideline/browser/03-cdp.md
 /docs/guideline/browser/04-shared-profile.md
 /docs/guideline/browser/05-page-scripts.md
-/docs/guideline/browser/browseros-neo/01-limits.md
-/docs/guideline/browser/browseros-neo/02-playwright.md
-/docs/guideline/browser/browseros-neo/03-tabs.md
-/docs/guideline/browser/browseros-neo/SETUP.md
-/docs/guideline/codegraph/00-index.md
-/docs/guideline/codegraph/01-orca-setup.md
-/docs/guideline/codegraph/SETUP.md
 /docs/guideline/komodo/00-stack.md
 /docs/guideline/komodo/01-environment.md
 /docs/guideline/komodo/02-override.md
-/docs/guideline/lefthook/00-toolchain.md
-/docs/guideline/lefthook/01-pre-push.md
-/docs/guideline/lefthook/02-post-checkout.md
 /docs/guideline/mise/00-source.md
 /docs/guideline/mise/01-path.md
 /docs/guideline/mise/02-pnpm.md
 /docs/guideline/mise/SETUP.md
 /docs/guideline/oxc/00-version.md
+/docs/guideline/public-docs/00-readme.md
+/docs/guideline/public-docs/01-images.md
+/docs/guideline/public-docs/02-manual.md
+/docs/guideline/public-docs/03-i18n.md
+/docs/guideline/public-docs/04-style.md
+/docs/guideline/public-docs/05-support.md
+/docs/guideline/public-docs/06-readme-template.md
+/docs/guideline/public-docs/07-release-check.md
 /docs/guideline/ruler/01-nested.md
 /docs/guideline/ruler/02-documents.md
 /docs/guideline/ruler/SETUP.md
+/docs/guideline/web/00-llms-txt.md
 # END guideline generated files

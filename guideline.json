@@ -8,19 +8,15 @@
     "default": {
       "server": "https://guideline.develma.com",
       "items": [
-        "mcp/codegraph",
-        "mcp/context7",
-        "mcp/playwright-neo",
         "rules/base",
         "rules/base/orca",
         "rules/browser",
-        "rules/browser/browseros-neo",
-        "rules/codegraph",
         "rules/komodo",
-        "rules/lefthook",
         "rules/mise",
         "rules/oxc",
+        "rules/public-docs",
         "rules/ruler",
+        "rules/web",
         "skills/guideline-export",
         "skills/guideline-sync",
         "skills/orca-worker"

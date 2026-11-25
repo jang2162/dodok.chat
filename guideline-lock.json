@@ -4,9 +4,6 @@
     "default": 35
   },
   "sources": {
-    "default:mcp/codegraph": "01d216780214053bd3728391bbb87db603034af0d566ca43dc52bc228378cc00",
-    "default:mcp/context7": "8f182786a2622ee518d5fe624bb4725715b0337962923d51c73d16ef3ba2044f",
-    "default:mcp/playwright-neo": "0a8d57a7eeaccb470a1cddad3e55140708c6cc86d920d32c97a88ddece315b37",
     "default:rules/base/00-agent.md": "8769ce88bbe59ad56fb00ab23e4b303befafc1d73f764be15033b245ff66bb89",
     "default:rules/base/01-git.md": "a6c05de86c1758ba1a3da5454a520c54b81573947fb56c527b323286aa299972",
     "default:rules/base/02-delegation.md": "eef0e640070a54f161d3807e14af6c52231bbca488bd38d0552cf00be637676e",
@@ -30,77 +27,33 @@
     "default:rules/browser/03-cdp.md": "2c5f83f8ad66728b3623ef3de2380b9642df841f37dc354a7be24a6deee19224",
     "default:rules/browser/04-shared-profile.md": "5f306b8212cff5572c7e8d1f2e012cd6ce7bd80e9ae0b1f985d61593635473d5",
     "default:rules/browser/05-page-scripts.md": "f4cd5fd94a30564e33a552a810dc453c75ffa0b59370a2ab821358d31670d3f7",
-    "default:rules/browser/browseros-neo/00-switch.md": "d73aae12ba3cafeb02260555deba57ebfd19bc20b994cbc30af6582f8dac28a0",
-    "default:rules/browser/browseros-neo/01-limits.md": "52fa2c34c80c0b91776f11e4f8f3bb4bfb9aa04cde757882c3c653fb6b8331ab",
-    "default:rules/browser/browseros-neo/02-playwright.md": "804d4f46ea93b2442427527a0a694bb4cf2212d761b6139ee1e4698a6171df0b",
-    "default:rules/browser/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
-    "default:rules/browser/browseros-neo/SETUP.md": "db770b1dc291ea5a27d9660ec9eee10f54c3ba2fe0fc059f97e1175cb0b50feb",
-    "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
-    "default:rules/codegraph/01-orca-setup.md": "02b018ad80d5b31cf8269fde51afdafdf34e9a4d07a5d0e32d69e0498d10a5b6",
-    "default:rules/codegraph/SETUP.md": "af5d91882dbaa2fa131e0623519a5379273a6f9d055725be8dabb89687aeb2e4",
     "default:rules/komodo/00-stack.md": "a59767508bd633848f14c7e5fec0b4958dfeec00bb99d819a72c2fa8f645df6a",
     "default:rules/komodo/01-environment.md": "8ad000befaca09c3dd1ef565ce2de43d07939682d789a1978d1f792741c4d898",
     "default:rules/komodo/02-override.md": "06bce5f009fafa0173c91f0e6729ef538f36d2d18c28729b3790c94e8589ea28",
-    "default:rules/lefthook/00-toolchain.md": "1b778edb3d410653acc7c23acc3967268125e08da90522289fd6386d2af21589",
-    "default:rules/lefthook/01-pre-push.md": "abacc327081e93b49348ff865cae466c25ff2a2fd4c3a1330a0c94ea51d943c3",
-    "default:rules/lefthook/02-post-checkout.md": "169934a65474ff98bd9e2923034e7dc2568cff496632ac34ab439a56c44347b9",
     "default:rules/mise/00-source.md": "6694bcfb4a8af598cf02642c41c7989f22977de9b913e2e327201e7892792f97",
     "default:rules/mise/01-path.md": "2e25464ea31b9db5388074df777b3628418ed032d0495963ed23a4a70b36c15d",
     "default:rules/mise/02-pnpm.md": "9cbc7883c4b75918af7241daa2c63a97264f4f3d4e8ab7a99328089ca39f1a15",
     "default:rules/mise/SETUP.md": "a212d06bc337ab23c04d4da3a4c8acc864ede892fddd4f8ad8c23d79234b4e75",
     "default:rules/oxc/00-version.md": "b6358ea4358d8b9df6e2ca52d2b0a8dfa3047d4a0e9c8b6d0a8c3a532b8b5f57",
     "default:rules/oxc/01-formatting.md": "6b1b6ed02c4c5ee9406c3a4d4c0254cfd26e4c5851dbcb4d68d980ba92caf2a2",
+    "default:rules/public-docs/00-readme.md": "12e42a49fa850a87bebdd79f752315084dc31e690d5ed41c9be2f12edddd0127",
+    "default:rules/public-docs/01-images.md": "aff2406ed0070c5b90d98f4c664246582fad6e73e197b302b5cbd4a27392328a",
+    "default:rules/public-docs/02-manual.md": "5522399adf3416795693f54aa1ac91abd7ec89d167de35cbc81eaa80d619131a",
+    "default:rules/public-docs/03-i18n.md": "c2ad0855890bb1e60b76d0e58315e95d2593810f6cda6970eaafb2775b56509c",
+    "default:rules/public-docs/04-style.md": "c5e9a38a6fbf3b59153f3f359dc17cc99fd6f5e942e02d2cb861d03ca0ec78db",
+    "default:rules/public-docs/05-support.md": "e3d49377aaa7a9c27dead714beb90a96fe56aa7008334087e63b434e16665846",
+    "default:rules/public-docs/06-readme-template.md": "4a5b65383ab8b3b32764a9f7e07489516c0d105c128d31bd68c1515e06b4b435",
+    "default:rules/public-docs/07-release-check.md": "9bcfdda213473e4fa935669aaec47624549f4f640a99fb86b753b9575511b4d7",
     "default:rules/ruler/00-sources.md": "610329878706b5adc9346bcca5bf8ea8d19a278b32edbdd48aeb9b419296be9b",
     "default:rules/ruler/01-nested.md": "ef31c4113a00f5e7229f076eac8eb128508c6a11a7d0acd3c2c5de9da391a897",
     "default:rules/ruler/02-documents.md": "67e70636a76b474fbbd24c8bd1f3f05ea03e3d6821ecd89f2246082c627db039",
     "default:rules/ruler/SETUP.md": "4ec303a0399bc671a5309fdad1852456ca3ee40fd2486a73fad6f2c03a27cb9f",
+    "default:rules/web/00-llms-txt.md": "6955a39ebcfb57a41677a9a9bbd0d2ffca45f1474737d10d988ac772ad450060",
     "default:skills/guideline-export": "78f0ac736d5f6d04a1673b490e8602333e51ca7b1bb94ceb56f5daab54efe92b",
     "default:skills/guideline-sync": "b0cc253ce07d28b7c1d6d3ca9c4d7bd67f4b8b9fc7e9cc3d8c73fc9a371e3f1d",
     "default:skills/orca-worker": "cb0f73fe1f9d67ab6c674274dc8a4045cc20bbd06eb5858eed4211dcb7579055"
   },
   "outputs": [
-    {
-      "path": ".guideline/mcp/codegraph/README.md",
-      "items": [
-        "default:mcp/codegraph"
-      ],
-      "hash": "d472372c1cdf56a4a19ba76c94881820854006a5c2811a575990270758f8d77c"
-    },
-    {
-      "path": ".guideline/mcp/codegraph/server.json",
-      "items": [
-        "default:mcp/codegraph"
-      ],
-      "hash": "82dfdf61495812bc2e7281c845caea63235069b3ec2d63b5f76750e783d2f91d"
-    },
-    {
-      "path": ".guideline/mcp/context7/README.md",
-      "items": [
-        "default:mcp/context7"
-      ],
-      "hash": "e6e5db686aa3186ad9c46126f4e724589cdc3e5a54e6c606e9ccc87014ff1232"
-    },
-    {
-      "path": ".guideline/mcp/context7/server.json",
-      "items": [
-        "default:mcp/context7"
-      ],
-      "hash": "0cb922c984b54defa9418add6828046bef6b67ade9e1b4ceb906f0d3b7546198"
-    },
-    {
-      "path": ".guideline/mcp/playwright-neo/README.md",
-      "items": [
-        "default:mcp/playwright-neo"
-      ],
-      "hash": "43b8ca4d658c7d9bb8bf739721b0a60e8d0647ab9ab71cde572ab5228c7ad627"
-    },
-    {
-      "path": ".guideline/mcp/playwright-neo/server.json",
-      "items": [
-        "default:mcp/playwright-neo"
-      ],
-      "hash": "196f035d47c4d57d69224900b062e4c06326a7dbb90ea1d7175bc60b1ebcc71b"
-    },
     {
       "path": ".guideline/rules/base/00-agent.md",
       "items": [
@@ -263,62 +216,6 @@
       "hash": "f4cd5fd94a30564e33a552a810dc453c75ffa0b59370a2ab821358d31670d3f7"
     },
     {
-      "path": ".guideline/rules/browser/browseros-neo/00-switch.md",
-      "items": [
-        "default:rules/browser/browseros-neo/00-switch.md"
-      ],
-      "hash": "d73aae12ba3cafeb02260555deba57ebfd19bc20b994cbc30af6582f8dac28a0"
-    },
-    {
-      "path": ".guideline/rules/browser/browseros-neo/01-limits.md",
-      "items": [
-        "default:rules/browser/browseros-neo/01-limits.md"
-      ],
-      "hash": "52fa2c34c80c0b91776f11e4f8f3bb4bfb9aa04cde757882c3c653fb6b8331ab"
-    },
-    {
-      "path": ".guideline/rules/browser/browseros-neo/02-playwright.md",
-      "items": [
-        "default:rules/browser/browseros-neo/02-playwright.md"
-      ],
-      "hash": "804d4f46ea93b2442427527a0a694bb4cf2212d761b6139ee1e4698a6171df0b"
-    },
-    {
-      "path": ".guideline/rules/browser/browseros-neo/03-tabs.md",
-      "items": [
-        "default:rules/browser/browseros-neo/03-tabs.md"
-      ],
-      "hash": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4"
-    },
-    {
-      "path": ".guideline/rules/browser/browseros-neo/SETUP.md",
-      "items": [
-        "default:rules/browser/browseros-neo/SETUP.md"
-      ],
-      "hash": "db770b1dc291ea5a27d9660ec9eee10f54c3ba2fe0fc059f97e1175cb0b50feb"
-    },
-    {
-      "path": ".guideline/rules/codegraph/00-index.md",
-      "items": [
-        "default:rules/codegraph/00-index.md"
-      ],
-      "hash": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e"
-    },
-    {
-      "path": ".guideline/rules/codegraph/01-orca-setup.md",
-      "items": [
-        "default:rules/codegraph/01-orca-setup.md"
-      ],
-      "hash": "02b018ad80d5b31cf8269fde51afdafdf34e9a4d07a5d0e32d69e0498d10a5b6"
-    },
-    {
-      "path": ".guideline/rules/codegraph/SETUP.md",
-      "items": [
-        "default:rules/codegraph/SETUP.md"
-      ],
-      "hash": "af5d91882dbaa2fa131e0623519a5379273a6f9d055725be8dabb89687aeb2e4"
-    },
-    {
       "path": ".guideline/rules/komodo/00-stack.md",
       "items": [
         "default:rules/komodo/00-stack.md"
@@ -338,27 +235,6 @@
         "default:rules/komodo/02-override.md"
       ],
       "hash": "06bce5f009fafa0173c91f0e6729ef538f36d2d18c28729b3790c94e8589ea28"
-    },
-    {
-      "path": ".guideline/rules/lefthook/00-toolchain.md",
-      "items": [
-        "default:rules/lefthook/00-toolchain.md"
-      ],
-      "hash": "1b778edb3d410653acc7c23acc3967268125e08da90522289fd6386d2af21589"
-    },
-    {
-      "path": ".guideline/rules/lefthook/01-pre-push.md",
-      "items": [
-        "default:rules/lefthook/01-pre-push.md"
-      ],
-      "hash": "abacc327081e93b49348ff865cae466c25ff2a2fd4c3a1330a0c94ea51d943c3"
-    },
-    {
-      "path": ".guideline/rules/lefthook/02-post-checkout.md",
-      "items": [
-        "default:rules/lefthook/02-post-checkout.md"
-      ],
-      "hash": "169934a65474ff98bd9e2923034e7dc2568cff496632ac34ab439a56c44347b9"
     },
     {
       "path": ".guideline/rules/mise/00-source.md",
@@ -403,6 +279,62 @@
       "hash": "6b1b6ed02c4c5ee9406c3a4d4c0254cfd26e4c5851dbcb4d68d980ba92caf2a2"
     },
     {
+      "path": ".guideline/rules/public-docs/00-readme.md",
+      "items": [
+        "default:rules/public-docs/00-readme.md"
+      ],
+      "hash": "12e42a49fa850a87bebdd79f752315084dc31e690d5ed41c9be2f12edddd0127"
+    },
+    {
+      "path": ".guideline/rules/public-docs/01-images.md",
+      "items": [
+        "default:rules/public-docs/01-images.md"
+      ],
+      "hash": "aff2406ed0070c5b90d98f4c664246582fad6e73e197b302b5cbd4a27392328a"
+    },
+    {
+      "path": ".guideline/rules/public-docs/02-manual.md",
+      "items": [
+        "default:rules/public-docs/02-manual.md"
+      ],
+      "hash": "5522399adf3416795693f54aa1ac91abd7ec89d167de35cbc81eaa80d619131a"
+    },
+    {
+      "path": ".guideline/rules/public-docs/03-i18n.md",
+      "items": [
+        "default:rules/public-docs/03-i18n.md"
+      ],
+      "hash": "c2ad0855890bb1e60b76d0e58315e95d2593810f6cda6970eaafb2775b56509c"
+    },
+    {
+      "path": ".guideline/rules/public-docs/04-style.md",
+      "items": [
+        "default:rules/public-docs/04-style.md"
+      ],
+      "hash": "c5e9a38a6fbf3b59153f3f359dc17cc99fd6f5e942e02d2cb861d03ca0ec78db"
+    },
+    {
+      "path": ".guideline/rules/public-docs/05-support.md",
+      "items": [
+        "default:rules/public-docs/05-support.md"
+      ],
+      "hash": "e3d49377aaa7a9c27dead714beb90a96fe56aa7008334087e63b434e16665846"
+    },
+    {
+      "path": ".guideline/rules/public-docs/06-readme-template.md",
+      "items": [
+        "default:rules/public-docs/06-readme-template.md"
+      ],
+      "hash": "4a5b65383ab8b3b32764a9f7e07489516c0d105c128d31bd68c1515e06b4b435"
+    },
+    {
+      "path": ".guideline/rules/public-docs/07-release-check.md",
+      "items": [
+        "default:rules/public-docs/07-release-check.md"
+      ],
+      "hash": "9bcfdda213473e4fa935669aaec47624549f4f640a99fb86b753b9575511b4d7"
+    },
+    {
       "path": ".guideline/rules/ruler/00-sources.md",
       "items": [
         "default:rules/ruler/00-sources.md"
@@ -429,6 +361,13 @@
         "default:rules/ruler/SETUP.md"
       ],
       "hash": "4ec303a0399bc671a5309fdad1852456ca3ee40fd2486a73fad6f2c03a27cb9f"
+    },
+    {
+      "path": ".guideline/rules/web/00-llms-txt.md",
+      "items": [
+        "default:rules/web/00-llms-txt.md"
+      ],
+      "hash": "6955a39ebcfb57a41677a9a9bbd0d2ffca45f1474737d10d988ac772ad450060"
     },
     {
       "path": ".guideline/skills/guideline-export/SKILL.md",
