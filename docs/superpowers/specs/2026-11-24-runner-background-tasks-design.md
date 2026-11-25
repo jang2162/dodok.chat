@@ -2,7 +2,7 @@
 
 - 날짜: 2026-11-24
 - 범위: 러너(`dodok-runner`, Claude Code 드라이버) 에이전트. OpenClaw Gateway 에이전트는 이 설계에 들지 않는다.
-- 상태: 검토 대기(builder 점검 반영)
+- 상태: 구현됨
 
 ## 1. 왜
 
@@ -114,7 +114,7 @@
   - 시킨 사람(`requestedBy`)은 원래 런의 값.
   - **세션 큐:** 추가 응답 턴은 러너 안에서 이미 시작됐다. 서버는 이 런을 큐에 줄 세우지 않고 곧바로 「도는 중」으로 만든다. 같은 세션 큐에 기다리는 사람 런이 있으면 그 런은 이 런 뒤로 간다. 러너 쪽에서도 한 번에 한 턴이라(5.2) 순서가 맞는다.
   - **보낼 자리:** 대화는 원래 런의 대화, 스레드 루트는 원래 런의 첫 응답 메시지(`RUN_FINISHED.messageIds[0]`). 지금 런은 세션 키로 보낼 자리를 정한다(「에이전트의 글은 그 세션 키의 대화에만」). 이 런은 **채널 세션 키로 돌면서 스레드에 쓴다** — 런에 「응답 스레드 루트」 칸을 더한다. 원래 런의 응답 메시지가 없으면(도구만 쓰고 답이 없던 런) 그 런의 트리거 메시지를 루트로 쓴다(제 판단).
-  - 거절되면 스레드에 시스템 글: 「백그라운드 작업이 끝났지만 <사유>로 이어서 답하지 못했습니다」.
+  - 거절되면 스레드에 시스템 글: 「백그라운드 작업이 끝났지만 <사유> 이어서 답하지 못했습니다」 — 사유에 조사까지 들어 있다(「오늘 런 한도로」·「채널이 보관돼」·「에이전트가 꺼져」·「세션이 닫혀」, `apps/server/src/modules/runs/background.ts` 의 `followupRefusedText`).
 - **런 타임아웃(`runMs` 10분)** 은 추가 응답 런에도 그대로다 — 붙든 시간이 아니라 그 턴의 시간이다.
 - **끄기:** `POST /api/v1/runs/:runId/tasks/:taskId/stop` → 러너 → 서버 프레임 `task.stop { sessionKey, taskId }` → `q.stopTask(taskId)`. 권한은 그 런의 「중지」와 같다(제 판단). 끈 결과는 `tasks.update` 로 돌아온다.
 - **함께 끄는 때:** 세션 닫기(`abortConversation`)·에이전트 보관·채널 보관·대화에서 에이전트 내보내기(`abortConversationAgent`)는 그 세션의 작업을 모두 끄고 붙든 프로세스를 닫는다. 새 프레임 `session.release { sessionKey }`.
@@ -166,7 +166,7 @@
 - 러너 프로토콜(`packages/shared/src/runner/index.ts`): 러너 → 서버 `run.followup`(ack), `tasks.update`. 서버 → 러너 `task.stop`(ack), `session.release`. 새 capability `backgroundTasks` — 없는 옛 러너는 지금 동작 그대로(서버는 프레임을 보내지 않고 화면에 작업 줄이 없다).
 - wire: `tasks.updated`, 구독 스냅샷.
 - 런: 「응답 스레드 루트」 칸, 「원래 런」 칸(추가 응답 런 → 원래 런), 트리거 종류 「백그라운드 작업」.
-- REST: `POST /api/v1/runs/:runId/tasks/:taskId/stop`.
+- REST: `POST /api/v1/runs/:runId/tasks/:taskId/stop`. 구현은 wire `task.stop`(계획 Task 1) — REST 경로는 만들지 않았다.
 - 런 이벤트: 러너가 `SUBAGENT_*` 를 내기 시작한다(계약은 이미 있다).
 
 ## 7. 시험
