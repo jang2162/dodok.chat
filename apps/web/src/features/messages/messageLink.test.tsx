@@ -120,6 +120,21 @@ describe("링크 복사", () => {
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, url.length]);
   });
 
+  it("채널에도 보낸 답글은 세션 타임라인에 보여도 스레드 주소 꼴(/t/<rootId>?m=)을 복사한다", async () => {
+    const write = stubClipboard(async () => {});
+    const also = msg(101, { threadRootId: ROOT.id, alsoInChannel: true, bodyMd: "채널에도 보낸 답글" });
+    const qc = subscribedClient();
+    qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({
+      ...t!,
+      items: [...t!.items, also],
+      lastSeq: 101,
+    }));
+    renderRoute(`/c/${CH}/s/${CH}`, qc);
+    await screen.findByText("채널에도 보낸 답글");
+    await userEvent.click(within(rowOf("채널에도 보낸 답글")).getByRole("button", { name: "링크 복사" }));
+    expect(write).toHaveBeenCalledWith(`${window.location.origin}/c/${CH}/s/${CH}/t/${ROOT.id}?m=${also.id}`);
+  });
+
   it("시스템 메시지에는 「링크 복사」가 없다", async () => {
     const qc = subscribedClient();
     qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({
@@ -158,6 +173,26 @@ describe("?m= 주소로 들어오기", () => {
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
       `/api/v1/conversations/${CH}/messages?limit=50&around=10`,
     );
+  });
+
+  it("채널에도 보낸 답글의 id 를 세션 주소로 열면 스레드로 옮기지 않고 세션 타임라인의 그 글로 간다", async () => {
+    const also = msg(80, { threadRootId: ROOT.id, alsoInChannel: true, bodyMd: "채널에도 보낸 답글" });
+    const qc = subscribedClient();
+    qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({
+      ...t!,
+      items: t!.items.map((m) => (m.id === also.id ? also : m)),
+    }));
+    routes.set(`/api/v1/messages/${also.id}`, () => json(200, viewOf(also)));
+    const { router } = renderRoute(`/c/${CH}/s/${CH}?m=${also.id}`, qc);
+    await waitFor(() =>
+      expect(screen.getByText("채널에도 보낸 답글").closest("[data-index]")).toHaveAttribute(
+        "data-highlighted",
+        "true",
+      ),
+    );
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`);
+    expect(router.state.location.search).not.toHaveProperty("m");
+    expect(screen.queryByTestId("thread-panel")).toBeNull();
   });
 
   it("스레드 주소 + ?m= — 스레드 패널 안의 그 답글로 간다", async () => {

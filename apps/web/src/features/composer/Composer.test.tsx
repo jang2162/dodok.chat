@@ -276,6 +276,7 @@ describe("스레드 작성기의 「채널에도 보내기」(스레드 글 채�
   it("세션 작성기에는 체크가 없다", () => {
     renderComposer();
     expect(screen.queryByRole("checkbox", { name: "채널에도 보내기" })).toBeNull();
+  });
 });
 
 describe("링크한 메시지 미리보기 카드(메시지 링크 스펙)", () => {

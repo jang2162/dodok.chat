@@ -123,20 +123,24 @@ export function useMessageLinkEntry(): void {
           return;
         }
         const msg = found.message;
+        // 채널에도 보낸 답글은 세션 타임라인에도 있다 — 세션 주소로 열었으면 스레드로 옮기지 않고 그 글로 간다
+        const inSession =
+          msg.alsoInChannel === true && !/\/t\/[^/]+\/?$/.test(router.state.location.pathname);
+        const threadRootId = inSession ? undefined : msg.threadRootId;
         requestJump({
           conversationId: msg.conversationId,
           messageId: msg.id,
           seq: msg.seq,
-          ...(msg.threadRootId === undefined ? {} : { threadRootId: msg.threadRootId }),
+          ...(threadRootId === undefined ? {} : { threadRootId }),
         });
         const params = { channelId: msg.channelId, conversationId: msg.conversationId };
         const { view } = router.state.location.search as { view?: unknown };
-        if (msg.threadRootId === undefined)
+        if (threadRootId === undefined)
           void navigate({ to: "/c/$channelId/s/$conversationId", params, replace: true });
         else
           void navigate({
             to: "/c/$channelId/s/$conversationId/t/$rootId",
-            params: { ...params, rootId: msg.threadRootId },
+            params: { ...params, rootId: threadRootId },
             search: view === "main" ? { view: "main" } : {},
             replace: true,
           });

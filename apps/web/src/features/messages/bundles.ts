@@ -166,18 +166,23 @@ export function previewOf(
   mention: (kind: "a" | "u", id: string) => string | undefined,
   lines = 1,
 ): string {
-  return bodyMd
-    .split("\n")
-    // 빈 줄·가로줄(`---`·`***`·`___`)은 미리보기에 뜻이 없다
-    .filter((l) => l.trim() !== "" && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l))
-    .slice(0, lines)
-    .map((line) =>
-      line
-        .replace(/<@([au]):([0-9a-f-]+)>/gi, (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`)
-        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-        .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
-        .replace(/[*_`~]/g, "")
-        .trim(),
-    )
-    .join("\n");
+  return (
+    bodyMd
+      .split("\n")
+      // 빈 줄·가로줄(`---`·`***`·`___`)은 미리보기에 뜻이 없다
+      .filter((l) => l.trim() !== "" && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l))
+      .slice(0, lines)
+      .map((line) =>
+        line
+          .replace(
+            /<@([au]):([0-9a-f-]+)>/gi,
+            (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`,
+          )
+          .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+          .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
+          .replace(/[*_`~]/g, "")
+          .trim(),
+      )
+      .join("\n")
+  );
 }
