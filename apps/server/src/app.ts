@@ -460,6 +460,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       registry,
       workspaceId,
       timeouts: deps.timeouts,
+      appOrigin: config.APP_ORIGIN,
       skillAliases: (agent) => agentCommands.skillAliases(db, agent),
       ...(deps.backgroundResyncMs === undefined ? {} : { backgroundResyncMs: deps.backgroundResyncMs }),
     });

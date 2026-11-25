@@ -278,3 +278,65 @@ describe("스레드 작성기의 「채널에도 보내기」(스레드 글 채�
     expect(screen.queryByRole("checkbox", { name: "채널에도 보내기" })).toBeNull();
   });
 });
+
+describe("링크한 메시지 미리보기 카드(메시지 링크 스펙)", () => {
+  const LINKED_ID = "01a00000-0000-7000-8000-000000077001";
+  const linkText = () => `${window.location.origin}/c/${CH}/s/${CH}?m=${LINKED_ID}`;
+  const seed = (qc: ReturnType<typeof renderComposer>["qc"]) =>
+    qc.setQueryData(["message", LINKED_ID], {
+      message: {
+        id: LINKED_ID,
+        channelId: CH,
+        conversationId: CH,
+        seq: 3,
+        kind: "normal",
+        authorType: "user",
+        authorId: USER,
+        bodyMd: "스키마 변경안 정리했습니다",
+        mentions: { users: [], agents: [] },
+        attachments: [],
+        interactions: [],
+        reactions: [],
+        createdAt: "2026-11-25T05:11:00.000Z",
+      },
+      channelKind: "channel",
+      channelName: "dodok-dev",
+      conversationTitle: "스레드 UI 개선",
+    });
+  const cards = () => screen.queryAllByRole("button", { name: /^링크한 메시지 — / });
+
+  it("링크를 붙여넣으면 작성기 위에 카드, ✕ 는 카드만 닫고 본문 링크는 남는다", async () => {
+    fake.onAck("message.send", confirmed);
+    const { box, editor, qc } = renderComposer();
+    seed(qc);
+    const text = linkText();
+    fireEvent.paste(box, {
+      clipboardData: {
+        files: [],
+        types: ["text/plain"],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+    // jsdom 의 붙여넣기가 글을 넣지 않으면 같은 글을 넣는다 — 시험하는 것은 본문의 링크가 카드가 되는가다
+    if (!editor.getText().includes(text)) setDoc(editor, doc(p(t(text))));
+    await waitFor(() => expect(cards()).toHaveLength(1));
+    expect(cards()[0]).toHaveAccessibleName(/주인: 스키마 변경안 정리했습니다/);
+    expect(cards()[0]).toHaveTextContent("# dodok-dev · 스레드 UI 개선");
+    await userEvent.click(screen.getByRole("button", { name: "인용 미리보기 닫기" }));
+    expect(cards()).toHaveLength(0);
+    expect(editor.getText()).toContain(text);
+    // 사라진 ✕ 대신 입력이 초점을 받는다 — 이어서 Enter 로 보낸다
+    await flushEditorFrames();
+    expect(box).toHaveFocus();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(fake.sentOf("message.send")).toMatchObject([{ bodyMd: text }]);
+  });
+
+  it("못 읽는 링크(null)면 카드가 없다", async () => {
+    const { editor, qc } = renderComposer();
+    qc.setQueryData(["message", LINKED_ID], null);
+    setDoc(editor, doc(p(t(`봐 ${linkText()}`))));
+    await act(async () => {});
+    expect(cards()).toHaveLength(0);
+  });
+});

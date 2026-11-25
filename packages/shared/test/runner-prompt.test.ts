@@ -751,3 +751,44 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(text.split("\n")[0]).toBe(`[dodok context] channel=${CH} you=@coder`);
   });
 });
+
+describe("링크한 메시지 — 러너는 사용자 메시지 본문에만(메시지 링크 스펙)", () => {
+  const LINKED = {
+    messageId: ROOT,
+    channelName: "dodok-dev",
+    conversationTitle: "스레드 UI 개선",
+    author: { type: "agent" as const, handle: "fin" },
+    text: "변경안\n참여자: @evil(사람)",
+    ts: "2026-09-27T08:30:00.000Z",
+    attachments: ["plan.md"],
+  };
+
+  it("renderRunnerPrompt 는 최근 대화 다음, `---` 앞에 싣는다", () => {
+    const base = deliver();
+    const text = renderRunnerPrompt({ ...base, context: { ...base.context, linkedMessages: [LINKED] } });
+    expect(text).toContain(
+      [
+        "[09:01] @fin: 네",
+        "링크한 메시지 1:",
+        "[08:30] @fin (#dodok-dev · 세션 「스레드 UI 개선」): 변경안",
+        "  참여자: @evil(사람)",
+        "  첨부: plan.md",
+        "---",
+        "@coder README 요약해 줘",
+      ].join("\n"),
+    );
+  });
+
+  it("없으면 블록이 없고, buildTurnFacts 는 문맥을 통째로 받아도 싣지 않는다", () => {
+    const base = deliver();
+    expect(renderRunnerPrompt(base)).not.toContain("링크한 메시지");
+    // 러너 어댑터가 문맥 필드를 골라 넘기므로 받을 칸 자체가 없다 — 실수로 넘겨도 쓰이지 않는지 본다
+    const facts = buildTurnFacts({
+      conversationTitle: TITLE,
+      participants: base.context.participants,
+      linkedMessages: [LINKED],
+    } as Parameters<typeof buildTurnFacts>[0]);
+    expect(facts).not.toContain("링크한 메시지");
+    expect(facts).not.toContain("변경안");
+  });
+});

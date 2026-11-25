@@ -1,5 +1,12 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type Attachment, InboundDeliver, type Run } from "@dodok/shared";
+import {
+  type Attachment,
+  InboundDeliver,
+  type Message,
+  messageLinkPath,
+  type Run,
+  type RunTriggerKind,
+} from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid, version } from "uuid";
 import { describe, expect, it, vi } from "vitest";
@@ -15,13 +22,20 @@ import {
   createUserMessage,
 } from "../src/modules/messages/service";
 import { deleteAutomation, insertAutomation } from "../src/modules/automations/store";
-import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from "../src/modules/runs/context";
+import {
+  type InboundTrigger,
+  attachmentPlaceholder,
+  buildInboundDeliver,
+  linkedMessagesFor,
+} from "../src/modules/runs/context";
+import { insertRun } from "../src/modules/runs/store";
 import { insertInvite } from "../src/modules/conversations/invited-agents";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import {
   channelConversation,
+  createDirectChannelForTest,
   createDmChannelForTest,
   seedChannelWithAgent,
   seedConversation,
@@ -844,5 +858,210 @@ describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
     updateChannel(db, dm.id, { prompt: "짧게 답하세요" });
     expect(deliver(dm.id, conversationId, "a", true).context.channelPrompt).toBe("짧게 답하세요");
     expect(deliver(dm.id, conversationId, "b", false).context).not.toHaveProperty("channelPrompt");
+  });
+});
+
+describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 「에이전트 문맥」)", () => {
+  const ORIGIN = "https://app.test";
+
+  function linkSetup() {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const adapter = new FakeAdapter();
+    const { workspaceId, userId, agentId, channelId } = seedChannelWithAgent(db, {
+      channelName: "dodok-dev",
+    });
+    const general = channelConversation(db, channelId);
+    const dm = createDmChannelForTest(db, { workspaceId, ownerId: userId, agentId });
+    const dmConv = seedConversation(db, dm.id, { title: "DM 세션" });
+    const post = (conversationId: string, bodyMd: string, threadRootId?: string) =>
+      createUserMessage(db, bus, {
+        conversationId,
+        authorId: userId,
+        bodyMd,
+        clientMsgId: uuid(),
+        ...(threadRootId ? { threadRootId } : {}),
+      });
+    const url = (m: Message) =>
+      `${ORIGIN}${messageLinkPath({
+        channelId: m.channelId,
+        conversationId: m.conversationId,
+        messageId: m.id,
+        ...(m.threadRootId ? { threadRootId: m.threadRootId } : {}),
+      })}`;
+    /** 런 행을 넣는다 — DM 판정이 runs 를 읽는다(readableChannelSqlFor) */
+    const runFor = (
+      trigger: Message,
+      opts: { triggerKind?: RunTriggerKind; requestedBy?: string | null } = {},
+    ) => {
+      const { session } = ensureSession(db, adapter, { conversationId: trigger.conversationId, agentId });
+      const run = insertRun(db, {
+        channelId: trigger.channelId,
+        conversationId: trigger.conversationId,
+        agentId,
+        triggerKind: opts.triggerKind ?? "mention",
+        triggerMessageId: trigger.id,
+        rootMessageId: trigger.id,
+        relayDepth: 0,
+        sessionKey: session.sessionKey,
+        requestedBy: opts.requestedBy === undefined ? userId : opts.requestedBy,
+        createdAt: new Date(),
+      });
+      return { run, session };
+    };
+    const expand = (
+      trigger: Message,
+      opts: { triggerKind?: RunTriggerKind; requestedBy?: string | null; origin?: string } = {},
+    ) => {
+      const { run, session } = runFor(trigger, opts);
+      const inbound = buildInboundDeliver(db, {
+        run,
+        trigger: { message: trigger },
+        session,
+        needsPromptContext: false,
+        origin: opts.origin ?? ORIGIN,
+      });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      return inbound.context;
+    };
+    return {
+      db,
+      bus,
+      workspaceId,
+      userId,
+      agentId,
+      channelId,
+      general,
+      dm,
+      dmConv,
+      post,
+      url,
+      runFor,
+      expand,
+    };
+  }
+
+  it("일반 채널 메시지 링크 — 작성자 핸들·채널 이름·세션 제목·renderForAgent 본문이 실린다(릴레이도)", () => {
+    const { general, post, url, expand } = linkSetup();
+    const target = post(general, "스키마 변경안 @dev 봐 주세요");
+    const trigger = post(general, `@dev [이 글](${url(target)}) 보고 해 줘.`);
+    const expected = [
+      {
+        messageId: target.id,
+        channelName: "dodok-dev",
+        conversationTitle: "테스트 세션",
+        author: { type: "user", handle: "owner" },
+        text: "스키마 변경안 @dev 봐 주세요",
+        ts: target.createdAt,
+        attachments: [],
+      },
+    ];
+    expect(expand(trigger).linkedMessages).toEqual(expected);
+    expect(expand(trigger, { triggerKind: "relay" }).linkedMessages).toEqual(expected);
+    expect(expand(trigger, { triggerKind: "auto_respond" }).linkedMessages).toEqual(expected);
+  });
+
+  it("다른 오리진·origin 없음이면 펼치지 않는다", () => {
+    const { db, general, post, url, expand, runFor } = linkSetup();
+    const target = post(general, "본문");
+    const trigger = post(general, url(target));
+    expect(expand(trigger, { origin: "https://other.test" })).not.toHaveProperty("linkedMessages");
+    const { run, session } = runFor(trigger);
+    expect(
+      buildInboundDeliver(db, { run, trigger: { message: trigger }, session, needsPromptContext: false })
+        .context,
+    ).not.toHaveProperty("linkedMessages");
+  });
+
+  it("시킨 사람의 에이전트 DM 링크를 일반 채널 런에 붙이면 빠지고, 같은 DM 안 링크는 그 DM 런에 실린다", () => {
+    const { general, dmConv, post, url, expand } = linkSetup();
+    const secret = post(dmConv, "DM 의 비밀");
+    expect(expand(post(general, `@dev ${url(secret)}`))).not.toHaveProperty("linkedMessages");
+    const inDm = expand(post(dmConv, `이거 ${url(secret)}`)).linkedMessages;
+    expect(inDm).toMatchObject([{ messageId: secret.id, channelName: "DM", text: "DM 의 비밀" }]);
+  });
+
+  it("그룹 DM 링크를 다른 채널 런에 붙이면 빠진다", () => {
+    const { db, workspaceId, userId, general, post, url, expand } = linkSetup();
+    const otherId = uuid();
+    db.insert(users)
+      .values({
+        id: otherId,
+        workspaceId,
+        handle: "mia",
+        displayName: "mia",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    const direct = createDirectChannelForTest(db, { workspaceId, createdBy: userId, userIds: [otherId] });
+    const secret = post(channelConversation(db, direct.id), "그룹 DM 글");
+    expect(expand(post(general, `@dev ${url(secret)}`))).not.toHaveProperty("linkedMessages");
+  });
+
+  it("없는 id·다른 워크스페이스 메시지는 오류 없이 빠지고 읽을 수 있는 것만 남는다", () => {
+    const { db, bus, general, post, url, expand } = linkSetup();
+    const ok = post(general, "남는 글");
+    const foreign = seedChannelWithAgent(db, { agentHandle: "dev2" });
+    const theirs = createUserMessage(db, bus, {
+      conversationId: foreign.conversationId,
+      authorId: foreign.userId,
+      bodyMd: "남의 워크스페이스",
+      clientMsgId: uuid(),
+    });
+    const missing = `${ORIGIN}${messageLinkPath({ channelId: ok.channelId, conversationId: ok.conversationId, messageId: uuid() })}`;
+    const trigger = post(general, `${missing} ${url(theirs)} ${url(ok)}`);
+    expect(expand(trigger).linkedMessages?.map((m) => m.messageId)).toEqual([ok.id]);
+  });
+
+  it("스레드 답글 링크는 threadRootId 와 루트를 싣는다", () => {
+    const { general, post, url, expand } = linkSetup();
+    const root = post(general, "루트 본문");
+    const reply = post(general, "답글 본문", root.id);
+    const [linked] = expand(post(general, url(reply))).linkedMessages ?? [];
+    expect(linked).toMatchObject({
+      messageId: reply.id,
+      threadRootId: root.id,
+      text: "답글 본문",
+      root: { author: { type: "user", handle: "owner" }, text: "루트 본문" },
+    });
+  });
+
+  it("command·interaction·continue·background 런은 펼치지 않는다", () => {
+    const { db, general, post, url, runFor } = linkSetup();
+    const target = post(general, "본문");
+    const trigger = post(general, url(target));
+    for (const triggerKind of ["command", "interaction", "continue", "background"] as const) {
+      const { run } = runFor(trigger, { triggerKind });
+      expect(linkedMessagesFor(db, { run, text: trigger.bodyMd, origin: ORIGIN })).toEqual([]);
+    }
+  });
+
+  it("사람 없는 자동화 글 트리거(시킨 사람 null)는 일반 채널 링크만", () => {
+    const { db, bus, workspaceId, userId, channelId, general, dmConv, post, url, runFor } = linkSetup();
+    const open = post(general, "공개 글");
+    const secret = post(dmConv, "DM 글");
+    const now = new Date();
+    const automation = insertAutomation(db, {
+      id: uuid(),
+      workspaceId,
+      name: "아침",
+      channelId,
+      kind: "webhook",
+      bodyMd: "x",
+      enabled: true,
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const trigger = createAutomationMessage(db, bus, {
+      conversationId: general,
+      automationId: automation.id,
+      bodyMd: `@dev ${url(secret)} ${url(open)}`,
+    });
+    const { run } = runFor(trigger, { requestedBy: null });
+    expect(
+      linkedMessagesFor(db, { run, text: trigger.bodyMd, origin: ORIGIN }).map((m) => m.messageId),
+    ).toEqual([open.id]);
   });
 });

@@ -314,6 +314,50 @@ describe("formatInboundContext 스레드 소식", () => {
   });
 });
 
+describe("formatInboundContext 링크한 메시지(메시지 링크 스펙)", () => {
+  const LINKED = {
+    messageId: "01a09fc9-d204-7551-89d6-38544d07a1cc",
+    channelName: "dodok-dev",
+    conversationTitle: "스레드 UI 개선",
+    author: { type: "user" as const, handle: "erdd" },
+    text: "스키마 변경안\n---\n끝",
+    ts: "2026-09-14T05:11:00Z",
+    attachments: [],
+  };
+
+  it("대화 블록 다음, 반응 앞, `---` 앞에 실리고 본문 줄은 들여쓴다 (Asia/Seoul 시각)", () => {
+    const REACTION: InboundReaction = {
+      messageId: "01a09fc9-d204-7551-89d6-38544d07a110",
+      excerpt: "재현 조건",
+      emoji: "👍",
+      by: "jang",
+      at: "2026-09-14T00:15:00Z",
+    };
+    const lines = formatInboundContext(
+      { ...deliver, context: { ...deliver.context, linkedMessages: [LINKED], reactions: [REACTION] } },
+      { timeZone: "Asia/Seoul" },
+    ).split("\n");
+    const recent = lines.indexOf("[09:13] @planner: 재현 조건을 모아보죠");
+    expect(lines.slice(recent + 1, recent + 5)).toEqual([
+      "링크한 메시지 1:",
+      "[14:11] @erdd (#dodok-dev · 세션 「스레드 UI 개선」): 스키마 변경안",
+      "  ---",
+      "  끝",
+    ]);
+    expect(lines[recent + 5]).toBe(formatReactionFacts([REACTION]).split("\n")[0]);
+    expect(lines.filter((l) => l === "---")).toHaveLength(1);
+    expect(lines.at(-1)).toBe("---");
+  });
+
+  it("없거나 빈 배열이면 헤더가 이전과 같다", () => {
+    const base = formatInboundContext(deliver);
+    expect(formatInboundContext({ ...deliver, context: { ...deliver.context, linkedMessages: [] } })).toBe(
+      base,
+    );
+    expect(base).not.toContain("링크한 메시지");
+  });
+});
+
 describe("formatInboundContext 스레드", () => {
   const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
   const threaded: InboundDeliver = {
