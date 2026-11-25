@@ -6,7 +6,7 @@ import type { BackgroundHooks } from "../src/drivers/claude/session-process";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, type FakeSdk, type ScriptStep, script } from "./helpers/fake-query";
-import type { SdkMessage } from "../src/drivers/claude/sdk";
+import type { SdkMessage, SdkQuery } from "../src/drivers/claude/sdk";
 import { AGENT, runSpec } from "./helpers/fixtures";
 
 const RUN_1 = "0192f000-0000-7000-8000-00000000a001";
@@ -614,6 +614,64 @@ describe("세션 프로세스 — 스스로 연 턴·한 번에 한 턴·끄기(
       [RUN_2, "둘째"],
     ]);
     expect(fake.calls).toHaveLength(1);
+  });
+
+  it("waits again when the cli opens a turn while the held run changes settings", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start } = runner(fake, hooks);
+    // setModel 을 붙잡아 두고 그 사이 CLI 가 스스로 턴을 열게 한다. 턴을 여는 때는 시험이 stopTask("go") 로 고른다
+    let releaseModel!: () => void;
+    const modelGate = new Promise<void>((r) => (releaseModel = r));
+    let modelCalled = false;
+    let q: SdkQuery | undefined;
+    const query = fake.query;
+    fake.query = (args) => {
+      const made = query(args);
+      const setModel = made.setModel.bind(made);
+      made.setModel = async (model) => {
+        modelCalled = true;
+        await modelGate;
+        return setModel(model);
+      };
+      q = made;
+      return made;
+    };
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...shellStarted("b2"),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      {
+        waitStopTask: "go",
+        emit: [
+          script.taskNotification("b1", "completed"),
+          script.tasksChanged([{ task_id: "b2", task_type: "local_bash", description: "pnpm dev" }]),
+          script.init(),
+        ],
+      },
+      { sleep: 80 },
+      ...script.textTurn("msg_f", ["b1 끝"]),
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_2", ["둘째"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    // 둘째 런은 모델이 달라 setModel 에서 멈춘다 — 그 사이 b1 이 끝나 CLI 가 스스로 턴을 연다
+    const second = start(spec2({ model: "claude-other" }));
+    await until(() => modelCalled);
+    await q!.stopTask("go");
+    await until(() => hooks.followups.length === 1);
+    releaseModel();
+    await second.done;
+    expect(finals(hooks.followupRuns.get(FOLLOW)!.emitted)).toMatchObject([{ final: { text: "b1 끝" } }]);
+    expect(finals(second.emitted)).toMatchObject([{ final: { text: "둘째" } }]);
+    expect(hooks.order).toEqual([
+      [RUN_1, "띄웠어요"],
+      [FOLLOW, "b1 끝"],
+      [RUN_2, "둘째"],
+    ]);
   });
 
   it("a queued human run aborted while waiting closes without a prompt", async () => {
