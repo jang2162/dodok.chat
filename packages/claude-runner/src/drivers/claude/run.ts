@@ -37,8 +37,10 @@ import type {
   SdkPort,
   SdkQuery,
   SdkSlashCommand,
+  SdkSpawnOptions,
   SdkUserMessage,
 } from "./sdk";
+import type { CliSpawner } from "./cli-processes";
 import type { BackgroundHooks } from "../../driver";
 import {
   createSessionProcess,
@@ -290,6 +292,8 @@ export function buildQueryOptions(
      * 여기서 읽는다(백그라운드 작업 스펙 5.2). 없으면 spec·alwaysAllowed 그대로
      */
     live?: () => Pick<RunBinding, "turnFacts" | "alwaysAllowed" | "permissionMode">;
+    /** CLI 를 띄우는 자리(cli-processes.ts) — 없으면 SDK 기본 spawn(Windows) */
+    spawnClaudeCodeProcess?: SdkOptions["spawnClaudeCodeProcess"];
   },
 ): SdkOptions {
   const botMcp = deps.botMcp ?? { servers: {}, allowedTools: [] };
@@ -405,6 +409,7 @@ export function buildQueryOptions(
     env,
     ...(deps.executable === undefined ? {} : { pathToClaudeCodeExecutable: deps.executable }),
     ...(deps.canUseTool ? { canUseTool: deps.canUseTool } : {}),
+    ...(deps.spawnClaudeCodeProcess ? { spawnClaudeCodeProcess: deps.spawnClaudeCodeProcess } : {}),
   };
 }
 
@@ -449,6 +454,10 @@ export type RunContext = {
   background?: BackgroundContext;
   /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간(session-process SELF_TURN_WAIT_MS) */
   selfTurnWaitMs?: number;
+  /**
+   * CLI 를 띄우는 자리 — 띄운 CLI 를 기록해 러너가 강제로 죽은 뒤 다음 시작이 끈다(cli-processes.ts). 없으면 SDK 기본 spawn(Windows)
+   */
+  spawnCli?: CliSpawner;
 };
 
 export type BackgroundContext = {
@@ -775,8 +784,12 @@ async function attempt(
     ...(ctx.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: ctx.selfTurnWaitMs }),
     ...(ctx.log ? { log: ctx.log } : {}),
   });
+  // 커스텀 spawn 이면 SDK 가 exit 오류에 stderr 꼬리를 붙이지 않는다 — 거절 문구는 spawn 이 쥔 꼬리에서도 본다
+  let stderrTail = () => "";
   const retryable = (error: unknown) =>
-    !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
+    !resume &&
+    isSessionInUseText(`${error instanceof Error ? error.message : String(error)}\n${stderrTail()}`);
+  const spawnCli = ctx.spawnCli;
   // dodok 도구·승인 콜백은 지금 턴의 런으로 — 제어 호출의 runId 도 지금 런으로 바꿔 싣는다. 스스로 연 턴의 런이 정해지기 전이면
   // 기다리고, 못 정해졌으면 앞 런으로 보내지 않고 거절한다(liveBinding)
   const dodokServer = createDodokMcpServer({
@@ -811,6 +824,15 @@ async function attempt(
     alwaysAllowed,
     botMcp,
     live: () => sp.bindingRef.current,
+    ...(spawnCli
+      ? {
+          spawnClaudeCodeProcess: (o: SdkSpawnOptions) => {
+            const p = spawnCli(o);
+            stderrTail = p.stderrTail;
+            return p;
+          },
+        }
+      : {}),
   });
   let q: SdkQuery;
   try {

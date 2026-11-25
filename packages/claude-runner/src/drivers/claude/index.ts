@@ -22,6 +22,7 @@ import {
 import { createCommandWrappers } from "./command-wrappers";
 import type { BackgroundHooks } from "../../driver";
 import type { SessionProcess } from "./session-process";
+import type { CliSpawner } from "./cli-processes";
 import {
   CLAUDE_CODE_LABEL,
   type ClaudeRunSpec,
@@ -59,6 +60,8 @@ export type ClaudeDriverOptions = {
   hooks?: BackgroundHooks;
   /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간 */
   selfTurnWaitMs?: number;
+  /** 런의 CLI 를 띄우는 자리 — 띄운 CLI 를 기록한다(cli-processes.ts). 없으면 SDK 기본 spawn(Windows) */
+  spawnCli?: CliSpawner;
 };
 
 /**
@@ -332,6 +335,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
         ...(hooks ? { background: { hooks, sessions } } : {}),
         ...(opts.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: opts.selfTurnWaitMs }),
+        ...(opts.spawnCli ? { spawnCli: opts.spawnCli } : {}),
       });
     },
     ...(hooks
