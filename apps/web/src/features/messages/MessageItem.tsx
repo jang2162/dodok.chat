@@ -29,6 +29,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { IdentityAvatar } from "@/ui/identity-avatar";
 import { previewOf } from "./bundles";
 import { MessageBody } from "./MessageBody";
+import { CopyLinkButton } from "./messageLink";
 import { type Author, useAuthors } from "./useAuthors";
 
 const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" });
@@ -241,15 +242,19 @@ function AlsoInChannelLink({ message, rootId }: { message: Message; rootId: stri
 
 /**
  * 마우스 없는 기기(`hover: none`)에서는 동작 버튼이 늘 보여 머리 줄이 없는 이어진 메시지의 본문 첫 줄들 위에 뜬다 —
- * 그 조건에서만 본문 칸 오른쪽을 버튼 폭만큼 비운다(행 `px-4` 를 뺀 값: 스레드 답하기 right-3 + 28px 이면 24px,
- * 반응 추가가 right-12 에 더 있으면 64px, 스레드 패널은 반응 추가가 right-3 이라 24px). 버튼이 없으면 비우지 않는다.
+ * 그 조건에서만 본문 칸 오른쪽을 버튼 폭만큼 비운다(행 `px-4` 를 뺀 값: 버튼이 right-3 부터 28px·간격 8px 로 놓이므로 하나면 24px,
+ * 둘이면 64px, 셋이면 96px — 스레드 답하기·반응 추가·링크 복사). 버튼이 없으면 비우지 않는다.
  * 클래스는 Tailwind 가 읽도록 통째로 적는다.
  */
-function touchGutter(inThread: boolean, hasPicker: boolean): string | undefined {
-  if (hasPicker && !inThread) return "[@media(hover:none)]:pr-16";
-  if (hasPicker || !inThread) return "[@media(hover:none)]:pr-6";
+function touchGutter(buttons: number): string | undefined {
+  if (buttons >= 3) return "[@media(hover:none)]:pr-24";
+  if (buttons === 2) return "[@media(hover:none)]:pr-16";
+  if (buttons === 1) return "[@media(hover:none)]:pr-6";
   return undefined;
 }
+
+/** 동작 줄의 n 번째 버튼(오른쪽부터 0) 자리 — touchGutter 와 같은 간격. 클래스는 Tailwind 가 읽도록 통째로 적는다 */
+const ACTION_SLOT = ["right-3", "right-12", "right-21"] as const;
 
 /**
  * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 첨부 + components 카드.
@@ -307,6 +312,9 @@ export function MessageItem({
   const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
   const reactable = message.kind === "normal";
+  const pickable = reactable && !archived;
+  // 링크 복사(메시지 링크 스펙 「복사 자리」) — 시스템 메시지는 가리킬 까닭이 없다
+  const linkable = message.kind === "normal";
   return (
     <article
       className="group relative flex gap-3 px-4 py-0.5 hover:bg-accent/40"
@@ -329,7 +337,7 @@ export function MessageItem({
         className={cn(
           "min-w-0 flex-1",
           head && "pt-1",
-          head || touchGutter(noThreads, reactable && !archived),
+          head || touchGutter(Number(!noThreads) + Number(pickable) + Number(linkable)),
         )}
       >
         {alsoRootId !== undefined && <AlsoInChannelLink message={message} rootId={alsoRootId} />}
@@ -368,11 +376,14 @@ export function MessageItem({
           <ThreadChip message={message} summary={message.threadSummary} />
         )}
       </div>
-      {reactable && !archived && (
+      {pickable && (
         <ReactionPicker
-          className={noThreads ? "right-3" : "right-12"}
+          className={ACTION_SLOT[Number(!noThreads)]}
           onPick={(e) => setReaction(message.id, e, true)}
         />
+      )}
+      {linkable && (
+        <CopyLinkButton message={message} className={ACTION_SLOT[Number(!noThreads) + Number(pickable)]} />
       )}
       {!noThreads && <ReplyInThread message={message} />}
     </article>

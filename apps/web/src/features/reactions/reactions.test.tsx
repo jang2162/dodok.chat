@@ -641,12 +641,12 @@ describe("MessageItem 안의 리액션", () => {
     const gutter = (container: HTMLElement) =>
       container.querySelector("article > div:nth-child(2)")?.className ?? "";
 
-    it("머리 줄 없는 메시지는 본문 칸 오른쪽을 비운다 — 두 버튼이면 pr-16, 스레드 답하기만이면 pr-6", () => {
+    it("머리 줄 없는 메시지는 본문 칸 오른쪽을 비운다 — 세 버튼(스레드 답하기·반응 추가·링크 복사)이면 pr-24, 반응 추가가 없으면 pr-16", () => {
       const { container, unmount } = renderWithClient(
         <MessageItem message={ROOT_MSG} head={false} />,
         authorsClient(undefined, PEOPLE),
       );
-      expect(gutter(container)).toContain("[@media(hover:none)]:pr-16");
+      expect(gutter(container)).toContain("[@media(hover:none)]:pr-24");
       unmount();
       const archived = renderWithClient(
         <ChannelArchivedContext.Provider value={true}>
@@ -654,15 +654,15 @@ describe("MessageItem 안의 리액션", () => {
         </ChannelArchivedContext.Provider>,
         authorsClient(undefined, PEOPLE),
       );
-      expect(gutter(archived.container)).toContain("[@media(hover:none)]:pr-6");
+      expect(gutter(archived.container)).toContain("[@media(hover:none)]:pr-16");
     });
 
-    it("스레드 패널은 반응 추가 하나라 pr-6", () => {
+    it("스레드 패널은 반응 추가·링크 복사 둘이라 pr-16", () => {
       const { container } = renderWithClient(
         <MessageItem message={ROOT_MSG} head={false} inThread />,
         authorsClient(undefined, PEOPLE),
       );
-      expect(gutter(container)).toContain("[@media(hover:none)]:pr-6");
+      expect(gutter(container)).toContain("[@media(hover:none)]:pr-16");
     });
 
     it("머리 줄 있는 행은 비우지 않는다", () => {

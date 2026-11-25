@@ -159,12 +159,21 @@ export const channelIndexRoute = createRoute({
   component: lazyPage(() => import("@/features/messages/ChannelRedirect"), "ChannelRedirect"),
 });
 /**
+ * 세션·스레드 주소의 메시지 링크(메시지 링크 스펙 「주소」) — `?m=<메시지 id>` 면 그 메시지로 가서 강조하고 주소에서 지운다
+ * (`useMessageLinkEntry`). 스레드 주소는 이 라우트 아래라 같은 값을 받는다
+ */
+export type MessageLinkSearch = { m?: string };
+const messageLinkSearch = (s: Record<string, unknown>): MessageLinkSearch =>
+  typeof s.m === "string" && s.m !== "" ? { m: s.m } : {};
+
+/**
  * 세션 화면(채널 세션 계획 판정 PS6): 헤더 · 그 세션의 메시지 목록 · 작성기 · 오른쪽 패널. `new` 는 아직 대화가 없는 새 세션 창 —
  * 첫 보내기가 세션을 만들고 그 세션 주소로 바꿔 간다(`useSendMessage`)
  */
 export const conversationRoute = createRoute({
   getParentRoute: () => channelRoute,
   path: "s/$conversationId",
+  validateSearch: messageLinkSearch,
   component: lazyPage(() => import("@/features/messages/ChannelPage"), "ChannelPage"),
 });
 export const channelSettingsRoute = createRoute({

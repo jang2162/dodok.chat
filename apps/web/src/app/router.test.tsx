@@ -154,6 +154,21 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
     expect(screen.queryByTestId("page-channel")).toBeNull();
   });
 
+  it("?m= 메시지 링크 — 세션·스레드 주소가 받고, 그 메시지로 간 뒤 m 만 지운다(스레드의 view=main 은 남는다)", async () => {
+    const MID = "01a00000-0000-7000-8000-000000003099";
+    const reply = { id: MID, channelId: "abc", conversationId: SESSION, seq: 7, threadRootId: "root1" };
+    serve([{ id: SESSION }]);
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input) === `/api/v1/messages/${MID}`
+        ? json(200, { message: reply, channelKind: "channel", channelName: "abc", conversationTitle: "t" })
+        : base(input, init),
+    );
+    const router = renderAt(`/c/abc/s/${SESSION}/t/root1?view=main&m=${MID}`);
+    await waitFor(() => expect(router.state.location.search).toEqual({ view: "main" }));
+    expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/t/root1`);
+  });
+
   it("/c/<ch>/s/<conv>/t/<root> 새로고침은 그 세션과 그 스레드 패널을 연다", async () => {
     serve([{ id: SESSION }]);
     const router = renderAt(`/c/abc/s/${SESSION}/t/root1`);

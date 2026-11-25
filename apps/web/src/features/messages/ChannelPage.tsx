@@ -38,6 +38,7 @@ import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { ChannelLoading, ChannelUnavailable } from "./ChannelStatus";
 import { requestJump } from "./jumpTarget";
+import { useMessageLinkEntry } from "./messageLink";
 import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
 import { NEW_CONVERSATION, type Timeline } from "./timeline";
@@ -193,6 +194,8 @@ export function ChannelPage() {
       },
     );
   }, [qc, navigate, channelId, conversationId, rootId]);
+  // `?m=` 메시지 링크로 들어왔으면 그 메시지로 간다(메시지 링크 스펙)
+  useMessageLinkEntry();
   const sessionKnown = conversationId !== NEW_CONVERSATION && session.timeline !== undefined;
   useEffect(() => {
     if (known) touchRecentChannel(qc, channelId);
