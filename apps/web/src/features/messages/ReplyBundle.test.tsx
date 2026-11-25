@@ -2,7 +2,10 @@ import { type Agent, type Message, StoredComponentsV1 } from "@dodok/shared";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { listKey, useJumpStore } from "./jumpTarget";
+import { threadFromPage } from "./timeline";
 import { AGENT, APPROVAL, approval, msg, uid } from "../../../test/fixtures";
 import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
 import { useBundleExpansion } from "./bundleExpansion";
@@ -151,5 +154,76 @@ describe("ReplyBundle", () => {
     // 같은 메시지가 새로 와도(갱신) 그대로
     redraw([root, { ...live, bodyMd: "고친 답" }, reply(3, FIN, RB)]);
     expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("ReplyBundle — 채널에도 보낸 답글의 묶음(답은 스레드에)", () => {
+  const TROOT = msg(1, { bodyMd: "스레드 루트" });
+  const ALSO = msg(5, { threadRootId: TROOT.id, alsoInChannel: true, bodyMd: "@dev @fin 봐줘" });
+  const runOn = (runId: string, agentId: string, status: BundleRun["status"] = "streaming"): BundleRun => ({
+    runId,
+    agentId,
+    rootMessageId: ALSO.id,
+    triggerMessageId: ALSO.id,
+    status,
+  });
+  const devAnswer = msg(6, {
+    authorType: "agent",
+    authorId: AGENT,
+    runId: RA,
+    threadRootId: TROOT.id,
+    bodyMd: "dev 의 스레드 답\n둘째 줄",
+  });
+  function drawThread(withThreadCache: boolean) {
+    const items = [TROOT, ALSO];
+    const bundle = computeBundles(items, [runOn(RA, AGENT, "done"), runOn(RB, FIN)]).get(ALSO.id);
+    if (!bundle) throw new Error("묶음이 없다");
+    const qc = authorsClient([DEV, FIN_AGENT]);
+    if (withThreadCache)
+      qc.setQueryData(
+        qk.thread(ALSO.channelId, ALSO.conversationId, TROOT.id),
+        threadFromPage(undefined, TROOT, [ALSO, devAnswer], false),
+      );
+    return renderWithClient(
+      <ReplyBundle bundle={bundle} messagesById={new Map(items.map((m) => [m.id, m]))} />,
+      qc,
+    );
+  }
+  const laneLink = (handle: string) => screen.getByRole("link", { name: new RegExp(`^@${handle} `) });
+
+  beforeEach(() => useJumpStore.setState({ targets: {} }));
+
+  it("머리 「@dev·@fin 답 · 스레드에서 진행」", () => {
+    drawThread(false);
+    expect(screen.getByRole("group", { name: "@dev·@fin 답 · 스레드에서 진행" })).toBeInTheDocument();
+    expect(screen.getByText("@dev·@fin 답 · 스레드에서 진행")).toBeInTheDocument();
+  });
+
+  it("줄 미리보기: 스레드 캐시에 그 런의 메시지가 있으면 첫 줄, 없으면 상태 문구만", () => {
+    const { unmount } = drawThread(true);
+    expect(laneLink("dev")).toHaveTextContent("dev 의 스레드 답");
+    expect(laneLink("dev")).not.toHaveTextContent("둘째 줄");
+    unmount();
+    drawThread(false);
+    expect(laneLink("dev")).not.toHaveTextContent("dev 의 스레드 답");
+    expect(laneLink("fin")).toHaveTextContent(/.+/);
+  });
+
+  it("줄을 누르면 펼치지 않고 그 스레드로 가 그 답으로 점프한다", async () => {
+    const { router } = drawThread(true);
+    const dev = laneLink("dev");
+    expect(dev).toHaveAttribute("href", `/c/${ALSO.channelId}/s/${ALSO.conversationId}/t/${TROOT.id}`);
+    expect(dev).not.toHaveAttribute("aria-expanded");
+    await userEvent.click(dev);
+    expect(useJumpStore.getState().targets[listKey(ALSO.conversationId, TROOT.id)]).toEqual({
+      messageId: devAnswer.id,
+      seq: devAnswer.seq,
+    });
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        `/c/${ALSO.channelId}/s/${ALSO.conversationId}/t/${TROOT.id}`,
+      ),
+    );
+    expect(screen.queryByText(/둘째 줄/)).toBeNull();
   });
 });

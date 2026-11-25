@@ -17,6 +17,8 @@ export type PendingMessage = {
   attachments?: Attachment[];
   /** `failed` 의 사유 — 레이트리밋(ack RATE_LIMITED)이면 다른 문구를 보인다. 없으면 일반 실패 */
   reason?: PendingFailReason;
+  /** 스레드 작성기의 「채널에도 보내기」 — 다시 보내기도 같은 값으로 간다 */
+  alsoInChannel?: boolean;
 };
 /**
  * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지

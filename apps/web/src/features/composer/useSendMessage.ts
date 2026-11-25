@@ -19,12 +19,16 @@ import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime
 import { WireAckError, type WireSocket, emitAck, useWireStatus } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
 
+/** `alsoInChannel` — 스레드 작성기의 「채널에도 보내기」. 스레드 답글일 때만 싣는다(채널 작성기는 버린다) */
+export type SendOptions = { alsoInChannel?: boolean };
+
 export type SendMessage = {
   /** 보내는 중 항목을 넣고 `message.send`. 실패는 던지지 않고 항목을 `failed` 로 둔다. 첨부가 있으면 본문은 비어도 된다 */
   send(
     bodyMd: string,
     attachments?: readonly Attachment[],
     agentSettings?: readonly AgentSettingsEntry[],
+    opts?: SendOptions,
   ): Promise<void>;
   /** 같은 clientMsgId·같은 본문·같은 첨부로 다시(서버가 `(authorId, clientMsgId)` 로 멱등) */
   retry(clientMsgId: string): Promise<void>;
@@ -286,6 +290,7 @@ export function useSendMessage(
       bodyMd: string,
       attachments: readonly Attachment[] = [],
       agentSettings?: readonly AgentSettingsEntry[],
+      alsoInChannel?: boolean,
     ) => {
       if (!socket || useWireStatus.getState().status !== "connected") return fail(clientMsgId, undefined);
       let target = isNew ? undefined : conversationId;
@@ -337,6 +342,7 @@ export function useSendMessage(
           conversationId: target,
           ...(ids.length > 0 ? { attachments: ids } : {}),
           ...(threadRootId === undefined ? {} : { threadRootId }),
+          ...(threadRootId === undefined || alsoInChannel === undefined ? {} : { alsoInChannel }),
         });
         if (isNew) settleNew(clientMsgId, message, conversation?.lastSeq, () => {});
         else update((t) => upsert(t, message));
@@ -365,6 +371,7 @@ export function useSendMessage(
       bodyMd: string,
       attachments: readonly Attachment[] = [],
       agentSettings?: readonly AgentSettingsEntry[],
+      opts: SendOptions = {},
     ) => {
       const clientMsgId = crypto.randomUUID();
       // 설정은 세션을 만드는 첫 글만 싣는다 — 새 세션 창이 아니면 버린다
@@ -372,12 +379,22 @@ export function useSendMessage(
       if (settings) pendingSettingsOf(qc).set(clientMsgId, settings);
       const createdAt = new Date().toISOString();
       const withAttachments = attachments.length > 0 ? { attachments: [...attachments] } : {};
+      const alsoInChannel = threadRootId === undefined ? undefined : opts.alsoInChannel;
+      const withAlso = alsoInChannel === undefined ? {} : { alsoInChannel };
       update((t) =>
-        addPending(t, { clientMsgId, channelId, bodyMd, createdAt, state: "sending", ...withAttachments }),
+        addPending(t, {
+          clientMsgId,
+          channelId,
+          bodyMd,
+          createdAt,
+          state: "sending",
+          ...withAttachments,
+          ...withAlso,
+        }),
       );
-      await deliver(clientMsgId, bodyMd, attachments, settings);
+      await deliver(clientMsgId, bodyMd, attachments, settings, alsoInChannel);
     },
-    [qc, isNew, channelId, deliver, update],
+    [qc, isNew, channelId, threadRootId, deliver, update],
   );
 
   const retry = useCallback(
@@ -385,7 +402,13 @@ export function useSendMessage(
       const p = read()?.pending.find((x) => x.clientMsgId === clientMsgId);
       if (!p) return;
       update((t) => setPendingState(t, clientMsgId, "sending"));
-      await deliver(clientMsgId, p.bodyMd, p.attachments, pendingSettingsOf(qc).get(clientMsgId));
+      await deliver(
+        clientMsgId,
+        p.bodyMd,
+        p.attachments,
+        pendingSettingsOf(qc).get(clientMsgId),
+        p.alsoInChannel,
+      );
     },
     [qc, read, update, deliver],
   );

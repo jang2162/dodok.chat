@@ -314,6 +314,24 @@ describe("채널에도 보낸 답글(스레드 글 채널에도 보이기 설계
     expect(row.querySelector('[data-slot="thread-chip"]')).toBeNull();
   });
 
+  it("그 글이 두 에이전트 런을 일으켰으면 세션 타임라인의 그 글 아래 묶음 「… 답 · 스레드에서 진행」", async () => {
+    const FIN = { ...DEV, id: uid(22), handle: "fin", providerAgentId: "fin", name: "fin" };
+    const qc = authorsClient([DEV, FIN]);
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, ALSO], lastSeq: 4 });
+    setChannelSeq(qc, CH, 4);
+    for (const [id, agentId] of [
+      [RUN, AGENT],
+      [RUN2, FIN.id],
+    ] as const)
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id, agentId, rootMessageId: ALSO.id, triggerMessageId: ALSO.id, threadRootId: ROOT.id }),
+        );
+    renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    expect(await screen.findByRole("group", { name: "@dev·@fin 답 · 스레드에서 진행" })).toBeInTheDocument();
+  });
+
   it("루트가 어느 캐시에도 없으면 「원래 글」", () => {
     renderWithClient(<MessageItem message={ALSO} head />);
     expect(screen.getByRole("link", { name: /스레드에 댓글 남김/ })).toHaveTextContent(

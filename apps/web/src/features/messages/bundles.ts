@@ -18,8 +18,11 @@ export type BundleLane = {
   firstSeq?: number;
 };
 
-/** 루트 글 하나의 묶음 — 줄은 런 id(uuid v7 = 생성) 순. `tailSystemIds` 는 그 체인의 relay_limit·relay_denied(묶음 맨 아래) */
-export type Bundle = { rootId: string; lanes: BundleLane[]; tailSystemIds: string[] };
+/**
+ * 루트 글 하나의 묶음 — 줄은 런 id(uuid v7 = 생성) 순. `tailSystemIds` 는 그 체인의 relay_limit·relay_denied(묶음 맨 아래).
+ * `threadRootId` 는 루트 글이 채널에도 보낸 스레드 답글일 때 그 스레드 — 답은 스레드에 있어 세션 타임라인에 없다(줄은 런으로 선다)
+ */
+export type Bundle = { rootId: string; lanes: BundleLane[]; tailSystemIds: string[]; threadRootId?: string };
 
 /** 런 저장소에서 넘기는 런 — 지난 메시지의 `runRoot` 가 없는 실시간 글(wire message.created)도 이것으로 루트를 안다 */
 export type BundleRun = {
@@ -30,9 +33,11 @@ export type BundleRun = {
   status: RunState["status"];
 };
 
-/** 묶음 루트가 될 수 있는 글 — 사람의 최상위 보통 글 */
+/** 묶음 루트가 될 수 있는 글 — 사람의 최상위 보통 글 또는 채널에도 보낸 답글(서버 canRootRuns 와 같은 조건) */
 const canRoot = (m: Message): boolean =>
-  m.authorType === "user" && m.kind === "normal" && m.threadRootId === undefined;
+  m.authorType === "user" &&
+  m.kind === "normal" &&
+  (m.threadRootId === undefined || m.alsoInChannel === true);
 
 type Draft = {
   runId: string;
@@ -120,7 +125,8 @@ export function computeBundles(items: readonly Message[], runs: readonly BundleR
       if (seqs.length > 0) lane.firstSeq = Math.min(...seqs);
       return lane;
     });
-    bundles.set(rootId, { rootId, lanes, tailSystemIds: [] });
+    const threadRootId = byId.get(rootId)?.threadRootId;
+    bundles.set(rootId, { rootId, lanes, tailSystemIds: [], ...(threadRootId ? { threadRootId } : {}) });
   }
   if (bundles.size === 0) return bundles;
   for (const m of items) {

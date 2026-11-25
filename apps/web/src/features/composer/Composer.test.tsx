@@ -1,4 +1,6 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Editor } from "@tiptap/core";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -6,10 +8,17 @@ import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { FakeXhr, stubObjectUrls } from "../../../test/fakeXhr";
-import { AGENT, CH, CH2 } from "../../../test/fixtures";
+import { qk } from "@/api/queries";
+import { invitedAgentKeys } from "@/features/conversations/invitedAgents";
+import { AGENT, CH, CH2, uid, USER } from "../../../test/fixtures";
+import { Composer } from "./Composer";
 import {
   confirmed,
+  DEV,
   doc,
+  FIN,
+  ME,
+  memberOf,
   flushEditorFrames,
   mention,
   p,
@@ -211,4 +220,61 @@ it("입력 상자 안 도구 줄 — 첨부·보내기 버튼과 입력이 한 �
   // 입력과 도구 줄이 한 상자 안에
   const box = screen.getByRole("textbox", { name: "메시지 입력" });
   expect(toolbar.parentElement?.contains(box)).toBe(true);
+});
+
+describe("스레드 작성기의 「채널에도 보내기」(스레드 글 채널에도 보이기 설계)", () => {
+  const ROOT = uid(500);
+  function renderThreadComposer() {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    qc.setQueryData(qk.me, ME);
+    qc.setQueryData(qk.people, [{ id: USER, handle: "owner", displayName: "주인", role: "owner" }]);
+    qc.setQueryData(qk.agents, [DEV, FIN]);
+    qc.setQueryData(qk.members(CH), [memberOf(DEV.id), memberOf(FIN.id)]);
+    qc.setQueryData(invitedAgentKeys.of(CH), []);
+    render(
+      <QueryClientProvider client={qc}>
+        <Composer channelId={CH} conversationId={CH} threadRootId={ROOT} />
+      </QueryClientProvider>,
+    );
+    const box = screen.getByRole("textbox", { name: "스레드 답글 입력" });
+    const editor = (box as unknown as { editor: Editor }).editor;
+    return { box, editor };
+  }
+  const toggle = () => screen.getByRole("checkbox", { name: "채널에도 보내기" });
+  const two = () => doc(p(mention(`a:${DEV.id}`, "dev"), t(" "), mention(`a:${FIN.id}`, "fin"), t(" 봐줘")));
+
+  it("기본값: 서로 다른 에이전트 둘을 멘션하면 켜짐, 하나면 꺼짐", () => {
+    const { editor } = renderThreadComposer();
+    expect(toggle()).not.toBeChecked();
+    setDoc(editor, two());
+    expect(toggle()).toBeChecked();
+    setDoc(editor, doc(p(mention(`a:${DEV.id}`, "dev"), t(" 봐줘"))));
+    expect(toggle()).not.toBeChecked();
+  });
+
+  it("사람이 손대면 초안이 바뀌어도 그 값 — 보낼 때 그 값을 alsoInChannel 로 명시, 보낸 뒤 다시 자동", async () => {
+    fake.onAck("message.send", confirmed);
+    const { box, editor } = renderThreadComposer();
+    setDoc(editor, two());
+    await userEvent.click(toggle());
+    expect(toggle()).not.toBeChecked();
+    setDoc(editor, doc(p(mention(`a:${DEV.id}`, "dev"), t(" "), mention(`a:${FIN.id}`, "fin"), t(" 다시"))));
+    expect(toggle()).not.toBeChecked();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(fake.sentOf("message.send")[0]).toMatchObject({ threadRootId: ROOT, alsoInChannel: false });
+    await waitFor(() => expect(editor.isEmpty).toBe(true));
+
+    setDoc(editor, two());
+    expect(toggle()).toBeChecked();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(fake.sentOf("message.send")[1]).toMatchObject({ alsoInChannel: true });
+    setDoc(editor, doc(p(t("혼잣말"))));
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(fake.sentOf("message.send")[2]).toMatchObject({ alsoInChannel: false });
+  });
+
+  it("세션 작성기에는 체크가 없다", () => {
+    renderComposer();
+    expect(screen.queryByRole("checkbox", { name: "채널에도 보내기" })).toBeNull();
+  });
 });
