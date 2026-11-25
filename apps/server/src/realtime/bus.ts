@@ -14,6 +14,8 @@ export type BusEvents = {
   "message.updated": Payload<"message.updated">;
   "run.state": Payload<"run.state">;
   "run.event": { event: RunEvent; channelId: Id };
+  // 러너 백그라운드 작업 — 그 채널 룸으로(볼 권한은 활동 탭과 같다, runs/background.ts)
+  "tasks.updated": Payload<"tasks.updated">;
   // 승인은 워크스페이스 룸으로 — 다른 채널을 보고 있어도 카드·알림이 닿아야 한다(판정 7, events.ts)
   "approval.requested": Payload<"approval.requested">;
   "approval.resolved": Payload<"approval.resolved">;

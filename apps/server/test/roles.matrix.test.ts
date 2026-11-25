@@ -1829,6 +1829,12 @@ describe("역할 매트릭스(스펙 2장)", () => {
         emit: (socket, fx) => socket.emitWithAck("run.abort", { runId: fx.runId }),
       },
       {
+        // 백그라운드 작업 끄기 — 권한은 run.abort 와 같다. 목록에 없는 작업이면 주인에게는 아무것도 하지 않는 ok
+        name: "task.stop",
+        owner: "ok",
+        emit: (socket, fx) => socket.emitWithAck("task.stop", { runId: fx.runId, taskId: "bash_1" }),
+      },
+      {
         name: "run.events.replay",
         owner: "ok",
         emit: (socket, fx) => socket.emitWithAck("run.events.replay", { runId: fx.runId, afterSeq: 0 }),

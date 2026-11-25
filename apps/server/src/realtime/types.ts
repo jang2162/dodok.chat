@@ -1,6 +1,7 @@
 import type {
   Approval,
   ApprovalDecision,
+  ChannelSubscribeResult,
   ClientToServerEvents,
   ComponentInteract,
   RunEventsReplayResult,
@@ -36,6 +37,10 @@ export type RunsFacade = {
   resolveApproval(input: { approvalId: string; decision: ApprovalDecision; userId: string }): Promise<void>;
   /** 런이 남의 DM 에 있으면 abort·replay 둘 다 없는 런과 같은 NOT_FOUND(auth/channel-access.ts) */
   abort(runId: string, userId: string): Promise<void>;
+  /** 채널 구독 결과의 백그라운드 작업 — 그 채널 대화들의 지금 값 */
+  backgroundTasks(channelId: string): ChannelSubscribeResult["tasks"];
+  /** 「종료」 — 그 런이 띄운 백그라운드 작업 하나. 권한은 abort 와 같다(남의 DM 의 런은 NOT_FOUND) */
+  stopTask(runId: string, taskId: string, userId: string): Promise<void>;
   replay(runId: string, afterSeq: number, userId: string): Promise<RunEventsReplayResult>;
   interact(input: ComponentInteract & { userId: string }): Promise<{ interactionId: string }>;
 };

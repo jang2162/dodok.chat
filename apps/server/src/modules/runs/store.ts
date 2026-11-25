@@ -31,6 +31,10 @@ export type InsertRunInput = {
   connectionId?: string | null | undefined;
   /** 그 런을 시킨 사람 — 오케스트레이터 requesterOf 가 정한다. 없으면 null */
   requestedBy?: string | null | undefined;
+  /** 추가 응답 런(triggerKind background)이면 원래 런 */
+  backgroundOriginRunId?: string | undefined;
+  /** 제공자 쪽 런 id 를 만들 때 안다면(추가 응답 런 — 러너가 이미 연 턴이라 그 런 id 가 곧 제공자 런 id) */
+  providerRunId?: string | undefined;
   createdAt: Date;
 };
 
@@ -66,6 +70,7 @@ export function rowToRun(row: RunRow): Run {
       rootMessageId: row.rootMessageId,
       relayDepth: row.relayDepth,
       parentRunId: row.parentRunId ?? undefined,
+      backgroundOriginRunId: row.backgroundOriginRunId ?? undefined,
       sessionKey: row.sessionKey,
       threadRootId: row.threadRootId ?? undefined,
       providerRunId: row.providerRunId ?? undefined,
@@ -106,6 +111,8 @@ export function insertRun(db: DbOrTx, input: InsertRunInput): Run {
       threadRootId: input.threadRootId ?? null,
       connectionId: input.connectionId ?? null,
       requestedBy: input.requestedBy ?? null,
+      backgroundOriginRunId: input.backgroundOriginRunId ?? null,
+      providerRunId: input.providerRunId ?? null,
       status: "queued",
       hasCanonical: false,
       createdAt: input.createdAt,

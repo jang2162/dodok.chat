@@ -288,7 +288,7 @@ describe("러너 통합 시나리오", () => {
     expect(notice.components).toMatchObject(RETRY_COMPONENTS);
 
     const again = await runner.reconnect({ token: issued.token });
-    expect(again).toEqual({ ok: true, serverVersion: expect.any(String) });
+    expect(again).toEqual({ ok: true, serverVersion: expect.any(String), features: ["backgroundTasks"] });
     const retried = await pressRetry(log.socket, notice);
     if (!retried.ok) throw new Error(`다시 실행 실패: ${retried.error.code}`);
     const second = await runOf(log, coder.id, 1);
@@ -339,7 +339,11 @@ describe("러너 통합 시나리오", () => {
     const { runner, coder, channel, log } = await start();
     const second = await issueToken("desktop");
     const other = await connectRunner(second.token);
-    expect(other.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
+    expect(other.helloResult).toEqual({
+      ok: true,
+      serverVersion: expect.any(String),
+      features: ["backgroundTasks"],
+    });
     expect((await setupStatus()).runners.list.map((r) => r.label)).toEqual(["macbook", "desktop"]);
 
     await sendMessage(log.socket, channel.id, "@coder 누구야");
@@ -678,7 +682,11 @@ describe("러너 통합 시나리오", () => {
         },
         { timeout: 10_000 },
       );
-      expect(macbook.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
+      expect(macbook.helloResult).toEqual({
+        ok: true,
+        serverVersion: expect.any(String),
+        features: ["backgroundTasks"],
+      });
       expect(macbook.connected).toBe(true);
       const status = await setupStatus();
       expect(status.runners.list.map((r) => r.label).sort()).toEqual(["desktop", "macbook"]);

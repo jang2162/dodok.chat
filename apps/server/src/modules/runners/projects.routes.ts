@@ -65,6 +65,7 @@ import {
   setProjectIsGit,
 } from "./projects";
 import { listRunnerTokens } from "./tokens";
+import type { BackgroundService } from "../runs/background";
 
 export type RunnerAdminRouteContext = {
   auth: Auth;
@@ -84,6 +85,8 @@ export type RunnerAdminRouteContext = {
   remoteUpdates: RemoteUpdates;
   /** 「업데이트 대기」(러너 봇 2부 스펙 T16) — 봇의 request_runner_update 가 둔 것 */
   updateQueue: RunnerUpdateQueue;
+  /** 러너가 쥔 백그라운드 작업 수(백그라운드 작업 스펙 5.6 — 업데이트 확인). 없으면 0 */
+  background?: Pick<BackgroundService, "taskCount">;
 };
 
 /**
@@ -92,7 +95,15 @@ export type RunnerAdminRouteContext = {
  */
 export type RunnerOpsContext = Pick<
   RunnerAdminRouteContext,
-  "db" | "logger" | "workspaceId" | "bus" | "runners" | "latest" | "remoteUpdates" | "updateQueue"
+  | "db"
+  | "logger"
+  | "workspaceId"
+  | "bus"
+  | "runners"
+  | "latest"
+  | "remoteUpdates"
+  | "updateQueue"
+  | "background"
 >;
 
 const liveOf = (ctx: Pick<RunnerOpsContext, "runners">, tokenId: string): RunnerLive | null =>
@@ -147,7 +158,7 @@ export function runnerProjectsOf(
 
 /** GET /runners 의 러너 하나 */
 export function runnerSummaryOf(
-  ctx: Pick<RunnerOpsContext, "runners" | "remoteUpdates" | "updateQueue">,
+  ctx: Pick<RunnerOpsContext, "runners" | "remoteUpdates" | "updateQueue" | "background">,
   token: { id: string; label: string; revokedAt: Date | string | null },
   projectCount: number,
   latestVersion: string | null | undefined,
@@ -170,6 +181,7 @@ export function runnerSummaryOf(
     remoteUpdate: hello ? runnerSupport((c) => ctx.runners?.hasCapability(token.id, c) ?? false) : null,
     update: ctx.remoteUpdates.runnerView(token.id, hello),
     updateQueued: ctx.updateQueue.view(token.id),
+    backgroundTasks: ctx.background?.taskCount(token.id) ?? 0,
   };
 }
 

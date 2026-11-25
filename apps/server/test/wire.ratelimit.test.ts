@@ -121,6 +121,7 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
       "message.send": "heavy",
       "component.interact": "heavy",
       "run.abort": "heavy",
+      "task.stop": "heavy",
       "run.events.replay": "replay",
       "approval.resolve": "approval",
       typing: "chatter",
