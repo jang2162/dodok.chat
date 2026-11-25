@@ -15,9 +15,11 @@ import {
   createUserMessage,
   getMessage,
   listMessages,
+  resolveAlsoInChannel,
   threadRootsOf,
   threadSummaryOf,
 } from "../src/modules/messages/service";
+import { insertRun } from "../src/modules/runs/store";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
@@ -49,13 +51,17 @@ function setup() {
     return a;
   };
   let n = 0;
-  const human = (bodyMd: string, over: { threadRootId?: string; channelId?: string } = {}) =>
+  const human = (
+    bodyMd: string,
+    over: { threadRootId?: string; channelId?: string; alsoInChannel?: boolean } = {},
+  ) =>
     createUserMessage(db, bus, {
       conversationId: channelConversation(db, over.channelId ?? channel.id),
       authorId: userId,
       bodyMd,
       clientMsgId: `c${++n}`,
       ...(over.threadRootId ? { threadRootId: over.threadRootId } : {}),
+      ...(over.alsoInChannel === undefined ? {} : { alsoInChannel: over.alsoInChannel }),
     });
   const agentSays = (agentId: string, bodyMd: string, threadRootId?: string) =>
     createAgentMessage(db, bus, {
@@ -320,6 +326,53 @@ describe("스레드 답글 저장·요약", () => {
   });
 });
 
+describe("alsoInChannel", () => {
+  it("resolveAlsoInChannel — 명시가 이기고, 없으면 에이전트 둘 이상인 스레드 답글", () => {
+    const r = (requested: boolean | undefined, threadRootId: string | undefined, agentMentionCount: number) =>
+      resolveAlsoInChannel({ requested, threadRootId, agentMentionCount });
+    expect(r(true, "root", 0)).toBe(true);
+    expect(r(false, "root", 2)).toBe(false);
+    expect(r(undefined, "root", 2)).toBe(true);
+    expect(r(undefined, "root", 1)).toBe(false);
+    expect(r(true, undefined, 2)).toBe(false);
+  });
+
+  it("true + 스레드 답글이면 저장된 메시지에 alsoInChannel", () => {
+    const t = setup();
+    const root = t.human("루트");
+    const reply = t.human("답글", { threadRootId: root.id, alsoInChannel: true });
+    expect(reply.alsoInChannel).toBe(true);
+    expect(getMessage(t.db, reply.id)?.alsoInChannel).toBe(true);
+    expect(Message.parse(reply).alsoInChannel).toBe(true);
+  });
+
+  it("false 면 에이전트 둘을 멘션해도 싣지 않는다", () => {
+    const t = setup();
+    t.agent("dev");
+    t.agent("fin");
+    const root = t.human("루트");
+    const reply = t.human("@dev @fin 봐줘", { threadRootId: root.id, alsoInChannel: false });
+    expect(reply.mentions.agents).toHaveLength(2);
+    expect(reply.alsoInChannel).toBeUndefined();
+  });
+
+  it("없으면 서로 다른 에이전트 둘 이상을 멘션한 스레드 답글만", () => {
+    const t = setup();
+    t.agent("dev");
+    t.agent("fin");
+    const root = t.human("루트");
+    expect(t.human("@dev @fin 봐줘", { threadRootId: root.id }).alsoInChannel).toBe(true);
+    expect(t.human("@dev @dev 봐줘", { threadRootId: root.id }).alsoInChannel).toBeUndefined();
+    expect(t.human("@dev 봐줘", { threadRootId: root.id }).alsoInChannel).toBeUndefined();
+  });
+
+  it("true 라도 최상위 글이면 무시한다(오류 아님)", () => {
+    const t = setup();
+    const top = t.human("최상위", { alsoInChannel: true });
+    expect(top.alsoInChannel).toBeUndefined();
+  });
+});
+
 describe("listMessages 스코프·around", () => {
   /** 루트 1·3·5·7, 답글 2(→1)·4(→3)·6(→1) */
   function seeded() {
@@ -371,6 +424,61 @@ describe("listMessages 스코프·around", () => {
     expect(
       seqs(listMessages(t.db, t.channel.id, { limit: 50, afterSeq: 1, scope: { threadRootId: t.r1.id } })),
     ).toEqual([2, 6]);
+  });
+
+  it("channel 은 루트 + 채널에도 보낸 답글, roots 에는 없다", () => {
+    const t = seeded();
+    const also = t.human("a4", { threadRootId: t.r3.id, alsoInChannel: true });
+    t.human("r9");
+    expect(also.seq).toBe(8);
+    expect(seqs(listMessages(t.db, t.channel.id, { limit: 50, scope: "channel" }))).toEqual([
+      1, 3, 5, 7, 8, 9,
+    ]);
+    expect(seqs(listMessages(t.db, t.channel.id, { limit: 50 }))).toEqual([1, 3, 5, 7, 9]);
+    expect(seqs(listMessages(t.db, t.channel.id, { limit: 2, beforeSeq: 9, scope: "channel" }))).toEqual([
+      7, 8,
+    ]);
+  });
+
+  it("channel 의 around — 채널에도 보낸 답글 seq 면 그 글이 가운데, 보통 답글 seq 면 루트", () => {
+    const t = seeded();
+    const also = t.human("a4", { threadRootId: t.r1.id, alsoInChannel: true });
+    for (let i = 0; i < 3; i++) t.human(`n${i}`);
+    const at = listMessages(t.db, t.channel.id, { limit: 2, aroundSeq: also.seq, scope: "channel" });
+    expect(seqs(at)).toEqual([8, 9]);
+    expect(at.messages.find((m) => m.seq === also.seq)?.alsoInChannel).toBe(true);
+    // 보통 답글(seq 2 → 루트 1)
+    expect(seqs(listMessages(t.db, t.channel.id, { limit: 2, aroundSeq: 2, scope: "channel" }))).toEqual([
+      1, 3,
+    ]);
+    // roots 범위에서는 채널에도 보낸 답글도 그 루트 자리
+    expect(seqs(listMessages(t.db, t.channel.id, { limit: 2, aroundSeq: also.seq }))).toEqual([1, 3]);
+  });
+
+  it("채널에도 보낸 사람 답글은 그 글이 루트인 런(rootRuns)을 싣는다", () => {
+    const t = seeded();
+    const dev = t.agent("dev");
+    const also = t.human("a4", { threadRootId: t.r1.id, alsoInChannel: true });
+    const plain = t.human("a5", { threadRootId: t.r1.id });
+    const run = (rootMessageId: string) =>
+      insertRun(t.db, {
+        channelId: t.channel.id,
+        conversationId: also.conversationId,
+        agentId: dev.id,
+        triggerKind: "mention",
+        triggerMessageId: rootMessageId,
+        rootMessageId,
+        relayDepth: 0,
+        sessionKey: dodokSessionKey("dev", also.conversationId, t.r1.id),
+        createdAt: new Date(),
+      });
+    const r = run(also.id);
+    run(plain.id);
+    const page = listMessages(t.db, t.channel.id, { limit: 50, scope: "all" });
+    expect(page.messages.find((m) => m.id === also.id)?.rootRuns).toEqual([
+      { runId: r.id, agentId: dev.id, status: "queued", triggerMessageId: also.id },
+    ]);
+    expect(page.messages.find((m) => m.id === plain.id)?.rootRuns).toBeUndefined();
   });
 
   it("around 는 그 seq 앞뒤 절반 — hasMore 는 더 옛것, hasMoreAfter 는 더 새것", () => {
@@ -583,6 +691,26 @@ describe("wire·REST — 스레드", () => {
     expect((await updated).message.threadSummary).toMatchObject({ count: 1, agentIds: [] });
   });
 
+  it("message.send alsoInChannel — true 는 싣고 false 는 싣지 않는다", async () => {
+    const socket = await connect();
+    const channel = newChannel("wire-also");
+    const root = post(channel.id, "루트");
+    const send = async (clientMsgId: string, alsoInChannel: boolean) => {
+      const res = await socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        ...sendTarget(app.db, channel.id, root.id),
+        clientMsgId,
+        bodyMd: "답글",
+        threadRootId: root.id,
+        alsoInChannel,
+      });
+      if (!res.ok) throw new Error(res.error.code);
+      return res.data.message;
+    };
+    expect((await send("also-1", true)).alsoInChannel).toBe(true);
+    expect((await send("also-2", false)).alsoInChannel).toBeUndefined();
+  });
+
   it("message.send threadRootId 가 답글·다른 채널·없는 id 면 VALIDATION(Review Focus 1)", async () => {
     const socket = await connect();
     const channel = newChannel("wire-thread-bad");
@@ -672,6 +800,26 @@ describe("wire·REST — 스레드", () => {
     const both = await get(`/conversations/${conversationId}/messages?around=2&beforeSeq=3`);
     expect(both.statusCode).toBe(400);
     expect(both.json()).toMatchObject({ code: "VALIDATION" });
+  });
+
+  it("GET /conversations/:id/messages — 채널에도 보낸 답글은 싣고 보통 답글은 싣지 않는다", async () => {
+    const channel = newChannel("rest-also");
+    const conversationId = channelConversation(app.db, channel.id);
+    const root = post(channel.id, "루트");
+    post(channel.id, "보통 답", root.id);
+    const also = createUserMessage(app.db, app.bus, {
+      conversationId,
+      authorId: app.ownerUserId,
+      bodyMd: "채널에도",
+      clientMsgId: `seed-${++n}`,
+      threadRootId: root.id,
+      alsoInChannel: true,
+    });
+    const res = await get(`/conversations/${conversationId}/messages`);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { messages: Message[] };
+    expect(body.messages.map((m) => m.id)).toEqual([root.id, also.id]);
+    expect(body.messages[1]).toMatchObject({ alsoInChannel: true, threadRootId: root.id });
   });
 
   it("GET /conversations/:id/threads/:rootId/messages — 루트 + 답글 오래된 순, before/after/around", async () => {

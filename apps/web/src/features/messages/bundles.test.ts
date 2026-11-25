@@ -155,3 +155,50 @@ describe("computeBundles", () => {
     expect(byRun.get(RB)).toBe(R);
   });
 });
+
+describe("computeBundles — 채널에도 보낸 답글(스레드 글 채널에도 보이기 설계)", () => {
+  const threadRoot = msg(1);
+  const also = msg(5, { threadRootId: threadRoot.id, alsoInChannel: true });
+  const plain = msg(6, { threadRootId: threadRoot.id });
+  const runOn = (rootMessageId: string, runId: string, agentId: string): BundleRun => ({
+    runId,
+    agentId,
+    rootMessageId,
+    triggerMessageId: rootMessageId,
+    status: "streaming",
+  });
+
+  it("사람의 채널에도 보낸 답글 + 서로 다른 에이전트 런 둘 → 묶음(줄은 런으로, 스레드 루트를 싣는다)", () => {
+    const bundles = computeBundles([threadRoot, also], [runOn(also.id, RA, AGENT), runOn(also.id, RB, FIN)]);
+    const b = bundles.get(also.id);
+    expect(b?.lanes.map((l) => [l.runId, l.status, l.messageIds])).toEqual([
+      [RA, "streaming", []],
+      [RB, "streaming", []],
+    ]);
+    expect(b?.threadRootId).toBe(threadRoot.id);
+    // 최상위 글의 묶음은 스레드 루트가 없다
+    expect(
+      computeBundles([root, reply(2, AGENT, RA), reply(3, FIN, RB)], []).get(R)?.threadRootId,
+    ).toBeUndefined();
+  });
+
+  it("보통 스레드 답글은 묶지 않는다", () => {
+    const bundles = computeBundles(
+      [threadRoot, plain],
+      [runOn(plain.id, RA, AGENT), runOn(plain.id, RB, FIN)],
+    );
+    expect(bundles.size).toBe(0);
+  });
+
+  it("런 저장소가 없으면 글의 rootRuns 로 줄이 선다", () => {
+    const withRuns = {
+      ...also,
+      rootRuns: [
+        { runId: RA, agentId: AGENT, status: "done" as const },
+        { runId: RB, agentId: FIN, status: "error" as const },
+      ],
+    };
+    const b = computeBundles([threadRoot, withRuns], []).get(also.id);
+    expect(b?.lanes.map((l) => l.status)).toEqual(["done", "error"]);
+  });
+});

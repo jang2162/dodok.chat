@@ -344,6 +344,21 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     expect(catchUp).not.toHaveBeenCalled();
   });
 
+  it("채널에도 보낸 답글은 세션 타임라인과 연 스레드 둘 다에 넣고, 수정(반응)은 둘 다 바꾼다", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [ROOT]);
+    openThread(queryClient, [ROOT]);
+    const also = reply(2, { alsoInChannel: true });
+    fake.serverEmit("message.created", { message: also });
+
+    expect(seqs(queryClient)).toEqual([1, 2]);
+    expect(threadSeqs(queryClient)).toEqual([1, 2]);
+    const reactions = [{ emoji: "👍" as const, count: 1, userIds: [uid(77)] }];
+    fake.serverEmit("message.updated", { message: { ...also, reactions } });
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.reactions).toEqual(reactions);
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items[1]?.reactions).toEqual(reactions);
+  });
+
   it("답글 뒤의 루트는 빈틈이 아니다 — 루트만 든 타임라인에서 거짓 빈틈을 내지 않는다", () => {
     const { fake, queryClient, subscriptions } = setup();
     const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();

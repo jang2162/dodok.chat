@@ -8,6 +8,7 @@ import {
   fromLatest,
   hasChannelGap,
   inThread,
+  isChannelVisible,
   jumpAround,
   noteSeq,
   type PendingMessage,
@@ -122,6 +123,19 @@ describe("루트만 드는 채널 타임라인(스레드·검색 스펙 4.1)", (
     const next = applyToTimeline(t, [reply(3), msg(4), reply(5)]);
     expect(next.items.map((m) => m.seq)).toEqual([1, 2, 4]);
     expect(next.lastSeq).toBe(5);
+  });
+
+  it("applyToTimeline: 채널에도 보낸 답글은 세션 타임라인에 넣는다 — 재동기화 뒤에도 남는다", () => {
+    const t = fromLatest(undefined, [msg(1)], false);
+    const next = applyToTimeline(t, [reply(2), reply(3, { alsoInChannel: true }), msg(4)]);
+    expect(next.items.map((m) => m.seq)).toEqual([1, 3, 4]);
+    expect(next.lastSeq).toBe(4);
+  });
+
+  it("isChannelVisible: 루트 또는 채널에도 보낸 답글", () => {
+    expect(isChannelVisible(msg(1))).toBe(true);
+    expect(isChannelVisible(reply(2))).toBe(false);
+    expect(isChannelVisible(reply(3, { alsoInChannel: true }))).toBe(true);
   });
 
   it("refreshRoots: 이미 가진 루트만 요약을 갈아 끼우고, 없는 루트(적재 범위 밖)는 넣지 않는다", () => {

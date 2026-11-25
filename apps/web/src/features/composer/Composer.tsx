@@ -18,6 +18,7 @@ import { useChannelArchived } from "@/features/channels/archived";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
+import { Checkbox } from "@/ui/checkbox";
 import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { mentionedAgentIds, sameIds } from "./mentionedAgents";
@@ -263,6 +264,12 @@ export function Composer({
     equalityFn: (a, b) => b !== null && sameIds(a, b),
   });
 
+  // 스레드 작성기의 「채널에도 보내기」(스레드 글 채널에도 보이기 설계) — 기본값은 초안이 서로 다른 에이전트 둘 이상을 멘션할 때 켜짐. 사람이
+  // 손대면 그 초안(draftKey)에서는 그 값을 지키고, 보내면 다시 자동으로 돌아간다
+  const [alsoChoice, setAlsoChoice] = useState<{ key: string; value: boolean } | undefined>(undefined);
+  const alsoInChannel =
+    alsoChoice !== undefined && alsoChoice.key === draftKey ? alsoChoice.value : (mentioned?.size ?? 0) >= 2;
+
   // 채널을 옮기면 지금 초안을 그 채널 몫으로 두고, 옮겨 간 채널의 초안을 꺼낸다(없으면 비움). 새 세션 창에서 그 창이 만든 세션으로 옮겨
   // 갔으면 편집기를 그대로 두고 창 몫으로 막 넣어 둔 초안만 지운다 — 다음에 새 세션 창을 열면 빈 작성기다
   useEffect(() => {
@@ -376,8 +383,9 @@ export function Composer({
     const agentSettings = isNewWindow
       ? Object.entries(pendingSettings.byAgent).map(([agentId, patch]) => ({ agentId, ...patch }))
       : [];
-    void send(bodyMd, attachments.ready, agentSettings);
+    void send(bodyMd, attachments.ready, agentSettings, threadRootId === undefined ? {} : { alsoInChannel });
     if (agentSettings.length > 0) setPendingSettings({ n: place.n, byAgent: {} });
+    if (alsoChoice !== undefined) setAlsoChoice(undefined);
     attachments.clear();
     editor.commands.clearContent();
   };
@@ -454,6 +462,15 @@ export function Composer({
               }))
             }
           />
+          {threadRootId !== undefined && (
+            <label className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox
+                checked={alsoInChannel}
+                onCheckedChange={(v) => setAlsoChoice({ key: draftKey, value: v === true })}
+              />
+              채널에도 보내기
+            </label>
+          )}
           {/* 에이전트 칸이 없으면(러너 없음) ml-auto 가 보내기를 오른쪽 끝으로 민다 — 있으면 칸이 남는 폭을 차지한다 */}
           <Button
             type="button"

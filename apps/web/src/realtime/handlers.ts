@@ -38,7 +38,13 @@ import {
   isDmChannel,
   isRegularChannel,
 } from "@/features/dms/queries";
-import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
+import {
+  hasChannelGap,
+  isChannelVisible,
+  noteSeq,
+  type Timeline,
+  upsert,
+} from "@/features/messages/timeline";
 import { usePresenceStore } from "@/features/presence/store";
 import { receiveSidebar, sidebarKey } from "@/features/sidebar/queries";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
@@ -151,19 +157,25 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     }
     if (!stale) noteChannelSeq(qc, channelId, m.seq);
     if (rootId !== undefined) {
-      if (!stale) patchTimeline(qc, channelId, conversationId, (prev) => noteSeq(prev, m.seq));
       updateThread(qc, channelId, conversationId, rootId, (prev) =>
         keeps(prev, m, updated) ? upsert(prev, m) : prev,
       );
+      // 채널에도 보낸 답글은 세션 타임라인에도 든다 — 그 수정(반응 등)도 두 캐시를 함께 바꾼다. 적재 범위 규칙은 루트와 같다
+      if (isChannelVisible(m)) patchTimeline(qc, channelId, conversationId, inRange(m, stale));
+      else if (!stale) patchTimeline(qc, channelId, conversationId, (prev) => noteSeq(prev, m.seq));
       return;
     }
     // 연 스레드의 루트는 적재 범위와 상관없이 늘 맞춘다(패널 맨 위에 늘 있다)
     updateThread(qc, channelId, conversationId, m.id, (prev) => upsert(prev, m));
-    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다. 받는 중인 첫 페이지에
-    // 다시 적용될 때도 같은 규칙이다(`patchTimeline`)
-    patchTimeline(qc, channelId, conversationId, (prev) =>
-      stale && !prev.items.some((x) => x.id === m.id) ? prev : upsert(prev, m),
-    );
+    patchTimeline(qc, channelId, conversationId, inRange(m, stale));
+  }
+
+  /**
+   * 세션 타임라인에 넣는 변경. 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다.
+   * 받는 중인 첫 페이지에 다시 적용될 때도 같은 규칙이다(`patchTimeline`)
+   */
+  function inRange(m: Message, stale: boolean): (prev: Timeline) => Timeline {
+    return (prev) => (stale && !prev.items.some((x) => x.id === m.id) ? prev : upsert(prev, m));
   }
 
   /** 스레드 캐시에 넣을 답글인가 — 수정이면 가진 것이거나 적재 범위(가장 옛 답글) 안일 때만 */

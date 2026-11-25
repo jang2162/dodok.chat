@@ -103,8 +103,9 @@ function withActivity(t: Tables, a: ChannelActivity, ctx: ActivityContext): Tabl
     const mentioned = ctx.me !== undefined && a.mentionedUserIds.includes(ctx.me);
     next = {
       ...next,
-      // 스레드 답글은 굵게 하지 않는다 — 스레드가 활발한 세션이 늘 굵어지지 않게(스펙 결정 5). 멘션은 어디서 왔든 센다
-      unread: next.unread || a.threadRootId === undefined,
+      // 스레드 답글은 굵게 하지 않는다 — 스레드가 활발한 세션이 늘 굵어지지 않게(스펙 결정 5). 채널에도 보낸 답글은 채널 글이라
+      // 굵게 한다. 멘션은 어디서 왔든 센다
+      unread: next.unread || a.threadRootId === undefined || a.alsoInChannel === true,
       mentions: mentioned ? Math.min(MENTIONS_MAX, next.mentions + 1) : next.mentions,
     };
   }

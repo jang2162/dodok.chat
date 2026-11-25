@@ -295,11 +295,33 @@ it("스레드 작성기: 그 세션과 threadRootId 를 싣고, 보내는 중·�
   expect(getTimeline(qc, CH, CH)?.items.map((m) => m.seq)).toEqual([1]);
 });
 
+it("스레드 작성기: alsoInChannel 을 받은 값 그대로 싣고, 다시 보내기도 같은 값", async () => {
+  const root = msg(1);
+  qc.setQueryData(qk.thread(CH, CH, root.id), threadFromPage(undefined, root, [], false));
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "INTERNAL", message: "x" } }));
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  const send = renderHook(() => useSendMessage(CH, CH, root.id), { wrapper }).result;
+  await act(() => send.current.send("채널에도", [], undefined, { alsoInChannel: true }));
+  await act(() => send.current.send("스레드만", [], undefined, { alsoInChannel: false }));
+  expect(fake.sentOf("message.send").map((p) => (p as { alsoInChannel?: boolean }).alsoInChannel)).toEqual([
+    true,
+    false,
+  ]);
+  const failed = getThread(qc, CH, CH, root.id)?.pending[0];
+  if (!failed) throw new Error("실패 항목이 없다");
+  await act(() => send.current.retry(failed.clientMsgId));
+  expect(fake.sentOf("message.send")[2]).toMatchObject({ bodyMd: "채널에도", alsoInChannel: true });
+});
+
 it("채널 작성기는 threadRootId 를 싣지 않는다", async () => {
   fake.onAck("message.send", (p) => confirmed(p));
   const send = renderSend();
   await act(() => send.current.send("채널"));
   expect(fake.sentOf("message.send")[0]).not.toHaveProperty("threadRootId");
+  // 스레드 답글이 아니면 alsoInChannel 도 싣지 않는다
+  await act(() => send.current.send("채널 둘", [], undefined, { alsoInChannel: true }));
+  expect(fake.sentOf("message.send")[1]).not.toHaveProperty("alsoInChannel");
 });
 
 it("[Review Focus 2] ack CONVERSATION_CLOSED 면 failed 에 사유 conversation_closed — 다른 탭이 닫은 세션", async () => {

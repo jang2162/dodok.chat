@@ -492,6 +492,7 @@ function sendMessage(
     attachments: input.attachments,
     replyTo: input.replyTo,
     threadRootId: input.threadRootId,
+    alsoInChannel: input.alsoInChannel,
   });
   const conversation =
     sent.conversation ??

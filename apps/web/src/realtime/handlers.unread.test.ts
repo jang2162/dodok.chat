@@ -16,6 +16,7 @@ vi.mock("sonner", () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.f
 
 const OTHER = uid(12);
 const CH3 = uid(3);
+const ROOT = uid(31);
 const UNREAD_URL = "/api/v1/me/unread";
 const ARCHIVED_AT = "2027-01-15T08:00:00.000Z";
 
@@ -315,6 +316,17 @@ describe("channel.activity", () => {
     fake.serverEmit("channel.activity", activity(1, { channelId: CH2, authorId: USER }));
     expect(view()).toEqual({ unread: true, mentions: 1 });
     expect(view(CH2)).toEqual({ unread: false, mentions: 0 });
+  });
+
+  it("스레드 답글은 굵게 하지 않고, 채널에도 보낸 답글(alsoInChannel)은 굵게", async () => {
+    const { fake } = await connected(snap(row(), row({ channelId: CH2 })));
+    fake.serverEmit("channel.activity", activity(1, { threadRootId: ROOT }));
+    expect(view()).toEqual({ unread: false, mentions: 0 });
+    fake.serverEmit(
+      "channel.activity",
+      activity(1, { channelId: CH2, threadRootId: ROOT, alsoInChannel: true }),
+    );
+    expect(view(CH2)).toEqual({ unread: true, mentions: 0 });
   });
 
   it("보고 있는 세션(구독 중인 채널의 그 세션)의 끝이 보이면 더하지 않고, 끝이 안 보이면 굵게", async () => {

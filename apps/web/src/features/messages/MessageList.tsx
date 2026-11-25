@@ -134,7 +134,13 @@ function ChannelMessages({
   const me = useMe().data?.user.id;
   // 답 묶음(설계 「정한 것」) — 세션 타임라인에서만. 스레드 패널은 이미 따로 떨어진 공간이라 묶지 않는다. 런의 루트는 저장소의 `roots`
   // (run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운 런도 남는다)와 메시지의 runRoot 로 안다
+  // 스레드 런은 그 글이 세션 타임라인에 있는 채널에도 보낸 답글일 때만(스레드 글 채널에도 보이기 설계)
   const runRoots = useRunStore((s) => s.roots);
+  const timelineItems = timeline?.items;
+  const alsoIds = useMemo(
+    () => new Set((timelineItems ?? []).flatMap((m) => (m.alsoInChannel ? [m.id] : []))),
+    [timelineItems],
+  );
   const bundleRuns = useMemo(
     (): BundleRun[] =>
       threadRootId !== undefined
@@ -143,11 +149,10 @@ function ChannelMessages({
             (r) =>
               r.channelId === channelId &&
               r.conversationId === conversationId &&
-              r.threadRootId === undefined,
+              (r.threadRootId === undefined || alsoIds.has(r.rootMessageId)),
           ),
-    [runRoots, channelId, conversationId, threadRootId],
+    [runRoots, channelId, conversationId, threadRootId, alsoIds],
   );
-  const timelineItems = timeline?.items;
   const bundles = useMemo(
     () =>
       threadRootId !== undefined || !timelineItems ? NO_BUNDLES : computeBundles(timelineItems, bundleRuns),

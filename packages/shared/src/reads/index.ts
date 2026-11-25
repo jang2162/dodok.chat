@@ -47,6 +47,8 @@ export const ChannelActivity = z.object({
   conversationId: Id,
   seq: z.int().min(1),
   threadRootId: Id.optional(),
+  /** 채널에도 보낸 스레드 답글(Message.alsoInChannel) — 참일 때만. 스레드 답글이어도 채널 글처럼 굵게 한다 */
+  alsoInChannel: z.literal(true).optional(),
   authorType: z.enum(["user", "agent", "automation"]),
   /** 자동화 글이면 자동화 id */
   authorId: Id,

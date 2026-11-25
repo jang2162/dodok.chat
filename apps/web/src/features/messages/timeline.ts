@@ -17,6 +17,8 @@ export type PendingMessage = {
   attachments?: Attachment[];
   /** `failed` 의 사유 — 레이트리밋(ack RATE_LIMITED)이면 다른 문구를 보인다. 없으면 일반 실패 */
   reason?: PendingFailReason;
+  /** 스레드 작성기의 「채널에도 보내기」 — 다시 보내기도 같은 값으로 간다 */
+  alsoInChannel?: boolean;
 };
 /**
  * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지
@@ -118,11 +120,19 @@ export function noteSeq(t: Timeline, seq: number): Timeline {
   return seq > t.lastSeq ? { ...t, lastSeq: seq } : t;
 }
 
-const isRoot = (m: Message) => m.threadRootId === undefined;
+/**
+ * 세션 타임라인에 그리는 메시지 — 루트 또는 채널에도 보낸 답글(스레드 글 채널에도 보이기 설계). 채널에도 보낸 답글은 스레드
+ * 타임라인에도 든다 — 같은 메시지가 두 캐시에 있다
+ */
+export const isChannelVisible = (m: Pick<Message, "threadRootId" | "alsoInChannel">): boolean =>
+  m.threadRootId === undefined || m.alsoInChannel === true;
 
-/** 재동기화 응답 가운데 한 세션의 것(루트·답글이 섞였다)을 그 세션 타임라인에 — 루트는 병합하고 답글은 seq 만 기록한다 */
+/**
+ * 재동기화 응답 가운데 한 세션의 것(루트·답글이 섞였다)을 그 세션 타임라인에 — 루트와 채널에도 보낸 답글은 병합하고 나머지 답글은
+ * seq 만 기록한다
+ */
 export function applyToTimeline(t: Timeline, incoming: readonly Message[]): Timeline {
-  return noteSeq(upsertMany(t, incoming.filter(isRoot)), maxSeq(incoming));
+  return noteSeq(upsertMany(t, incoming.filter(isChannelVisible)), maxSeq(incoming));
 }
 
 /**
