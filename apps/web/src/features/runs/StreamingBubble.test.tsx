@@ -105,6 +105,22 @@ describe("StreamingBubble", () => {
     expect(stopButton()).toBeNull();
   });
 
+  it("queued bubble explains held slots — RUN_QUEUED.heldSlots > 0 이면 D7 문구, 없거나 0 이거나 시작하면 없다", () => {
+    const D7 = "백그라운드 작업 2개가 러너 자리를 쓰는 중 — 활동 탭에서 종료하면 이어집니다";
+    run({ status: "queued" });
+    act(() => useRunStore.getState().applyEvent(runEvent({ type: "RUN_QUEUED", seq: 1, position: 1 })));
+    renderWithClient(<StreamingBubble runId={RUN} />);
+    expect(screen.getByText("대기 중")).toBeInTheDocument();
+    expect(screen.queryByText(/러너 자리를 쓰는 중/)).toBeNull();
+    act(() => useRunStore.getState().applyEvent(runEvent({ type: "RUN_QUEUED", seq: 2, heldSlots: 2 })));
+    expect(screen.getByText(D7)).toBeInTheDocument();
+    act(() => useRunStore.getState().applyEvent(runEvent({ type: "RUN_QUEUED", seq: 3, heldSlots: 0 })));
+    expect(screen.queryByText(/러너 자리를 쓰는 중/)).toBeNull();
+    act(() => useRunStore.getState().applyEvent(runEvent({ type: "RUN_QUEUED", seq: 4, heldSlots: 2 })));
+    run({ status: "streaming" });
+    expect(screen.queryByText(/러너 자리를 쓰는 중/)).toBeNull();
+  });
+
   it("모르는 런이면 아무것도 그리지 않는다", () => {
     const { container } = renderWithClient(<StreamingBubble runId={RUN} />);
     expect(container).toBeEmptyDOMElement();

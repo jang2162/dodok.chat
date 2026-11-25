@@ -9,6 +9,7 @@ import { selectChannelRuns, useRunStore } from "@/features/runs/runStore";
 import { Notice } from "./Notice";
 import { RunCards } from "./RunCard";
 import { countRuns, filterRuns, freezeDurations, mergeRuns, RUN_FILTERS, type RunFilter } from "./timeline";
+import { useBackgroundTasks } from "./useBackgroundTasks";
 import { useSettledRuns } from "./useSettledRuns";
 
 /**
@@ -53,10 +54,18 @@ function ActivityBody({ channelId }: { channelId: string }) {
     void refetchRuns();
   }, [settledKey, refetchRuns]);
 
+  /** 백그라운드 작업(스펙 5.7) — 작업은 원래 런 카드에 붙고, 작업이 남은 끝난 런도 「진행 중」에 든다 */
+  const background = useBackgroundTasks(channelId);
+  /** 추가 응답 런 카드가 원래 런의 시작 시각을 찾는 길 — 거르기와 상관없이 받은 목록 전체에서 */
+  const startedAtOf = useCallback((runId: string) => runs.find((r) => r.id === runId)?.startedAt, [runs]);
+
   /** 거르기 — 수는 전체에서 세고, 고른 칩에 맞는 카드만 그린다. 펼침은 거르기와 따로 기억한다(거르기를 바꿔도 펼친 채) */
   const [filter, setFilter] = useState<RunFilter>("all");
-  const counts = useMemo(() => countRuns(runs), [runs]);
-  const visible = useMemo(() => filterRuns(runs, filter), [runs, filter]);
+  const counts = useMemo(() => countRuns(runs, background.activeRunIds), [runs, background.activeRunIds]);
+  const visible = useMemo(
+    () => filterRuns(runs, filter, background.activeRunIds),
+    [runs, filter, background.activeRunIds],
+  );
 
   /**
    * 펼침 — 사람이 아직 어떤 카드도 펴거나 접지 않았으면 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
@@ -119,7 +128,14 @@ function ActivityBody({ channelId }: { channelId: string }) {
         <>
           <FilterChips value={filter} counts={counts} onChange={setFilter} />
           {visible.length > 0 ? (
-            <RunCards runs={visible} isExpanded={isExpanded} onToggle={toggle} approval={approvalOf} />
+            <RunCards
+              runs={visible}
+              isExpanded={isExpanded}
+              onToggle={toggle}
+              approval={approvalOf}
+              background={background.byRun}
+              startedAtOf={startedAtOf}
+            />
           ) : (
             <Notice>{EMPTY[filter]}</Notice>
           )}

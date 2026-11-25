@@ -386,6 +386,22 @@ describe("원격 업데이트(원격 업데이트 스펙 U8·U9)", () => {
     expect(await headButton()).toBeDisabled();
   });
 
+  it.each([
+    [3, "백그라운드 작업 3개가 꺼집니다"],
+    [0, undefined],
+  ])(
+    "백그라운드 작업 %i 개 — 확인에 「백그라운드 작업 N개가 꺼집니다」, 없으면 그 문장이 없다(백그라운드 작업 스펙 5.6)",
+    async (backgroundTasks, line) => {
+      stubRunner({ backgroundTasks });
+      renderConnection(OWNER, undefined, runnerDetailPath(tokenId(1)));
+      await group();
+      await userEvent.click((await headButton())!);
+      const dialog = await screen.findByRole("dialog");
+      if (line) expect(dialog).toHaveTextContent(line);
+      else expect(dialog).not.toHaveTextContent("백그라운드 작업");
+    },
+  );
+
   // Review Focus 5
   it("최신을 알 수 없으면(레지스트리에 닿지 않음) 단추가 없다", async () => {
     stubRunner({ latestVersion: null });

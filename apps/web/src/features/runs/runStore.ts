@@ -17,6 +17,8 @@ export type RunView = {
   /** 런이 시작된 루트 글·부른 글(run.state) — 답 묶음이 줄을 루트 아래 세운다. 뒤따른 상태에 빠져도 잊지 않는다 */
   rootMessageId?: string;
   triggerMessageId?: string;
+  /** 러너 자리를 쥔 붙든 프로세스 수 — 그 까닭으로 기다리는 런의 RUN_QUEUED 가 싣는다(백그라운드 작업 스펙 D7) */
+  heldSlots?: number;
 };
 
 /**
@@ -58,6 +60,11 @@ export function reduceEvent(prev: RunView | undefined, event: RunEvent): RunView
   if (event.type === "TEXT_MESSAGE_CONTENT")
     return { ...prev, text: prev.text + event.delta, lastEventSeq: event.seq };
   if (event.type === "TEXT_MESSAGE_REPLACE") return { ...prev, text: event.text, lastEventSeq: event.seq };
+  if (event.type === "RUN_QUEUED") {
+    const { heldSlots: _, ...rest } = prev;
+    const held = event.heldSlots ?? 0;
+    return { ...rest, ...(held > 0 && { heldSlots: held }), lastEventSeq: event.seq };
+  }
   return { ...startedThread(prev, event), lastEventSeq: event.seq };
 }
 

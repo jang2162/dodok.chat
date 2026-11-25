@@ -18,6 +18,9 @@ import { ArrowUpCircleIcon } from "lucide-react";
 // 원격 업데이트(원격 업데이트 스펙 U8·U9) — 러너 상세 머리의 「러너 업데이트」와 「판 X · 최신 Y」, Gateway 상세의 「[업데이트]」. 누르면 확인 → 「업데이트 중…」 →
 // 다시 붙으면 새 판(진행이 사라진다) / 실패면 사유 한 줄 / 상한 안에 다시 붙지 않으면 「응답이 없습니다 — 그 머신에서 확인하세요」
 
+/** 붙든 프로세스는 업데이트의 busy 로 세지 않는다 — 대신 확인에서 꺼질 작업 수를 알린다(백그라운드 작업 스펙 5.6) */
+export const backgroundTasksOffText = (n: number) => `백그라운드 작업 ${n}개가 꺼집니다`;
+
 /** 옛 러너(능력 remoteUpdate 없음)에 보이는 명령 한 줄(U8) */
 export const RUNNER_UPDATE_COMMAND = "npm i -g @dodok/runner@latest";
 export const NO_RESPONSE_TEXT = "응답이 없습니다 — 그 머신에서 확인하세요";
@@ -152,11 +155,16 @@ export function RunnerUpdateStatus({ update: u }: { update: RunnerUpdateState | 
         description={
           start.isError
             ? updateError(start.error)
-            : "그 머신이 npm 에서 새 판을 설치하고 같은 설정으로 다시 뜹니다. 도는 런이 있으면 러너가 거절합니다."
+            : `그 머신이 npm 에서 새 판을 설치하고 같은 설정으로 다시 뜹니다. 도는 런이 있으면 러너가 거절합니다.${
+                runner.backgroundTasks !== undefined && runner.backgroundTasks > 0
+                  ? ` ${backgroundTasksOffText(runner.backgroundTasks)}`
+                  : ""
+              }`
         }
         confirmLabel="업데이트"
         pendingLabel="보내는 중…"
         pending={start.isPending}
+        destructive={runner.backgroundTasks !== undefined && runner.backgroundTasks > 0}
         returnFocus={u.button}
         onConfirm={() => start.mutate()}
       />

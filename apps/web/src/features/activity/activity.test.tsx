@@ -1,4 +1,4 @@
-import type { Agent, ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
+import type { Agent, BackgroundTask, ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -38,6 +38,7 @@ import { agentOf } from "../../../test/settingsServer";
 import { RunCards } from "./RunCard";
 import { APPROVAL_PENDING_HINT } from "./RunTimeline";
 import type { ActivityRun } from "./timeline";
+import { useBackgroundTaskStore } from "./useBackgroundTasks";
 
 // 활동 패널은 실시간 run.event 를 소켓에서 곧바로 받는다 — 테스트는 가짜 소켓을 끼운다
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
@@ -107,6 +108,7 @@ beforeEach(() => {
   useWireStatus.getState().setStatus("connected");
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
+  useBackgroundTaskStore.getState().reset();
 });
 afterEach(async () => {
   // 앱 셸의 작성기(tiptap)는 언마운트된 뒤 다음 틱(`setTimeout` 1ms)에 `Editor.destroy` 를 부른다 — 파일의 마지막 테스트면 그 틱이
@@ -1746,4 +1748,238 @@ it("멈춘 자리값 줄의 소요는 흐리게 보이고 「멈춤」 까닭을
   // 끝난 줄과 아직 흐르는 줄에는 표식이 없다
   expect(row(RUN).querySelector("[data-frozen]")).toBeNull();
   expect(row(uid(106)).querySelector("[data-frozen]")).toBeNull();
+});
+
+// ── 백그라운드 작업(백그라운드 작업 스펙 5.7·D6·D7) ──────────────────────────────
+
+const bgTask = (taskId: string, originRunId: string, over: Partial<BackgroundTask> = {}): BackgroundTask => ({
+  taskId,
+  kind: "shell",
+  description: `pnpm dev ${taskId}`,
+  startedAt: new Date(Date.now() - 125_000).toISOString(),
+  originRunId,
+  ...over,
+});
+/** 그 대화(여기서는 채널의 「이전 대화」 = CH)의 작업 전체를 바꿔 끼운다 — 서버 tasks.updated 와 같은 값 */
+const putTasks = (tasks: BackgroundTask[], runnerConnected = true) =>
+  act(() => useBackgroundTaskStore.getState().apply(CH, { conversationId: CH, runnerConnected, tasks }));
+const taskRows = (el: HTMLElement) => [...el.querySelectorAll<HTMLElement>("[data-task-id]")];
+
+it("shows background rows on a collapsed card — 접힌 끝난 카드에도 작업 줄, 머리에 「백그라운드 N」 칩", async () => {
+  stubServer({ runs: [runOf(RUN2, { createdAt: "2027-01-15T08:10:00.000Z" }), runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findAllByRole("region", { name: /^@dev 런/ });
+  expect(openRuns(aside)).toEqual([RUN2]);
+  putTasks([
+    bgTask("s1", RUN),
+    bgTask("a1", RUN, {
+      kind: "subagent",
+      description: "파일 찾기",
+      subagentType: "Explore",
+      summary: "src 를 훑는 중",
+      lastToolName: "Grep",
+    }),
+  ]);
+  const collapsed = card(aside, RUN);
+  expect(collapsed).toHaveAttribute("data-expanded", "false");
+  const rows = taskRows(collapsed);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toHaveTextContent("셸");
+  expect(rows[0]).toHaveTextContent("pnpm dev s1");
+  expect(rows[0]).toHaveTextContent("2분째");
+  expect(rows[1]).toHaveTextContent("서브에이전트");
+  expect(rows[1]).toHaveTextContent("파일 찾기");
+  expect(rows[1]).toHaveTextContent("Explore · src 를 훑는 중 · Grep");
+  const badge = collapsed.querySelector('[data-slot="background-chip"]');
+  expect(badge).toHaveTextContent("백그라운드 2");
+  expect(badge).toHaveAttribute("aria-label", "백그라운드 작업 2개");
+  // 작업이 없는 카드에는 칩도 줄도 없다
+  expect(card(aside, RUN2).querySelector('[data-slot="background-chip"]')).toBeNull();
+  expect(taskRows(card(aside, RUN2))).toHaveLength(0);
+  // 바꿔 끼운 값에서 빠진 작업은 줄도 빠진다
+  putTasks([bgTask("s1", RUN)]);
+  expect(taskRows(card(aside, RUN))).toHaveLength(1);
+  expect(card(aside, RUN).querySelector('[data-slot="background-chip"]')).toHaveTextContent("백그라운드 1");
+});
+
+it("stop follows the run stop rule — 런을 보는 사람 누구에게나 「종료」, wire 가 붙어 있지 않으면 비활성", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  putTasks([bgTask("s1", RUN)]);
+  const stop = within(card(aside, RUN)).getByRole("button", { name: "셸 pnpm dev s1 종료" });
+  expect(stop).toBeEnabled();
+  act(() => useWireStatus.getState().setStatus("reconnecting"));
+  expect(stop).toBeDisabled();
+  await userEvent.click(stop);
+  expect(fake.sentOf("task.stop")).toEqual([]);
+  act(() => useWireStatus.getState().setStatus("connected"));
+  expect(stop).toBeEnabled();
+});
+
+it("stop sends task.stop and disables the button — 원래 런 id 로 보내고, 응답 전까지 잠근다. 실패는 그 줄에, NOT_FOUND 면 줄을 지운다", async () => {
+  let release: (r: Result<null>) => void = () => {};
+  fake.onAck("task.stop", () => new Promise<Result<null>>((resolve) => (release = resolve)));
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  putTasks([bgTask("s1", RUN), bgTask("s2", RUN)]);
+
+  await userEvent.click(within(card(aside, RUN)).getByRole("button", { name: "셸 pnpm dev s1 종료" }));
+  expect(fake.sentOf("task.stop")).toEqual([{ runId: RUN, taskId: "s1" }]);
+  const locked = within(card(aside, RUN)).getByRole("button", { name: "셸 pnpm dev s1 종료 중" });
+  expect(locked).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(locked);
+  expect(fake.sentOf("task.stop")).toHaveLength(1);
+
+  // 러너가 끊겼거나 끄지 못했다 — 그 줄에 짧게 알리고 다시 연다
+  await act(async () => release({ ok: false, error: { code: "ADAPTER_UNAVAILABLE", message: "x" } }));
+  const row = taskRows(card(aside, RUN))[0]!;
+  expect(within(row).getByRole("alert")).toHaveTextContent("러너에 닿지 않아 작업을 종료하지 못했습니다");
+  expect(within(row).getByRole("button", { name: "셸 pnpm dev s1 종료" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
+
+  // 서버가 그 런을 모른다 — 줄을 지운다
+  await userEvent.click(within(row).getByRole("button", { name: "셸 pnpm dev s1 종료" }));
+  await act(async () => release({ ok: false, error: { code: "NOT_FOUND", message: "x" } }));
+  expect(taskRows(card(aside, RUN)).map((r) => r.dataset.taskId)).toEqual(["s2"]);
+});
+
+it("marks disconnected runner rows — 줄을 흐리고 「러너 연결 끊김」, 「종료」는 없다", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  putTasks([bgTask("s1", RUN)], false);
+  const list = card(aside, RUN).querySelector<HTMLElement>('[data-slot="background-tasks"]')!;
+  expect(list).toHaveClass("opacity-60");
+  expect(within(list).getByText("러너 연결 끊김")).toBeInTheDocument();
+  expect(within(list).queryByRole("button", { name: /종료/ })).not.toBeInTheDocument();
+  putTasks([bgTask("s1", RUN)], true);
+  expect(list).not.toHaveClass("opacity-60");
+  expect(within(list).queryByText("러너 연결 끊김")).not.toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "셸 pnpm dev s1 종료" })).toBeInTheDocument();
+});
+
+it("in progress filter includes finished runs with tasks — 작업이 남은 끝난 런도 「진행 중」에 들고 수에도 든다", async () => {
+  stubServer({ runs: [runOf(RUN2, { createdAt: "2027-01-15T08:10:00.000Z" }), runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findAllByRole("region", { name: /^@dev 런/ });
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 0");
+  putTasks([bgTask("s1", RUN)]);
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 1");
+  await userEvent.click(chip(aside, "진행 중"));
+  expect(runIds(aside)).toEqual([RUN]);
+  // 작업이 끝나면 빠진다
+  putTasks([]);
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 0");
+  expect(within(aside).getByText("진행 중인 런이 없습니다.")).toBeInTheDocument();
+});
+
+it("follow-up card names its origin run — 「추가 응답 · <원래 런 시작 시각> 런」, 원래 런을 모르면 「추가 응답」", async () => {
+  const FOLLOWUP = uid(130);
+  const ORPHAN = uid(131);
+  const startedAt = "2027-01-15T08:00:01.000Z";
+  stubServer({
+    runs: [
+      runOf(ORPHAN, { triggerKind: "background", backgroundOriginRunId: uid(999) }),
+      runOf(FOLLOWUP, { triggerKind: "background", backgroundOriginRunId: RUN }),
+      runOf(RUN, { startedAt }),
+    ],
+  });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findAllByRole("region", { name: /^@dev 런/ });
+  const time = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(
+    new Date(startedAt),
+  );
+  expect(card(aside, FOLLOWUP).querySelector('[data-slot="followup-origin"]')).toHaveTextContent(
+    `추가 응답 · ${time} 런`,
+  );
+  expect(card(aside, ORPHAN).querySelector('[data-slot="followup-origin"]')?.textContent).toBe("추가 응답");
+  expect(card(aside, RUN).querySelector('[data-slot="followup-origin"]')).toBeNull();
+});
+
+it("follow-up card names its origin run from live run.state — 실시간 상태가 backgroundOriginRunId 를 싣는다", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  act(() =>
+    useRunStore
+      .getState()
+      .applyState(runState({ id: RUN2, status: "streaming", backgroundOriginRunId: RUN })),
+  );
+  await waitFor(() =>
+    expect(card(aside, RUN2).querySelector('[data-slot="followup-origin"]')).toHaveTextContent(
+      /^추가 응답 · .+ 런$/,
+    ),
+  );
+});
+
+it("held settings note — CUSTOM dodok.held_settings 가 있는 런 카드에 D6 문구(접혀 있어도 받아 둔 이벤트면)", async () => {
+  const queryClient = createQueryClient(() => {});
+  queryClient.setQueryData(qk.runEvents(RUN), [
+    runEvent({ type: "CUSTOM", seq: 1, name: "dodok.held_settings", value: { fields: ["allowedTools"] } }),
+    ...TOOL_EVENTS.map((e) => ({ ...e, seq: e.seq + 1 })),
+  ]);
+  stubServer({ runs: [runOf(RUN2, { createdAt: "2027-01-15T08:10:00.000Z" }), runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`, queryClient);
+  const aside = await panel();
+  await within(aside).findAllByRole("region", { name: /^@dev 런/ });
+  await waitFor(() =>
+    expect(card(aside, RUN).querySelector('[data-slot="held-settings"]')).toHaveTextContent(
+      "백그라운드 작업 때문에 일부 설정은 이전 값으로 실행",
+    ),
+  );
+  expect(card(aside, RUN2).querySelector('[data-slot="held-settings"]')).toBeNull();
+  // 행이 되지는 않는다 — 요약은 그대로 도구 하나
+  expect(card(aside, RUN).querySelector('[data-slot="run-summary"]')).toHaveTextContent("도구 1(Read)");
+});
+
+it("held settings note — 실시간으로 본 런도 D6 문구", async () => {
+  stubServer({ runs: [] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("아직 실행 기록이 없습니다.");
+  act(() => {
+    useRunStore.getState().applyState(runState({ id: RUN2, status: "queued" }));
+    useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" }));
+    useRunStore
+      .getState()
+      .applyEvent(
+        runEvent({ runId: RUN2, type: "CUSTOM", seq: 1, name: "dodok.held_settings", value: { fields: [] } }),
+      );
+  });
+  await waitFor(() =>
+    expect(card(aside, RUN2).querySelector('[data-slot="held-settings"]')).toHaveTextContent(
+      "백그라운드 작업 때문에 일부 설정은 이전 값으로 실행",
+    ),
+  );
+});
+
+it("queued card explains held slots — 기다리는 런 카드에 D7 문구, 시작하면 사라진다", async () => {
+  stubServer({ runs: [] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("아직 실행 기록이 없습니다.");
+  act(() => {
+    useRunStore.getState().applyState(runState({ id: RUN2, status: "queued" }));
+    useRunStore.getState().applyEvent(runEvent({ runId: RUN2, type: "RUN_QUEUED", seq: 1, heldSlots: 2 }));
+  });
+  const held = await waitFor(() => {
+    const el = card(aside, RUN2).querySelector('[data-slot="held-slots"]');
+    expect(el).not.toBeNull();
+    return el;
+  });
+  expect(held).toHaveTextContent(
+    "백그라운드 작업 2개가 러너 자리를 쓰는 중 — 활동 탭에서 종료하면 이어집니다",
+  );
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" })));
+  expect(card(aside, RUN2).querySelector('[data-slot="held-slots"]')).toBeNull();
 });
