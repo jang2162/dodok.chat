@@ -481,7 +481,6 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   const { start } = spec;
   // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-  const sessionId = start.providerSessionId;
   const runId = start.deliver.runId;
   const command = start.deliver.command;
   // 서버를 지나도 막는 명령은 한 번 더 막는다(에이전트 명령 스펙 5.3 — 이중 방어)
@@ -498,8 +497,30 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
       ctx.log?.(`dodok-runner: 런 ${runId} SOUL.md 를 쓰지 못했습니다 — ${String(error)}`);
     }
   }
-  let held = await heldProcessFor(spec, ctx);
+  const held = await heldProcessFor(spec, ctx);
   if (held === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  // heldProcessFor 가 쥐여 준 자리 — 턴을 열지 않고 나가면 놓는다. 안 놓으면 그 세션의 다음 런이 whenIdle 에서 영영 기다리고
+  // 프로세스도 닫히지 않는다(리뷰 B1)
+  let reservation: SessionProcess | undefined = held;
+  try {
+    return await runOnceReserved(spec, ctx, held, () => (reservation = undefined));
+  } finally {
+    reservation?.unreserve();
+  }
+}
+
+/** runOnce 의 나머지 — heldAtStart 의 자리는 handOff() 를 부르기 전까지 runOnce 가 쥐고 있다(이른 반환이면 runOnce 가 놓는다) */
+async function runOnceReserved(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+  heldAtStart: SessionProcess | undefined,
+  handOff: () => void,
+): Promise<void> {
+  const { start } = spec;
+  const sessionId = start.providerSessionId;
+  const runId = start.deliver.runId;
+  const command = start.deliver.command;
+  let held: SessionProcess | undefined | "aborted" = heldAtStart;
   let resume = false;
   if (held === undefined) {
     let lookup = "";
@@ -524,6 +545,8 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
   const alwaysAllowed: AlwaysAllowed = new Set();
   const botMcp = assembleBotMcp(spec, ctx.log);
   if (held !== undefined) {
+    // 여기부터 자리는 runHeldTurn 이 쥔다 — 턴을 열거나 스스로 놓는다
+    handOff();
     const outcome = await runHeldTurn(spec, ctx, held, images, alwaysAllowed, botMcp);
     if (outcome === "done") return;
     if (outcome === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));

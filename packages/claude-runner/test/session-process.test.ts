@@ -391,6 +391,65 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     expect(finals(first.emitted)[0]).toMatchObject({ final: { costUsd: 0.5 } });
     expect(finals(second.emitted)[0]).toMatchObject({ final: { costUsd: 0.25 } });
   });
+
+  it("a held run aborted while loading images gives the turn back to the next run", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["첫째"]),
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_3", ["셋째 답"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    // 둘째 런 — 이미지를 받는 사이 중지된다(붙든 프로세스의 자리를 쥔 뒤)
+    const imageId = "0192f000-0000-7000-8000-0000000000f1";
+    const bridge = createFakeBridge();
+    let downloading = false;
+    bridge.http.download = (_id, opts) =>
+      new Promise((_resolve, reject) => {
+        downloading = true;
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    const base = spec2();
+    const withImage: ClaudeRunSpec = {
+      ...base,
+      start: {
+        ...base.start,
+        deliver: {
+          ...base.start.deliver,
+          message: {
+            ...base.start.deliver.message,
+            attachments: [
+              {
+                id: imageId,
+                kind: "image",
+                url: `artifact://${imageId}`,
+                name: "a.png",
+                mime: "image/png",
+                size: 3,
+              },
+            ],
+          },
+        },
+      },
+    };
+    const second = start(withImage, bridge);
+    await until(() => downloading);
+    second.controller.abort();
+    await second.done;
+    expect(finals(second.emitted)).toMatchObject([{ final: { stopReason: "aborted" } }]);
+    // 셋째 런은 같은 프로세스의 다음 턴으로 끝난다 — 둘째 런이 자리를 놓지 않으면 whenIdle 에서 영영 기다린다
+    const third = start(runSpec({ runId: RUN_3 }));
+    let settled = false;
+    void third.done.then(() => (settled = true));
+    await until(() => settled, 1500);
+    expect(fake.calls).toHaveLength(1);
+    expect(finals(third.emitted)).toMatchObject([{ final: { text: "셋째 답" } }]);
+  });
 });
 
 const FOLLOW = "0192f000-0000-7000-8000-00000000f001";
