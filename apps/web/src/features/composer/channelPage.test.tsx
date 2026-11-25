@@ -117,7 +117,7 @@ it("PendingActions: 다시 보내기는 같은 clientMsgId 로 다시 보내 확
 
 /** 에이전트 dev 가 쓴 글 하나가 든 채널 — dev 는 채널 멤버라 작성기의 @ 후보다. `thread` 면 그 글을 답글로 둔 스레드를 연다 */
 const ROOT = msg(1, { bodyMd: "루트 질문" });
-function renderWithAgentMessage({ thread = false } = {}) {
+function renderWithAgentMessage({ thread = false, main = false } = {}) {
   // 가상 목록은 높이를 재야 줄을 그린다
   const restoreScroll = stubScrollLayout();
   onTestFinished(restoreScroll);
@@ -147,10 +147,10 @@ function renderWithAgentMessage({ thread = false } = {}) {
     lastSeq: thread ? 2 : 1,
   });
   if (thread) setChannelSeq(qc, CH, 2);
-  renderRoute(thread ? `/c/${CH}/s/${CH}/t/${ROOT.id}` : `/c/${CH}/s/${CH}`, qc);
+  renderRoute(thread ? `/c/${CH}/s/${CH}/t/${ROOT.id}${main ? "?view=main" : ""}` : `/c/${CH}/s/${CH}`, qc);
 }
 const textOf = async (name: string) => {
-  const box = await screen.findByRole("textbox", { name });
+  const box = await screen.findByRole("textbox", { name, hidden: true });
   return (box as unknown as { editor: Editor }).editor.getText();
 };
 const composerText = () => textOf("메시지 입력");
@@ -195,6 +195,19 @@ it("스레드 패널 안의 이름 → 「멘션」은 스레드 작성기에 �
   const user = userEvent.setup();
   const panel = await screen.findByTestId("thread-panel");
   const name = await within(panel).findByRole("button", { name: "개발봇" });
+  await waitFor(async () => expect(await textOf("스레드 답글 입력")).toBe(""));
+  name.focus();
+  await user.keyboard("{Enter}");
+  await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "멘션" }));
+  await waitFor(async () => expect(await textOf("스레드 답글 입력")).toBe("@dev "));
+  expect(await composerText()).toBe("");
+});
+
+it("스레드 메인 보기(?view=main)의 이름 → 「멘션」도 그 스레드 작성기에 넣는다", async () => {
+  renderWithAgentMessage({ thread: true, main: true });
+  const user = userEvent.setup();
+  const view = await screen.findByTestId("thread-main");
+  const name = await within(view).findByRole("button", { name: "개발봇" });
   await waitFor(async () => expect(await textOf("스레드 답글 입력")).toBe(""));
   name.focus();
   await user.keyboard("{Enter}");
