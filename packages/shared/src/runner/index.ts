@@ -361,10 +361,22 @@ export type RunnerHello = z.infer<typeof RunnerHello>;
  * 핸드셰이크 미들웨어가 connect_error 로 거절하고, 러너는 거기서 가른다(RATE_LIMITED 는 끝내지 않는다 — 최종 리뷰 M3)
  */
 export const RunnerHelloResult = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), serverVersion: z.string() }),
+  z.object({
+    ok: z.literal(true),
+    serverVersion: z.string(),
+    /**
+     * 서버가 아는 러너 기능(RUNNER_SERVER_FEATURES). 러너는 서버가 「backgroundTasks」를 알릴 때만 백그라운드 작업이 남은 프로세스를
+     * 붙든다 — 옛 서버는 추가 응답·작업 끄기·세션 놓기를 보내지 않아 붙든 프로세스를 끌 길이 없다(리뷰 C1). 없으면 아무것도 모른다
+     */
+    features: z.array(z.string()).max(32).optional(),
+  }),
   z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
 ]);
 export type RunnerHelloResult = z.infer<typeof RunnerHelloResult>;
+
+/** hello 결과 features 의 값 — 문자열 배열이라 옛 러너는 모르는 값을 그냥 지나친다 */
+export const RUNNER_SERVER_FEATURES = ["backgroundTasks"] as const;
+export type RunnerServerFeature = (typeof RUNNER_SERVER_FEATURES)[number];
 
 /**
  * 봇 id — 그 봇 에이전트의 providerAgentId(서버가 짓는 `r-` + 소문자 hex 10, 러너 봇 스펙 B1). 러너가 `botsDir/<id>` 를 런 자리로

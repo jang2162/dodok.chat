@@ -118,6 +118,8 @@ async function setup(
     control?: RunnerAdapterOptions["onControlCall"] | null;
     /** 서버의 추가 응답 런 만들기(백그라운드 작업 스펙 5.5) — 없으면 옵션을 주지 않는다 */
     followup?: RunnerAdapterOptions["onFollowup"];
+    /** 참이면 onTasks 옵션을 주지 않는다 */
+    noTasks?: boolean;
   } = {},
 ): Promise<Harness> {
   // 가짜 시계로 10분을 건너뛰어도 Socket.IO 하트비트가 끊지 않게 핑 간격을 늘린다
@@ -178,7 +180,12 @@ async function setup(
             return control(connectionId, call);
           },
         }),
-    onTasks: (connectionId, update) => void tasks.push([connectionId, update]),
+    ...(opts.noTasks
+      ? {}
+      : {
+          onTasks: (connectionId: string, update: RunnerTasksUpdate | { disconnected: true }) =>
+            void tasks.push([connectionId, update]),
+        }),
     ...(opts.followup ? { onFollowup: opts.followup } : {}),
     agentDefinition: (agentId, tokenId, conversationId) => {
       definitionCalls.push([agentId, tokenId]);
@@ -237,7 +244,8 @@ async function setup(
   };
 }
 
-afterEach(async () => {
+/** 띄운 어댑터·서버를 닫는다 — 한 시험에서 setup 을 여러 번 부를 때 사이에도 부른다 */
+async function teardown(): Promise<void> {
   if (current) {
     for (const r of current.runners) r.close();
     await current.adapter.close();
@@ -245,6 +253,10 @@ afterEach(async () => {
     await new Promise<void>((resolve) => current?.http.close(() => resolve()));
     current = undefined;
   }
+}
+
+afterEach(async () => {
+  await teardown();
   vi.useRealTimers();
 });
 
@@ -2757,6 +2769,25 @@ describe("백그라운드 작업 프레임(백그라운드 작업 스펙 5.3·5.
   };
   const followupOf = (r: FakeRunner, req: RunnerFollowupRequest): Promise<RunnerFollowupResult> =>
     r.socket.timeout(2000).emitWithAck("run.followup", req);
+
+  it("hello result announces backgroundTasks only when the server takes followups and tasks", async () => {
+    const followup: RunnerAdapterOptions["onFollowup"] = async () => ({ ok: false, reason: "closed" });
+    const both = await setup({ followup });
+    expect(await (await both.runner(TOKEN_A)).hello()).toEqual({
+      ok: true,
+      serverVersion: "test-server",
+      features: ["backgroundTasks"],
+    });
+    await teardown();
+    const noFollowup = await setup();
+    expect(await (await noFollowup.runner(TOKEN_A)).hello()).toEqual({
+      ok: true,
+      serverVersion: "test-server",
+    });
+    await teardown();
+    const noTasks = await setup({ followup, noTasks: true });
+    expect(await (await noTasks.runner(TOKEN_A)).hello()).toEqual({ ok: true, serverVersion: "test-server" });
+  });
 
   it("followup registers a started run that accepts events", async () => {
     const FOLLOW = randomUUID();

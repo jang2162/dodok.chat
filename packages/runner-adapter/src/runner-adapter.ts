@@ -49,6 +49,7 @@ import {
   RunnerFsListResult,
   RunnerHello,
   type RunnerHelloResult,
+  type RunnerServerFeature,
   RunnerOutboundPost,
   type RunnerOutboundAck,
   RunnerProjectCheckResult,
@@ -566,13 +567,22 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
   }
 
+  // 서버가 추가 응답·작업 목록을 받을 수 있을 때만 러너가 프로세스를 붙든다(리뷰 C1) — 둘 중 하나라도 없으면 알리지 않는다
+  const helloOk: RunnerHelloResult = {
+    ok: true,
+    serverVersion: opts.serverVersion,
+    ...(opts.onFollowup && opts.onTasks
+      ? { features: ["backgroundTasks" satisfies RunnerServerFeature] }
+      : {}),
+  };
+
   function onHello(socket: RunnerSocket, auth: Required<SocketAuth>, payload: unknown, ack: unknown) {
     const reply = (r: RunnerHelloResult) => {
       if (typeof ack === "function") ack(r);
     };
     if (registry.get(socket.id)) {
       logger.warn({ tokenId: auth.tokenId }, "runner hello repeated — ignored");
-      return reply({ ok: true, serverVersion: opts.serverVersion });
+      return reply(helloOk);
     }
     const reject = (message: string, detail: object) => {
       logger.warn({ tokenId: auth.tokenId, ...detail }, "runner hello rejected");
@@ -627,7 +637,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       },
       "runner hello",
     );
-    reply({ ok: true, serverVersion: opts.serverVersion });
+    reply(helloOk);
     announceRunners();
   }
 

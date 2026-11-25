@@ -177,6 +177,11 @@ describe("/runner 프레임 — 유효 예 왕복", () => {
     ["RunnerHello", RunnerHello, HELLO],
     ["RunnerHelloResult ok", RunnerHelloResult, { ok: true, serverVersion: "0.0.0" }],
     [
+      "RunnerHelloResult ok + features",
+      RunnerHelloResult,
+      { ok: true, serverVersion: "0.0.0", features: ["backgroundTasks", "모르는-기능"] },
+    ],
+    [
       "RunnerHelloResult 거절",
       RunnerHelloResult,
       { ok: false, code: "PROTOCOL_MISMATCH", message: "서버와 러너 판본을 맞추세요" },
