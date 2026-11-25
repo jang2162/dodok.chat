@@ -54,6 +54,7 @@ type Post = {
   authorType: "user" | "agent" | "system";
   authorId?: string;
   threadRootId?: string;
+  alsoInChannel?: boolean;
   mentionUsers?: string[];
 };
 
@@ -83,6 +84,7 @@ function post(db: Db, conversationId: string, p: Post): { id: string; seq: numbe
         bodyMd: "hi",
         mentions: { agents: [], users: p.mentionUsers ?? [] },
         threadRootId: p.threadRootId ?? null,
+        alsoInChannel: p.alsoInChannel ? 1 : 0,
         createdAt: NOW,
       })
       .run();
@@ -301,6 +303,22 @@ describe("unreadFor", () => {
     post(db, conv, { authorType: "user", authorId: b, threadRootId: root.id, mentionUsers: [a] });
 
     expect(unreadOf(db, workspaceId, a, conv)).toMatchObject({ unread: false, mentions: 1 });
+  });
+
+  it("채널에도 보낸 답글은 굵게 하고, 그 세션을 읽으면 꺼진다 — 멘션 배지는 한 번만", () => {
+    const { db, workspaceId, a, b, conv } = setup();
+    const root = post(db, conv, { authorType: "user", authorId: a });
+    const also = post(db, conv, {
+      authorType: "user",
+      authorId: b,
+      threadRootId: root.id,
+      alsoInChannel: true,
+      mentionUsers: [a],
+    });
+
+    expect(unreadOf(db, workspaceId, a, conv)).toMatchObject({ unread: true, mentions: 1 });
+    markRead(db, workspaceId, a, conv, also.seq, NOW);
+    expect(unreadOf(db, workspaceId, a, conv)).toMatchObject({ unread: false, mentions: 0 });
   });
 
   it("자기를 멘션한 자기 글은 배지에 넣지 않는다", () => {

@@ -184,6 +184,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
         conversationId: message.conversationId,
         seq: message.seq,
         ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
+        ...(message.alsoInChannel ? { alsoInChannel: true as const } : {}),
         authorType,
         authorId: message.authorId,
         mentionedUserIds,

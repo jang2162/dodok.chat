@@ -37,12 +37,13 @@ function setup() {
     workspaceId: ids.workspaceId,
   });
   let n = 0;
-  const say = (bodyMd = "안녕") =>
+  const say = (bodyMd = "안녕", over: { threadRootId?: string; alsoInChannel?: boolean } = {}) =>
     createUserMessage(db, bus, {
       conversationId: ids.conversationId,
       authorId: ids.userId,
       bodyMd,
       clientMsgId: `c${++n}`,
+      ...over,
     });
   return { db, bus, ids, emitted, logger, fanout, say };
 }
@@ -61,6 +62,24 @@ describe("attachWireFanout — message.created", () => {
       ["channel.activity", [workspaceRoom(t.ids.workspaceId)]],
     ]);
     expect(t.emitted[0]?.payload).toMatchObject({ message: { id: message.id } });
+    t.fanout.close();
+  });
+
+  it("channel.activity 는 채널에도 보낸 답글에만 alsoInChannel 을 싣는다", () => {
+    const t = setup();
+    const root = t.say("루트");
+    const also = t.say("채널에도", { threadRootId: root.id, alsoInChannel: true });
+    const plain = t.say("스레드만", { threadRootId: root.id, alsoInChannel: false });
+    const activity = (id: string) => {
+      const seq = [root, also, plain].find((m) => m.id === id)?.seq;
+      return t.emitted.find(
+        (e) => e.event === "channel.activity" && (e.payload as { seq: number }).seq === seq,
+      )?.payload;
+    };
+    expect(activity(also.id)).toMatchObject({ threadRootId: root.id, alsoInChannel: true });
+    expect(activity(plain.id)).toMatchObject({ threadRootId: root.id });
+    expect(activity(plain.id)).not.toHaveProperty("alsoInChannel");
+    expect(activity(root.id)).not.toHaveProperty("alsoInChannel");
     t.fanout.close();
   });
 
