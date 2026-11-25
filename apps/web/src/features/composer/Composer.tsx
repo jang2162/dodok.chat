@@ -1,3 +1,4 @@
+import { findMessageLinks } from "@dodok/shared";
 import type { JSONContent } from "@tiptap/core";
 import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extension-placeholder";
@@ -9,6 +10,7 @@ import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "rea
 import { toast } from "sonner";
 import { useAgents, useMe, useMembers, usePeople } from "@/api/queries";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
+import { LinkedMessageCards } from "@/features/messages/LinkedMessageCard";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectScopeRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
@@ -257,6 +259,18 @@ export function Composer({
     [],
   );
   const empty = useEditorState({ editor, selector: ({ editor: ed }) => ed.isEmpty });
+  // 본문의 같은 앱 메시지 링크 — 작성기 위 인용 카드 미리보기(메시지 링크 스펙). ✕ 는 미리보기만 닫는다(웹 상태 — 자리가 바뀌거나 보내면 비운다)
+  const linkedIds = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => findMessageLinks(ed.getText(), window.location.origin),
+    equalityFn: (a, b) => b !== null && a.join() === b.join(),
+  });
+  const [dismissedLinks, setDismissedLinks] = useState<{ n: number; ids: ReadonlySet<string> }>({
+    n: place.n,
+    ids: new Set(),
+  });
+  if (dismissedLinks.n !== place.n) setDismissedLinks({ n: place.n, ids: new Set() });
+  const shownLinks = linkedIds.filter((id) => !dismissedLinks.ids.has(id));
   // 초안이 부르는 에이전트 — 도구 줄 알약의 강조(작성기 도구 줄 스펙 T6). 같은 집합이면 다시 그리지 않는다
   const mentioned = useEditorState({
     editor,
@@ -387,6 +401,7 @@ export function Composer({
     if (agentSettings.length > 0) setPendingSettings({ n: place.n, byAgent: {} });
     if (alsoChoice !== undefined) setAlsoChoice(undefined);
     attachments.clear();
+    setDismissedLinks({ n: place.n, ids: new Set() });
     editor.commands.clearContent();
   };
 
@@ -416,6 +431,11 @@ export function Composer({
           items={attachments.items}
           onRemove={attachments.remove}
           onEmptied={() => attachButton.current?.focus()}
+        />
+        <LinkedMessageCards
+          ids={shownLinks}
+          onDismiss={(id) => setDismissedLinks((d) => ({ n: d.n, ids: new Set(d.ids).add(id) }))}
+          className="flex flex-col gap-1.5 pt-1 pb-1.5"
         />
         <EditorContent editor={editor} className="min-w-0" />
         <div data-testid="composer-toolbar" className="flex items-center gap-1.5">

@@ -160,16 +160,23 @@ export function laneOfMessage(bundle: Bundle, messageId: string): string | undef
   return bundle.lanes.find((l) => l.messageIds.includes(messageId) || l.systemIds.includes(messageId))?.runId;
 }
 
-/** 접힌 줄의 미리보기 — 마크다운 표시를 걷은 첫 줄. 멘션 토큰은 @핸들로 */
+/** 접힌 줄의 미리보기 — 마크다운 표시를 걷은 첫 줄(빈 줄은 건너뛴다). 멘션 토큰은 @핸들로. `lines` 면 그만큼의 줄을 줄바꿈으로 잇는다(링크한 메시지 카드) */
 export function previewOf(
   bodyMd: string,
   mention: (kind: "a" | "u", id: string) => string | undefined,
+  lines = 1,
 ): string {
-  const line = bodyMd.split("\n").find((l) => l.trim() !== "") ?? "";
-  return line
-    .replace(/<@([au]):([0-9a-f-]+)>/gi, (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`)
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
-    .replace(/[*_`~]/g, "")
-    .trim();
+  return bodyMd
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .slice(0, lines)
+    .map((line) =>
+      line
+        .replace(/<@([au]):([0-9a-f-]+)>/gi, (_, kind: "a" | "u", id: string) => `@${mention(kind, id) ?? "?"}`)
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/, "")
+        .replace(/[*_`~]/g, "")
+        .trim(),
+    )
+    .join("\n");
 }

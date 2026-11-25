@@ -1,9 +1,9 @@
-import type { Message } from "@dodok/shared";
+import { findMessageLinks, type Message } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMe } from "@/api/queries";
 import { BotIcon, CornerDownRightIcon } from "lucide-react";
-import { type MouseEvent, type PointerEvent, type ReactNode, useRef } from "react";
+import { type MouseEvent, type PointerEvent, type ReactNode, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { MessageActivity } from "@/features/activity/InlineActivity";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
@@ -29,6 +29,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { IdentityAvatar } from "@/ui/identity-avatar";
 import { previewOf } from "./bundles";
 import { MessageBody } from "./MessageBody";
+import { LinkedMessageCards } from "./LinkedMessageCard";
 import { CopyLinkButton } from "./messageLink";
 import { type Author, useAuthors } from "./useAuthors";
 
@@ -315,6 +316,11 @@ export function MessageItem({
   const pickable = reactable && !archived;
   // 링크 복사(메시지 링크 스펙 「복사 자리」) — 시스템 메시지는 가리킬 까닭이 없다
   const linkable = message.kind === "normal";
+  // 본문의 같은 앱 메시지 링크 — 본문 아래 인용 카드(메시지 링크 스펙, 최대 3). 보는 사람이 못 읽는 것은 카드가 그리지 않는다
+  const linkedIds = useMemo(
+    () => (message.kind === "normal" ? findMessageLinks(message.bodyMd, window.location.origin) : []),
+    [message.kind, message.bodyMd],
+  );
   return (
     <article
       className="group relative flex gap-3 px-4 py-0.5 hover:bg-accent/40"
@@ -363,6 +369,7 @@ export function MessageItem({
         )}
         {message.bodyMd !== "" && <MessageBody bodyMd={message.bodyMd} />}
         {message.editedAt && <span className="text-xs text-muted-foreground">(수정됨)</span>}
+        <LinkedMessageCards ids={linkedIds} className="my-1 flex flex-col gap-1.5" />
         <MessageAttachments
           attachments={message.attachments}
           exclude={referencedAttachmentIds(message.components, message.attachments)}
