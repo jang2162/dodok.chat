@@ -142,11 +142,14 @@ it("헤더 아바타에 삭제(보관)한 에이전트는 없다 — 멤버 응�
     members: [memberOf("user", "u"), memberOf("agent", "ag-dev"), memberOf("agent", "ag-fin")],
   });
   renderRoute("/c/a");
-  const group = await within(await screen.findByTestId("channel-header")).findByRole("group", {
-    name: "참여 에이전트",
+  // 참여자 단추(UI 시안 03) — 나(u)와 dev 둘, 보관한 fin 은 세지도 보이지도 않는다
+  const header = await screen.findByTestId("channel-header");
+  await userEvent.click(await within(header).findByRole("button", { name: "참여자 2명" }));
+  const agents = within(await screen.findByRole("dialog", { name: "참여자 2" })).getByRole("region", {
+    name: "에이전트",
   });
-  expect(await within(group).findByRole("img", { name: "@dev" })).toBeInTheDocument();
-  expect(within(group).queryByRole("img", { name: "@fin" })).not.toBeInTheDocument();
+  expect(agents).toHaveTextContent("@dev");
+  expect(agents).not.toHaveTextContent("@fin");
 });
 
 it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트 색), 설정 버튼은 설정 패널을 여닫는다", async () => {
@@ -159,11 +162,12 @@ it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트
   expect(await within(header).findByRole("heading", { name: /general/ })).toBeInTheDocument();
   expect(within(header).getByText("아무 이야기")).toBeInTheDocument();
 
-  const group = await within(header).findByRole("group", { name: "참여 에이전트" });
-  const dev = await within(group).findByRole("img", { name: "@dev" });
+  // 참여자 단추의 얼굴(UI 시안 03) — 사람(나) 다음 채널 에이전트 dev(fin 은 멤버가 아니다), 에이전트는 테두리 에이전트 색
+  const participants = await within(header).findByRole("button", { name: "참여자 2명" });
+  const faces = Array.from(participants.querySelectorAll<HTMLElement>("[data-kind]"));
+  expect(faces.map((f) => f.dataset.kind)).toEqual(["person", "agent"]);
   // toHaveStyle 은 계산된 스타일을 본다 — jsdom 은 var() 를 풀지 않으므로 인라인 값을 잰다
-  expect(dev.style.borderColor).toBe(agentColorVar("dev"));
-  expect(within(group).queryByRole("img", { name: "@fin" })).not.toBeInTheDocument();
+  expect(faces[1]?.style.borderColor).toBe(agentColorVar("dev"));
 
   const settings = within(header).getByRole("link", { name: "채널 설정" });
   // 채널 주소는 최근 세션(여기는 「이전 대화」 a)으로 넘겨졌다 — 설정 패널을 여닫아도 그 세션에 머문다

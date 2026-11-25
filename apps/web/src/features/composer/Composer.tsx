@@ -19,7 +19,9 @@ import { Button } from "@/ui/button";
 import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
 import { useSessionInvitedAgents } from "@/features/conversations/invitedAgents";
 import { mentionedAgentIds, sameIds } from "./mentionedAgents";
-import { mentionCandidates } from "./mentions";
+import { type MentionCandidate, mentionCandidates, mentionContent, mentionIdsIn } from "./mentions";
+import { MentionPicker } from "./MentionPicker";
+import { registerComposer } from "./insertMention";
 import { mentionSuggestion } from "./MentionList";
 import { AgentCommandSuggestion, type AgentCommandsLookup, commandSuggestion } from "./CommandList";
 import { commandBlock, useAgentCommands } from "./commands";
@@ -185,6 +187,7 @@ export function Composer({
     directAgentId: undefined as string | undefined,
     clearCommandError: () => {},
     wantCommands: () => {},
+    insertMentions: (_picked: readonly MentionCandidate[]) => false as boolean,
   });
   const menu = useRef({ open: false }).current;
   const commandMenu = useRef({ open: false }).current;
@@ -282,6 +285,21 @@ export function Composer({
         .run();
     });
   }, [editor, threadRootId]);
+  // 바깥(참여자 목록의 「멘션」·메시지 작성자 이름 메뉴 — UI 시안 02·03)에서 이 자리 작성기에 멘션을 넣는다. 후보는 @ 자동완성과 같은 목록
+  useEffect(
+    () =>
+      registerComposer(
+        { channelId, conversationId, ...(threadRootId === undefined ? {} : { threadRootId }) },
+        {
+          mention: (handle) => {
+            const c = live.current.candidates.find((x) => x.label === handle);
+            if (!c) return false;
+            return live.current.insertMentions([c]);
+          },
+        },
+      ),
+    [channelId, conversationId, threadRootId],
+  );
   // 명령 목록이 늦게 오면(처음 `/`) 열린 목록을 다시 그린다
   useEffect(() => {
     commandsUi.refresh();
@@ -298,6 +316,10 @@ export function Composer({
   }, [qc, channelId, conversationId, threadRootId]);
 
   live.current.candidates = candidates;
+  live.current.insertMentions = (picked) => {
+    if (editor.isDestroyed || !editor.isEditable || picked.length === 0) return false;
+    return editor.chain().focus().insertContent(mentionContent(picked)).run();
+  };
   live.current.placeholder =
     threadRootId !== undefined ? THREAD_PLACEHOLDER : plain ? DM_PLACEHOLDER : PLACEHOLDER;
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};
@@ -367,7 +389,7 @@ export function Composer({
     live.current.addFiles(files);
   };
 
-  // 입력 상자 안 두 줄(작성기 도구 줄 스펙 T1·5.1) — 첨부 미리보기 → 입력(전체 폭) → 도구 줄 [첨부][에이전트 칸][보내기]
+  // 입력 상자 안 두 줄(작성기 도구 줄 스펙 T1·5.1) — 첨부 미리보기 → 입력(전체 폭) → 도구 줄 [첨부][@ 부르기(UI 시안 02)][에이전트 칸][보내기]
   return (
     <div className="px-4 pb-4">
       <div
@@ -393,6 +415,13 @@ export function Composer({
           >
             <PaperclipIcon />
           </Button>
+          {dmKind !== "dm" && (
+            <MentionPicker
+              candidates={candidates}
+              inDraft={() => mentionIdsIn(editor.getJSON())}
+              onInsert={(picked) => live.current.insertMentions(picked)}
+            />
+          )}
           <input
             ref={fileInput}
             type="file"

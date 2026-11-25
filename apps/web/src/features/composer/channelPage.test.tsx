@@ -2,12 +2,17 @@ import type { Message, Result } from "@dodok/shared";
 import type { Editor } from "@tiptap/core";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { getTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
+import { stubScrollLayout } from "../../../test/scrollLayout";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { CH, msg } from "../../../test/fixtures";
+import { AGENT, CH, msg } from "../../../test/fixtures";
+import { DEV, memberOf } from "../../../test/composerHarness";
+import { qk } from "@/api/queries";
+import { createQueryClient } from "@/app/queryClient";
+import { emptyTimeline } from "@/features/messages/timeline";
 import { ME, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 // 채널 화면이 작성기 자리를 채우고, 보내는 중 항목의 다시 보내기·삭제를 PendingActionsContext 로 내려 주는지 잰다.
@@ -108,4 +113,67 @@ it("PendingActions: 다시 보내기는 같은 clientMsgId 로 다시 보내 확
   await userEvent.click(screen.getByRole("button", { name: "탐침 삭제" }));
   expect(getTimeline(queryClient, CH, CH)?.pending).toEqual([]);
   expect(fake.sent).toHaveLength(sent);
+});
+
+/** 에이전트 dev 가 쓴 글 하나가 든 채널 — dev 는 채널 멤버라 작성기의 @ 후보다 */
+function renderWithAgentMessage() {
+  // 가상 목록은 높이를 재야 줄을 그린다
+  const restoreScroll = stubScrollLayout();
+  onTestFinished(restoreScroll);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return json(200, ME);
+      if (url === "/api/v1/agents") return json(200, { agents: [DEV] });
+      if (url === `/api/v1/channels/${CH}/members`) return json(200, { members: [memberOf(DEV.id)] });
+      return shellGet(input, init) ?? json(404, {});
+    }),
+  );
+  const qc = createQueryClient(() => {});
+  qc.setQueryData(qk.timeline(CH, CH), {
+    ...emptyTimeline(),
+    items: [msg(1, { authorType: "agent", authorId: AGENT, bodyMd: "정리했습니다" })],
+  });
+  renderRoute(`/c/${CH}/s/${CH}`, qc);
+}
+const composerText = async () => {
+  const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+  return (box as unknown as { editor: Editor }).editor.getText();
+};
+
+it("에이전트 작성자 이름 → 메뉴 「멘션」·「프로필」, 「멘션」은 세션 작성기에 @dev 칩 [UI 시안 02]", async () => {
+  renderWithAgentMessage();
+  const user = userEvent.setup();
+  const name = await screen.findByRole("button", { name: "개발봇" });
+  // 후보 목록(멤버·에이전트)을 받은 뒤 부른다
+  await waitFor(async () => expect(await composerText()).toBe(""));
+  name.focus();
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu");
+  expect(
+    within(menu)
+      .getAllByRole("menuitem")
+      .map((i) => i.textContent),
+  ).toEqual(["멘션", "프로필"]);
+  await user.click(within(menu).getByRole("menuitem", { name: "멘션" }));
+  await waitFor(async () => expect(await composerText()).toBe("@dev "));
+});
+
+it("⌘/Ctrl+클릭은 메뉴 없이 바로 멘션", async () => {
+  renderWithAgentMessage();
+  const user = userEvent.setup();
+  const name = await screen.findByRole("button", { name: "개발봇" });
+  await waitFor(async () => {
+    await user.keyboard("{Meta>}");
+    await user.click(name);
+    await user.keyboard("{/Meta}");
+    expect(await composerText()).toBe("@dev ");
+  });
+  expect(screen.queryByRole("menu")).toBeNull();
+  await user.keyboard("{Control>}");
+  await user.click(name);
+  await user.keyboard("{/Control}");
+  expect(await composerText()).toBe("@dev @dev ");
+  expect(screen.queryByRole("menu")).toBeNull();
 });

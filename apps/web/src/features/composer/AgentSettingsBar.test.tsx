@@ -21,11 +21,11 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
 import { doc, flushEditorFrames, mention, p, setDoc, t } from "../../../test/composerHarness";
 import { stubMedia } from "../../../test/media";
-import { agentColorVar } from "../../theme/agentColor";
 import { runnerId } from "../../../test/runnersServer";
 import { Composer } from "./Composer";
+import { openAgentSettings } from "./insertMention";
 import { ABOVE_CEILING, EFFORT_DEFAULT_LABEL, EFFORT_UNSUPPORTED, RAISE_LOCKED } from "./AgentSettingChips";
-import { PANEL_COLUMNS, SHEET_COLUMNS } from "./AgentPills";
+import { PANEL_COLUMNS, panelTitle, SHEET_COLUMNS, settingsLabel } from "./AgentPills";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -217,11 +217,12 @@ async function pick(handle: string, kind: ChipKind, name: string) {
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 }
 const patches = () => calls.filter((c) => c.method === "PATCH");
+/** 도구 줄의 주의 알약(70% 이상·초안의 멘션) — 「⚙ 에이전트 N」 단추는 빼고 */
 const pills = () =>
   within(bar())
-    .getAllByRole("button", { name: /설정 — |명 더/ })
+    .queryAllByRole("button", { name: /설정 — / })
     .map((b) => b.getAttribute("data-testid"));
-/** 알약(이름을 안 주면 첫 알약)이나 「+N」을 눌러 설정 패널을 연다 */
+/** 알약(이름을 안 주면 맨 앞의 「⚙ 에이전트 N」)을 눌러 설정 패널을 연다 */
 async function openPanel(name?: RegExp) {
   const button = await waitFor(() =>
     name ? within(bar()).getByRole("button", { name }) : within(bar()).getAllByRole("button")[0]!,
@@ -256,8 +257,8 @@ describe("에이전트 칩 — 세션에 초대한 러너 에이전트 [세션 �
       qc.setQueryData(invitedAgentKeys.of(CONV), [{ agentId: GUEST.id, invitedBy: USER, invitedAt: TS }]);
       qc.setQueryData(invitedAgentKeys.of(OTHER), []);
     });
-    await waitFor(() => expect(screen.getByTestId("agent-pill-guest")).toHaveTextContent("opus"));
-    await openPanel(/^@guest 설정/);
+    await openPanel(new RegExp(`^${settingsLabel(2)}$`));
+    await waitFor(() => expect(chip("guest", "모델")).toHaveTextContent("opus"));
     expect(within(lineOf("guest")).getByText("초대됨")).toBeInTheDocument();
     expect(within(lineOf("coder")).queryByText("초대됨")).toBeNull();
     rerender(OTHER);
@@ -277,7 +278,6 @@ describe("에이전트 칩 — 칩·게이지 [세션 설정 스펙 S3 · 작성
       },
     });
     renderAt(CONV);
-    await waitFor(() => expect(screen.getByTestId("agent-pill-coder")).toHaveTextContent("opus"));
     await openPanel();
     await waitFor(() => expect(chip("coder", "모델")).toHaveTextContent("opus"));
     expect(chip("coder", "노력치")).toHaveTextContent("높음");
@@ -320,109 +320,116 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
       el.getAttribute("data-testid"),
     );
 
-  it("2명이면 알약 둘 — 점·핸들·모델·컨텍스트, 누르면 패널에 줄 둘이고 누른 에이전트 줄로 초점", async () => {
-    serve({
-      settings: {
-        [CONV]: [row(CODER, { model: "opus", contextPercent: 31 }), row(REVIEWER, { models: MODELS })],
-      },
-    });
-    renderAt(CONV);
-    const coder = await screen.findByRole("button", { name: "@coder 설정 — 모델 opus, 컨텍스트 31%" });
-    expect(coder).toHaveTextContent("@coderopus31%");
-    expect(coder).toHaveAttribute("aria-haspopup", "dialog");
-    expect(coder).toHaveAttribute("aria-expanded", "false");
-    const reviewer = screen.getByRole("button", { name: "@reviewer 설정 — 모델 기본, 컨텍스트 —" });
-    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer"]);
-    // 칩은 패널을 열기 전에는 없다
-    expect(screen.queryByTestId("agent-settings-coder")).toBeNull();
-    const dialog = await openPanel(/^@reviewer 설정/);
-    expect(dialog).toHaveAccessibleName("러너 에이전트 2");
-    expect(dialog).toHaveTextContent("바꾸면 이 세션에 바로 저장됩니다");
-    expect(linesIn(dialog)).toEqual(["agent-settings-coder", "agent-settings-reviewer"]);
-    expect(reviewer).toHaveAttribute("aria-expanded", "true");
-    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
-  });
-
-  it("셋이면 알약 셋, 넷이면 알약 둘 + 「+2」 — 70% 이상이 앞", async () => {
-    const three = [CODER, REVIEWER, TESTER];
-    serve({ settings: { [CONV]: three.map((a) => row(a)) } });
-    renderAt(CONV, { agents: three });
-    await waitFor(() =>
-      expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-tester"]),
-    );
-    expect(screen.queryByTestId("agent-pill-more")).toBeNull();
-    cleanup();
-
-    const four = [CODER, REVIEWER, TESTER, DOCS];
+  it("2명 — 맨 앞 「⚙ 에이전트 2」, 알약은 70% 이상만 · 알약을 누르면 그 줄로, 단추면 첫 줄로 초점 [UI 시안 01]", async () => {
     serve({
       settings: {
         [CONV]: [
-          row(CODER, { contextPercent: 10 }),
-          row(REVIEWER),
-          row(TESTER, { contextPercent: 72 }),
-          row(DOCS, { contextPercent: 5 }),
+          row(CODER, { model: "opus", contextPercent: 31 }),
+          row(REVIEWER, { models: MODELS, contextPercent: 75 }),
         ],
       },
     });
-    renderAt(CONV, { agents: four });
-    await waitFor(() =>
-      expect(pills()).toEqual(["agent-pill-tester", "agent-pill-coder", "agent-pill-more"]),
-    );
-    const more = screen.getByTestId("agent-pill-more");
-    expect(more).toHaveAccessibleName("에이전트 2명 더");
-    expect(more).toHaveTextContent("+2");
-    const dialog = await openPanel(/명 더$/);
-    expect(dialog).toHaveAccessibleName("러너 에이전트 4");
+    renderAt(CONV);
+    const settings = await screen.findByRole("button", { name: settingsLabel(2) });
+    expect(settings).toHaveTextContent("에이전트 2");
+    expect(settings).toHaveAttribute("aria-haspopup", "dialog");
+    expect(within(bar()).getAllByRole("button")[0]).toBe(settings);
+    const reviewer = await screen.findByRole("button", { name: "@reviewer 설정 — 모델 기본, 컨텍스트 75%" });
+    expect(reviewer).toHaveTextContent("@reviewer기본75%");
+    // 31% 는 주의 구간 밖 — 알약이 없다
+    expect(pills()).toEqual(["agent-pill-reviewer"]);
+    // 칩은 패널을 열기 전에는 없다
+    expect(screen.queryByTestId("agent-settings-coder")).toBeNull();
+    const dialog = await openPanel(/^@reviewer 설정/);
+    expect(dialog).toHaveAccessibleName(panelTitle(2));
+    expect(dialog).toHaveTextContent("바꾸면 이 세션에 바로 저장됩니다");
+    // 줄 순서는 T4 — 70% 이상(reviewer)이 앞
+    expect(linesIn(dialog)).toEqual(["agent-settings-reviewer", "agent-settings-coder"]);
+    expect(reviewer).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(settings);
+    await screen.findByRole("dialog", { name: panelTitle(2) });
+    expect(settings).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+  });
+
+  it("8명이어도 「+N」 없이 「⚙ 에이전트 8」 — 패널에 전원, 5명 이상이면 검색 칸(핸들·이름) [UI 시안 01]", async () => {
+    const eight = [CODER, REVIEWER, TESTER, DOCS, ...[5, 6, 7, 8].map((n) => runnerAgent(n, `bot${n}`))];
+    serve({
+      settings: {
+        [CONV]: eight.map((a) => row(a, a === TESTER ? { contextPercent: 72 } : {})),
+      },
+    });
+    renderAt(CONV, { agents: eight });
+    const settings = await screen.findByRole("button", { name: settingsLabel(8) });
+    await waitFor(() => expect(pills()).toEqual(["agent-pill-tester"]));
+    expect(screen.queryByTestId("agent-pill-more")).toBeNull();
+    expect(within(bar()).queryByText(/^\+\d/)).toBeNull();
+    await userEvent.click(settings);
+    const dialog = await screen.findByRole("dialog", { name: panelTitle(8) });
     expect(linesIn(dialog)).toEqual([
       "agent-settings-tester",
       "agent-settings-coder",
       "agent-settings-reviewer",
       "agent-settings-docs",
+      "agent-settings-bot5",
+      "agent-settings-bot6",
+      "agent-settings-bot7",
+      "agent-settings-bot8",
     ]);
-    // 「+N」은 첫 줄로
     await waitFor(() => expect(chip("tester", "모델")).toHaveFocus());
+    const search = within(dialog).getByRole("searchbox", { name: "에이전트 찾기" });
+    await userEvent.type(search, "BOT");
+    expect(linesIn(dialog)).toEqual([
+      "agent-settings-bot5",
+      "agent-settings-bot6",
+      "agent-settings-bot7",
+      "agent-settings-bot8",
+    ]);
+    await userEvent.clear(search);
+    await userEvent.type(search, "없는");
+    expect(linesIn(dialog)).toEqual([]);
+    expect(dialog).toHaveTextContent("맞는 에이전트가 없습니다");
+  });
+
+  it("4명이면 검색 칸이 없다", async () => {
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({ settings: { [CONV]: four.map((a) => row(a)) } });
+    renderAt(CONV, { agents: four });
+    const dialog = await openPanel();
+    expect(within(dialog).queryByRole("searchbox")).toBeNull();
   });
 
   it("mention highlights without reordering", async () => {
     const four = [CODER, REVIEWER, TESTER, DOCS];
     serve({ settings: { [CONV]: four.map((a) => row(a)) } });
     renderAt(CONV, { agents: four });
-    await waitFor(() =>
-      expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]),
-    );
+    await screen.findByRole("button", { name: settingsLabel(4) });
+    // 주의할 것이 없으면 알약도 없다
+    expect(pills()).toEqual([]);
     setDoc(editorOf(), doc(p(mention(`a:${REVIEWER.id}`, "reviewer"), t(" 봐 줘"))));
     await waitFor(() =>
       expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
         "@reviewer 설정 — 모델 기본, 컨텍스트 — — 이 글에서 부름",
       ),
     );
-    expect(screen.getByTestId("agent-pill-coder")).toHaveAccessibleName(
-      "@coder 설정 — 모델 기본, 컨텍스트 —",
-    );
-    expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더");
-    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]);
-    // 접힌 에이전트(docs)를 부르면 「+N」에 꼬리
-    setDoc(editorOf(), doc(p(mention(`a:${DOCS.id}`, "docs"))));
-    await waitFor(() =>
-      expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더 — 이 글에서 부름"),
-    );
-    expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
-      "@reviewer 설정 — 모델 기본, 컨텍스트 —",
-    );
-    expect(pills()).toEqual(["agent-pill-coder", "agent-pill-reviewer", "agent-pill-more"]);
-    // 멘션을 지우면 꼬리도 사라진다
+    expect(pills()).toEqual(["agent-pill-reviewer"]);
+    // 멘션한 순서(docs → coder)가 아니라 받은 순서(coder → docs)
+    setDoc(editorOf(), doc(p(mention(`a:${DOCS.id}`, "docs"), mention(`a:${CODER.id}`, "coder"))));
+    await waitFor(() => expect(pills()).toEqual(["agent-pill-coder", "agent-pill-docs"]));
+    expect(screen.getByTestId("agent-pill-docs")).toHaveAccessibleName(/이 글에서 부름$/);
+    // 멘션을 지우면 알약도 사라진다
     setDoc(editorOf(), doc(p(t("멘션 없음"))));
-    await waitFor(() =>
-      expect(screen.getByTestId("agent-pill-more")).toHaveAccessibleName("에이전트 2명 더"),
-    );
-    expect(screen.getByTestId("agent-pill-reviewer")).not.toHaveAccessibleName(/이 글에서 부름/);
-    expect(screen.getByTestId("agent-pill-coder")).not.toHaveAccessibleName(/이 글에서 부름/);
+    await waitFor(() => expect(pills()).toEqual([]));
+    expect(screen.getByRole("button", { name: settingsLabel(4) })).toBeInTheDocument();
   });
 
   it("panel stays open while picking a chip", async () => {
     serve({ settings: { [CONV]: [row(CODER), row(REVIEWER)] } });
     renderAt(CONV);
-    await openPanel(/^@reviewer 설정/);
+    await openPanel();
     await pick("reviewer", "모델", "opus");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(patches().map((c) => [c.url, c.body])).toEqual([
@@ -439,7 +446,7 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
       return { ok: true, data: { message: msg(1, { clientMsgId, bodyMd, conversationId: CONV }) } };
     });
     renderAt(NEW_CONVERSATION, { agents: [CODER, REVIEWER] });
-    const dialog = await openPanel(/^@reviewer 설정/);
+    const dialog = await openPanel();
     expect(dialog).toHaveTextContent("첫 메시지와 함께 저장됩니다");
     await pick("reviewer", "노력치", "낮음");
     await waitFor(() => expect(chip("reviewer", "노력치")).toHaveTextContent("노력 낮음"));
@@ -454,6 +461,32 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
       agentSettings: [{ agentId: REVIEWER.id, effort: "low" }],
     });
     expect(patches()).toEqual([]);
+  });
+
+  it("바깥(참여자 목록의 ⚙)이 openAgentSettings 로 부르면 패널이 그 에이전트 줄에 초점을 두고 열린다 [UI 시안 03]", async () => {
+    const four = [CODER, REVIEWER, TESTER, DOCS];
+    serve({ settings: { [CONV]: four.map((a) => row(a)) } });
+    renderAt(CONV, { agents: four });
+    await screen.findByRole("button", { name: settingsLabel(4) });
+    // 다른 세션의 작성기는 듣지 않는다
+    expect(openAgentSettings({ channelId: CH, conversationId: uid(509) }, DOCS.id)).toBe(false);
+    let handled = false;
+    act(() => {
+      handled = openAgentSettings({ channelId: CH, conversationId: CONV }, DOCS.id);
+    });
+    expect(handled).toBe(true);
+    await screen.findByRole("dialog", { name: panelTitle(4) });
+    await waitFor(() => expect(chip("docs", "모델")).toHaveFocus());
+  });
+
+  it("1명이면 openAgentSettings 가 펼친 칩의 첫 칩으로 초점만 옮긴다", async () => {
+    serve({ settings: { [CONV]: [row(CODER)] } });
+    renderAt(CONV, { agents: [CODER, OPENCLAW] });
+    await waitFor(() => expect(chip("coder", "모델")).toBeInTheDocument());
+    act(() => {
+      openAgentSettings({ channelId: CH, conversationId: CONV }, CODER.id);
+    });
+    expect(chip("coder", "모델")).toHaveFocus();
   });
 
   it("panel closes when agents drop to one", async () => {
@@ -471,12 +504,12 @@ describe("알약·설정 패널 — 2명 이상 [작성기 도구 줄 스펙 T3�
   it("escape returns focus", async () => {
     serve({ settings: { [CONV]: [row(CODER), row(REVIEWER)] } });
     renderAt(CONV);
-    await openPanel(/^@reviewer 설정/);
-    await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
+    await openPanel();
+    await waitFor(() => expect(chip("coder", "모델")).toHaveFocus());
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByTestId("agent-pill-reviewer")).toHaveFocus();
-    expect(screen.getByTestId("agent-pill-reviewer")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("agent-pill-summary")).toHaveFocus();
+    expect(screen.getByTestId("agent-pill-summary")).toHaveAttribute("aria-expanded", "false");
   });
 });
 
@@ -491,11 +524,11 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
     renderAt(CONV, { agents: three });
     await waitFor(() => expect(summary()).toHaveTextContent("72%"));
     expect(summary()).toHaveTextContent("에이전트 3");
-    expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정");
+    expect(summary()).toHaveAccessibleName(settingsLabel(3));
     expect(summary()).toHaveAttribute("aria-haspopup", "dialog");
     expect(screen.queryByTestId("agent-pill-coder")).toBeNull();
     await userEvent.click(summary());
-    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    const dialog = await screen.findByRole("dialog", { name: panelTitle(3) });
     expect(dialog).toHaveAttribute("data-slot", "sheet-content");
     expect(summary()).toHaveAttribute("aria-expanded", "true");
     // 줄 순서도 T4 — 70% 이상(reviewer)이 앞
@@ -507,25 +540,13 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
     await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
   });
 
-  it("좁은 화면 4명 이상 — 점은 순서(70% 이상이 앞)의 앞 셋까지만", async () => {
+  it("좁은 화면 — 70% 이상이어도 알약 없이 단추 하나 [UI 시안 01]", async () => {
     stubMedia(true);
-    const four = [CODER, REVIEWER, TESTER, DOCS];
-    serve({
-      settings: {
-        [CONV]: [
-          row(CODER, { contextPercent: 10 }),
-          row(REVIEWER, { contextPercent: 5 }),
-          row(TESTER, { contextPercent: 72 }),
-          row(DOCS, { contextPercent: 1 }),
-        ],
-      },
-    });
-    renderAt(CONV, { agents: four });
+    serve({ settings: { [CONV]: rows() } });
+    renderAt(CONV, { agents: three });
     await waitFor(() => expect(summary()).toHaveTextContent("72%"));
-    const dots = Array.from(summary().querySelectorAll<HTMLElement>("span[aria-hidden] > span"));
-    expect(dots.map((d) => d.style.backgroundColor)).toEqual(
-      [TESTER, CODER, REVIEWER].map((a) => agentColorVar(a.handle)),
-    );
+    expect(within(bar()).getAllByRole("button")).toEqual([summary()]);
+    expect(screen.queryByTestId("agent-pill-reviewer")).toBeNull();
   });
 
   it("넓은 화면의 스레드 작성기도 모은 알약 — 시트가 아니라 패널", async () => {
@@ -533,7 +554,7 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
     renderAt(CONV, { agents: three, threadRootId: ROOT });
     await waitFor(() => expect(summary()).toHaveTextContent("72%"));
     await userEvent.click(summary());
-    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    const dialog = await screen.findByRole("dialog", { name: panelTitle(3) });
     expect(dialog).toHaveAttribute("data-slot", "popover-content");
   });
 
@@ -553,11 +574,11 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
     stubMedia(true);
     serve({ settings: { [CONV]: rows() } });
     renderAt(CONV, { agents: three });
-    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정"));
+    await waitFor(() => expect(summary()).toHaveAccessibleName(settingsLabel(3)));
     const editor = (screen.getByRole("textbox", { name: "메시지 입력" }) as unknown as { editor: Editor })
       .editor;
     setDoc(editor, doc(p(mention(`a:${TESTER.id}`, "tester"))));
-    await waitFor(() => expect(summary()).toHaveAccessibleName("러너 에이전트 3 설정 — 이 글에서 부름"));
+    await waitFor(() => expect(summary()).toHaveAccessibleName(`${settingsLabel(3)} — 이 글에서 부름`));
   });
 
   it("escape returns focus — 시트", async () => {
@@ -565,7 +586,7 @@ describe("모은 알약 — 좁은 화면·스레드 작성기 [작성기 도구
     serve({ settings: { [CONV]: rows() } });
     renderAt(CONV, { agents: three });
     await userEvent.click(await waitFor(() => summary()));
-    await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    await screen.findByRole("dialog", { name: panelTitle(3) });
     await waitFor(() => expect(chip("reviewer", "모델")).toHaveFocus());
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -803,7 +824,7 @@ describe("새 세션 창 [S11]", () => {
     serve({});
     fake.onAck("message.send", sent);
     renderAt(NEW_CONVERSATION, { agents: [CODER, REVIEWER] });
-    await openPanel(/^@coder 설정/);
+    await openPanel();
     expect(chip("coder", "모델")).toHaveTextContent("sonnet");
     await pick("coder", "권한", "plan");
     await waitFor(() => expect(chip("coder", "권한")).toHaveTextContent("plan"));
@@ -882,16 +903,24 @@ describe("「기본」의 실제 값 [채널 UI·권한 모드 스펙 2장]", ()
   const LABELED: RunnerModelOption[] = [{ ...MODELS[0]!, resolvedLabel: "Opus 5.5" }, ...MODELS.slice(1)];
 
   it("모델 「기본」은 default 줄의 resolvedLabel 로 「기본 · Opus 5.5」 — 칩·메뉴·알약이 같은 글", async () => {
-    serve({ settings: { [CONV]: [row(CODER, { models: LABELED }), row(REVIEWER, { models: MODELS })] } });
+    // 알약은 70% 이상일 때만 선다 — 둘 다 주의 구간으로
+    serve({
+      settings: {
+        [CONV]: [
+          row(CODER, { models: LABELED, contextPercent: 75 }),
+          row(REVIEWER, { models: MODELS, contextPercent: 80 }),
+        ],
+      },
+    });
     renderAt(CONV, { agents: [CODER, REVIEWER] });
     await waitFor(() =>
       expect(screen.getByTestId("agent-pill-coder")).toHaveAccessibleName(
-        "@coder 설정 — 모델 기본 · Opus 5.5, 컨텍스트 —",
+        "@coder 설정 — 모델 기본 · Opus 5.5, 컨텍스트 75%",
       ),
     );
     // 옛 러너(resolvedLabel 없음)는 「기본」 그대로
     expect(screen.getByTestId("agent-pill-reviewer")).toHaveAccessibleName(
-      "@reviewer 설정 — 모델 기본, 컨텍스트 —",
+      "@reviewer 설정 — 모델 기본, 컨텍스트 80%",
     );
     await openPanel();
     expect(chip("coder", "모델")).toHaveAccessibleName("@coder 모델: 기본 · Opus 5.5");
@@ -973,7 +1002,7 @@ describe("설정 패널의 열 정렬 [채널 UI·권한 모드 스펙 2장]", (
     serve({ settings: { [CONV]: [row(CODER), row(REVIEWER), row(TESTER)] } });
     renderAt(CONV, { agents: [CODER, REVIEWER, TESTER] });
     await userEvent.click(await screen.findByTestId("agent-pill-summary"));
-    const dialog = await screen.findByRole("dialog", { name: "러너 에이전트 3" });
+    const dialog = await screen.findByRole("dialog", { name: panelTitle(3) });
     const grid = expectAligned(dialog, ["coder", "reviewer", "tester"], SHEET_COLUMNS);
     expect(grid.style.gridAutoRows).toBe("minmax(2.75rem, auto)");
     expect(grid.parentElement?.className).toContain("overflow-x-auto");

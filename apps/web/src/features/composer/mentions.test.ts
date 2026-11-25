@@ -1,6 +1,12 @@
 import { Agent, ChannelMember, type Person, User } from "@dodok/shared";
 import { expect, it } from "vitest";
-import { type MentionCandidate, matchMentions, mentionCandidates } from "./mentions";
+import {
+  type MentionCandidate,
+  matchMentions,
+  mentionCandidates,
+  mentionContent,
+  mentionIdsIn,
+} from "./mentions";
 import { uid } from "../../../test/fixtures";
 
 const W = uid(900);
@@ -162,4 +168,45 @@ it("삭제(보관)한 에이전트는 후보에서 빠진다 — 멤버 응답�
   const gone = agent(24, "old", { archivedAt: "2026-10-05T00:00:00.000Z" });
   const list = mentionCandidates([member("agent", gone.id), member("agent", DEV.id)], [DEV, gone], ME);
   expect(list.map((c) => c.label)).toEqual(["dev", "owner"]);
+});
+
+it("mentionIdsIn — 사람·에이전트 멘션 노드 id 를 중첩까지, 손으로 친 @글자는 뺀다 [UI 시안 02]", () => {
+  const doc = {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "mention", attrs: { id: "a:1", label: "dev" } },
+          { type: "text", text: " @fin" },
+        ],
+      },
+      {
+        type: "bulletList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "mention", attrs: { id: "u:2", label: "mia" } }] },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  expect([...mentionIdsIn(doc)]).toEqual(["a:1", "u:2"]);
+});
+
+it("mentionContent — 고른 순서대로 멘션 노드, 노드마다 뒤에 공백 하나", () => {
+  expect(
+    mentionContent([
+      { id: "a:1", label: "dev" },
+      { id: "u:2", label: "mia" },
+    ]),
+  ).toEqual([
+    { type: "mention", attrs: { id: "a:1", label: "dev" } },
+    { type: "text", text: " " },
+    { type: "mention", attrs: { id: "u:2", label: "mia" } },
+    { type: "text", text: " " },
+  ]);
 });

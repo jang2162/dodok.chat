@@ -2,8 +2,8 @@ import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawGatewayStatus } from "@dodok/shared";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { Agent, OpenClawGatewayStatus } from "@dodok/shared";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import { createQueryClient } from "@/app/queryClient";
@@ -14,7 +14,10 @@ import { attachHandlers } from "@/realtime/handlers";
 import { createSubscriptions } from "@/realtime/subscriptions";
 import { stubNotification } from "../../../test/domStubs";
 import { createFakeSocket } from "../../../test/fakeSocket";
-import { approval, CH, CH2 } from "../../../test/fixtures";
+import { approval, CH, CH2, runState, uid, USER } from "../../../test/fixtures";
+import { DEV, memberOf } from "../../../test/composerHarness";
+import { onAgentSettingsRequest, registerComposer } from "@/features/composer/insertMention";
+import { useRunStore } from "@/features/runs/runStore";
 import { stubMedia } from "../../../test/media";
 import {
   ADAPTER_OK,
@@ -30,6 +33,7 @@ import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
 import { PanelTabs } from "./PanelTabs";
 import { LAYOUT_KEY, layoutStore } from "./useLayoutWidths";
+import { ParticipantsButton } from "./ParticipantsButton";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -888,5 +892,146 @@ describe("사이드바·패널 너비(UI 시안 04)", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "사이드바 너비" })).toBeNull();
     expect(screen.queryByRole("separator", { name: "패널 너비" })).toBeNull();
+  });
+});
+
+describe("참여자 단추 [UI 시안 03]", () => {
+  const MIA = uid(6_101);
+  const RUNNER: Agent = { ...DEV, id: uid(6_102), handle: "coder", name: "코더", provider: "runner" };
+  const GUEST: Agent = { ...DEV, id: uid(6_103), handle: "guest", name: "손님" };
+  const CONV = uid(6_104);
+
+  function renderParticipants(over: { canInvite?: boolean } = {}) {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetch);
+    const qc = createQueryClient(() => {});
+    qc.setQueryDefaults([], { staleTime: Infinity });
+    qc.setQueryData(qk.me, { ...ME, user: { ...ME.user, id: USER, handle: "owner", displayName: "주인" } });
+    qc.setQueryData(qk.people, [
+      {
+        id: USER,
+        handle: "owner",
+        displayName: "주인",
+        role: "owner",
+        deactivatedAt: null,
+        statusMessage: null,
+      },
+      {
+        id: MIA,
+        handle: "mia",
+        displayName: "미아",
+        role: "member",
+        deactivatedAt: null,
+        statusMessage: null,
+      },
+    ]);
+    qc.setQueryData(qk.members(CH), [
+      { ...memberOf(DEV.id), memberType: "user", memberId: USER },
+      { ...memberOf(DEV.id), id: "m-mia", memberType: "user", memberId: MIA },
+      memberOf(DEV.id),
+      memberOf(RUNNER.id),
+    ]);
+    const onInvite = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <ParticipantsButton
+          channelId={CH}
+          conversationId={CONV}
+          channelAgents={[DEV, RUNNER]}
+          invited={[GUEST]}
+          canInvite={over.canInvite ?? true}
+          inviteFull={false}
+          onInvite={onInvite}
+          narrow={false}
+        />
+      </QueryClientProvider>,
+    );
+    return { fetch, onInvite };
+  }
+  afterEach(() => useRunStore.getState().reset());
+
+  it("얼굴 셋(사람 먼저, 응답 중인 에이전트 다음) + 총인원 — 누르면 사람·에이전트·이 세션에만 초대 세 갈래", async () => {
+    act(() =>
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ channelId: CH, conversationId: CONV, agentId: RUNNER.id, status: "streaming" }),
+        ),
+    );
+    renderParticipants();
+    const button = screen.getByRole("button", { name: "참여자 5명" });
+    expect(button).toHaveTextContent("5");
+    // 사람 둘(주인·미아) 다음 응답 중인 coder — 응답하지 않는 dev 보다 앞
+    expect(Array.from(button.querySelectorAll("[data-kind]")).map((el) => el.textContent)).toEqual([
+      "주",
+      "미",
+      "코",
+    ]);
+    await userEvent.click(button);
+    const dialog = await screen.findByRole("dialog", { name: "참여자 5" });
+    const people = within(dialog).getByRole("region", { name: "사람" });
+    expect(people).toHaveTextContent("사람 2");
+    expect(people).toHaveTextContent("주인나");
+    expect(people).toHaveTextContent("미아@mia");
+    const agents = within(dialog).getByRole("region", { name: "에이전트" });
+    expect(agents).toHaveTextContent("에이전트 2 · 응답 중 1");
+    expect(agents).toHaveTextContent("코더응답 중…");
+    const invited = within(dialog).getByRole("region", { name: "이 세션에만 초대" });
+    expect(invited).toHaveTextContent("손님@guest · 초대됨");
+    // 나에게는 「멘션」이 없다
+    expect(within(people).queryByRole("button", { name: "@owner 멘션" })).toBeNull();
+    expect(within(people).getByRole("button", { name: "@mia 멘션" })).toBeInTheDocument();
+    // ⚙ 는 러너 에이전트만
+    expect(within(agents).getByRole("button", { name: "@coder 설정" })).toBeInTheDocument();
+    expect(within(agents).queryByRole("button", { name: "@dev 설정" })).toBeNull();
+    // 검색은 이름·핸들
+    await userEvent.type(within(dialog).getByRole("searchbox", { name: "참여자 찾기" }), "MI");
+    expect(within(people).queryByText("주인")).toBeNull();
+    expect(within(people).getByText("미아")).toBeInTheDocument();
+    expect(within(agents).getByText("맞는 참여자가 없습니다")).toBeInTheDocument();
+  });
+
+  it("「멘션」은 팝오버를 닫고 그 세션 작성기에 넣는다 · ⚙ 는 그 에이전트 줄로 설정을 연다", async () => {
+    const mention = vi.fn(() => true);
+    const off = registerComposer({ channelId: CH, conversationId: CONV }, { mention });
+    const settings = vi.fn();
+    const offSettings = onAgentSettingsRequest({ channelId: CH, conversationId: CONV }, settings);
+    onTestFinished(() => {
+      off();
+      offSettings();
+    });
+    renderParticipants();
+    await userEvent.click(screen.getByRole("button", { name: "참여자 5명" }));
+    await userEvent.click(await screen.findByRole("button", { name: "@mia 멘션" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mention).toHaveBeenCalledWith("mia");
+    await userEvent.click(screen.getByRole("button", { name: "참여자 5명" }));
+    await userEvent.click(await screen.findByRole("button", { name: "@coder 설정" }));
+    await waitFor(() => expect(settings).toHaveBeenCalledWith(RUNNER.id));
+  });
+
+  it("초대 에이전트의 「세션에서 내보내기」는 DELETE, 「에이전트 초대」는 닫은 뒤 대화상자 — 권한이 없으면 둘 다 없다", async () => {
+    const { fetch, onInvite } = renderParticipants();
+    await userEvent.click(screen.getByRole("button", { name: "참여자 5명" }));
+    await userEvent.click(await screen.findByRole("button", { name: "@guest 세션에서 내보내기" }));
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([url, init]) =>
+            String(url) === `/api/v1/conversations/${CONV}/agents/${GUEST.id}` && init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "에이전트 초대" }));
+    await waitFor(() => expect(onInvite).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("canInvite 가 거짓이면 내보내기·초대가 없다", async () => {
+    renderParticipants({ canInvite: false });
+    await userEvent.click(screen.getByRole("button", { name: "참여자 5명" }));
+    const dialog = await screen.findByRole("dialog", { name: "참여자 5" });
+    expect(within(dialog).queryByRole("button", { name: /세션에서 내보내기/ })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "에이전트 초대" })).toBeNull();
   });
 });

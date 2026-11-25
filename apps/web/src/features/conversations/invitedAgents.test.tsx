@@ -99,30 +99,42 @@ afterEach(() => {
 });
 
 const header = () => screen.findByTestId("channel-header");
+/** 머리의 참여자 단추(UI 시안 03)를 눌러 팝오버를 연다 — `waitText` 가 보일 때까지(초대 목록은 늦게 온다) 다시 연다 */
+async function openParticipants(waitText?: RegExp) {
+  const user = userEvent.setup();
+  return waitFor(async () => {
+    if (!screen.queryByRole("dialog", { name: /^참여자 \d+$/ }))
+      await user.click(await within(await header()).findByRole("button", { name: /^참여자 \d+명$/ }));
+    const dialog = await screen.findByRole("dialog", { name: /^참여자 \d+$/ });
+    if (waitText) expect(dialog).toHaveTextContent(waitText);
+    return dialog;
+  });
+}
 
 describe("세션 머리 — 초대한 에이전트", () => {
-  it("초대한 에이전트는 「초대됨」 표시로 보이고 채널 에이전트 묶음에는 없다", async () => {
+  it("초대한 에이전트는 참여자 팝오버의 「이 세션에만 초대」 갈래에 「초대됨」으로 보이고 채널 에이전트 갈래에는 없다 [UI 시안 03]", async () => {
     stubServer({ invited: { [SESSION]: [invitedRow(GUEST.id)] } });
     renderRoute(`/c/a/s/${SESSION}`);
-    const head = await header();
-    const list = await within(head).findByRole("list", { name: "초대한 에이전트" });
-    expect(within(list).getByRole("button", { name: "@guest 초대됨" })).toHaveTextContent("초대됨");
-    const group = within(head).getByRole("group", { name: "참여 에이전트" });
-    expect(within(group).queryByRole("img", { name: "@guest" })).toBeNull();
+    const dialog = await openParticipants(/@guest/);
+    expect(within(dialog).getByRole("region", { name: "이 세션에만 초대" })).toHaveTextContent(
+      "@guest · 초대됨",
+    );
+    expect(within(dialog).getByRole("region", { name: "에이전트" })).not.toHaveTextContent("@guest");
   });
 
-  it("다른 세션의 머리에는 초대한 에이전트가 없다", async () => {
+  it("다른 세션의 참여자에는 초대한 에이전트가 없다", async () => {
     stubServer({ invited: { [SESSION]: [invitedRow(GUEST.id)] } });
     renderRoute(`/c/a/s/${OTHER}`);
-    const head = await header();
-    await within(head).findByRole("button", { name: "에이전트 초대" });
-    expect(within(head).queryByRole("list", { name: "초대한 에이전트" })).toBeNull();
+    const dialog = await openParticipants();
+    await within(dialog).findByRole("button", { name: "에이전트 초대" });
+    expect(within(dialog).queryByRole("region", { name: "이 세션에만 초대" })).toBeNull();
   });
 
-  it("「에이전트 초대」는 채널에 없고 보관되지 않은 에이전트만 보이고, 고르면 POST — 머리에 바로 「초대됨」", async () => {
+  it("「에이전트 초대」는 채널에 없고 보관되지 않은 에이전트만 보이고, 고르면 POST — 참여자에 바로 「초대됨」", async () => {
     const fetch = stubServer();
     renderRoute(`/c/a/s/${SESSION}`);
-    await userEvent.click(await within(await header()).findByRole("button", { name: "에이전트 초대" }));
+    const participants = await openParticipants();
+    await userEvent.click(await within(participants).findByRole("button", { name: "에이전트 초대" }));
     const dialog = await screen.findByRole("dialog", { name: "에이전트 초대" });
     const options = within(dialog).getByRole("list", { name: "초대할 에이전트" });
     expect(
@@ -140,22 +152,19 @@ describe("세션 머리 — 초대한 에이전트", () => {
           String(init.body) === JSON.stringify({ agentId: GUEST.id }),
       ),
     ).toBe(true);
-    expect(await within(await header()).findByRole("button", { name: "@guest 초대됨" })).toBeInTheDocument();
+    const again = await openParticipants(/@guest/);
+    expect(within(again).getByRole("region", { name: "이 세션에만 초대" })).toHaveTextContent(
+      "@guest · 초대됨",
+    );
   });
 
-  it("얼굴 메뉴의 「세션에서 내보내기」는 DELETE — 머리에서 빠진다", async () => {
+  it("참여자 팝오버의 「@guest 세션에서 내보내기」는 DELETE — 참여자에서 빠진다", async () => {
     const fetch = stubServer({ invited: { [SESSION]: [invitedRow(GUEST.id)] } });
     renderRoute(`/c/a/s/${SESSION}`);
-    // 메뉴는 트리거에 초점을 준 뒤 Enter 로 연다(sidebar.test 의 까닭 — jsdom 의 window blur 가 Radix 메뉴를 닫는다)
-    const user = userEvent.setup();
-    (await within(await header()).findByRole("button", { name: "@guest 초대됨" })).focus();
-    await user.keyboard("{Enter}");
-    const menu = await screen.findByRole("menu");
-    await user.click(within(menu).getByRole("menuitem", { name: "세션에서 내보내기" }));
+    const dialog = await openParticipants(/@guest/);
+    await userEvent.click(within(dialog).getByRole("button", { name: "@guest 세션에서 내보내기" }));
     await waitFor(() =>
-      expect(
-        within(screen.getByTestId("channel-header")).queryByRole("list", { name: "초대한 에이전트" }),
-      ).toBeNull(),
+      expect(within(dialog).queryByRole("region", { name: "이 세션에만 초대" })).toBeNull(),
     );
     expect(
       fetch.mock.calls.some(
@@ -201,12 +210,17 @@ describe("세션 머리 — 초대한 에이전트", () => {
     expect(within(again).getByRole("menuitem", { name: "에이전트 초대" })).toBeInTheDocument();
   });
 
-  it("닫힌 세션·새 세션 창에서는 「에이전트 초대」가 없다 — 닫힌 세션의 얼굴에는 메뉴가 없다", async () => {
+  it("닫힌 세션·새 세션 창에서는 「에이전트 초대」가 없다 — 닫힌 세션의 초대 에이전트에는 내보내기가 없다", async () => {
     stubServer({ closed: true, invited: { [SESSION]: [invitedRow(GUEST.id)] } });
     const { router } = renderRoute(`/c/a/s/${SESSION}`);
-    const head = await header();
-    expect(await within(head).findByRole("img", { name: "@guest 초대됨" })).toBeInTheDocument();
-    expect(within(head).queryByRole("button", { name: "에이전트 초대" })).toBeNull();
+    const closed = await openParticipants(/@guest/);
+    expect(within(closed).getByRole("region", { name: "이 세션에만 초대" })).toHaveTextContent(
+      "@guest · 초대됨",
+    );
+    expect(within(closed).queryByRole("button", { name: "@guest 세션에서 내보내기" })).toBeNull();
+    expect(within(closed).queryByRole("button", { name: "에이전트 초대" })).toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await act(async () => {
       await router.navigate({
         to: "/c/$channelId/s/$conversationId",
@@ -216,19 +230,21 @@ describe("세션 머리 — 초대한 에이전트", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/c/a/s/new"));
     const fresh = await header();
     await within(fresh).findByRole("heading", { name: /general/ });
-    expect(within(fresh).queryByRole("button", { name: "에이전트 초대" })).toBeNull();
-    expect(within(fresh).queryByRole("list", { name: "초대한 에이전트" })).toBeNull();
+    const draft = await openParticipants();
+    expect(within(draft).queryByRole("button", { name: "에이전트 초대" })).toBeNull();
+    expect(within(draft).queryByRole("region", { name: "이 세션에만 초대" })).toBeNull();
   });
 
   it("wire conversation.agents 로 다른 사람이 초대한 것이 머리에 반영된다", async () => {
     stubServer();
     const queryClient = createQueryClient(() => {});
     renderRoute(`/c/a/s/${SESSION}`, queryClient);
-    await within(await header()).findByRole("button", { name: "에이전트 초대" });
+    await within(await openParticipants()).findByRole("button", { name: "에이전트 초대" });
     // 핸들러(realtime/handlers.ts)가 하는 일과 같은 갈아 끼우기 — 핸들러 자체는 handlers.test.ts 가 잰다
     await act(async () => {
       queryClient.setQueryData(invitedAgentKeys.of(SESSION), [invitedRow(SPARE.id)]);
     });
-    expect(await within(await header()).findByRole("button", { name: "@spare 초대됨" })).toBeInTheDocument();
+    expect(await openParticipants(/@spare/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "이 세션에만 초대" })).toHaveTextContent("@spare · 초대됨");
   });
 });
