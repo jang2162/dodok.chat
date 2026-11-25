@@ -360,7 +360,8 @@ export function createBackgroundService(deps: {
     if (isChannelArchived(db, origin.channelId)) return refuse("archived", at);
     const agent = getAgent(db, origin.agentId);
     if (!agent || !isAgentActive(agent)) return refuse("inactive", at);
-    if (deps.gate.check(origin.conversationId, threadRootId)) return refuse("limit", at);
+    // 관문의 run_limit 알림은 남기지 않는다 — 거절 글이 「오늘 런 한도」 사유를 이미 말해 같은 스레드에 글이 둘이 된다
+    if (deps.gate.check(origin.conversationId, threadRootId, { announce: false })) return refuse("limit", at);
     const message: Message | undefined =
       (origin.triggerMessageId === undefined ? undefined : getMessage(db, origin.triggerMessageId)) ??
       getMessage(db, threadRootId);

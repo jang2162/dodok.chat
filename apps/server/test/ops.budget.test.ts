@@ -251,6 +251,23 @@ describe("RunGate", () => {
     expect(limitMessages().map((m) => m.threadRootId ?? null)).toEqual([root.id, null]);
   });
 
+  it("announce: false 면 판정·사건만 — 알림을 남기지 않고 하루 한 번도 쓰지 않아 다음 평소 판정이 알림을 남긴다", () => {
+    const c = channel({ dailyRunLimit: 1 });
+    const conversationId = channelConversation(db, c.id);
+    const root = createUserMessage(db, new ServerBus(), {
+      conversationId,
+      authorId: userId,
+      bodyMd: "루트",
+      clientMsgId: uuid(),
+    });
+    fill(c.id, 1);
+    expect(gate.check(conversationId, root.id, { announce: false })).toEqual({ scope: "channel", limit: 1 });
+    expect(limitMessages()).toEqual([]);
+    expect(events().map((r) => [r.key, r.count])).toEqual([[`channel:${c.id}`, 1]]);
+    expect(gate.check(conversationId, root.id)).toEqual({ scope: "channel", limit: 1 });
+    expect(limitMessages().map((m) => m.threadRootId ?? null)).toEqual([root.id]);
+  });
+
   it("없는 대화 id 면 NOT_FOUND — 한도 안으로 통과시키지 않는다", () => {
     expect(() => gate.check(uuid())).toThrow(
       expect.objectContaining({ body: expect.objectContaining({ code: "NOT_FOUND" }) }),

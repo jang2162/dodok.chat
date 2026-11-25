@@ -23,9 +23,11 @@ export interface RunGate {
   /**
    * 한도 안이면 null. 넘으면 LimitHit — 그 대화에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 그 대화에 남기고 사건
    * run_limit 을 기록한다. 한도는 채널·워크스페이스 단위다. 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 대화 단위).
-   * 대화가 없으면 NOT_FOUND 를 던진다
+   * 대화가 없으면 NOT_FOUND 를 던진다. `announce: false` 면 판정과 사건 기록만 하고 시스템 메시지를 남기지 않는다 — 부른 쪽이
+   * 사유를 말하는 자기 글을 따로 남길 때(백그라운드 추가 응답의 거절 글). 메시지를 남기지 않으므로 그 대화의 「하루 한 번」도
+   * 쓰지 않는다 — 다음 사람 런이 막히면 평소 알림이 남는다
    */
-  check(conversationId: string, threadRootId?: string): LimitHit | null;
+  check(conversationId: string, threadRootId?: string, opts?: { announce?: boolean }): LimitHit | null;
   /**
    * 대상이 활성이고 채널이 보관되지 않았고 check 가 null 이면 orchestrator.enqueueRun, 아니면 null. 두 검사는 런 행을 넣는
    * enqueueRun 과 await 없이 이어진다 — 보관 쓰기와 엇갈려도 「보관 뒤 새 런」이 생기지 않는다(쓰기 전에 들어온 런은 보관이 훑어 닫는다)
@@ -94,7 +96,11 @@ export function createRunGate(deps: {
     return row !== undefined;
   }
 
-  function check(conversationId: string, threadRootId?: string): LimitHit | null {
+  function check(
+    conversationId: string,
+    threadRootId?: string,
+    opts?: { announce?: boolean },
+  ): LimitHit | null {
     const at = now();
     const channelId = db
       .select({ channelId: conversations.channelId })
@@ -105,7 +111,7 @@ export function createRunGate(deps: {
     if (channelId === undefined) throw apiError("NOT_FOUND", "conversation not found");
     const hit = hitOf(channelId, at);
     if (!hit) return null;
-    if (!announcedToday(conversationId, threadRootId, hit.scope, at)) {
+    if (opts?.announce !== false && !announcedToday(conversationId, threadRootId, hit.scope, at)) {
       const prefix = hit.scope === "channel" ? "이 채널의 " : "";
       createSystemMessage(db, bus, {
         conversationId,
