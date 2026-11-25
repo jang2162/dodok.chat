@@ -97,6 +97,7 @@ export function createBackgroundHooksSlot(): BackgroundHooksSlot {
       },
       tasksChanged: (key, tasks) => impl?.tasksChanged(key, tasks),
       held: (key, holding) => impl?.held(key, holding),
+      canHold: () => impl?.canHold() ?? false,
     },
     bind: (next) => {
       impl = next;
@@ -271,6 +272,9 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const background = backgroundDriver?.background;
   // 이 연결 세대에서 hello 가 받아들여졌나 — 그 전에는 tasks.update 를 내지 않는다(붙은 뒤 held() 로 한꺼번에)
   let ready = false;
+  // 마지막 hello 결과에 서버가 backgroundTasks 를 알렸나 — 그때만 드라이버가 프로세스를 붙든다(리뷰 C1). 연결마다 다시 정한다.
+  // 끊긴 동안은 마지막 값을 쓴다(같은 서버에 다시 붙는 것이 보통이다)
+  let serverHolds = false;
   // 추가 응답 런 → 중지(run.abort·끊김)
   const followups = new Map<string, AbortController>();
   const tasksThrottleMs = opts.tasksThrottleMs ?? TASKS_THROTTLE_MS;
@@ -497,6 +501,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         }
         attempt = 0;
         logger.info(`dodok-runner: 연결됨(서버 ${result.serverVersion})`);
+        serverHolds = result.features?.includes("backgroundTasks") ?? false;
         ready = true;
         // 끊긴 사이에도 CLI 와 작업은 살아 있다 — 붙은 뒤 세션마다 지금 목록을 한 번 보낸다(스펙 5.4)
         const held = background?.held() ?? [];
@@ -830,6 +835,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     },
     tasksChanged,
     held: (sessionKey, holding) => (holding ? scheduler.hold(sessionKey) : scheduler.unhold(sessionKey)),
+    canHold: () => serverHolds,
   });
 
   // 기한이 지나면 서버가 deny + reason expired 를 보낸다(판정 P5). 모르는 id(이미 거둔 승인)는 버린다

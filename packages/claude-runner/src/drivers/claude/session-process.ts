@@ -15,7 +15,7 @@ import { createTaskTracker, type TaskNotice, type TaskTracker } from "./tasks";
 //   result 뒤로 기다린다(whenIdle)
 // - 쉬는 동안 온 system/init 은 CLI 가 작업 알림 뒤 스스로 연 턴이다(ADR 5.11 — init 은 사람 턴마다도 오지만 그때는 턴이 열려 있다).
 //   그 사이 온 알림의 작업으로 서버에 추가 응답 런을 청하고, 답이 오기 전 메시지는 쥐었다가 그 런의 턴으로 넘긴다. 거절이면 interrupt
-// - hooks 가 없으면(옛 연결·시험) 붙들지 않는다 — 첫 result 에서 닫는 지금 동작 그대로
+// - hooks 가 없거나 서버가 지원을 알리지 않았으면(canHold 거짓 — 옛 서버) 붙들지 않는다 — 첫 result 에서 닫는 지금 동작 그대로
 
 /** 알림 뒤 CLI 가 턴을 열기를 기다리는 시간 — 실측은 약 10ms(ADR 5.11 시나리오 1). 넘으면 턴이 없는 것으로 보고 닫기를 다시 본다 */
 export const SELF_TURN_WAIT_MS = 10_000;
@@ -438,7 +438,7 @@ export function createSessionProcess(o: {
     send,
     endInput,
     finishTurn() {
-      if (o.hooks && !dead && !released && tracker.size() > 0) {
+      if (o.hooks?.canHold() && !dead && !released && tracker.size() > 0) {
         cancelClose();
         setHeld(true);
         // 턴은 run.ts 가 곧바로 done() 으로 뗀다 — 그때 쌓인 메시지가 쉬는 동안의 길로 간다

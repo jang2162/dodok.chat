@@ -124,7 +124,8 @@ async function startFakeServer(): Promise<FakeServer> {
     followups: [],
     postAck: { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" },
     sockets: [],
-    helloResult: { ok: true, serverVersion: "test" },
+    // 서버가 백그라운드 작업을 안다 — 표시가 없는 옛 서버는 시험이 helloResult 로 고른다
+    helloResult: { ok: true, serverVersion: "test", features: ["backgroundTasks"] },
     handshakes: 0,
     close: async () => {
       await io.close();
@@ -207,6 +208,8 @@ async function setup(
     token?: string;
     stopWaitMs?: number;
     reject?: FakeServer["reject"];
+    /** 서버의 hello 답 — 기본은 backgroundTasks 를 아는 서버 */
+    helloResult?: FakeServer["helloResult"];
     /** onFatal 이 불린 그 순간을 보려고 — fatal 목록에 넣은 뒤 부른다 */
     onFatal?: (code: number) => void;
     browse?: boolean;
@@ -231,6 +234,7 @@ async function setup(
 ) {
   const server = await startFakeServer();
   server.reject = opts.reject;
+  if (opts.helloResult) server.helloResult = opts.helloResult;
   cleanups.push(() => server.close());
   const fake: FakeSdk = createFakeSdk();
   opts.sdk?.(fake);
@@ -1921,6 +1925,31 @@ describe("백그라운드 작업 프레임(백그라운드 작업 스펙 5.3·5.
     const off = await setup();
     await waitFor(() => off.server.hellos.length === 1);
     expect(off.server.hellos[0]!.capabilities).not.toContain("backgroundTasks");
+  });
+
+  it("holds only while the last hello result announces backgroundTasks", async () => {
+    // 옛 서버 — 표시가 없으면 작업이 남아도 첫 result 에서 닫는다(옛 서버는 붙든 프로세스를 끌 길이 없다)
+    const { server, fake } = await setup({
+      background: true,
+      tasksThrottleMs: 10,
+      helloResult: { ok: true, serverVersion: "old" },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...heldScript(), { waitInput: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    await waitFor(() => fake.calls[0]!.finished);
+    expect(fake.calls[0]!.inputClosed).toBe(true);
+    // 새 서버로 다시 붙으면 그 연결부터 붙든다 — 연결마다 다시 정한다
+    server.helloResult = { ok: true, serverVersion: "new", features: ["backgroundTasks"] };
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.hellos.length === 2);
+    fake.script(...heldScript(), { waitInput: true });
+    await sendStart(server.sockets.at(-1)!, runStart({ runId: RUN_2, sessionId: SESSION_2 }));
+    await waitFor(() => server.finals.length === 2);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(fake.calls[1]!.inputClosed).toBe(false);
+    expect(fake.calls[1]!.finished).toBe(false);
   });
 
   it("throttles tasks.update to once per second per session", async () => {

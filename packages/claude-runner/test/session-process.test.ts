@@ -44,6 +44,7 @@ function hooksSpy(followup?: BackgroundHooks["requestFollowup"]): Hooks {
     followupRuns,
     order,
     held: (key, holding) => void heldLog.push([key, holding]),
+    canHold: () => true,
     tasksChanged: (key, tasks) => void tasksLog.push([key, tasks]),
     requestFollowup: async (req) => {
       followups.push(req);
@@ -207,6 +208,18 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["띄웠어요"]));
     await start(runSpec()).done;
     expect(fake.calls[0]!.inputClosed).toBe(true);
+  });
+
+  it("does not hold when the server does not announce support — closes on the first result", async () => {
+    const fake = createFakeSdk();
+    const hooks = { ...hooksSpy(), canHold: () => false };
+    const { start } = runner(fake, hooks);
+    fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["띄웠어요"]), {
+      waitInput: true,
+    });
+    await start(runSpec()).done;
+    expect(fake.calls[0]!.inputClosed).toBe(true);
+    expect(hooks.heldLog).toEqual([]);
   });
 
   it("routes the next run of a held session into the same process", async () => {

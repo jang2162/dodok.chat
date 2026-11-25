@@ -31,6 +31,11 @@ export type BackgroundHooks = {
   tasksChanged(sessionKey: string, tasks: BackgroundTask[]): void;
   /** 그 세션의 프로세스를 붙들기 시작했다·놓았다 — 스케줄러 자리 하나 */
   held(sessionKey: string, holding: boolean): void;
+  /**
+   * 지금 프로세스를 붙들어도 되나 — 서버가 마지막 hello 결과에 backgroundTasks 를 알렸을 때만 참(리뷰 C1). 옛 서버는 추가 응답·작업
+   * 끄기·세션 놓기를 보내지 않아 붙든 프로세스를 끌 길이 없다. 거짓이면 첫 result 에서 닫는다(지금 동작)
+   */
+  canHold(): boolean;
 };
 
 // 프로그램 드라이버 계약(러너 일반화 스펙 4장). 연결은 천장 검사를 마친 런을 RunSpec 으로 풀어 드라이버에 넘기고, 드라이버는

@@ -677,6 +677,27 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(server.adapter.status().runners.connected).toBe(1);
   });
 
+  it("a server that cannot take follow-ups gets no held process", async () => {
+    // onFollowup 이 없는 서버 — 어댑터가 hello 에 backgroundTasks 를 싣지 않아 러너는 첫 result 에서 닫는다
+    const tasks: Array<RunnerTasksUpdate | { disconnected: true }> = [];
+    const server = await startServer(0, { tasks });
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    startRunner(server, fake, { background: true });
+    await ready(server);
+    fake.script(
+      script.init(),
+      script.tasksChanged([{ task_id: "b1", task_type: "local_bash", description: "pnpm dev" }]),
+      script.taskStarted("b1", { description: "pnpm dev" }),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { waitInput: true },
+    );
+    await server.adapter.send(deliver(RUN_1), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
+    await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "최종 답");
+    await waitFor(() => fake.calls[0]!.finished, "CLI 종료");
+    expect(fake.calls[0]!.inputClosed).toBe(true);
+  });
+
   it("held process follow-up flows through the real adapter", async () => {
     const FOLLOW = "0192f000-0000-7000-8000-00000000f101";
     const tasks: Array<RunnerTasksUpdate | { disconnected: true }> = [];
