@@ -52,6 +52,14 @@ describe("runs store", () => {
     expect(newRun()).not.toHaveProperty("threadRootId", expect.anything());
   });
 
+  it("toRunState 는 추가 응답 런의 backgroundOriginRunId 를 싣는다(백그라운드 작업 스펙 5.7)", () => {
+    const { newRun } = setup();
+    const origin = newRun();
+    const followup = newRun({ triggerKind: "background", backgroundOriginRunId: origin.id });
+    expect(toRunState(followup).backgroundOriginRunId).toBe(origin.id);
+    expect(toRunState(origin)).not.toHaveProperty("backgroundOriginRunId");
+  });
+
   it("insertRun 은 queued 행을 만들고 getRun·updateRun 이 Run 도메인으로 돌려준다", () => {
     const { db, newRun, channelId, agentId, sessionKey } = setup();
     const triggerInteractionId = uuid();

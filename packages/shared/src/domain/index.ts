@@ -604,6 +604,7 @@ export const RunState = Run.pick({
   status: true,
   relayDepth: true,
   parentRunId: true,
+  backgroundOriginRunId: true, // 추가 응답 런 카드의 「추가 응답 · <원래 런 시작 시각> 런」(백그라운드 작업 스펙 5.7)
   hasCanonical: true,
   finalSource: true,
   error: true,

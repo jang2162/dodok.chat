@@ -372,6 +372,7 @@ describe("Run", () => {
     expect(Object.keys(RunState.shape).sort()).toEqual(
       [
         "agentId",
+        "backgroundOriginRunId",
         "channelId",
         "conversationId",
         "endedAt",
@@ -417,6 +418,10 @@ describe("run root", () => {
     const s = RunState.parse({ ...state, rootMessageId: ID(4), triggerMessageId: ID(5) });
     expect(s.rootMessageId).toBe(ID(4));
     expect(s.triggerMessageId).toBe(ID(5));
+  });
+  it("RunState 는 추가 응답 런의 backgroundOriginRunId 를 싣는다(없어도 파싱된다)", () => {
+    expect(RunState.parse({ ...state, backgroundOriginRunId: ID(6) }).backgroundOriginRunId).toBe(ID(6));
+    expect(RunState.parse(state).backgroundOriginRunId).toBeUndefined();
   });
   it("RunState 는 두 칸 없이도 파싱된다(옛 서버)", () => {
     const s = RunState.parse(state);
