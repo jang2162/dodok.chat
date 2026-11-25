@@ -73,6 +73,8 @@ import {
   DEV_FAKE_RUNNERS,
   fakeAgentScript,
   FAKE_REASONING,
+  BACKGROUND_SHELL_ENDLESS_COMMAND,
+  BACKGROUND_SHELL_TIMED_COMMAND,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
   DEV_FAKE_CONTEXT_WINDOW,
@@ -2861,6 +2863,66 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     );
     expect(res.status).toBe(403);
   });
+
+  /** 「백그라운드」 대본의 작업 둘 — tasks.updated 로 받은 그 대화의 목록을 모으고, 받은 `task.stop` 은 wire 로 보낸다 */
+  async function backgroundChannel(name: string) {
+    const ch = await coderChannel(name);
+    const lists: Array<Array<{ taskId: string; description: string; originRunId: string }>> = [];
+    ch.socket.on("tasks.updated", (p) => lists.push(p.tasks));
+    const latest = () => lists.at(-1) ?? [];
+    const stop = (task: { taskId: string; originRunId: string }) =>
+      ch.socket.emitWithAck("task.stop", { runId: task.originRunId, taskId: task.taskId });
+    return { ...ch, lists, latest, stop };
+  }
+  const withTwoShells = (list: Array<{ description: string }>) => list.length === 2;
+
+  it("「백그라운드」 → 셸 둘이 작업 줄로 서고, 5초 뒤 끝난 셸의 추가 응답이 처음 응답의 스레드에 쌓인다 [백그라운드 작업 스펙]", async () => {
+    const ch = await backgroundChannel("runner-bg-followup");
+    expect((await ch.send(`<@a:${ch.coderId}> 백그라운드`)).ok).toBe(true);
+    const first = await vi.waitFor(
+      () => {
+        const found = ch.created.find((m) => m.authorType === "agent");
+        if (!found) throw new Error("처음 응답 없음");
+        return found;
+      },
+      { timeout: 10_000 },
+    );
+    await vi.waitFor(() => expect(withTwoShells(ch.latest())).toBe(true), { timeout: 10_000 });
+    // 하나가 끝나면 목록에서 빠지고 추가 응답이 처음 응답의 스레드로 온다
+    const followup = await vi.waitFor(
+      () => {
+        const found = ch.created.find((m) => m.authorType === "agent" && m.id !== first.id);
+        if (!found) throw new Error("추가 응답 없음");
+        return found;
+      },
+      { timeout: 15_000 },
+    );
+    expect(followup.threadRootId).toBe(first.id);
+    expect(ch.latest().map((t) => t.description)).toEqual([BACKGROUND_SHELL_ENDLESS_COMMAND]);
+    // 끝나지 않는 셸은 남아 있다 — 정리
+    const [rest] = ch.latest();
+    expect((await ch.stop(rest ?? { taskId: "", originRunId: "" })).ok).toBe(true);
+  }, 30_000);
+
+  it("끝나지 않는 셸은 task.stop 으로만 끝나고, 끈 셸은 추가 응답을 만들지 않는다", async () => {
+    const ch = await backgroundChannel("runner-bg-stop");
+    expect((await ch.send(`<@a:${ch.coderId}> 백그라운드 끄기`)).ok).toBe(true);
+    await vi.waitFor(() => expect(withTwoShells(ch.latest())).toBe(true), { timeout: 10_000 });
+    const timed = ch.latest().find((t) => t.description === BACKGROUND_SHELL_TIMED_COMMAND);
+    const endless = ch.latest().find((t) => t.description === BACKGROUND_SHELL_ENDLESS_COMMAND);
+    if (!timed || !endless) throw new Error("작업 둘이 아니다");
+    // 끝나지 않는 셸을 끄면 그 줄만 사라진다
+    expect((await ch.stop(endless)).ok).toBe(true);
+    await vi.waitFor(() => expect(ch.latest().map((t) => t.taskId)).toEqual([timed.taskId]), {
+      timeout: 5_000,
+    });
+    const other = timed;
+    // 남은 것도 끄면 비고, 어느 쪽도 추가 응답을 만들지 않는다
+    expect((await ch.stop(other)).ok).toBe(true);
+    await vi.waitFor(() => expect(ch.latest()).toEqual([]), { timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect(ch.created.filter((m) => m.authorType === "agent")).toHaveLength(1);
+  }, 30_000);
 
   it("「천장」 → 천장 카드(permissionMode)와 「다시 실행」, roots 훅으로 루트를 빼면 root 카드·「루트 없음」, 되돌리면 답한다", async () => {
     const ch = await coderChannel("runner-ceiling");
