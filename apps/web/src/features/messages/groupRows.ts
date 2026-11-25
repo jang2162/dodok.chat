@@ -1,6 +1,6 @@
 import type { Approval, Message } from "@dodok/shared";
 import { type Bundle, bundleIndex } from "./bundles";
-import type { PendingMessage, Timeline } from "./timeline";
+import { isChannelVisible, type PendingMessage, type Timeline } from "./timeline";
 
 /** 메시지 목록의 한 행. key 는 가상 목록이 스크롤 위치를 붙드는 기준이라 같은 항목이면 늘 같아야 한다 */
 export type Row =
@@ -31,15 +31,17 @@ function dayOf(iso: string, tz: string | undefined): string {
 
 function continues(prev: Message, m: Message): boolean {
   if (prev.kind === "system" || m.kind === "system") return false;
+  // 채널에도 보낸 답글은 링크 줄이 붙으므로 앞 글과 이어 붙이지 않고 늘 머리 줄(이름·시각)을 그린다
+  if (m.threadRootId !== undefined) return false;
   if (prev.authorType !== m.authorType || prev.authorId !== m.authorId) return false;
   const gap = Date.parse(m.createdAt) - Date.parse(prev.createdAt);
   return gap >= 0 && gap < GROUP_GAP_MS;
 }
 
-/** 구분선이 서는 메시지 — 읽음 위치 뒤의 남의 최상위 보통 메시지. 에이전트 글은 id 가 같아도 내 글이 아니다 */
+/** 구분선이 서는 메시지 — 읽음 위치 뒤의 남의 채널에 보이는(최상위 또는 채널에도 보낸 답글) 보통 메시지. 에이전트 글은 id 가 같아도 내 글이 아니다 */
 function isNewForMe(m: Message, opts: GroupOpts): boolean {
   if (opts.entryReadSeq === undefined || m.seq <= opts.entryReadSeq) return false;
-  if (m.kind !== "normal" || m.threadRootId !== undefined) return false;
+  if (m.kind !== "normal" || !isChannelVisible(m)) return false;
   return !(m.authorType === "user" && m.authorId === opts.me);
 }
 

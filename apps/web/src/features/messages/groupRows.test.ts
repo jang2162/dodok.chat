@@ -290,6 +290,30 @@ describe("groupRows 「새 메시지」 구분선", () => {
     expect(next?.kind === "message" && next.message.seq).toBe(3);
   });
 
+  it("채널에도 보낸 답글은 구분선 자리다", () => {
+    const items = [
+      theirs(1),
+      theirs(2, "2027-01-15T08:00:10Z", {
+        threadRootId: "00000000-0000-4000-8000-0000000000bb",
+        alsoInChannel: true,
+      }),
+    ];
+    const rows = withUnread(items, 1);
+    const next = rows[unreadAt(rows) + 1];
+    expect(next?.kind === "message" && next.message.seq).toBe(2);
+  });
+
+  it("채널에도 보낸 답글은 같은 작성자 연속이어도 머리 줄을 그린다", () => {
+    const items = [
+      theirs(1),
+      theirs(2, "2027-01-15T08:00:10Z", {
+        threadRootId: "00000000-0000-4000-8000-0000000000bb",
+        alsoInChannel: true,
+      }),
+    ];
+    expect(heads(withUnread(items, undefined))).toEqual([true, true]);
+  });
+
   it("모두 읽은 범위면 없다", () => {
     expect(unreadAt(withUnread([theirs(1), theirs(2)], 2))).toBe(-1);
   });
