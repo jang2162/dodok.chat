@@ -15,6 +15,7 @@ import {
   createUserMessage,
   getMessage,
   listMessages,
+  resolveAlsoInChannel,
   threadRootsOf,
   threadSummaryOf,
 } from "../src/modules/messages/service";
@@ -49,13 +50,17 @@ function setup() {
     return a;
   };
   let n = 0;
-  const human = (bodyMd: string, over: { threadRootId?: string; channelId?: string } = {}) =>
+  const human = (
+    bodyMd: string,
+    over: { threadRootId?: string; channelId?: string; alsoInChannel?: boolean } = {},
+  ) =>
     createUserMessage(db, bus, {
       conversationId: channelConversation(db, over.channelId ?? channel.id),
       authorId: userId,
       bodyMd,
       clientMsgId: `c${++n}`,
       ...(over.threadRootId ? { threadRootId: over.threadRootId } : {}),
+      ...(over.alsoInChannel === undefined ? {} : { alsoInChannel: over.alsoInChannel }),
     });
   const agentSays = (agentId: string, bodyMd: string, threadRootId?: string) =>
     createAgentMessage(db, bus, {
@@ -320,6 +325,53 @@ describe("스레드 답글 저장·요약", () => {
   });
 });
 
+describe("alsoInChannel", () => {
+  it("resolveAlsoInChannel — 명시가 이기고, 없으면 에이전트 둘 이상인 스레드 답글", () => {
+    const r = (requested: boolean | undefined, threadRootId: string | undefined, agentMentionCount: number) =>
+      resolveAlsoInChannel({ requested, threadRootId, agentMentionCount });
+    expect(r(true, "root", 0)).toBe(true);
+    expect(r(false, "root", 2)).toBe(false);
+    expect(r(undefined, "root", 2)).toBe(true);
+    expect(r(undefined, "root", 1)).toBe(false);
+    expect(r(true, undefined, 2)).toBe(false);
+  });
+
+  it("true + 스레드 답글이면 저장된 메시지에 alsoInChannel", () => {
+    const t = setup();
+    const root = t.human("루트");
+    const reply = t.human("답글", { threadRootId: root.id, alsoInChannel: true });
+    expect(reply.alsoInChannel).toBe(true);
+    expect(getMessage(t.db, reply.id)?.alsoInChannel).toBe(true);
+    expect(Message.parse(reply).alsoInChannel).toBe(true);
+  });
+
+  it("false 면 에이전트 둘을 멘션해도 싣지 않는다", () => {
+    const t = setup();
+    t.agent("dev");
+    t.agent("fin");
+    const root = t.human("루트");
+    const reply = t.human("@dev @fin 봐줘", { threadRootId: root.id, alsoInChannel: false });
+    expect(reply.mentions.agents).toHaveLength(2);
+    expect(reply.alsoInChannel).toBeUndefined();
+  });
+
+  it("없으면 서로 다른 에이전트 둘 이상을 멘션한 스레드 답글만", () => {
+    const t = setup();
+    t.agent("dev");
+    t.agent("fin");
+    const root = t.human("루트");
+    expect(t.human("@dev @fin 봐줘", { threadRootId: root.id }).alsoInChannel).toBe(true);
+    expect(t.human("@dev @dev 봐줘", { threadRootId: root.id }).alsoInChannel).toBeUndefined();
+    expect(t.human("@dev 봐줘", { threadRootId: root.id }).alsoInChannel).toBeUndefined();
+  });
+
+  it("true 라도 최상위 글이면 무시한다(오류 아님)", () => {
+    const t = setup();
+    const top = t.human("최상위", { alsoInChannel: true });
+    expect(top.alsoInChannel).toBeUndefined();
+  });
+});
+
 describe("listMessages 스코프·around", () => {
   /** 루트 1·3·5·7, 답글 2(→1)·4(→3)·6(→1) */
   function seeded() {
@@ -581,6 +633,26 @@ describe("wire·REST — 스레드", () => {
     if (!res.ok) throw new Error(res.error.code);
     expect(res.data.message).toMatchObject({ threadRootId: root.id, seq: 2 });
     expect((await updated).message.threadSummary).toMatchObject({ count: 1, agentIds: [] });
+  });
+
+  it("message.send alsoInChannel — true 는 싣고 false 는 싣지 않는다", async () => {
+    const socket = await connect();
+    const channel = newChannel("wire-also");
+    const root = post(channel.id, "루트");
+    const send = async (clientMsgId: string, alsoInChannel: boolean) => {
+      const res = await socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        ...sendTarget(app.db, channel.id, root.id),
+        clientMsgId,
+        bodyMd: "답글",
+        threadRootId: root.id,
+        alsoInChannel,
+      });
+      if (!res.ok) throw new Error(res.error.code);
+      return res.data.message;
+    };
+    expect((await send("also-1", true)).alsoInChannel).toBe(true);
+    expect((await send("also-2", false)).alsoInChannel).toBeUndefined();
   });
 
   it("message.send threadRootId 가 답글·다른 채널·없는 id 면 VALIDATION(Review Focus 1)", async () => {

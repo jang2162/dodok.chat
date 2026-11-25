@@ -1,0 +1,1 @@
+ALTER TABLE `messages` ADD `also_in_channel` integer DEFAULT 0 NOT NULL;

@@ -61,6 +61,8 @@ export const MessageSend = z
     attachments: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).optional(), // 업로드 API로 먼저 올린 첨부 id
     replyTo: Id.optional(),
     threadRootId: Id.optional(), // 답글을 가리키면 서버가 VALIDATION 으로 거절한다 — 웹이 루트를 보낸다
+    // 스레드 답글을 채널 타임라인에도 — true 1·false 0, 없으면(옛 웹) 서버가 정한다(서로 다른 에이전트 멘션 ≥ 2). 스레드 답글이 아니면 무시
+    alsoInChannel: z.boolean().optional(),
     // 둘 중 정확히 하나 — 그 채널의 세션(스레드 답글이면 루트의 세션과 같아야 한다), 또는 서버가 만들 새 세션
     conversationId: Id.optional(),
     newConversation: NewConversation.optional(),

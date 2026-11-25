@@ -101,7 +101,26 @@ export type CreateUserMessageInput = {
   replyTo?: string;
   /** 같은 대화의 루트만 — 답글·다른 대화·없는 id 면 VALIDATION(스레드 안의 스레드 없음) */
   threadRootId?: string;
+  /** 스레드 답글을 채널 타임라인에도(resolveAlsoInChannel). 없으면 서버가 정한다 */
+  alsoInChannel?: boolean;
 };
+
+/** 채널에도 보낸 답글로 자동 판정하는 서로 다른 에이전트 멘션 수 */
+const ALSO_IN_CHANNEL_AUTO_AGENTS = 2;
+
+/**
+ * 사람 글을 채널 타임라인에도 보일지 — 스레드 답글만 대상이고(아니면 늘 false, 오류 아님), 명시한 값이 이기며, 없으면(옛 웹) 토큰화한
+ * 멘션의 서로 다른 에이전트가 둘 이상일 때 true(스레드 글 채널에도 보이기 설계 「데이터·계약」)
+ */
+export function resolveAlsoInChannel(input: {
+  requested: boolean | undefined;
+  threadRootId: string | undefined;
+  agentMentionCount: number;
+}): boolean {
+  if (input.threadRootId === undefined) return false;
+  if (input.requested !== undefined) return input.requested;
+  return input.agentMentionCount >= ALSO_IN_CHANNEL_AUTO_AGENTS;
+}
 
 export type CreateAgentMessageInput = {
   conversationId: string;
@@ -189,6 +208,7 @@ export function rowToMessage(row: MessageRow): Message {
       systemMeta: row.systemMeta ?? undefined,
       replyTo: row.replyTo ?? undefined,
       threadRootId: row.threadRootId ?? undefined,
+      ...(row.alsoInChannel === 1 ? { alsoInChannel: true } : {}),
       runId: row.runId ?? undefined,
       clientMsgId: row.clientMsgId ?? undefined,
       externalId: row.externalId ?? undefined,
@@ -524,12 +544,18 @@ export function sendUserMessage(
           : kind === "direct"
             ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
             : plainInDm(input.bodyMd);
+      const alsoInChannel = resolveAlsoInChannel({
+        requested: input.alsoInChannel,
+        threadRootId: input.threadRootId,
+        agentMentionCount: new Set(mentions.agents).size,
+      });
       return {
         kind: "normal",
         authorType: "user",
         authorId: input.authorId,
         bodyMd,
         mentions,
+        alsoInChannel: alsoInChannel ? 1 : 0,
         attachments: claimed,
         replyTo: input.replyTo ?? null,
         clientMsgId: input.clientMsgId,

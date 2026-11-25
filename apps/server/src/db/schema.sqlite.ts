@@ -383,6 +383,8 @@ export const messages = sqliteTable(
     clientMsgId: text("client_msg_id"),
     externalId: text("external_id"),
     threadRootId: text("thread_root_id"), // 스레드 답글이면 같은 대화의 루트(thread_root_id 가 null 인 메시지) id
+    // 1 = 채널(세션) 타임라인에도 보이는 사람 스레드 답글(스레드 글 채널에도 보이기 설계). 사람 답글에만 1 이 된다
+    alsoInChannel: integer("also_in_channel").notNull().default(0),
     createdAt: ts("created_at").notNull(),
     editedAt: ts("edited_at"),
   },

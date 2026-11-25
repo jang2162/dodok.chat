@@ -475,6 +475,8 @@ export const Message = z.object({
   replyTo: Id.optional(),
   threadRootId: Id.optional(), // 스레드 답글이면 그 루트. 스레드 안의 스레드는 없다 — 루트만 가리킨다
   threadSummary: ThreadSummary.optional(),
+  /** 채널(세션) 타임라인에도 보이는 사람 스레드 답글 — 참일 때만 싣는다. 옛 웹은 버리고 받는다(스레드에만 보인다) */
+  alsoInChannel: z.literal(true).optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
   runRoot: MessageRunRoot.optional(),
   /** 사람 최상위 글이면 그 글이 루트인 런(런 id 순, 최대 ROOT_RUNS_MAX). 옛 서버·대상 아닌 글이면 없다 */
