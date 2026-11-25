@@ -130,7 +130,8 @@ export type InboundContext = z.infer<typeof InboundContext>;
 
 export const InboundDeliver = z.object({
   deliveryId: Id,
-  kind: z.enum(["message", "interaction", "continue"]),
+  // background — 러너 추가 응답 런(백그라운드 작업 스펙 5.5). 러너 run.followup ack 로만 가고 플러그인에는 보내지 않는다
+  kind: z.enum(["message", "interaction", "continue", "background"]),
   channelId: Id, // 채널 설정(ConfigSet)·프롬프트 조회 — 채널 단위
   conversationId: Id, // OpenClaw 피어 id(`channel:<id>`)·세션 키의 대화
   conversationTitle: ConversationTitle, // 헤더 `세션:` 줄 — formatSessionLine 으로만 싣는다(사람이 쓴 글이다)

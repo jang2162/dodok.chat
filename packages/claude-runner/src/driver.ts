@@ -1,6 +1,10 @@
 import type {
   AgentCommand,
   AppMcpCeiling,
+  BackgroundTask,
+  InboundDeliver,
+  RunnerFollowupRequest,
+  RunnerFollowupResult,
   RunnerEffort,
   RunnerPermissionMode,
   RunnerProgram,
@@ -10,6 +14,29 @@ import type {
 } from "@dodok/shared";
 import type { ProgramCeiling } from "./config";
 import type { RunSink } from "./sink";
+
+/** 추가 응답 런 하나 — 연결이 그 런 id 로 sink 와 중지 signal(run.abort)을 만든다. 턴이 끝나면 close */
+export type FollowupRun = { sink: RunSink; signal: AbortSignal; close(): void };
+
+/**
+ * 백그라운드 작업(백그라운드 작업 스펙 5.3·5.4) — 드라이버가 런보다 오래 사는 작업을 서버에 알리는 길. 연결이 채운다
+ * (createBackgroundHooksSlot). 드라이버는 연결보다 먼저 만들어지므로 자리를 먼저 받고 연결이 나중에 잇는다
+ */
+export type BackgroundHooks = {
+  /** CLI 가 작업 알림 뒤 스스로 연 턴 — 서버에 추가 응답 런을 청한다. 끊겨 있거나 답이 없으면 { ok: false, reason: "unknown" } */
+  requestFollowup(req: RunnerFollowupRequest): Promise<RunnerFollowupResult>;
+  /** 서버가 받아 준 추가 응답 런의 sink·signal */
+  openFollowup(run: { runId: string; deliver: InboundDeliver; workdir: string }): FollowupRun;
+  /** 그 세션의 작업 전체가 바뀌었다(바꿔 끼우는 값) — 연결이 세션마다 묶어 tasks.update 로 낸다 */
+  tasksChanged(sessionKey: string, tasks: BackgroundTask[]): void;
+  /** 그 세션의 프로세스를 붙들기 시작했다·놓았다 — 스케줄러 자리 하나 */
+  held(sessionKey: string, holding: boolean): void;
+  /**
+   * 지금 프로세스를 붙들어도 되나 — 서버가 마지막 hello 결과에 backgroundTasks 를 알렸을 때만 참(리뷰 C1). 옛 서버는 추가 응답·작업
+   * 끄기·세션 놓기를 보내지 않아 붙든 프로세스를 끌 길이 없다. 거짓이면 첫 result 에서 닫는다(지금 동작)
+   */
+  canHold(): boolean;
+};
 
 // 프로그램 드라이버 계약(러너 일반화 스펙 4장). 연결은 천장 검사를 마친 런을 RunSpec 으로 풀어 드라이버에 넘기고, 드라이버는
 // 결과를 sink 로만 낸다 — final·error 중 하나를 한 번 내고 던지지 않는다. 이번 드라이버는 drivers/claude 하나다
@@ -51,6 +78,18 @@ export interface ProgramDriver {
    * 연결이 failed 로 답한다
    */
   listCommands?(args: { workdir: string; configDir?: string; signal: AbortSignal }): Promise<AgentCommand[]>;
+  /**
+   * 백그라운드 작업(백그라운드 작업 스펙 5.2·5.5) — 런보다 오래 사는 작업을 쥐는 드라이버만. 있으면 연결이 hello 에 능력
+   * backgroundTasks 를 싣는다
+   */
+  background?: {
+    /** 화면의 「종료」 — 없는 세션·작업이면 false */
+    stopTask(sessionKey: string, taskId: string): Promise<boolean>;
+    /** 세션 닫기·보관 — 도는 턴을 멈추고 작업을 모두 끈 채 프로세스를 닫는다 */
+    release(sessionKey: string): void;
+    /** 작업이 남은 세션마다 지금 목록 — 다시 붙은 뒤 한 번씩 보낸다 */
+    held(): Array<{ sessionKey: string; tasks: BackgroundTask[] }>;
+  };
 }
 
 /** hello 의 programs[].capabilities — 드라이버가 할 수 있는 것만 */

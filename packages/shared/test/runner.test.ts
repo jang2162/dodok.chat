@@ -20,6 +20,12 @@ import {
   RunnerRunAck,
   RunnerUpdate,
   RunnerUpdateResult,
+  RunnerFollowupRequest,
+  RunnerFollowupResult,
+  RunnerSessionRelease,
+  RunnerTaskStop,
+  RunnerTaskStopResult,
+  RunnerTasksUpdate,
   RunnerRunError,
   RunnerRunEvent,
   RunnerRunFinal,
@@ -121,6 +127,7 @@ describe("/runner 상수(P1)", () => {
       "runnerControl",
       "remoteUpdate",
       "remoteUpdateOff",
+      "backgroundTasks",
     ]);
   });
 });
@@ -169,6 +176,11 @@ describe("/runner 프레임 — 유효 예 왕복", () => {
   it.each([
     ["RunnerHello", RunnerHello, HELLO],
     ["RunnerHelloResult ok", RunnerHelloResult, { ok: true, serverVersion: "0.0.0" }],
+    [
+      "RunnerHelloResult ok + features",
+      RunnerHelloResult,
+      { ok: true, serverVersion: "0.0.0", features: ["backgroundTasks", "모르는-기능"] },
+    ],
     [
       "RunnerHelloResult 거절",
       RunnerHelloResult,
@@ -399,5 +411,74 @@ describe("컨텍스트 세부·모델 목록(작성기 칩 스펙 5.2)", () => {
   it("옛 페이로드(세부·목록 없음)도 그대로 받는다", () => {
     roundTrip(RunnerRunFinal, FINAL);
     roundTrip(RunnerProgramStatus, PROGRAM);
+  });
+});
+
+describe("백그라운드 작업 프레임(백그라운드 작업 스펙 6장)", () => {
+  const shell = {
+    taskId: "b1",
+    kind: "shell",
+    description: "pnpm dev",
+    startedAt: "2026-11-24T00:00:00.000Z",
+    originRunId: ID,
+  };
+  const subagent = {
+    taskId: "a1",
+    kind: "subagent",
+    description: "파일 찾기",
+    subagentType: "Explore",
+    summary: "src 아래를 본다",
+    lastToolName: "Grep",
+    startedAt: "2026-11-24T00:00:01.000Z",
+    originRunId: ID,
+  };
+
+  it("accepts tasks.update with a shell and a subagent", () => {
+    roundTrip(RunnerTasksUpdate, { sessionKey: "agent:a:dodok:channel:c", tasks: [shell, subagent] });
+    roundTrip(RunnerTasksUpdate, { sessionKey: "agent:a:dodok:channel:c", tasks: [] });
+    expect(
+      RunnerTasksUpdate.safeParse({ sessionKey: "k", tasks: [{ ...shell, kind: "cron" }] }).success,
+    ).toBe(false);
+    expect(
+      RunnerTasksUpdate.safeParse({ sessionKey: "k", tasks: [{ ...shell, description: "x".repeat(201) }] })
+        .success,
+    ).toBe(false);
+    expect(
+      RunnerTasksUpdate.safeParse({ sessionKey: "k", tasks: [{ ...subagent, summary: "x".repeat(301) }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects tasks.update over 50 tasks", () => {
+    const tasks = Array.from({ length: 51 }, (_, i) => ({ ...shell, taskId: `b${i}` }));
+    expect(RunnerTasksUpdate.safeParse({ sessionKey: "k", tasks }).success).toBe(false);
+    expect(RunnerTasksUpdate.safeParse({ sessionKey: "k", tasks: tasks.slice(0, 50) }).success).toBe(true);
+  });
+
+  it("followup result is a discriminated union on ok", () => {
+    roundTrip(RunnerFollowupRequest, { sessionKey: "k", originRunId: ID, taskIds: ["b1"] });
+    expect(RunnerFollowupRequest.safeParse({ sessionKey: "k", originRunId: ID, taskIds: [] }).success).toBe(
+      false,
+    );
+    roundTrip(RunnerFollowupResult, { ok: true, runId: ID, deliver: { ...DELIVER, kind: "background" } });
+    roundTrip(RunnerFollowupResult, { ok: false, reason: "closed" });
+    expect(RunnerFollowupResult.safeParse({ ok: false, reason: "nope" }).success).toBe(false);
+    expect(RunnerFollowupResult.safeParse({ ok: true, reason: "limit" }).success).toBe(false);
+  });
+
+  it("task.stop·session.release", () => {
+    roundTrip(RunnerTaskStop, { sessionKey: "k", taskId: "b1" });
+    roundTrip(RunnerTaskStopResult, { ok: false });
+    roundTrip(RunnerSessionRelease, { sessionKey: "k" });
+  });
+
+  it("run ack carries heldSlots", () => {
+    roundTrip(RunnerRunAck, { runId: ID, admission: "dispatch", queuedPosition: 1, heldSlots: 2 });
+    expect(RunnerRunAck.safeParse({ runId: ID, admission: "dispatch", heldSlots: -1 }).success).toBe(false);
+  });
+
+  it("hello keeps unknown capabilities out", () => {
+    expect(RunnerCapability.safeParse("backgroundTasks").success).toBe(true);
+    expect(RunnerCapability.safeParse("backgroundShells").success).toBe(false);
   });
 });

@@ -494,6 +494,8 @@ export const RunTriggerKind = z.enum([
   "interaction",
   "continue",
   "command",
+  // background — 러너가 백그라운드 작업이 끝나 스스로 연 턴을 받는 추가 응답 런(백그라운드 작업 스펙 5.5)
+  "background",
 ]);
 export type RunTriggerKind = z.infer<typeof RunTriggerKind>;
 /** 런 끝 컨텍스트 세부의 한 줄(작성기 칩 스펙 5.1) — SDK getContextUsage 의 categories 를 줄였다. deferred 는 창 밖(불러올 때만) */
@@ -545,6 +547,24 @@ export const RunUsage = z.object({
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 
+/**
+ * 러너가 쥔 백그라운드 작업 하나(백그라운드 작업 스펙 5.4) — 러너가 SDK 작업 메시지에서 줄인 것. description·summary 는 러너가
+ * 작업 디렉터리 경로를 가리고 자른 글이다. originRunId 는 그 작업이 시작될 때 돌던 런 — 웹이 그 런 카드에 줄을 붙인다
+ */
+export const BackgroundTask = z.object({
+  taskId: z.string().min(1).max(128),
+  kind: z.enum(["shell", "subagent", "other"]),
+  description: z.string().max(200),
+  subagentType: z.string().max(64).optional(),
+  summary: z.string().max(300).optional(),
+  lastToolName: z.string().max(128).optional(),
+  startedAt: IsoDateTime,
+  originRunId: Id,
+});
+export type BackgroundTask = z.infer<typeof BackgroundTask>;
+/** 한 세션이 한 번에 싣는 작업 상한 — tasks.update·tasks.updated 가 같은 값 */
+export const BACKGROUND_TASKS_MAX = 50;
+
 export const Run = z.object({
   id: Id,
   channelId: Id,
@@ -557,6 +577,7 @@ export const Run = z.object({
   threadRootId: Id.optional(), // 스레드 런이면 그 루트 — 채널 런은 없다
   relayDepth: z.int().min(0),
   parentRunId: Id.optional(), // 서브에이전트 자식 런
+  backgroundOriginRunId: Id.optional(), // 추가 응답 런(triggerKind background)이면 그 작업을 띄운 원래 런
   sessionKey: z.string(),
   providerRunId: z.string().optional(), // OpenClaw runId
   status: RunStatus,

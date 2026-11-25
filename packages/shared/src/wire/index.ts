@@ -6,6 +6,8 @@ import {
   ATTACHMENT_LIMITS,
   Approval,
   ApprovalDecision,
+  BACKGROUND_TASKS_MAX,
+  BackgroundTask,
   type Channel,
   type ChannelMember,
   type Conversation,
@@ -22,6 +24,15 @@ import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "
 import type { SetupStatus } from "../setup";
 import type { SidebarLayout } from "../sidebar";
 
+/** 한 대화의 그 러너 세션 몫 백그라운드 작업 전체(백그라운드 작업 스펙 5.5) — 받은 쪽은 대화마다 바꿔 끼운다 */
+export const ConversationBackgroundTasks = z.object({
+  conversationId: Id,
+  // 러너가 끊겨 있으면 false — 웹은 줄을 흐리게 하고 「종료」를 뺀다
+  runnerConnected: z.boolean(),
+  tasks: z.array(BackgroundTask).max(BACKGROUND_TASKS_MAX),
+});
+export type ConversationBackgroundTasks = z.infer<typeof ConversationBackgroundTasks>;
+
 // ── 클라이언트 → 서버 (ack 있음) ──
 export const ChannelSubscribe = z.object({ channelId: Id, lastSeq: z.int().min(0).optional() });
 export type ChannelSubscribe = z.infer<typeof ChannelSubscribe>;
@@ -37,6 +48,8 @@ export const ChannelSubscribeResult = z.object({
   // lastSeq 재동기화만 — messages 의 답글이 가리키는 루트 중 messages 에 없는 것(최신 threadSummary 를 실었다).
   // 끊긴 사이 발행된 루트 message.updated 를 소켓이 못 받았으므로 웹은 이것으로 칩을 고친다
   threadRoots: z.array(Message).optional(),
+  // 그 채널 대화들의 백그라운드 작업 지금 값 — 옛 서버는 싣지 않는다
+  tasks: z.array(ConversationBackgroundTasks).default([]),
 });
 export type ChannelSubscribeResult = z.infer<typeof ChannelSubscribeResult>;
 
@@ -76,6 +89,10 @@ export type MessageSend = z.infer<typeof MessageSend>;
 
 export const RunAbort = z.object({ runId: Id });
 export type RunAbort = z.infer<typeof RunAbort>;
+
+/** 런 카드의 「종료」 — 권한은 그 런의 run.abort 와 같다(백그라운드 작업 스펙 9장) */
+export const TaskStop = z.object({ runId: Id, taskId: z.string().min(1).max(128) });
+export type TaskStop = z.infer<typeof TaskStop>;
 
 export const RunEventsReplay = z.object({ runId: Id, afterSeq: z.int().min(0).default(0) });
 export type RunEventsReplay = z.infer<typeof RunEventsReplay>;
@@ -118,6 +135,7 @@ export interface ClientToServerEvents {
   // conversation 은 newConversation 으로 보냈을 때만 — 서버가 만든 그 메시지의 세션(재전송이면 처음 만든 세션)
   "message.send": (p: MessageSend, ack: Ack<{ message: Message; conversation?: Conversation }>) => void;
   "run.abort": (p: RunAbort, ack: Ack<null>) => void;
+  "task.stop": (p: TaskStop, ack: Ack<null>) => void;
   "run.events.replay": (p: RunEventsReplay, ack: Ack<RunEventsReplayResult>) => void;
   "component.interact": (p: ComponentInteract, ack: Ack<{ interactionId: Id }>) => void;
   "approval.resolve": (p: ApprovalResolve, ack: Ack<null>) => void;
@@ -164,6 +182,8 @@ export interface ServerToClientEvents {
   "message.updated": (p: { message: Message }) => void; // 수정, 컴포넌트 소비/만료
   "run.state": (p: { run: RunState; resync?: boolean }) => void;
   "run.event": (p: { event: RunEvent }) => void;
+  // 채널 룸 — 그 대화의 그 러너 세션 몫 작업 전체(바꿔 끼우는 값)
+  "tasks.updated": (p: ConversationBackgroundTasks & { channelId: Id }) => void;
   // 승인 둘은 workspace 룸 — 구독하지 않은 채널의 승인도 받는다(다른 채널을 보고 있어도 알려야 한다)
   "approval.requested": (p: { approval: Approval }) => void;
   "approval.resolved": (p: { approval: Approval }) => void;

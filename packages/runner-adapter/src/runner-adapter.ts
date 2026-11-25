@@ -36,6 +36,10 @@ import {
   RunnerApprovalWithdrawn,
   type RunnerClientToServerEvents,
   RunnerControlCall,
+  RunnerFollowupRequest,
+  type RunnerFollowupResult,
+  RunnerTaskStopResult,
+  RunnerTasksUpdate,
   RunnerCommandsList,
   RunnerCommandsListResult,
   RUNNER_COMMANDS_LIST_TIMEOUT_MS,
@@ -45,6 +49,7 @@ import {
   RunnerFsListResult,
   RunnerHello,
   type RunnerHelloResult,
+  type RunnerServerFeature,
   RunnerOutboundPost,
   type RunnerOutboundAck,
   RunnerProjectCheckResult,
@@ -152,6 +157,13 @@ export type RunnerAdapterOptions = {
    * (최대 CONTROL_CONFIRM_TTL_MS), 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE
    */
   onControlCall?: (connectionId: string, call: RunnerControlCall) => Promise<ControlResult>;
+  /**
+   * 백그라운드 작업이 끝나 러너의 CLI 가 스스로 연 턴(run.followup — 백그라운드 작업 스펙 5.5) — 서버가 추가 응답 런을 만들어 돌려준다.
+   * 받아 준 런은 이 어댑터가 「도는 중」인 러너의 런으로 쫓는다. 없으면 늘 unknown 으로 거절한다
+   */
+  onFollowup?: (connectionId: string, req: RunnerFollowupRequest) => Promise<RunnerFollowupResult>;
+  /** 러너가 알린 그 세션의 작업 전체(tasks.update), 또는 그 러너가 빠졌다({ disconnected: true }) — 서버가 작업 목록을 쥔다 */
+  onTasks?: (connectionId: string, update: RunnerTasksUpdate | { disconnected: true }) => void;
   approvalTtlMs?: number;
   /**
    * 그 토큰의 러너가 맡는 러너 에이전트(providerAgentId)의 정의. 없으면(그 토큰의 러너 에이전트가 아니다·프로젝트가 없다) null.
@@ -199,6 +211,13 @@ export interface RunnerAdapter extends AgentAdapter {
   runnerUpdate(tokenId: string, version: string): Promise<RunnerUpdateResult>;
   /** 그 토큰으로 지금 붙은 러너가 hello 로 그 능력을 알렸나. 붙어 있지 않으면 false */
   hasCapability(tokenId: string, capability: RunnerCapability): boolean;
+  /**
+   * 화면의 「종료」(task.stop) — 그 러너가 그 세션의 작업을 끄면 true. 러너가 붙어 있지 않거나 능력 backgroundTasks 가 없거나 답이
+   * RUNNER_FS_ACK_TIMEOUT_MS 안에 없으면 false. 끈 결과(목록)는 tasks.update 로 따로 온다
+   */
+  stopTask(connectionId: string, sessionKey: string, taskId: string): Promise<boolean>;
+  /** 세션 닫기·보관·내보내기(session.release) — 능력 backgroundTasks 가 있는 붙은 러너에만 보낸다 */
+  releaseSession(connectionId: string, sessionKey: string): void;
   capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
 }
 
@@ -229,6 +248,8 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "approval.requested",
   "approval.withdrawn",
   "control.call",
+  "tasks.update",
+  "run.followup",
 ]);
 // 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다. 열린 런·기다리는 승인을
 // 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 RUN_FREE_APPROVALS 개까지
@@ -243,11 +264,13 @@ export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameB
   "approval.requested": "control",
   "approval.withdrawn": "control",
   "control.call": "control",
+  "tasks.update": "events",
+  "run.followup": "control",
 };
 
 /**
  * 러너가 `run.event` 로 보낼 수 있는 변형. 수명(RUN_*)·승인(APPROVAL_*)·대기(RUN_QUEUED)·상태(STATE_SNAPSHOT)는 서버와 이 어댑터가
- * 만드는 사실이라 러너가 지어내면 런 상태·승인 카드를 흉내 낼 수 있다. 서브에이전트 변형은 서버 런 id 를 싣는다 — 러너는 모른다
+ * 만드는 사실이라 러너가 지어내면 런 상태·승인 카드를 흉내 낼 수 있다
  */
 const RUNNER_EVENT_TYPES: ReadonlySet<RunEventType> = new Set<RunEventType>([
   "TEXT_MESSAGE_START",
@@ -264,6 +287,10 @@ const RUNNER_EVENT_TYPES: ReadonlySet<RunEventType> = new Set<RunEventType>([
   "TOOL_CALL_RESULT",
   "STEP_STARTED",
   "STEP_FINISHED",
+  // 서브에이전트 줄(백그라운드 작업 스펙 5.4) — subagentRunId 는 러너가 지은 표시용 키다. 서버 런을 가리키지 않는다(웹은 줄 키로만 쓴다)
+  "SUBAGENT_STARTED",
+  "SUBAGENT_FINISHED",
+  "SUBAGENT_ERROR",
   "CUSTOM",
 ]);
 // 비용은 run.final 에서만 만든다 — 러너가 CUSTOM 으로 다른 값을 겹쳐 쓰지 못하게
@@ -530,7 +557,24 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       });
     }
     approvals.cancelForRunner(runner);
+    // 작업 목록은 「러너 연결 끊김」으로 — 다시 붙으면 러너가 목록을 다시 보낸다(스펙 5.5)
+    if (runner.capabilities.includes("backgroundTasks")) {
+      try {
+        opts.onTasks?.(runner.tokenId, { disconnected: true });
+      } catch (error) {
+        logger.error({ err: error }, "runner tasks handler threw");
+      }
+    }
   }
+
+  // 서버가 추가 응답·작업 목록을 받을 수 있을 때만 러너가 프로세스를 붙든다(리뷰 C1) — 둘 중 하나라도 없으면 알리지 않는다
+  const helloOk: RunnerHelloResult = {
+    ok: true,
+    serverVersion: opts.serverVersion,
+    ...(opts.onFollowup && opts.onTasks
+      ? { features: ["backgroundTasks" satisfies RunnerServerFeature] }
+      : {}),
+  };
 
   function onHello(socket: RunnerSocket, auth: Required<SocketAuth>, payload: unknown, ack: unknown) {
     const reply = (r: RunnerHelloResult) => {
@@ -538,7 +582,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     };
     if (registry.get(socket.id)) {
       logger.warn({ tokenId: auth.tokenId }, "runner hello repeated — ignored");
-      return reply({ ok: true, serverVersion: opts.serverVersion });
+      return reply(helloOk);
     }
     const reject = (message: string, detail: object) => {
       logger.warn({ tokenId: auth.tokenId, ...detail }, "runner hello rejected");
@@ -593,7 +637,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       },
       "runner hello",
     );
-    reply({ ok: true, serverVersion: opts.serverVersion });
+    reply(helloOk);
     announceRunners();
   }
 
@@ -869,6 +913,71 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
   }
 
+  function onTasksUpdate(runner: Runner, payload: unknown) {
+    if (!runner.capabilities.includes("backgroundTasks")) {
+      logger.warn({ tokenId: runner.tokenId }, "runner tasks.update without backgroundTasks — dropped");
+      return;
+    }
+    const parsed = RunnerTasksUpdate.safeParse(payload);
+    if (!parsed.success || parseDodokSessionKey(parsed.data.sessionKey) === undefined) {
+      logger.warn(
+        { tokenId: runner.tokenId, ...(parsed.success ? {} : { issues: issues(parsed.error) }) },
+        "runner tasks.update violates contract",
+      );
+      return;
+    }
+    try {
+      opts.onTasks?.(runner.tokenId, parsed.data);
+    } catch (error) {
+      logger.error({ err: error }, "runner tasks handler threw");
+    }
+  }
+
+  /**
+   * 러너의 CLI 가 스스로 연 턴(스펙 5.3) — 서버가 받아 준 런은 곧바로 「도는 중」인 이 러너의 런이다(started). ack 는 추적을 등록한
+   * 뒤에 보낸다 — 러너는 ack 를 받자마자 쥐어 둔 이벤트를 그 런 id 로 흘린다
+   */
+  async function onRunFollowup(runner: Runner, payload: unknown, ack: unknown) {
+    const reply = (r: RunnerFollowupResult) => {
+      if (typeof ack === "function") ack(r);
+    };
+    const parsed = RunnerFollowupRequest.safeParse(payload);
+    if (!parsed.success || parseDodokSessionKey(parsed.data.sessionKey) === undefined) {
+      logger.warn({ tokenId: runner.tokenId }, "runner run.followup violates contract");
+      return reply({ ok: false, reason: "unknown" });
+    }
+    if (!runner.capabilities.includes("backgroundTasks") || !opts.onFollowup)
+      return reply({ ok: false, reason: "unknown" });
+    let result: RunnerFollowupResult;
+    try {
+      result = await opts.onFollowup(runner.tokenId, parsed.data);
+    } catch (error) {
+      logger.warn({ err: error, tokenId: runner.tokenId }, "runner run.followup failed");
+      return reply({ ok: false, reason: "unknown" });
+    }
+    if (result.ok) {
+      if (closed || !isLive(runner)) return reply({ ok: false, reason: "unknown" });
+      const definition = opts.agentDefinition(
+        result.deliver.agentId,
+        runner.tokenId,
+        result.deliver.conversationId,
+      );
+      runs.set(result.runId, {
+        runId: result.runId,
+        runner,
+        deliver: result.deliver,
+        model: definition?.agent.model ?? null,
+        serverSessionIds: true,
+        started: true,
+        openTools: new Set(),
+        aborted: false,
+        freeApprovals: 0,
+      });
+      logger.info({ runId: result.runId, tokenId: runner.tokenId }, "runner follow-up run started");
+    }
+    reply(result);
+  }
+
   function onApprovalRequested(runner: Runner, payload: unknown) {
     const parsed = RunnerApprovalRequested.safeParse(payload);
     if (!parsed.success) {
@@ -1058,6 +1167,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           ok: false,
           error: { code: "RATE_LIMITED", message: "too many frames" },
         });
+      if (event === "run.followup" && typeof ack === "function")
+        (ack as (r: RunnerFollowupResult) => void)({ ok: false, reason: "unknown" });
       return false;
     };
     const on = <A extends unknown[]>(
@@ -1102,6 +1213,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     on("approval.requested", onApprovalRequested);
     on("approval.withdrawn", onApprovalWithdrawn);
     on("control.call", onControlCall);
+    on("tasks.update", onTasksUpdate);
+    on("run.followup", onRunFollowup);
     socket.on("disconnect", () => {
       clearTimeout(helloTimer);
       helloTimers.delete(helloTimer);
@@ -1345,6 +1458,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           type: "RUN_QUEUED",
           runId: run.runId,
           position: ack.queuedPosition,
+          // 붙든 프로세스가 자리를 쥔 수 — 웹이 대기 표시에 그 까닭을 붙인다(D7)
+          ...(ack.heldSlots === undefined || ack.heldSlots === 0 ? {} : { heldSlots: ack.heldSlots }),
         });
       }
       logger.info(
@@ -1363,6 +1478,25 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         connectionId: runner.tokenId,
         ...(ack.queuedPosition === undefined ? {} : { queued: true }),
       };
+    },
+
+    async stopTask(connectionId, sessionKey, taskId) {
+      const runner = registry.byToken(connectionId);
+      if (closed || !runner || !runner.capabilities.includes("backgroundTasks")) return false;
+      try {
+        const raw: unknown = await runner.socket
+          .timeout(RUNNER_FS_ACK_TIMEOUT_MS)
+          .emitWithAck("task.stop", { sessionKey, taskId });
+        return RunnerTaskStopResult.safeParse(raw).data?.ok === true;
+      } catch {
+        return false;
+      }
+    },
+
+    releaseSession(connectionId, sessionKey) {
+      const runner = registry.byToken(connectionId);
+      if (closed || !runner || !runner.capabilities.includes("backgroundTasks") || !isLive(runner)) return;
+      runner.socket.emit("session.release", { sessionKey });
     },
 
     async abort(runId, _sessionKey, _connectionId) {

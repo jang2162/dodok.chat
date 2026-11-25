@@ -1354,7 +1354,15 @@ it("런 목록 조회가 실패해도 실시간으로 아는 런은 그린다", 
  */
 const subscribeAck = (over: Partial<ChannelSubscribeResult> = {}): Result<ChannelSubscribeResult> => ({
   ok: true,
-  data: { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [], ...over },
+  data: {
+    messages: [],
+    hasMore: false,
+    latestSeq: 0,
+    activeRuns: [],
+    pendingApprovals: [],
+    tasks: [],
+    ...over,
+  },
 });
 
 async function reconnect(queryClient: QueryClient, over: Partial<ChannelSubscribeResult> = {}) {

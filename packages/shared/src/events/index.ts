@@ -17,7 +17,8 @@ function ev<T extends string, S extends Record<string, z.ZodType>>(type: T, shap
 
 export const RunEvent = z.discriminatedUnion("type", [
   // 런 수명
-  ev("RUN_QUEUED", { position: z.int().optional() }), // dodok 확장
+  // dodok 확장. heldSlots — 러너 자리를 쥔 붙든 프로세스 수(백그라운드 작업 스펙 D7). 그 까닭으로 기다릴 때만 있다
+  ev("RUN_QUEUED", { position: z.int().optional(), heldSlots: z.int().min(0).optional() }),
   ev("RUN_STARTED", {
     threadId: Id, // channelId
     agentId: Id,

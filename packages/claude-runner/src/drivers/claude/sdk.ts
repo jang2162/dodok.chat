@@ -6,7 +6,10 @@ import {
   query,
   tool,
   type CanUseTool,
+  type EffortLevel,
+  type McpServerConfig,
   type ModelInfo,
+  type PermissionMode,
   type Options,
   type SDKControlGetContextUsageResponse,
   type SDKMessage,
@@ -34,6 +37,13 @@ export type SdkQuery = AsyncIterable<SdkMessage> & {
   getContextUsage(opts?: { detail?: "summary" | "full" }): Promise<SdkContextUsage>;
   /** 그 런의 CLI·cwd·플러그인에서 쓸 수 있는 명령 — 명령 런이 프롬프트를 내기 전에 스킬 별칭인지 본다(에이전트 명령 C4) */
   supportedCommands(): Promise<SdkSlashCommand[]>;
+  // 붙든 프로세스(백그라운드 작업 스펙 D6·5.5) — 이어 넣는 런의 설정을 턴 전에 바꾸고, 화면의 「종료」로 작업을 끈다
+  setModel(model?: string): Promise<void>;
+  setPermissionMode(mode: PermissionMode): Promise<void>;
+  /** effort 는 flag 설정 effortLevel 로 바꾼다 — null 이면 모델 기본 */
+  applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
+  setMcpServers(servers: Record<string, McpServerConfig>): Promise<unknown>;
+  stopTask(taskId: string): Promise<void>;
 };
 
 export type SdkPort = {

@@ -33,13 +33,19 @@ import { fetchContextBreakdown } from "./context-usage";
 import type {
   CanUseTool,
   SdkMcpServer,
-  SdkMessage,
   SdkOptions,
   SdkPort,
   SdkQuery,
   SdkSlashCommand,
   SdkUserMessage,
 } from "./sdk";
+import type { BackgroundHooks } from "../../driver";
+import {
+  createSessionProcess,
+  FOLLOWUP_UNBOUND_MESSAGE,
+  type RunBinding,
+  type SessionProcess,
+} from "./session-process";
 import { createStreamMapper, isAuthFailureText } from "./stream-map";
 
 /** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) */
@@ -279,6 +285,11 @@ export function buildQueryOptions(
     botMcp?: BotMcp;
     /** CLI 가 --thinking-display 를 아는 판이면 true(supportsThinkingDisplay) — 추론 글(요약)을 받는다 */
     thinkingDisplay?: boolean;
+    /**
+     * 지금 턴의 런 — 붙든 프로세스(세션 프로세스)는 런이 바뀌어도 이 query 를 계속 쓰므로 훅이 턴 사실·「항상 허용」·권한 모드를
+     * 여기서 읽는다(백그라운드 작업 스펙 5.2). 없으면 spec·alwaysAllowed 그대로
+     */
+    live?: () => Pick<RunBinding, "turnFacts" | "alwaysAllowed" | "permissionMode">;
   },
 ): SdkOptions {
   const botMcp = deps.botMcp ?? { servers: {}, allowedTools: [] };
@@ -334,15 +345,21 @@ export function buildQueryOptions(
                 tool_input?: unknown;
                 permission_mode?: string;
               };
+              const live = deps.live?.();
               const decision =
                 toolName === undefined
                   ? null
-                  : preToolDecision(toolName, mode ?? spec.permissionMode, botMcp.allowedTools);
+                  : preToolDecision(
+                      toolName,
+                      mode ?? live?.permissionMode ?? spec.permissionMode,
+                      botMcp.allowedTools,
+                    );
               if (decision === null) return {};
               // 사람이 이 런에서 「항상 허용」한 것은 묻게 만들지 않는다 — `ask` 는 CLI 세션 규칙을 덮어 카드가 다시 뜬다
+              const allowed = live?.alwaysAllowed ?? deps.alwaysAllowed;
               if (
                 decision === "ask" &&
-                deps.alwaysAllowed?.has(alwaysAllowKey(toolName as string, toolInput, spec.workdir))
+                allowed?.has(alwaysAllowKey(toolName as string, toolInput, spec.workdir))
               )
                 return {};
               return {
@@ -365,7 +382,10 @@ export function buildQueryOptions(
         {
           hooks: [
             async () => ({
-              hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: start.turnFacts },
+              hookSpecificOutput: {
+                hookEventName: "UserPromptSubmit",
+                additionalContext: deps.live?.().turnFacts ?? start.turnFacts,
+              },
             }),
           ],
         },
@@ -422,7 +442,23 @@ export type RunContext = {
   closeGraceMs?: number;
   /** 러너 로그 한 줄 — 세션을 어느 길(새로·resume·거절 뒤 resume)로 열었는지 남긴다. 실연에서 그 길을 가리려고 */
   log?: (line: string) => void;
+  /**
+   * 백그라운드 작업(백그라운드 작업 스펙 5.2) — 드라이버가 세션 프로세스 맵과 훅을 준다. 작업이 남은 result 뒤 프로세스를 붙들고,
+   * 붙든 세션의 다음 런은 같은 프로세스로 들어간다. 없으면 첫 result 에서 닫는다(지금 동작)
+   */
+  background?: BackgroundContext;
+  /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간(session-process SELF_TURN_WAIT_MS) */
+  selfTurnWaitMs?: number;
 };
+
+export type BackgroundContext = {
+  hooks: BackgroundHooks;
+  /** 세션 키 → 그 세션의 CLI 프로세스(도는 것·붙든 것). 프로세스가 끝나면 빠진다 */
+  sessions: Map<string, SessionProcess>;
+};
+
+/** 붙든 프로세스에 이어 넣은 런의 설정 가운데 도는 중에 못 바꾼 것 — 웹이 그 런 카드에 D6 문구를 붙인다 */
+export const HELD_SETTINGS_EVENT = "dodok.held_settings";
 
 /**
  * `<봇 폴더>/SOUL.md` = 머리 줄 + 서버 정의. 새 파일(`wx` — 이미 있는 것·링크를 따라가지 않는다)에 쓰고 rename 으로 바꾼다 —
@@ -440,16 +476,16 @@ export async function writeSoul(dir: string, soul: string, runId: string): Promi
 }
 
 /**
- * 런 하나 = query() 하나 = CLI 프로세스 하나, 프롬프트도 하나(ADR 0007 6의 1). 턴 사실은 훅 문맥에만 있으므로
- * 훅 문맥이 요청에서 빠지는 두 경우(앞 턴 처리 중 보낸 프롬프트·interrupt 직후 프롬프트 — 4.5)를 만들지 않도록
- * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.sink 로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
- * 예외 하나: 새 세션으로 연 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시 연다(첫 query 는 스트림 전에 죽었다)
+ * 런 하나. 붙든 프로세스가 없으면 query() 하나 = CLI 프로세스 하나를 새로 열고 프롬프트 하나를 보낸다(ADR 0007 6의 1). 턴 사실은 훅
+ * 문맥에만 있으므로 훅 문맥이 요청에서 빠지는 두 경우(앞 턴 처리 중 보낸 프롬프트·interrupt 직후 프롬프트 — 4.5)를 만들지 않도록
+ * 도는 턴에 프롬프트를 더 보내지 않는다. 결과는 ctx.sink 로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
+ * 예외 하나: 새 세션으로 연 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시 연다(첫 query 는 스트림 전에 죽었다).
+ * 백그라운드 작업이 남은 채 턴이 끝나면 프로세스를 붙들고(ctx.background), 그 세션의 다음 런은 같은 프로세스의 다음 턴이 된다
  */
 export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<void> {
   const { start } = spec;
   // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-  const sessionId = start.providerSessionId;
   const runId = start.deliver.runId;
   const command = start.deliver.command;
   // 서버를 지나도 막는 명령은 한 번 더 막는다(에이전트 명령 스펙 5.3 — 이중 방어)
@@ -466,16 +502,44 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
       ctx.log?.(`dodok-runner: 런 ${runId} SOUL.md 를 쓰지 못했습니다 — ${String(error)}`);
     }
   }
-  let resume = false;
-  let lookup = "";
+  const held = await heldProcessFor(spec, ctx);
+  if (held === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  // heldProcessFor 가 쥐여 준 자리 — 턴을 열지 않고 나가면 놓는다. 안 놓으면 그 세션의 다음 런이 whenIdle 에서 영영 기다리고
+  // 프로세스도 닫히지 않는다(리뷰 B1)
+  let reservation: SessionProcess | undefined = held;
   try {
-    // SDK 는 요약을 뽑을 수 없는 세션도 undefined 로 돌려준다 — 그러면 아래 재시도가 받친다
-    resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
-  } catch {
-    // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
-    lookup = "(전사 확인 실패)";
+    return await runOnceReserved(spec, ctx, held, () => (reservation = undefined));
+  } finally {
+    reservation?.unreserve();
   }
-  ctx.log?.(`dodok-runner: 런 ${runId} 세션 ${resume ? "resume" : "새로 열기"}${lookup}`);
+}
+
+/** runOnce 의 나머지 — heldAtStart 의 자리는 handOff() 를 부르기 전까지 runOnce 가 쥐고 있다(이른 반환이면 runOnce 가 놓는다) */
+async function runOnceReserved(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+  heldAtStart: SessionProcess | undefined,
+  handOff: () => void,
+): Promise<void> {
+  const { start } = spec;
+  const sessionId = start.providerSessionId;
+  const runId = start.deliver.runId;
+  const command = start.deliver.command;
+  let held: SessionProcess | undefined | "aborted" = heldAtStart;
+  let resume = false;
+  if (held === undefined) {
+    let lookup = "";
+    try {
+      // SDK 는 요약을 뽑을 수 없는 세션도 undefined 로 돌려준다 — 그러면 아래 재시도가 받친다
+      resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
+    } catch {
+      // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
+      lookup = "(전사 확인 실패)";
+    }
+    ctx.log?.(`dodok-runner: 런 ${runId} 세션 ${resume ? "resume" : "새로 열기"}${lookup}`);
+  } else {
+    ctx.log?.(`dodok-runner: 런 ${runId} 세션 붙든 프로세스로 이어 넣기`);
+  }
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다. 명령 런은 글 그대로라 이미지를 싣지 않는다
   const images =
@@ -483,6 +547,27 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
       ? await loadImageBlocks(start.deliver, ctx.sink.http, ctx.signal)
       : { blocks: [], failed: 0 };
   if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  const alwaysAllowed: AlwaysAllowed = new Set();
+  const botMcp = assembleBotMcp(spec, ctx.log);
+  if (held !== undefined) {
+    // 여기부터 자리는 runHeldTurn 이 쥔다 — 턴을 열거나 스스로 놓는다
+    handOff();
+    const outcome = await runHeldTurn(spec, ctx, held, images, alwaysAllowed, botMcp);
+    if (outcome === "done") return;
+    if (outcome === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+    // 기다리는 사이 프로세스가 닫혀 갔다 — 끝나기를 기다렸다가 새로 연다
+    held = await heldProcessFor(spec, ctx);
+    if (held === "aborted") return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+    if (held !== undefined) {
+      held.unreserve();
+      return void ctx.sink.error("INTERNAL", "Claude Code 세션 프로세스를 이어 쓰지 못했습니다");
+    }
+    try {
+      resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
+    } catch {
+      resume = false;
+    }
+  }
   // 감싸개를 못 만들면(임시 디렉터리 실패) 명령·스킬 없이 돈다 — 런을 막지 않는다
   let wrappers: CommandWrappers | undefined;
   try {
@@ -494,17 +579,144 @@ export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<voi
     ctx.log?.(`dodok-runner: 런 ${runId} 명령·스킬 감싸개를 만들지 못했습니다 — ${String(error)}`);
   }
   const plugins = wrappers?.plugins ?? [];
-  const alwaysAllowed: AlwaysAllowed = new Set();
-  const botMcp = assembleBotMcp(spec, ctx.log);
+  // 붙든 프로세스는 감싸개(플러그인 임시 디렉터리)를 계속 읽는다 — 그 프로세스가 끝날 때 치운다
+  let keptBy: SessionProcess | undefined;
   try {
-    const outcome = await attempt(spec, ctx, resume, images, plugins, alwaysAllowed, botMcp);
-    if (outcome !== "session-in-use") return;
-    if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
-    ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
-    await attempt(spec, ctx, true, images, plugins, alwaysAllowed, botMcp);
+    let outcome = await attempt(spec, ctx, resume, images, plugins, alwaysAllowed, botMcp);
+    if (outcome.result === "session-in-use") {
+      if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+      ctx.log?.(`dodok-runner: 런 ${runId} 이미 있는 세션이라 resume 으로 다시 엽니다`);
+      outcome = await attempt(spec, ctx, true, images, plugins, alwaysAllowed, botMcp);
+    }
+    if (outcome.result === "held") keptBy = outcome.process;
   } finally {
-    await wrappers?.dispose().catch(() => {});
+    if (keptBy && wrappers) {
+      const w = wrappers;
+      keptBy.onExit(() => w.dispose());
+    } else {
+      await wrappers?.dispose().catch(() => {});
+    }
   }
+}
+
+/**
+ * 이 런을 넣을 붙든 프로세스 — 없으면 undefined(새로 연다). 붙든 프로세스에 도는 턴(추가 응답)이 있으면 그 턴이 끝날 때까지 기다리고
+ * (한 번에 한 턴), 풀리면 그 자리를 쥔 채 돌려준다 — 곧바로 턴을 열거나 unreserve 한다. 기다리다 중지되면 "aborted".
+ * 끝나 가는 프로세스는 끝날 때까지 기다린다 — 같은 세션 파일을 두 CLI 가 함께 쓰지 않게(ADR 0007 4.3). 세션이 리셋됐거나(다른 세션
+ * id) 작업 디렉터리·로그인 자리·CLI 가 바뀌었으면 옛 프로세스의 작업은 이어 갈 수 없다 — 놓고(작업이 꺼진다) 새로 연다
+ */
+async function heldProcessFor(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+): Promise<SessionProcess | undefined | "aborted"> {
+  const bg = ctx.background;
+  if (bg === undefined) return undefined;
+  const sp = bg.sessions.get(spec.start.deliver.sessionKey);
+  if (sp === undefined) return undefined;
+  const opened = openedOf.get(sp);
+  const compatible =
+    sp.sessionId === spec.start.providerSessionId &&
+    opened !== undefined &&
+    opened.workdir === spec.workdir &&
+    opened.configDir === spec.configDir &&
+    opened.executable === ctx.executable;
+  if (sp.reusable() && compatible) {
+    if (!(await sp.whenIdle(ctx.signal))) return "aborted";
+    if (sp.reusable()) return sp;
+    sp.unreserve();
+  } else if (sp.reusable()) {
+    ctx.log?.(`dodok-runner: 런 ${spec.start.deliver.runId} 세션이 바뀌어 붙든 프로세스를 놓습니다`);
+    sp.release();
+  }
+  await sp.exited;
+  return undefined;
+}
+
+const NO_IMAGES = { blocks: [], failed: 0 };
+
+/** 프로세스를 연 설정 — 붙든 프로세스에 이어 넣는 런과 견준다(D6) */
+type OpenedSettings = {
+  workdir: string;
+  configDir: string | undefined;
+  executable: string | undefined;
+  model: string | null;
+  permissionMode: string;
+  effort: RunSpec["effort"] | null;
+  append: string;
+  allowedTools: string;
+  disallowedTools: string;
+  mcpServers: string;
+  dodokServer: SdkMcpServer;
+  plugins: CommandWrapperPlugin[];
+  costKind: RunnerRunFinal["costKind"];
+  /** 마지막으로 이 프로세스에 넣은 런 — 스스로 연 턴(추가 응답)이 그 정의·문맥을 잇는다 */
+  last: { spec: ClaudeRunSpec; ctx: RunContext };
+};
+const openedOf = new WeakMap<SessionProcess, OpenedSettings>();
+
+const sortedKey = (list: readonly string[] | undefined) => JSON.stringify([...(list ?? [])].sort());
+
+/** 런 하나의 바인딩 — 도구·승인·훅이 붙든 프로세스에서도 지금 런을 보게 */
+function bindingFor(spec: ClaudeRunSpec, ctx: RunContext, alwaysAllowed: AlwaysAllowed): RunBinding {
+  const { start } = spec;
+  return {
+    runId: start.deliver.runId,
+    deliver: start.deliver,
+    sessionKey: start.deliver.sessionKey,
+    signal: ctx.signal,
+    turnFacts: start.turnFacts,
+    permissionMode: spec.permissionMode,
+    alwaysAllowed,
+    sink: ctx.sink,
+    post: createPoster({
+      workdir: spec.workdir,
+      deliver: start.deliver,
+      http: ctx.sink.http,
+      send: (m) => ctx.sink.post(m),
+      mask: ctx.sink.mask,
+      signal: ctx.signal,
+      now: ctx.now ?? Date.now,
+    }),
+    canUseTool: runScopedAllowAlways(
+      createCanUseTool({
+        runId: start.deliver.runId,
+        sessionKey: start.deliver.sessionKey,
+        workdir: spec.workdir,
+        emit: (p) => ctx.sink.requestApproval(p),
+        withdraw: (id) => ctx.sink.withdrawApproval(id),
+        waitDecision: (id, signal) => ctx.sink.waitDecision(id, signal),
+        signal: ctx.signal,
+        alwaysAllowed,
+      }),
+      () => ctx.background?.hooks.canHold() === true,
+      alwaysAllowed,
+      spec.workdir,
+    ),
+  };
+}
+
+/**
+ * 「항상 허용」을 런 단위로 묶는다(백그라운드 작업 스펙 5.2). 제안이 있는 승인은 CLI 의 세션 규칙(updatedPermissions destination
+ * session)으로 가는데, 붙든 프로세스에서는 그 규칙이 다음 런까지 남는다 — 붙들 수 있는 프로세스면 규칙을 CLI 로 보내지 않고 그 요청
+ * 그대로를 이 런의 alwaysAllowed 에 넣는다(제안의 넓은 규칙보다 좁다). 붙들지 않는 프로세스는 런이 끝나면 CLI 도 끝나 지금 그대로다.
+ * 붙들 수 있는가는 훅이 있는가가 아니라 서버가 지원을 알렸는가(canHold — finishTurn 과 같은 판정)로 본다. 승인 때마다 다시 본다
+ */
+function runScopedAllowAlways(
+  canUseTool: CanUseTool,
+  holdable: () => boolean,
+  alwaysAllowed: AlwaysAllowed,
+  workdir: string,
+): CanUseTool {
+  return async (toolName, input, options) => {
+    const result = await canUseTool(toolName, input, options);
+    if (!holdable()) return result;
+    if (result?.behavior !== "allow" || !("updatedPermissions" in result)) return result;
+    alwaysAllowed.add(alwaysAllowKey(toolName, input, workdir));
+    const { updatedPermissions: _session, ...rest } = result as typeof result & {
+      updatedPermissions?: unknown;
+    };
+    return rest;
+  };
 }
 
 /**
@@ -546,164 +758,347 @@ async function attempt(
   plugins: CommandWrapperPlugin[],
   alwaysAllowed: AlwaysAllowed,
   botMcp: BotMcp,
-): Promise<"done" | "session-in-use"> {
+): Promise<{ result: TurnResult; process?: SessionProcess }> {
+  const { start } = spec;
+  const now = ctx.now ?? Date.now;
+  const binding = bindingFor(spec, ctx, alwaysAllowed);
+  const sessionKey = start.deliver.sessionKey;
+  const bg = ctx.background;
+  const sp = createSessionProcess({
+    sessionKey,
+    sessionId: start.providerSessionId,
+    workdir: spec.workdir,
+    binding,
+    ...(bg ? { hooks: bg.hooks } : {}),
+    now,
+    closeGraceMs: ctx.closeGraceMs ?? ABORT_CLOSE_MS,
+    ...(ctx.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: ctx.selfTurnWaitMs }),
+    ...(ctx.log ? { log: ctx.log } : {}),
+  });
+  const retryable = (error: unknown) =>
+    !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
+  // dodok 도구·승인 콜백은 지금 턴의 런으로 — 제어 호출의 runId 도 지금 런으로 바꿔 싣는다. 스스로 연 턴의 런이 정해지기 전이면
+  // 기다리고, 못 정해졌으면 앞 런으로 보내지 않고 거절한다(liveBinding)
+  const dodokServer = createDodokMcpServer({
+    sdk: ctx.sdk,
+    post: async (input) => {
+      const b = await sp.liveBinding();
+      return b ? b.post(input) : { error: FOLLOWUP_UNBOUND_MESSAGE };
+    },
+    tools: createControlTools({
+      runId: start.deliver.runId,
+      call: async (call) => {
+        const b = await sp.liveBinding();
+        if (!b) return { ok: false, error: { code: "INTERNAL", message: FOLLOWUP_UNBOUND_MESSAGE } };
+        return b.sink.control({ ...call, runId: b.runId });
+      },
+      runnerControl: hasRunnerControl(spec),
+    }),
+  });
+  const options = buildQueryOptions(spec, {
+    baseEnv: ctx.baseEnv,
+    ...(ctx.executable === undefined ? {} : { executable: ctx.executable }),
+    thinkingDisplay: supportsThinkingDisplay(ctx.cliVersion),
+    mcpServer: dodokServer,
+    canUseTool: async (toolName, input, opts) => {
+      const b = await sp.liveBinding();
+      return b
+        ? b.canUseTool(toolName, input, opts)
+        : { behavior: "deny", message: FOLLOWUP_UNBOUND_MESSAGE };
+    },
+    resume,
+    plugins,
+    alwaysAllowed,
+    botMcp,
+    live: () => sp.bindingRef.current,
+  });
+  let q: SdkQuery;
+  try {
+    q = ctx.sdk.query({ prompt: sp.input(), options });
+  } catch (error) {
+    if (retryable(error)) return { result: "session-in-use" };
+    failedRun(ctx.sink, error);
+    return { result: "done" };
+  }
+  openedOf.set(sp, {
+    workdir: spec.workdir,
+    configDir: spec.configDir,
+    executable: ctx.executable,
+    model: spec.model,
+    permissionMode: spec.permissionMode,
+    effort: spec.effort ?? null,
+    append: start.channelRulesAppend,
+    allowedTools: sortedKey(options.allowedTools),
+    disallowedTools: sortedKey(options.disallowedTools),
+    mcpServers: JSON.stringify(botMcp.servers),
+    dodokServer,
+    plugins,
+    costKind: "subscription_estimate",
+    last: { spec, ctx },
+  });
+  if (bg) {
+    sp.onSelfTurn((run) => runFollowupTurn(sp, bg, run));
+    bg.sessions.set(sessionKey, sp);
+    void sp.exited.then(() => {
+      if (bg.sessions.get(sessionKey) === sp) bg.sessions.delete(sessionKey);
+    });
+  }
+  sp.attach(q);
+  const result = await runTurn(spec, ctx, sp, binding, images, { costDiff: resume, retryable });
+  return { result, process: sp };
+}
+
+/**
+ * 붙든 프로세스에 다음 런을 넣는다. 도는 중에 바꿀 수 있는 설정(모델·권한 모드·effort·봇 MCP 서버)은 턴 전에 바꾸고, 못 바꾸는 것
+ * (채널 규칙·허용·막는 도구)은 프로세스를 연 값으로 잇고 그 런에 HELD_SETTINGS_EVENT 를 낸다(D6)
+ */
+async function runHeldTurn(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+  sp: SessionProcess,
+  images: { blocks: SdkImageBlock[]; failed: number },
+  alwaysAllowed: AlwaysAllowed,
+  botMcp: BotMcp,
+): Promise<"done" | "aborted" | "retry"> {
+  const binding = bindingFor(spec, ctx, alwaysAllowed);
+  const fields = await applyRunSettings(spec, ctx, sp, botMcp);
+  // 설정을 바꾸는 사이 CLI 가 스스로 턴을 열었으면 그 턴 뒤로 다시 선다
+  while (!sp.idleNow()) {
+    sp.unreserve();
+    if (!(await sp.whenIdle(ctx.signal))) return "aborted";
+    if (!sp.reusable()) {
+      sp.unreserve();
+      return "retry";
+    }
+  }
+  if (ctx.signal.aborted) {
+    sp.unreserve();
+    return "aborted";
+  }
+  const opened = openedOf.get(sp);
+  if (opened) opened.last = { spec, ctx };
+  if (fields.length > 0)
+    ctx.sink.event({ type: "CUSTOM", runId: binding.runId, name: HELD_SETTINGS_EVENT, value: { fields } });
+  await runTurn(spec, ctx, sp, binding, images, { costDiff: true, retryable: () => false });
+  return "done";
+}
+
+/**
+ * CLI 가 작업 알림 뒤 스스로 연 턴을 서버가 받아 준 추가 응답 런으로 돌린다(스펙 5.3). 프롬프트는 없다 — 턴 사실(훅 문맥)도 붙지
+ * 않는다(5.8). 정의·문맥은 이 프로세스에 마지막으로 넣은 런의 것, 보내는 곳은 서버가 준 deliver(처음 응답의 스레드)다
+ */
+async function runFollowupTurn(
+  sp: SessionProcess,
+  bg: BackgroundContext,
+  run: { runId: string; deliver: RunBinding["deliver"] },
+): Promise<void> {
+  const opened = openedOf.get(sp);
+  if (!opened) return;
+  const { spec: lastSpec, ctx: lastCtx } = opened.last;
+  const followup = bg.hooks.openFollowup({
+    runId: run.runId,
+    deliver: run.deliver,
+    workdir: lastSpec.workdir,
+  });
+  try {
+    const spec: ClaudeRunSpec = {
+      ...lastSpec,
+      start: { ...lastSpec.start, deliver: run.deliver, turnFacts: "" },
+    };
+    const ctx: RunContext = { ...lastCtx, sink: followup.sink, signal: followup.signal };
+    const binding = bindingFor(spec, ctx, new Set());
+    await runTurn(spec, ctx, sp, binding, NO_IMAGES, {
+      costDiff: true,
+      retryable: () => false,
+      prompt: false,
+    });
+  } finally {
+    followup.close();
+  }
+}
+
+/** D6 — 바꿀 수 있는 것은 바꾸고, 못 바꾼(또는 바꾸다 실패한) 설정 이름을 돌려준다 */
+async function applyRunSettings(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+  sp: SessionProcess,
+  botMcp: BotMcp,
+): Promise<string[]> {
+  const opened = openedOf.get(sp);
+  if (!opened) return [];
+  const q = sp.query();
+  const held: string[] = [];
+  const tryChange = async (field: string, change: () => Promise<unknown>, commit: () => void) => {
+    try {
+      await change();
+      commit();
+    } catch {
+      held.push(field);
+    }
+  };
+  if (spec.model !== opened.model)
+    await tryChange(
+      "model",
+      () => q.setModel(spec.model ?? undefined),
+      () => (opened.model = spec.model),
+    );
+  if (spec.permissionMode !== opened.permissionMode)
+    await tryChange(
+      "permissionMode",
+      () => q.setPermissionMode(spec.permissionMode),
+      () => (opened.permissionMode = spec.permissionMode),
+    );
+  const effort = spec.effort ?? null;
+  if (effort !== opened.effort)
+    await tryChange(
+      "effort",
+      () => q.applyFlagSettings({ effortLevel: effort }),
+      () => (opened.effort = effort),
+    );
+  const mcpServers = JSON.stringify(botMcp.servers);
+  if (mcpServers !== opened.mcpServers)
+    await tryChange(
+      "mcpServers",
+      () => q.setMcpServers({ ...botMcp.servers, dodok: opened.dodokServer } as never),
+      () => (opened.mcpServers = mcpServers),
+    );
+  // 못 바꾸는 것 — 이 런이 새로 열었다면 넣었을 옵션과 견준다
+  const would = buildQueryOptions(spec, {
+    baseEnv: ctx.baseEnv,
+    mcpServer: opened.dodokServer,
+    resume: true,
+    plugins: opened.plugins,
+    botMcp,
+  });
+  if (spec.start.channelRulesAppend !== opened.append) held.push("channelRulesAppend");
+  if (sortedKey(would.allowedTools) !== opened.allowedTools) held.push("allowedTools");
+  if (sortedKey(would.disallowedTools) !== opened.disallowedTools) held.push("disallowedTools");
+  return held;
+}
+
+type TurnResult = "done" | "held" | "session-in-use";
+
+function failedRun(sink: RunSink, error: unknown) {
+  const text = error instanceof Error ? error.message : String(error);
+  const code: ErrorCode = isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL";
+  const head =
+    code === "PROVIDER_AUTH" ? `러너의 ${CLAUDE_CODE_LABEL} 로그인을 확인하세요` : "Claude Code 실행 실패";
+  // 가림·길이 자르기는 sink 가 한다
+  sink.error(code, `${head}: ${text}`);
+}
+
+/**
+ * 한 런의 턴 — 프롬프트를 넣고 그 턴의 메시지를 이벤트로, result 를 final 로 낸다. 런의 끝은 그 프롬프트의 턴에서 나온 result 다.
+ * 작업이 남았으면 프로세스를 붙들고 "held", 아니면 입력을 닫고 프로세스가 끝날 때까지 읽는다
+ */
+async function runTurn(
+  spec: ClaudeRunSpec,
+  ctx: RunContext,
+  sp: SessionProcess,
+  binding: RunBinding,
+  images: { blocks: SdkImageBlock[]; failed: number },
+  o: {
+    /** 비용을 세션 누적값의 차이로 — resume 한 프로세스·붙든 프로세스의 턴 */
+    costDiff: boolean;
+    retryable: (error: unknown) => boolean;
+    /** false — CLI 가 스스로 연 턴(추가 응답)이라 넣을 프롬프트가 없다 */
+    prompt?: boolean;
+  },
+): Promise<TurnResult> {
   const { start } = spec;
   const sessionId = start.providerSessionId;
   const now = ctx.now ?? Date.now;
-  const mask = ctx.sink.mask;
+  const sink = binding.sink;
+  const signal = binding.signal;
+  const q = sp.query();
+  const opened = openedOf.get(sp);
   const mapper = createStreamMapper(now, {
-    runId: start.deliver.runId,
-    mask,
+    runId: binding.runId,
+    mask: sink.mask,
     command: start.deliver.command !== undefined,
   });
+  const turn = sp.turn(binding);
 
-  let finishInput!: () => void;
-  const inputDone = new Promise<void>((resolve) => (finishInput = resolve));
-  const promptMessage: SdkUserMessage = {
-    type: "user",
-    message: { role: "user", content: promptContent(start, images) },
-    parent_tool_use_id: null,
+  let interrupted = false;
+  const onAbort = () => {
+    interrupted = true;
+    mapper.markInterrupted(abortStopReason(signal.reason));
+    q.interrupt().catch(() => {});
+    // 붙들 수 있는 프로세스는 result 가 오면 유예를 거둔다(finishTurn) — interrupt 는 백그라운드 작업을 죽이지 않는다(ADR 5.11)
+    sp.closeLater();
   };
-  // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다.
-  // 명령 런의 이름이 사람 명령·허용 내장이 아니면 프롬프트를 내기 전에 이 CLI 의 목록으로 스킬 별칭인지 본다 — 아니면(목록을 못
-  // 받아도) 프롬프트 없이 VALIDATION 으로 닫는다. 서버가 같은 판정을 하지만 목록을 모를 때 넘기므로 여기가 마지막 자리다
-  // SDK 가 query() 안에서 곧바로 입력을 당길 수 있다(옵션이 단순하면 그렇다 — 재리뷰 N2 실측) — q 가 대입된 뒤에 목록을 묻는다
-  const command = start.deliver.command;
-  let queryAssigned!: () => void;
-  const queryReady = new Promise<void>((resolve) => (queryAssigned = resolve));
-  async function* prompt(): AsyncGenerator<SdkUserMessage> {
-    if (command !== undefined && needsAliasCheck(command)) {
-      await queryReady;
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  let ended = false;
+  let holding = false;
+  let sawMessage = false;
+  let costKind: RunnerRunFinal["costKind"] = opened?.costKind ?? "subscription_estimate";
+  const end = () => {
+    ended = true;
+    // 작업이 남았으면 붙든다 — 아니면 입력을 닫아 CLI 가 끝나게 하고, 끝나지 않으면 유예 뒤 닫는다
+    if (sp.finishTurn()) {
+      holding = true;
+      turn.done();
+    }
+  };
+
+  // total_cost_usd 는 세션 누적값이다 — resume 한 프로세스의 첫 result 에 앞 런 비용이 이미 들어 있다(ADR 0007 5.9). 붙든 프로세스의
+  // 다음 턴은 같은 프로세스의 직전 누적값과의 차이다
+  let costRecorded = false;
+  const recordCost = (total: number | undefined): number | undefined => {
+    costRecorded = true;
+    if (typeof total !== "number") return undefined;
+    const prev = ctx.costs.get(sessionId);
+    const cost = !o.costDiff ? total : prev === undefined ? undefined : Math.max(0, total - prev);
+    // 비정상 종료한 CLI 의 result 는 0 을 실을 수 있다 — 이어 간 세션의 알던 누적값을 0 으로 되돌리지 않는다
+    if (total > 0 || !o.costDiff) ctx.costs.set(sessionId, total);
+    return cost;
+  };
+
+  try {
+    // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다.
+    // 명령 런의 이름이 사람 명령·허용 내장이 아니면 프롬프트를 내기 전에 이 CLI 의 목록으로 스킬 별칭인지 본다 — 아니면(목록을 못
+    // 받아도) 프롬프트 없이 VALIDATION 으로 닫는다. 서버가 같은 판정을 하지만 목록을 모를 때 넘기므로 여기가 마지막 자리다
+    const command = start.deliver.command;
+    let blocked = false;
+    if (o.prompt !== false && command !== undefined && needsAliasCheck(command)) {
       let alias = false;
       try {
         alias = isSkillAlias(command.name, await q.supportedCommands());
       } catch {
         alias = false;
       }
-      if (!alias) {
-        if (!ended) ctx.sink.error("VALIDATION", COMMAND_BLOCKED_MESSAGE);
-        end();
-        return;
-      }
+      blocked = !alias;
     }
-    yield promptMessage;
-    await inputDone;
-  }
-
-  const failed = (error: unknown) => {
-    const text = error instanceof Error ? error.message : String(error);
-    const code: ErrorCode = isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL";
-    const head =
-      code === "PROVIDER_AUTH" ? `러너의 ${CLAUDE_CODE_LABEL} 로그인을 확인하세요` : "Claude Code 실행 실패";
-    // 가림·길이 자르기는 sink 가 한다
-    ctx.sink.error(code, `${head}: ${text}`);
-  };
-  const retryable = (error: unknown) =>
-    !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
-
-  let q: SdkQuery;
-  try {
-    q = ctx.sdk.query({
-      prompt: prompt(),
-      options: buildQueryOptions(spec, {
-        baseEnv: ctx.baseEnv,
-        ...(ctx.executable === undefined ? {} : { executable: ctx.executable }),
-        thinkingDisplay: supportsThinkingDisplay(ctx.cliVersion),
-        mcpServer: createDodokMcpServer({
-          sdk: ctx.sdk,
-          post: createPoster({
-            workdir: spec.workdir,
-            deliver: start.deliver,
-            http: ctx.sink.http,
-            send: (m) => ctx.sink.post(m),
-            mask,
-            signal: ctx.signal,
-            now,
-          }),
-          tools: createControlTools({
-            runId: start.deliver.runId,
-            call: (call) => ctx.sink.control(call),
-            runnerControl: hasRunnerControl(spec),
-          }),
-        }),
-        canUseTool: createCanUseTool({
-          runId: start.deliver.runId,
-          sessionKey: start.deliver.sessionKey,
-          workdir: spec.workdir,
-          emit: (p) => ctx.sink.requestApproval(p),
-          withdraw: (id) => ctx.sink.withdrawApproval(id),
-          waitDecision: (id, signal) => ctx.sink.waitDecision(id, signal),
-          signal: ctx.signal,
-          alwaysAllowed,
-        }),
-        resume,
-        plugins,
-        alwaysAllowed,
-        botMcp,
-      }),
-    });
-    queryAssigned();
-  } catch (error) {
-    if (retryable(error)) return "session-in-use";
-    failed(error);
-    return "done";
-  }
-
-  const graceMs = ctx.closeGraceMs ?? ABORT_CLOSE_MS;
-  let closeTimer: ReturnType<typeof setTimeout> | undefined;
-  const closeLater = () => {
-    closeTimer ??= setTimeout(() => q.close(), graceMs);
-  };
-  let interrupted = false;
-  const onAbort = () => {
-    interrupted = true;
-    mapper.markInterrupted(abortStopReason(ctx.signal.reason));
-    q.interrupt().catch(() => {});
-    closeLater();
-  };
-  ctx.signal.addEventListener("abort", onAbort, { once: true });
-
-  let ended = false;
-  let sawMessage = false;
-  let costKind: RunnerRunFinal["costKind"] = "subscription_estimate";
-  const end = () => {
-    ended = true;
-    finishInput();
-    // 입력을 닫으면 CLI 가 끝난다 — 끝나지 않으면 유예 뒤 닫는다
-    closeLater();
-  };
-
-  // total_cost_usd 는 세션 누적값이다 — resume 한 프로세스의 첫 result 에 앞 런 비용이 이미 들어 있다(ADR 0007 5.9)
-  let costRecorded = false;
-  const recordCost = (total: number | undefined): number | undefined => {
-    costRecorded = true;
-    if (typeof total !== "number") return undefined;
-    const prev = ctx.costs.get(sessionId);
-    const cost = !resume ? total : prev === undefined ? undefined : Math.max(0, total - prev);
-    // 비정상 종료한 CLI 의 result 는 0 을 실을 수 있다 — 이어 간 세션의 알던 누적값을 0 으로 되돌리지 않는다
-    if (total > 0 || !resume) ctx.costs.set(sessionId, total);
-    return cost;
-  };
-
-  try {
-    for await (const m of q as AsyncIterable<SdkMessage>) {
+    if (blocked) {
+      sink.error("VALIDATION", COMMAND_BLOCKED_MESSAGE);
+      end();
+    } else if (o.prompt !== false) {
+      sp.send({
+        type: "user",
+        message: { role: "user", content: promptContent(start, images) },
+        parent_tool_use_id: null,
+      });
+    }
+    for await (const m of turn) {
       sawMessage = true;
       if (ended) continue;
       const raw = m as { type?: string; subtype?: string; apiKeySource?: string; total_cost_usd?: number };
       if (raw.type === "system" && raw.subtype === "init" && raw.apiKeySource) {
         costKind = API_KEY_SOURCES.has(raw.apiKeySource) ? "api" : "subscription_estimate";
+        if (opened) opened.costKind = costKind;
       }
       for (const item of mapper.map(m)) {
+        if (ended) break;
         if (item.event) {
-          ctx.sink.event(item.event);
+          sink.event(item.event);
         } else if (item.final) {
           const { totalCostUsd, ...rest } = item.final;
           const costUsd = recordCost(totalCostUsd);
           // 세부는 입력을 닫기 전에 묻는다 — 닫으면 CLI 가 끝나 제어 요청에 답하지 않는다. 중지된 턴은 묻지 않는다(작성기 칩 스펙 C7)
-          const contextBreakdown =
-            interrupted || ctx.signal.aborted ? undefined : await fetchContextBreakdown(q);
+          const contextBreakdown = interrupted || signal.aborted ? undefined : await fetchContextBreakdown(q);
           const usage = contextBreakdown === undefined ? rest.usage : { ...rest.usage, contextBreakdown };
-          ctx.sink.final({
+          sink.final({
             ...rest,
             ...(usage === undefined ? {} : { usage }),
             ...(costUsd === undefined ? {} : { costUsd }),
@@ -711,7 +1106,7 @@ async function attempt(
           });
           end();
         } else if (item.error) {
-          ctx.sink.error(item.error.code, item.error.message);
+          sink.error(item.error.code, item.error.message);
           end();
         }
       }
@@ -719,22 +1114,24 @@ async function attempt(
       if (ended && raw.type === "result" && !costRecorded) recordCost(raw.total_cost_usd);
     }
     if (!ended) {
-      if (interrupted) ctx.sink.final(abortedFinal(costKind, ctx.signal.reason));
-      else ctx.sink.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
+      if (interrupted) sink.final(abortedFinal(costKind, signal.reason));
+      else sink.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
     }
   } catch (error) {
     // 마지막 result 뒤에 CLI 가 exit 1 로 끝나 반복자가 던질 수 있다(ADR 0007 4.4) — 런은 이미 끝났다
     if (!ended) {
-      if (interrupted) ctx.sink.final(abortedFinal(costKind, ctx.signal.reason));
-      else if (!sawMessage && retryable(error)) return "session-in-use";
-      else failed(error);
+      if (interrupted) sink.final(abortedFinal(costKind, signal.reason));
+      else if (!sawMessage && o.retryable(error)) return "session-in-use";
+      else failedRun(sink, error);
     }
   } finally {
     ended = true;
-    ctx.signal.removeEventListener("abort", onAbort);
-    finishInput();
-    if (closeTimer) clearTimeout(closeTimer);
-    q.close();
+    signal.removeEventListener("abort", onAbort);
+    if (!holding) {
+      sp.endInput();
+      sp.cancelClose();
+      q.close();
+    }
   }
-  return "done";
+  return holding ? "held" : "done";
 }
