@@ -98,7 +98,7 @@ describe("보낸 글의 인용 카드", () => {
   it("작성자·「# 채널 · 세션 제목 · 시각」·본문 첫 2줄(멘션 @핸들, 마크다운 걷음), 누르면 그 메시지로 가 강조", async () => {
     const target: Message = {
       // 셸의 사람 목록은 id "u" 의 「주인」 하나 — 픽스처의 uuid 검사를 지난 뒤 바꾼다
-      ...msg(80, { bodyMd: `**스키마** 변경안 <@a:${AGENT}>\n\n둘째 줄\n셋째 줄` }),
+      ...msg(80, { bodyMd: `**스키마** 변경안 <@a:${AGENT}>\n\n---\n둘째 줄\n셋째 줄` }),
       authorId: ME.user.id,
     };
     routes.set(`/api/v1/messages/${target.id}`, () => json(200, viewOf(target)));

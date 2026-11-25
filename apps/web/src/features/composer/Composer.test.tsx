@@ -324,6 +324,9 @@ describe("링크한 메시지 미리보기 카드(메시지 링크 스펙)", () 
     await userEvent.click(screen.getByRole("button", { name: "인용 미리보기 닫기" }));
     expect(cards()).toHaveLength(0);
     expect(editor.getText()).toContain(text);
+    // 사라진 ✕ 대신 입력이 초점을 받는다 — 이어서 Enter 로 보낸다
+    await flushEditorFrames();
+    expect(box).toHaveFocus();
     fireEvent.keyDown(box, { key: "Enter" });
     expect(fake.sentOf("message.send")).toMatchObject([{ bodyMd: text }]);
   });

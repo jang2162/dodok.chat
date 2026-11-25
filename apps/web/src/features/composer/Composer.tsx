@@ -434,7 +434,11 @@ export function Composer({
         />
         <LinkedMessageCards
           ids={shownLinks}
-          onDismiss={(id) => setDismissedLinks((d) => ({ n: d.n, ids: new Set(d.ids).add(id) }))}
+          onDismiss={(id) => {
+            setDismissedLinks((d) => ({ n: d.n, ids: new Set(d.ids).add(id) }));
+            // 누른 ✕ 가 카드와 함께 사라진다 — 초점이 body 로 떨어지지 않게 입력으로 돌려준다(이어서 Enter 로 보낸다)
+            editor.commands.focus();
+          }}
           className="flex flex-col gap-1.5 pt-1 pb-1.5"
         />
         <EditorContent editor={editor} className="min-w-0" />

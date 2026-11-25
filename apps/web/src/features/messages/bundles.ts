@@ -168,7 +168,8 @@ export function previewOf(
 ): string {
   return bodyMd
     .split("\n")
-    .filter((l) => l.trim() !== "")
+    // 빈 줄·가로줄(`---`·`***`·`___`)은 미리보기에 뜻이 없다
+    .filter((l) => l.trim() !== "" && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(l))
     .slice(0, lines)
     .map((line) =>
       line
