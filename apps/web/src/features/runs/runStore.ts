@@ -14,6 +14,24 @@ export type RunView = {
   lastEventSeq: number;
   terminalAt?: number;
   threadRootId?: string;
+  /** 런이 시작된 루트 글·부른 글(run.state) — 답 묶음이 줄을 루트 아래 세운다. 뒤따른 상태에 빠져도 잊지 않는다 */
+  rootMessageId?: string;
+  triggerMessageId?: string;
+};
+
+/**
+ * 답 묶음이 보는 런의 루트와 마지막 상태 — `remove` 로 런을 지워도 남긴다. 메시지에 `runRoot` 가 실리더라도 이 저장소가 있어야 하는 까닭은
+ * 둘이다: run.state 로 메시지보다 먼저 루트를 알고, 메시지가 아직 없는 런도 줄이 선다
+ */
+export type RunRoot = {
+  runId: string;
+  agentId: string;
+  channelId: string;
+  conversationId: string;
+  threadRootId?: string;
+  rootMessageId: string;
+  triggerMessageId?: string;
+  status: RunState["status"];
 };
 
 /** 스레드 소속은 run.state 의 threadRootId 가 1순위다 — queued 로 끝나는 런은 RUN_STARTED 가 없다. 뒤따른 상태에 빠져도 잊지 않는다 */
@@ -21,6 +39,8 @@ export function reduceState(prev: RunView | undefined, state: RunState, now: num
   const base: RunView = prev ? { ...prev, state } : { state, text: "", lastEventSeq: 0 };
   // 빠지면 prev 의 것(펼침)이 남는다
   if (state.threadRootId !== undefined) base.threadRootId = state.threadRootId;
+  if (state.rootMessageId !== undefined) base.rootMessageId = state.rootMessageId;
+  if (state.triggerMessageId !== undefined) base.triggerMessageId = state.triggerMessageId;
   if (TERMINAL.has(state.status) && base.terminalAt === undefined) base.terminalAt = now;
   return base;
 }
@@ -84,6 +104,8 @@ type RunStore = {
    * 어느 목록(채널·스레드)에 그릴지 알아야 한다. `reset` 에서만 비운다
    */
   threads: Record<string, string>;
+  /** 런 id → 루트(`RunRoot`). `remove` 해도 남기고 `reset` 에서만 비운다 */
+  roots: Record<string, RunRoot>;
   applyState(state: RunState): void;
   applyEvent(event: RunEvent): void;
   applyReplay(state: RunState, events: readonly RunEvent[]): void;
@@ -92,13 +114,38 @@ type RunStore = {
 };
 
 /** 런 하나를 바꾸고, 스레드 런이면 소속을 기록한다(이미 같으면 threads 는 그대로) */
-function put(s: RunStore, view: RunView): Pick<RunStore, "runs" | "threads"> {
+function put(s: RunStore, view: RunView): Pick<RunStore, "runs" | "threads" | "roots"> {
   const id = view.state.id;
   const runs = { ...s.runs, [id]: view };
   const rootId = view.threadRootId;
-  return rootId === undefined || s.threads[id] === rootId
-    ? { runs, threads: s.threads }
-    : { runs, threads: { ...s.threads, [id]: rootId } };
+  const threads =
+    rootId === undefined || s.threads[id] === rootId ? s.threads : { ...s.threads, [id]: rootId };
+  return { runs, threads, roots: putRoot(s.roots, view) };
+}
+
+/** 루트를 아는 런이면 roots 를 맞춘다 — 같으면 참조를 그대로 둔다(델타마다 구독자가 다시 그리지 않게) */
+function putRoot(roots: Record<string, RunRoot>, view: RunView): Record<string, RunRoot> {
+  if (view.rootMessageId === undefined) return roots;
+  const { state } = view;
+  const prev = roots[state.id];
+  if (
+    prev &&
+    prev.status === state.status &&
+    prev.threadRootId === view.threadRootId &&
+    prev.rootMessageId === view.rootMessageId
+  )
+    return roots;
+  const next: RunRoot = {
+    runId: state.id,
+    agentId: state.agentId,
+    channelId: state.channelId,
+    conversationId: state.conversationId,
+    rootMessageId: view.rootMessageId,
+    status: state.status,
+  };
+  if (view.threadRootId !== undefined) next.threadRootId = view.threadRootId;
+  if (view.triggerMessageId !== undefined) next.triggerMessageId = view.triggerMessageId;
+  return { ...roots, [state.id]: next };
 }
 
 /** 지운 런의 활동 기록 가운데 오래된 것(id = uuid v7 생성 순)을 `ACTIVITY_KEEP` 개만 남기고 버린다 */
@@ -115,6 +162,7 @@ function pruneActivity(
 export const useRunStore = create<RunStore>()((set) => ({
   runs: {},
   threads: {},
+  roots: {},
   activity: {},
   applyState: (state) =>
     set((s) => {
@@ -153,7 +201,7 @@ export const useRunStore = create<RunStore>()((set) => ({
       const { [runId]: _, ...rest } = s.runs;
       return { runs: rest, activity: pruneActivity(s.activity, rest) };
     }),
-  reset: () => set({ runs: {}, threads: {}, activity: {} }),
+  reset: () => set({ runs: {}, threads: {}, roots: {}, activity: {} }),
 }));
 
 /**

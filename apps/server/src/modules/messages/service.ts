@@ -4,9 +4,12 @@ import {
   INTERACTIONS_MAX,
   Message,
   type MessageInteraction,
+  type MessageRootRun,
   neutralizeMentionTokens,
   parseMentions,
   type Participant,
+  ROOT_RUNS_MAX,
+  type RunStatus,
   type SystemKind,
   type SystemMeta,
   type ThreadSummary,
@@ -22,6 +25,7 @@ import {
   componentInteractions,
   conversations,
   messages,
+  runs,
 } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
@@ -276,9 +280,100 @@ export function withAutomationNames(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
-/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름. REST·구독 ack·wire 팬아웃이 쓴다 */
+/** runRoot 를 붙일 런 id — 에이전트 메시지의 runId, run_error 시스템 메시지의 systemMeta.runId */
+function runIdForRoot(m: Message): string | undefined {
+  if (m.authorType === "agent") return m.runId;
+  if (m.kind === "system" && m.systemMeta?.kind === "run_error") return m.systemMeta.runId;
+  return undefined;
+}
+
+/**
+ * 에이전트 메시지와 run_error 시스템 메시지에 그 런의 루트(runRoot)를 붙인다 — 웹이 여러 에이전트 답을 루트 글 아래 묶는다(답 묶음
+ * 설계). 대상이 없으면 질의하지 않고, 있으면 런 id 로 한 번(N+1 없음). 런 행이 없으면(지운 채널 등) 붙이지 않는다
+ */
+export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = [...new Set(msgs.flatMap((m) => runIdForRoot(m) ?? []))];
+  if (ids.length === 0) return msgs;
+  const byRun = new Map(
+    db
+      .select({
+        id: runs.id,
+        agentId: runs.agentId,
+        rootMessageId: runs.rootMessageId,
+        triggerMessageId: runs.triggerMessageId,
+      })
+      .from(runs)
+      .where(inArray(runs.id, ids))
+      .all()
+      .map((r) => [r.id, r]),
+  );
+  return msgs.map((m) => {
+    const id = runIdForRoot(m);
+    const run = id === undefined ? undefined : byRun.get(id);
+    if (!run) return m;
+    return {
+      ...m,
+      runRoot: {
+        runId: run.id,
+        agentId: run.agentId,
+        rootMessageId: run.rootMessageId,
+        ...(run.triggerMessageId ? { triggerMessageId: run.triggerMessageId } : {}),
+      },
+    };
+  });
+}
+
+/** rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 사람 최상위 보통 글(웹 bundles.ts canRoot 와 같은 조건) */
+const canRootRuns = (m: Message): boolean =>
+  m.authorType === "user" && m.kind === "normal" && m.threadRootId === undefined;
+
+/**
+ * 사람 최상위 글에 그 글이 루트인 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계
+ * 「줄의 원천은 런」). 대상이 없으면 질의하지 않고, 있으면 runs_root 인덱스로 한 번. 글마다 최근 ROOT_RUNS_MAX 개를 런 id 순으로 싣고,
+ * 런이 없는 글에는 붙이지 않는다
+ */
+export function withRootRuns(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = [...new Set(msgs.flatMap((m) => (canRootRuns(m) ? [m.id] : [])))];
+  if (ids.length === 0) return msgs;
+  const byRoot = new Map<string, MessageRootRun[]>();
+  const rows = db
+    .select({
+      id: runs.id,
+      agentId: runs.agentId,
+      status: runs.status,
+      rootMessageId: runs.rootMessageId,
+      triggerMessageId: runs.triggerMessageId,
+    })
+    .from(runs)
+    .where(inArray(runs.rootMessageId, ids))
+    .orderBy(desc(runs.id))
+    .all();
+  for (const r of rows) {
+    const list = byRoot.get(r.rootMessageId) ?? [];
+    if (list.length >= ROOT_RUNS_MAX) continue;
+    list.push({
+      runId: r.id,
+      agentId: r.agentId,
+      status: r.status as RunStatus,
+      ...(r.triggerMessageId ? { triggerMessageId: r.triggerMessageId } : {}),
+    });
+    byRoot.set(r.rootMessageId, list);
+  }
+  return msgs.map((m) => {
+    const list = canRootRuns(m) ? byRoot.get(m.id) : undefined;
+    return list ? { ...m, rootRuns: [...list].reverse() } : m;
+  });
+}
+
+/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약·자동화 이름·런 루트. REST·구독 ack·wire 팬아웃이 쓴다 */
 export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
-  return withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs))));
+  return withRootRuns(
+    db,
+    withRunRoots(
+      db,
+      withAutomationNames(db, withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)))),
+    ),
+  );
 }
 
 /**

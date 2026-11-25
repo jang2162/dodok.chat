@@ -13,6 +13,7 @@ import { ApiRequestError } from "@/api/http";
 import { type MeResponse, qk, useMe } from "@/api/queries";
 import { registerSessionReset, resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { useBundleExpansion } from "@/features/messages/bundleExpansion";
 import { resetApprovalNotices } from "@/features/approvals/notify";
 import { createReadSender, type ReadSender, ReadSenderContext } from "@/features/reads/readSender";
 import { useUnread } from "@/features/reads/useUnread";
@@ -108,6 +109,8 @@ export function WireProvider({
       resetApprovalNotices();
       // 읽지 않음 현황도 — 다음 사람에게 앞 사람의 굵게·배지가 남지 않게
       useUnread.getState().reset();
+      // 답 묶음 줄의 펼침도 — 다른 사람으로 다시 로그인하면 앞 사람이 펼친 값이 남지 않게
+      useBundleExpansion.getState().reset();
       useWireStatus.getState().setStatus("idle");
     });
     useWireStatus.getState().setStatus("connecting");

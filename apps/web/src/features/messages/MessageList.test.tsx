@@ -19,18 +19,20 @@ import {
   runState,
   textDelta,
   uid,
+  USER,
 } from "../../../test/fixtures";
 import { useRunStore } from "@/features/runs/runStore";
-import { authorsClient, renderWithClient } from "../../../test/messages";
+import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
 import { remeasureRows, setViewportHeight, stubScrollLayout } from "../../../test/scrollLayout";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { ReadSenderContext } from "@/features/reads/readSender";
 import { isViewingAtEnd, useUnread } from "@/features/reads/useUnread";
 import { useWireStatus } from "@/realtime/wire";
+import { useBundleExpansion } from "./bundleExpansion";
 import { requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
-import { addPending, emptyTimeline, NEW_CONVERSATION, type Timeline, upsert } from "./timeline";
+import { addPending, appendNewer, emptyTimeline, NEW_CONVERSATION, type Timeline, upsert } from "./timeline";
 
 const RECT = { width: 800, height: 600 };
 const ROW = 64;
@@ -1903,5 +1905,252 @@ describe("MessageList 응답 안의 활동", () => {
     await screen.findByText("스레드 답");
     expect(summary()).toHaveTextContent(/^활동$/);
     expect(eventCalls()).toBe(0);
+  });
+});
+
+describe("MessageList 답 묶음", () => {
+  const FIN = uid(12);
+  const FIN_AGENT = { ...DEV, id: FIN, handle: "fin", name: "Fin", providerAgentId: "fin" };
+  const [RA, RB] = [uid(301), uid(302)];
+  const people = range(1, 30, { authorType: "user", authorId: USER });
+  const root = msg(31, { bodyMd: "@dev 봐줘" });
+  const answer = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+    msg(seq, {
+      authorType: "agent",
+      authorId: agentId,
+      runId,
+      bodyMd,
+      runRoot: { runId, agentId, rootMessageId: root.id, triggerMessageId: root.id },
+    });
+  beforeEach(() => {
+    useRunStore.getState().reset();
+    useBundleExpansion.getState().reset();
+  });
+  const draw = (items: Message[], threadRootId?: string) => {
+    const qc = authorsClient([DEV, FIN_AGENT]);
+    subscribedWith(
+      qc,
+      threadRootId === undefined ? qk.timeline(CH, CH) : qk.thread(CH, CH, threadRootId),
+      timelineOf(items),
+    );
+    const view = renderWithClient(
+      <MessageList channelId={CH} conversationId={CH} threadRootId={threadRootId} initialRect={RECT} />,
+      qc,
+    );
+    const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
+    const atEnd = () => scroller().scrollTop === scroller().scrollHeight - scroller().clientHeight;
+    return { ...view, qc, atEnd };
+  };
+
+  it("두 에이전트 답은 루트 아래 묶음으로, 메인에 따로 없다", async () => {
+    draw([...people, root, answer(32, AGENT, RA, "dev 의 답"), answer(33, FIN, RB, "fin 의 답")]);
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    // 답은 접힌 줄의 미리보기로만 — 메시지 행(article)으로 따로 그리지 않는다
+    expect(within(group).getByRole("button", { name: /@dev/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("dev 의 답").closest("article")).toBeNull();
+    // 루트 바로 뒤
+    const rootRow = screen.getByText("@dev 봐줘").closest("[data-index]") as HTMLElement;
+    const groupRow = group.closest("[data-index]") as HTMLElement;
+    expect(Number(groupRow.dataset.index)).toBe(Number(rootRow.dataset.index) + 1);
+  });
+
+  it("스레드 패널(threadRootId)에서는 묶지 않는다", async () => {
+    const r = msg(1, { bodyMd: "루트" });
+    const inThread = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd,
+        threadRootId: r.id,
+        runRoot: { runId, agentId, rootMessageId: r.id },
+      });
+    draw([r, inThread(2, AGENT, RA, "dev 스레드 답"), inThread(3, FIN, RB, "fin 스레드 답")], r.id);
+    expect((await screen.findByText("dev 스레드 답")).closest("article")).not.toBeNull();
+    expect(screen.queryByRole("group", { name: /답$/ })).toBeNull();
+  });
+
+  it("둘째 런이 시작되면 첫 답이 묶음으로 옮겨 가고 바닥 고정이 유지된다", async () => {
+    // 행 높이를 추정(64)과 다르게 — 마지막 행이 묶음 행(새 key)으로 바뀌어 추정으로 먼저 잡혔다 재어지는 경로
+    restore();
+    restore = stubScrollLayout({ ...RECT, rowHeight: 55 });
+    const { atEnd } = draw([...people, root, answer(32, AGENT, RA, "dev 의 답")]);
+    expect((await screen.findByText("dev 의 답")).closest("article")).not.toBeNull();
+    await waitFor(() => expect(atEnd()).toBe(true));
+    // 앞선 끝 맞추기가 멎은 뒤에 바꾼다(위 「마지막 행이 다른 key 로 바뀌면」 시험과 같은 까닭)
+    await act(() => new Promise((r) => setTimeout(r, 300)));
+    act(() =>
+      useRunStore.getState().applyState(
+        runState({
+          id: RB,
+          agentId: FIN,
+          status: "queued",
+          rootMessageId: root.id,
+          triggerMessageId: root.id,
+        }),
+      ),
+    );
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    expect(within(group).getByRole("button", { name: /@fin/ })).toHaveTextContent("대기 중");
+    expect(screen.getByText("dev 의 답").closest("article")).toBeNull();
+    await waitFor(() => expect(atEnd()).toBe(true));
+  });
+});
+
+describe("MessageList 「답 도착」 칩", () => {
+  const FIN = uid(12);
+  const FIN_AGENT = { ...DEV, id: FIN, handle: "fin", name: "Fin", providerAgentId: "fin" };
+  const [RA, RB] = [uid(301), uid(302)];
+  const root = msg(1, { bodyMd: "@dev 봐줘" });
+  const answer = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+    msg(seq, {
+      authorType: "agent",
+      authorId: agentId,
+      runId,
+      bodyMd,
+      runRoot: { runId, agentId, rootMessageId: root.id, triggerMessageId: root.id },
+    });
+  beforeEach(() => {
+    useRunStore.getState().reset();
+    useBundleExpansion.getState().reset();
+  });
+  const draw = (items: Message[] | Timeline) => {
+    const qc = authorsClient([DEV, FIN_AGENT]);
+    subscribedWith(qc, qk.timeline(CH, CH), Array.isArray(items) ? timelineOf(items) : items);
+    const view = renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
+    const atEnd = () => scroller().scrollTop === scroller().scrollHeight - scroller().clientHeight;
+    return { ...view, qc, atEnd, scroller };
+  };
+  const later = range(4, 60, { authorType: "user", authorId: USER });
+
+  it("화면 밖 묶음에 답이 오면 「답 도착」 칩, 누르면 그 묶음으로", async () => {
+    const { qc, atEnd, scroller } = draw([
+      root,
+      answer(2, AGENT, RA, "dev 의 답"),
+      answer(3, FIN, RB, "fin 첫 답"),
+      ...later,
+    ]);
+    await waitFor(() => expect(atEnd()).toBe(true));
+    expect(screen.queryByRole("group", { name: /답$/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, answer(61, FIN, RB, "fin 둘째 답"))));
+    const chip = await screen.findByRole("button", { name: "@fin 답 도착 — 보기" });
+    // 묶음이 위에 있으면 위 화살표
+    expect(chip.querySelector(".lucide-arrow-up")).not.toBeNull();
+    // 바닥 따라가기·「새 메시지」 칩은 없다 — 묶음 안 글은 루트 자리에 있다
+    expect(atEnd()).toBe(true);
+    expect(screen.queryByRole("button", { name: /^새 메시지/ })).toBeNull();
+    const top = scroller().scrollTop;
+    await userEvent.click(chip);
+    const lane = await screen.findByRole("button", { name: /^@fin / });
+    await waitFor(() => expect(lane).toHaveAttribute("aria-expanded", "true"));
+    expect(scroller().scrollTop).toBeLessThan(top);
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+  });
+
+  it("떨어진 창을 최신 쪽으로 갈아 끼우면 옛 답에 칩이 없다 — 그 뒤 실시간 답에는 뜬다", async () => {
+    const top = msg(100, { bodyMd: "@dev @fin 봐줘" });
+    const old = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `옛 답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc } = draw({ ...timelineOf(range(1, 20)), hasNewer: true, lastSeq: 160 });
+    await screen.findByText("본문 20");
+    const latest = [
+      top,
+      old(101, AGENT, RA),
+      old(102, FIN, RB),
+      ...range(103, 160, { authorType: "user", authorId: USER }),
+    ];
+    act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(latest)));
+    await screen.findByText("본문 160");
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, old(161, FIN, RB))));
+    expect(await screen.findByRole("button", { name: "@fin 답 도착 — 보기" })).toBeInTheDocument();
+  });
+
+  it("떨어진 창을 아래로 이어 받는 동안 옛 답에 칩이 없다 — 다 붙은 뒤 실시간 답에는 뜬다", async () => {
+    const top = msg(21, { bodyMd: "@dev @fin 봐줘" });
+    const old = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `옛 답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc } = draw({ ...timelineOf(range(1, 20)), hasNewer: true, lastSeq: 160 });
+    await screen.findByText("본문 20");
+    act(() =>
+      updateTimeline(qc, CH, CH, (t) =>
+        appendNewer(
+          t,
+          [
+            top,
+            old(22, AGENT, RA),
+            old(23, FIN, RB),
+            ...range(24, 100, { authorType: "user", authorId: USER }),
+          ],
+          true,
+        ),
+      ),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() =>
+      updateTimeline(qc, CH, CH, (t) =>
+        appendNewer(
+          t,
+          [old(101, FIN, RB), ...range(102, 160, { authorType: "user", authorId: USER })],
+          false,
+        ),
+      ),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, old(161, FIN, RB))));
+    expect(await screen.findByRole("button", { name: "@fin 답 도착 — 보기" })).toBeInTheDocument();
+  });
+
+  it("묶음이 화면 아래에 있으면 칩 화살표가 아래", async () => {
+    const top = msg(60, { bodyMd: "@dev @fin 봐줘" });
+    const a = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc, atEnd, scroller } = draw([
+      ...range(1, 59, { authorType: "user", authorId: USER }),
+      top,
+      a(61, AGENT, RA),
+      a(62, FIN, RB),
+    ]);
+    await waitFor(() => expect(atEnd()).toBe(true));
+    await act(async () => {
+      scroller().dispatchEvent(new Event("wheel"));
+      scroller().scrollTop = 0;
+      scroller().dispatchEvent(new Event("scroll"));
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, a(63, FIN, RB))));
+    const chip = await screen.findByRole("button", { name: "@fin 답 도착 — 보기" });
+    expect(chip.querySelector(".lucide-arrow-down")).not.toBeNull();
+    expect(chip.querySelector(".lucide-arrow-up")).toBeNull();
+  });
+
+  it("묶음이 화면 안이면 칩이 없다", async () => {
+    const { qc } = draw([root, answer(2, AGENT, RA, "dev 의 답"), answer(3, FIN, RB, "fin 첫 답")]);
+    await screen.findByRole("group", { name: "@dev·@fin 답" });
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, answer(4, FIN, RB, "fin 둘째 답"))));
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
   });
 });

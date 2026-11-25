@@ -1,5 +1,6 @@
+import type { Message } from "@dodok/shared";
 import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import {
   type FocusEvent,
   memo,
@@ -23,14 +24,18 @@ import { useRunStore } from "@/features/runs/runStore";
 import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { type Bundle, type BundleRun, bundleIndex, computeBundles } from "./bundles";
+import { useBundleExpansion } from "./bundleExpansion";
 import { groupRows, type Row } from "./groupRows";
 import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
+import { ReplyBundle } from "./ReplyBundle";
 import { SystemCard } from "./SystemCard";
 import { HIGHLIGHT_MS } from "./jumpTarget";
-import { useJump } from "./useJump";
+import { useAuthors } from "./useAuthors";
+import { rowHolds, useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
 import { NEW_CONVERSATION, type Timeline } from "./timeline";
@@ -49,6 +54,7 @@ const UNREAD_CONTEXT_PX = 128;
 /** 이어 받기를 기다리며 읽음을 붙잡는 가장 긴 시간 — 응답이 끝내 안 오면 놓는다 */
 const AWAIT_UNREAD_MAX_MS = 5_000;
 const NO_RUNS: readonly string[] = [];
+const NO_BUNDLES: ReadonlyMap<string, Bundle> = new Map();
 const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
 export type MessageListProps = {
@@ -126,6 +132,30 @@ function ChannelMessages({
     [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
+  // 답 묶음(설계 「정한 것」) — 세션 타임라인에서만. 스레드 패널은 이미 따로 떨어진 공간이라 묶지 않는다. 런의 루트는 저장소의 `roots`
+  // (run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운 런도 남는다)와 메시지의 runRoot 로 안다
+  const runRoots = useRunStore((s) => s.roots);
+  const bundleRuns = useMemo(
+    (): BundleRun[] =>
+      threadRootId !== undefined
+        ? []
+        : Object.values(runRoots).filter(
+            (r) =>
+              r.channelId === channelId &&
+              r.conversationId === conversationId &&
+              r.threadRootId === undefined,
+          ),
+    [runRoots, channelId, conversationId, threadRootId],
+  );
+  const timelineItems = timeline?.items;
+  const bundles = useMemo(
+    () =>
+      threadRootId !== undefined || !timelineItems ? NO_BUNDLES : computeBundles(timelineItems, bundleRuns),
+    [timelineItems, bundleRuns, threadRootId],
+  );
+  const messagesById = useMemo(() => new Map((timelineItems ?? []).map((m) => [m.id, m])), [timelineItems]);
+  const bubbleSet = useMemo(() => new Set(bubbleRunIds), [bubbleRunIds]);
+  const bundled = useMemo(() => bundleIndex(bundles), [bundles]);
   /**
    * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
    * 페이지 경계가 우연히 맞았으면 배너 대신 구분선에서 연다. `done` 이 되기 전에는 첫 위치를 잡지 않고 자리표시를 그린다.
@@ -137,9 +167,14 @@ function ChannelMessages({
   const rows = useMemo(
     () =>
       timeline
-        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me, settledReadSeq })
+        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, {
+            entryReadSeq,
+            me,
+            settledReadSeq,
+            bundles,
+          })
         : [],
-    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq],
+    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq, bundles],
   );
   // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게.
   // 읽은 자리가 0 인 채널(새 멤버가 처음 여는 채널 등)은 끝에서 연다(사용자 결정) — 기록 전체가 안 읽음이라 구분선에서 열면
@@ -212,7 +247,7 @@ function ChannelMessages({
     stuckRef.current = next;
     setStuckState(next);
   }, []);
-  const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef);
+  const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef, bundled.byMessage);
   const older = useOlderPages(channelId, conversationId, threadRootId);
   const newer = useNewerPages(channelId, conversationId, threadRootId, hasNewer);
   const qc = useQueryClient();
@@ -236,6 +271,80 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  // 묶음 줄의 「승인 대기」 — 목록 맨 아래 그 승인 카드로
+  const toApproval = useCallback(
+    (approvalId: string) => {
+      const index = rowsRef.current.findIndex((r) => r.key === `approval:${approvalId}`);
+      if (index >= 0) arrive(index);
+    },
+    [arrive],
+  );
+  const highlighted = jump.highlighted;
+  const bundleView = useMemo(
+    (): BundleView => ({
+      messagesById,
+      bubbleRunIds: bubbleSet,
+      bubbles,
+      onApproval: toApproval,
+      highlighted,
+    }),
+    [messagesById, bubbleSet, bubbles, toApproval, highlighted],
+  );
+  /** 그 행이 지금 뷰포트에 걸쳐 있는가 — 잰 자리(추정 포함)와 스크롤 위치로 본다 */
+  const rowInView = useCallback(
+    (index: number): boolean => {
+      const el = scrollRef.current;
+      const m = virtualizer.measurementsCache[index];
+      if (!el || !m) return false;
+      return m.end > el.scrollTop && m.start < el.scrollTop + el.clientHeight;
+    },
+    [virtualizer],
+  );
+  /**
+   * 「답 도착」 칩(답 묶음 설계) — 이 탭에서 새로 받은 에이전트 답이 묶음으로 들어갔는데 그 묶음 행이 화면 밖이면 띄운다. 묶음 안 글은
+   * 루트 자리에 있어 바닥 따라가기·「새 메시지」 칩이 맡지 않는다. 새로 받은 것 = 실시간으로 받은 글 — 지금까지 본 가장 큰 seq 뒤의 글이되,
+   * 떨어진 창(`hasNewer`)이던 동안의 변화는 뺀다. 떨어진 창에는 실시간 글이 들지 않으므로(timeline.ts `applyIncoming`) 그동안 끝이
+   * 늘어난 것은 아래로 이어 받은 쪽(`useNewerPages`)이나 최신 쪽으로 갈아 끼운 것(`loadLatest`)이다 — 옛 답이라 칩을 세우지 않는다.
+   * `below` 는 칩을 띄울 때 묶음 행이 뷰포트 아래에 있었는가(화살표 방향)
+   */
+  const [arrival, setArrival] = useState<{
+    rootId: string;
+    runId: string;
+    agentId?: string;
+    below: boolean;
+  }>();
+  const topSeq = useRef<number | undefined>(undefined);
+  const wasDetached = useRef(hasNewer);
+  useEffect(() => {
+    if (!timelineItems) return;
+    const last = timelineItems.at(-1)?.seq ?? 0;
+    const before = topSeq.current;
+    const detached = wasDetached.current || hasNewer;
+    wasDetached.current = hasNewer;
+    topSeq.current = detached ? last : Math.max(before ?? 0, last);
+    if (before === undefined || detached) return;
+    for (const m of timelineItems) {
+      if (m.seq <= before || m.authorType !== "agent") continue;
+      const rootId = bundled.byMessage.get(m.id);
+      const runId = m.runId;
+      if (rootId === undefined || runId === undefined) continue;
+      const index = rowsRef.current.findIndex((r) => r.key === `bundle:${rootId}`);
+      if (index < 0 || rowInView(index)) continue;
+      const below = (virtualizer.measurementsCache[index]?.start ?? 0) >= (scrollRef.current?.scrollTop ?? 0);
+      setArrival({ rootId, runId, agentId: m.authorId, below });
+    }
+  }, [timelineItems, bundled, rowInView, hasNewer, virtualizer]);
+  const toArrival = () => {
+    if (!arrival) return;
+    setArrival(undefined);
+    useBundleExpansion.getState().set(arrival.runId, true);
+    const index = rowsRef.current.findIndex((r) => r.key === `bundle:${arrival.rootId}`);
+    if (index >= 0) arrive(index);
+  };
+  const { author } = useAuthors();
+  const arrivalHandle = arrival
+    ? (author({ authorType: "agent", authorId: arrival.agentId }).handle ?? "?")
+    : undefined;
   // 묻는 것은 처음 위치를 잡기 전 한 번 — 배너가 뜰 경계(`showBanner` 와 같은 조건)이고 받은 목록에 구분선이 없을 때만.
   // 결과로 가기 목표를 안고 열렸으면 그리로 가므로 묻지 않는다
   const probing =
@@ -278,7 +387,7 @@ function ChannelMessages({
     let raf = 0;
     const doc = el.ownerDocument;
     const tick = () => {
-      const index = rowsRef.current.findIndex((r) => r.kind === "message" && r.message.id === focusId);
+      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId));
       const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
       if (doc.activeElement !== row && !focusIsFree(doc, el)) {
         focused();
@@ -538,6 +647,10 @@ function ChannelMessages({
     setStuck(fromBottom <= STICK_PX && !hasNewer && awaitRef.current === undefined);
     older.onScrollTop(el.scrollTop);
     newer.onScrollBottom(fromBottom);
+    if (arrival) {
+      const index = rowsRef.current.findIndex((r) => r.key === `bundle:${arrival.rootId}`);
+      if (index < 0 || rowInView(index)) setArrival(undefined);
+    }
   };
 
   // 초점이 든 행을 기억한다(`rangeExtractor`). 영역을 떠나면 잊는다 — 떠나는 순간(focusout)에는 아직 새 자리가 정해지지 않았으므로
@@ -647,7 +760,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
-                tabIndex={row.kind === "message" && row.message.id === landed ? -1 : undefined}
+                tabIndex={landed !== undefined && rowHolds(row, landed) ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",
@@ -661,6 +774,7 @@ function ChannelMessages({
                     channelId={channelId}
                     inThread={threadRootId !== undefined}
                     bubble={row.kind === "bubble" ? bubbles?.(row.runId) : undefined}
+                    bundleView={row.kind === "bundle" ? bundleView : undefined}
                   />
                 </MessageErrorBoundary>
               </div>
@@ -692,6 +806,11 @@ function ChannelMessages({
             최신 메시지로
             <ArrowDownIcon aria-hidden />
           </Button>
+        ) : arrival ? (
+          <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toArrival}>
+            @{arrivalHandle} 답 도착 — 보기
+            {arrival.below ? <ArrowDownIcon aria-hidden /> : <ArrowUpIcon aria-hidden />}
+          </Button>
         ) : (
           unseen > 0 && (
             <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toEnd}>
@@ -718,13 +837,29 @@ function sameRow(a: Row, b: Row): boolean {
   if (a.kind === "message" && b.kind === "message")
     return a.message === b.message && a.head === b.head && a.activity === b.activity;
   if (a.kind === "pending" && b.kind === "pending") return a.pending === b.pending;
+  if (a.kind === "bundle" && b.kind === "bundle") return a.bundle === b.bundle;
   // 구분선(날짜)·버블(runId)·승인(approvalId)은 key 에 다 들어 있다 — 카드 안은 저마다 스토어를 구독한다
   return true;
 }
 
-type RowProps = { row: Row; channelId: string; inThread: boolean; bubble: ReactNode };
+/** 묶음 행이 그릴 때 보는 목록의 것 — 메시지·버블·승인 카드로 가기 */
+type BundleView = {
+  messagesById: ReadonlyMap<string, Message>;
+  bubbleRunIds: ReadonlySet<string>;
+  bubbles: ((runId: string) => ReactNode) | undefined;
+  onApproval: (approvalId: string) => void;
+  highlighted?: string;
+};
+
+type RowProps = {
+  row: Row;
+  channelId: string;
+  inThread: boolean;
+  bubble: ReactNode;
+  bundleView: BundleView | undefined;
+};
 const RowView = memo(
-  function RowView({ row, channelId, inThread, bubble }: RowProps) {
+  function RowView({ row, channelId, inThread, bubble, bundleView }: RowProps) {
     switch (row.kind) {
       case "divider":
         return <DayDivider date={row.date} />;
@@ -742,10 +877,13 @@ const RowView = memo(
         return <ApprovalCard approvalId={row.approvalId} channelId={channelId} />;
       case "unread":
         return <NewMessagesDivider />;
+      case "bundle":
+        return bundleView ? <ReplyBundle bundle={row.bundle} {...bundleView} /> : null;
     }
   },
   (a: RowProps, b: RowProps) =>
     a.bubble === b.bubble &&
+    a.bundleView === b.bundleView &&
     a.channelId === b.channelId &&
     a.inThread === b.inThread &&
     sameRow(a.row, b.row),
@@ -804,6 +942,8 @@ function useUnseen(
   timeline: Timeline | undefined,
   stuck: boolean,
   stuckRef: { readonly current: boolean },
+  /** 답 묶음에 든 메시지 — 루트 자리에 있는 것으로 봐 세지 않는다(「답 도착」 칩이 맡는다) */
+  bundled: ReadonlyMap<string, string>,
 ): [number, (seq: number) => void] {
   const me = useMe().data?.user.id;
   const lastSeq = timeline?.items.at(-1)?.seq ?? 0;
@@ -815,7 +955,8 @@ function useUnseen(
   const unseen =
     stuck || !timeline
       ? 0
-      : timeline.items.filter((m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me))
-          .length;
+      : timeline.items.filter(
+          (m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me) && !bundled.has(m.id),
+        ).length;
   return [unseen, setSeenSeq];
 }

@@ -16,6 +16,7 @@ import {
   INTERACTIONS_MAX,
   Message,
   RelayPolicy,
+  ROOT_RUNS_MAX,
   Run,
   RunState,
   RunStatus,
@@ -379,11 +380,62 @@ describe("Run", () => {
         "id",
         "parentRunId",
         "relayDepth",
+        "rootMessageId",
         "startedAt",
         "status",
         "threadRootId",
+        "triggerMessageId",
       ].sort(),
     );
+  });
+});
+
+describe("run root", () => {
+  const state = {
+    id: ID(1),
+    channelId: ID(2),
+    conversationId: ID(2),
+    agentId: ID(3),
+    status: "streaming",
+    relayDepth: 0,
+  };
+  const msg = {
+    id: ID(10),
+    channelId: ID(2),
+    conversationId: ID(2),
+    seq: 2,
+    kind: "normal",
+    authorType: "agent",
+    authorId: ID(3),
+    bodyMd: "답",
+    mentions: { agents: [], users: [] },
+    runId: ID(1),
+    createdAt: NOW,
+  };
+  it("RunState 는 rootMessageId·triggerMessageId 를 싣는다", () => {
+    const s = RunState.parse({ ...state, rootMessageId: ID(4), triggerMessageId: ID(5) });
+    expect(s.rootMessageId).toBe(ID(4));
+    expect(s.triggerMessageId).toBe(ID(5));
+  });
+  it("RunState 는 두 칸 없이도 파싱된다(옛 서버)", () => {
+    const s = RunState.parse(state);
+    expect(s.rootMessageId).toBeUndefined();
+    expect(s.triggerMessageId).toBeUndefined();
+  });
+  it("Message.runRoot 는 선택 — 있으면 그대로 둔다", () => {
+    const runRoot = { runId: ID(1), agentId: ID(3), rootMessageId: ID(4) };
+    expect(Message.parse({ ...msg, runRoot }).runRoot).toEqual(runRoot);
+    expect(Message.parse(msg).runRoot).toBeUndefined();
+    expect(Message.safeParse({ ...msg, runRoot: { ...runRoot, rootMessageId: "x" } }).success).toBe(false);
+  });
+  it("Message.rootRuns 는 선택 — 상태를 싣고 ROOT_RUNS_MAX 를 넘으면 거부", () => {
+    const run = { runId: ID(1), agentId: ID(3), status: "aborted" };
+    expect(Message.parse({ ...msg, rootRuns: [run] }).rootRuns).toEqual([run]);
+    expect(Message.parse(msg).rootRuns).toBeUndefined();
+    expect(Message.safeParse({ ...msg, rootRuns: [{ ...run, status: "nope" }] }).success).toBe(false);
+    const many = Array.from({ length: ROOT_RUNS_MAX + 1 }, () => run);
+    expect(Message.safeParse({ ...msg, rootRuns: many }).success).toBe(false);
+    expect(Message.safeParse({ ...msg, rootRuns: many.slice(1) }).success).toBe(true);
   });
 });
 

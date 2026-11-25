@@ -402,6 +402,49 @@ export const ThreadSummary = z.object({
 });
 export type ThreadSummary = z.infer<typeof ThreadSummary>;
 
+/**
+ * 메시지를 낸 런과 그 런이 시작된 루트 글 — 웹이 여러 에이전트 답을 루트 아래 묶을 때 쓴다(답 묶음 설계).
+ * 서버가 에이전트 메시지(runId)와 run_error 시스템 메시지(systemMeta.runId)에만 runs 와 맞춰 붙인다. 옛 서버면 없다
+ */
+export const MessageRunRoot = z.object({
+  runId: Id,
+  agentId: Id,
+  rootMessageId: Id,
+  /** 런을 부른 글 — 릴레이면 부른 에이전트의 글. interaction 런이면 없다 */
+  triggerMessageId: Id.optional(),
+});
+export type MessageRunRoot = z.infer<typeof MessageRunRoot>;
+
+export const RunStatus = z.enum([
+  "queued",
+  "streaming",
+  "tool",
+  "awaiting_approval",
+  "finalizing",
+  "done",
+  "error",
+  "aborted",
+]);
+export type RunStatus = z.infer<typeof RunStatus>;
+
+/**
+ * 사람 최상위 글에 실리는 그 글이 루트인 런 하나(답 묶음 설계 「줄의 원천은 런」). 메시지 없이 중지·실패한 런도 새로 불러온 뒤 줄이
+ * 서게 서버(hydrateForClient)가 붙인다. 실시간 상태 변화는 run.state 가 맡고 루트 글을 다시 보내지는 않는다
+ */
+export const MessageRootRun = z.object({
+  runId: Id,
+  agentId: Id,
+  status: RunStatus,
+  triggerMessageId: Id.optional(),
+});
+export type MessageRootRun = z.infer<typeof MessageRootRun>;
+
+/**
+ * 루트 글 하나에 싣는 런 수의 상한 — 넘치면 최근 것(런 id 가 큰 것)부터 남긴다. 한 글에서 갈라지는 런은 보통 몇 개라 이 값이면 다
+ * 실린다. 릴레이를 「이어 가기」로 계속 늘려도 글 한 개의 크기가 끝없이 커지지 않게 막는다
+ */
+export const ROOT_RUNS_MAX = 32;
+
 export const Message = z.object({
   id: Id,
   channelId: Id,
@@ -433,6 +476,9 @@ export const Message = z.object({
   threadRootId: Id.optional(), // 스레드 답글이면 그 루트. 스레드 안의 스레드는 없다 — 루트만 가리킨다
   threadSummary: ThreadSummary.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
+  runRoot: MessageRunRoot.optional(),
+  /** 사람 최상위 글이면 그 글이 루트인 런(런 id 순, 최대 ROOT_RUNS_MAX). 옛 서버·대상 아닌 글이면 없다 */
+  rootRuns: z.array(MessageRootRun).max(ROOT_RUNS_MAX).optional(),
   clientMsgId: z.string().max(64).optional(), // 사용자 전송 멱등 키
   externalId: z.string().max(128).optional(), // 브리지 outboundId
   createdAt: IsoDateTime,
@@ -440,17 +486,6 @@ export const Message = z.object({
 });
 export type Message = z.infer<typeof Message>;
 
-export const RunStatus = z.enum([
-  "queued",
-  "streaming",
-  "tool",
-  "awaiting_approval",
-  "finalizing",
-  "done",
-  "error",
-  "aborted",
-]);
-export type RunStatus = z.infer<typeof RunStatus>;
 // command — 에이전트 명령 런(에이전트 명령 스펙 5.1). 릴레이·자동 응답을 일으키지 않는다
 export const RunTriggerKind = z.enum([
   "mention",
@@ -553,6 +588,10 @@ export const RunState = Run.pick({
   error: true,
   startedAt: true,
   endedAt: true,
+}).extend({
+  // 선택 — Run 에서는 rootMessageId 가 필수라 pick 하면 옛 서버의 run.state 가 거부된다(답 묶음 설계)
+  rootMessageId: Id.optional(),
+  triggerMessageId: Id.optional(),
 });
 export type RunState = z.infer<typeof RunState>;
 
