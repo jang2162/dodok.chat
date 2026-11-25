@@ -395,6 +395,10 @@ export const messages = sqliteTable(
     index("messages_run").on(t.runId),
     index("messages_channel_thread_seq").on(t.channelId, t.threadRootId, t.seq),
     index("messages_conversation_thread_seq").on(t.conversationId, t.threadRootId, t.seq),
+    // 세션 타임라인(listMessages channel 범위) — 루트 + 채널에도 보낸 답글을 대화 안 seq 순으로. 조건이 질의와 같아야 SQLite 가 탄다
+    index("messages_conversation_channel_seq")
+      .on(t.conversationId, t.seq)
+      .where(sql`thread_root_id IS NULL OR also_in_channel = 1`),
   ],
 );
 

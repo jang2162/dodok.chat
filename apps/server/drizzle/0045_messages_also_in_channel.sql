@@ -1,1 +1,2 @@
-ALTER TABLE `messages` ADD `also_in_channel` integer DEFAULT 0 NOT NULL;
+ALTER TABLE `messages` ADD `also_in_channel` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE INDEX `messages_conversation_channel_seq` ON `messages` (`conversation_id`,`seq`) WHERE thread_root_id IS NULL OR also_in_channel = 1;

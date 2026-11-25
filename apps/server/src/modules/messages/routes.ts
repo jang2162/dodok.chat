@@ -31,7 +31,10 @@ export const HistoryQuery = z
  * `/channels/:id/threads/:rootId/messages`)은 걷었다 — 타임라인은 세션마다다(채널 세션 계획 판정 PS5)
  */
 export function registerMessageRoutes(fastify: FastifyInstance, ctx: MessageRouteContext): void {
-  /** 세션 타임라인 — 그 대화의 루트만(채널 세션 스펙 「wire·REST」 장). seq 는 채널 번호라 around 가 답글 seq 면 그 루트를 가운데로 */
+  /**
+   * 세션 타임라인 — 그 대화의 루트와 채널에도 보낸 답글(channel 범위, 스레드 글 채널에도 보이기 설계). seq 는 채널 번호라 around 가
+   * 보통 답글 seq 면 그 루트를, 채널에도 보낸 답글이면 그 글을 가운데로
+   */
   fastify.get(
     "/api/v1/conversations/:id/messages",
     { preHandler: requirePolicy(ctx, authorizeRead) },
@@ -45,6 +48,7 @@ export function registerMessageRoutes(fastify: FastifyInstance, ctx: MessageRout
         ...query,
         aroundSeq: around,
         conversationId: conversation.id,
+        scope: "channel",
       });
     },
   );

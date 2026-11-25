@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0670a3db-b14e-4aed-a4ed-c02f12ed715b",
+  "id": "a469a466-7149-45ed-a93a-23768bd86a0e",
   "prevId": "2cd250ec-5e19-4bb5-97a3-a2d49ba327a7",
   "tables": {
     "agent_sessions": {
@@ -2653,6 +2653,15 @@
             "seq"
           ],
           "isUnique": false
+        },
+        "messages_conversation_channel_seq": {
+          "name": "messages_conversation_channel_seq",
+          "columns": [
+            "conversation_id",
+            "seq"
+          ],
+          "isUnique": false,
+          "where": "thread_root_id IS NULL OR also_in_channel = 1"
         }
       },
       "foreignKeys": {

@@ -165,8 +165,11 @@ export type CreateSystemMessageInput = {
   threadRootId?: string;
 };
 
-/** roots = 채널 타임라인(답글 제외), all = 재동기화(답글 포함), threadRootId = 그 루트와 답글 */
-export type MessageScope = "roots" | "all" | { threadRootId: string };
+/**
+ * roots = 루트만(답글 제외 — 제어 도구 read_messages, 에이전트가 읽는 채널), channel = 웹 세션 타임라인(루트 + 채널에도 보낸 답글),
+ * all = 재동기화(답글 포함), threadRootId = 그 루트와 답글
+ */
+export type MessageScope = "roots" | "channel" | "all" | { threadRootId: string };
 
 export type ListMessagesOptions = {
   limit: number;
@@ -343,9 +346,14 @@ export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
-/** rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 사람 최상위 보통 글(웹 bundles.ts canRoot 와 같은 조건) */
+/**
+ * rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 사람 보통 글: 최상위 글 또는 채널에도 보낸 답글(웹 bundles.ts canRoot 와 같은 조건).
+ * 스레드 안 사람 글로 시작한 런은 rootMessageId 가 그 글이다
+ */
 const canRootRuns = (m: Message): boolean =>
-  m.authorType === "user" && m.kind === "normal" && m.threadRootId === undefined;
+  m.authorType === "user" &&
+  m.kind === "normal" &&
+  (m.threadRootId === undefined || m.alsoInChannel === true);
 
 /**
  * 사람 최상위 글에 그 글이 루트인 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계
@@ -734,7 +742,8 @@ export function createSystemMessage(db: Db, bus: ServerBus, input: CreateSystemM
 /**
  * seq 오름차순 한 페이지(limit ≤ 200). afterSeq 가 있으면 그 초과에서 가장 오래된 것부터(hasMore = 더 새것이 있다),
  * 없으면 (beforeSeq 미만에서) 가장 최근 것들(hasMore = 더 옛것이 있다). aroundSeq 는 그 seq 이하에서 절반(올림),
- * 초과에서 나머지 — roots 스코프에서 그 seq 가 답글이면 그 루트가 가운데다(검색 결과로 가기).
+ * 초과에서 나머지 — roots·channel 스코프에서 그 seq 가 답글이면 그 루트가 가운데다(검색 결과로 가기 — channel 에서 채널에도
+ * 보낸 답글은 그 글 자리).
  * REST 히스토리와 구독 ack 가 쓰는 클라이언트 경로라 상호작용 기록·스레드 요약을 붙여 돌려준다.
  */
 export function listMessages(db: DbOrTx, channelId: string, opts: ListMessagesOptions): MessagePage {
@@ -759,7 +768,10 @@ export function listMessages(db: DbOrTx, channelId: string, opts: ListMessagesOp
       .all();
 
   if (opts.aroundSeq !== undefined) {
-    const center = scope === "roots" ? rootSeqAt(db, channelId, opts.aroundSeq) : opts.aroundSeq;
+    const center =
+      scope === "roots" || scope === "channel"
+        ? rootSeqAt(db, channelId, opts.aroundSeq, scope)
+        : opts.aroundSeq;
     const olderN = Math.ceil(limit / 2);
     const newerN = limit - olderN;
     const older = page(lte(messages.seq, center), false, olderN);
@@ -789,18 +801,22 @@ export function listMessages(db: DbOrTx, channelId: string, opts: ListMessagesOp
 
 function scopeFilter(scope: MessageScope): SQL | undefined {
   if (scope === "roots") return isNull(messages.threadRootId);
+  if (scope === "channel") return or(isNull(messages.threadRootId), eq(messages.alsoInChannel, 1));
   if (scope === "all") return undefined;
   return or(eq(messages.id, scope.threadRootId), eq(messages.threadRootId, scope.threadRootId));
 }
 
-/** 그 seq 가 답글이면 루트의 seq, 아니면(루트거나 없는 seq) 그대로 */
-function rootSeqAt(db: DbOrTx, channelId: string, seq: number): number {
+/**
+ * 그 seq 가 답글이면 루트의 seq, 아니면(루트거나 없는 seq) 그대로. channel 범위에서는 채널에도 보낸 답글이 타임라인에 있으니 그 자리 그대로
+ */
+function rootSeqAt(db: DbOrTx, channelId: string, seq: number, scope: "roots" | "channel"): number {
   const row = db
-    .select({ threadRootId: messages.threadRootId })
+    .select({ threadRootId: messages.threadRootId, alsoInChannel: messages.alsoInChannel })
     .from(messages)
     .where(and(eq(messages.channelId, channelId), eq(messages.seq, seq)))
     .get();
   if (!row?.threadRootId) return seq;
+  if (scope === "channel" && row.alsoInChannel === 1) return seq;
   const root = db.select({ seq: messages.seq }).from(messages).where(eq(messages.id, row.threadRootId)).get();
   return root?.seq ?? seq;
 }

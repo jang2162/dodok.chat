@@ -118,6 +118,30 @@ describe("제어 서비스", () => {
       ]);
     });
 
+    it("read_messages — 채널에도 보낸 스레드 답글은 루트 목록에 섞지 않는다(에이전트 문맥 불변)", async () => {
+      const { channel } = openRun(app, owner);
+      const conversationId = channelConversation(app.db, channel.id);
+      const root = createUserMessage(app.db, app.bus, {
+        conversationId,
+        authorId: owner,
+        bodyMd: "루트",
+        clientMsgId: `also-root-${channel.id}`,
+      });
+      const also = createUserMessage(app.db, app.bus, {
+        conversationId,
+        authorId: owner,
+        bodyMd: "채널에도",
+        clientMsgId: `also-reply-${channel.id}`,
+        threadRootId: root.id,
+        alsoInChannel: true,
+      });
+      expect(also.alsoInChannel).toBe(true);
+      const page = expectOk(await call(pat(owner), "read_messages", { conversationId })) as {
+        messages: Array<{ id: string }>;
+      };
+      expect(page.messages.map((m) => m.id)).toEqual([root.id]);
+    });
+
     it("read_messages — 그 세션의 글만, 같은 채널의 다른 세션 글·그 세션 밖 스레드는 섞지 않는다", async () => {
       const { channel } = openRun(app, owner);
       const here = channelConversation(app.db, channel.id);
