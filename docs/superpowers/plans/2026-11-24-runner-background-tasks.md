@@ -28,7 +28,7 @@
   - 끊김 줄 「러너 연결 끊김」
   - D6 「백그라운드 작업 때문에 일부 설정은 이전 값으로 실행」
   - D7 「백그라운드 작업 N개가 러너 자리를 쓰는 중 — 활동 탭에서 종료하면 이어집니다」
-  - 거절 「백그라운드 작업이 끝났지만 <사유>로 이어서 답하지 못했습니다」
+  - 거절 「백그라운드 작업이 끝났지만 <사유> 이어서 답하지 못했습니다」(사유에 조사까지 — 「오늘 런 한도로」·「채널이 보관돼」·「에이전트가 꺼져」·「세션이 닫혀」)
   - 죽음 「백그라운드 작업이 끝나지 못했습니다 — 러너가 다시 시작됐습니다」
   - 업데이트 확인 「백그라운드 작업 N개가 꺼집니다」
 - 모델 런은 실행 직전 사용자 승인. 이 계획의 모든 시험은 가짜 SdkPort·가짜 러너·런 0회 하네스로 돈다.
@@ -225,7 +225,7 @@
   - `Orchestrator.adoptRun(plan: RunPlan & { channelId; conversationId }, trigger: EnqueueTrigger & { backgroundOriginRunId: string; threadRootId: string }): Promise<Run>` — 세션 큐에 줄 세우지 않고 곧바로 `streaming` 으로(RUN_STARTED·startedAt·run 타이머), 같은 세션 큐의 기다리는 런은 이 런 뒤로. `triggerKind: "background"`, `requestedBy` 는 원래 런의 값.
   - `createBackgroundService(deps: { db; bus; orchestrator; gate: RunGate; registry; now; logger }): BackgroundService`
   - `BackgroundService = { onFollowup(connectionId, req): Promise<RunnerFollowupResult>; onTasks(connectionId, update): void; snapshot(channelId: string): ChannelSubscribeResult["tasks"]; stop(runId: string, taskId: string, principal): Promise<void>; releaseConversation(conversationId: string, agentId?: string): void; heldCount(runnerTokenId: string): number }`
-  - 추가 응답 규칙(설계 5.5): 원래 런 → 대화·에이전트·채널. 스레드 루트 = 원래 런이 스레드 런이면 그 `threadRootId`, 아니면 원래 런의 첫 정본 메시지 id, 없으면 원래 런의 트리거 메시지. 관문(`gate.check` + 에이전트 활성·채널 보관·대화 닫힘)에 막히면 그 스레드에 시스템 글 「백그라운드 작업이 끝났지만 <사유>로 이어서 답하지 못했습니다」(사유: 한도 「오늘 런 한도」, 보관 「채널이 보관돼」, 비활성 「에이전트가 꺼져」, 닫힘 「세션이 닫혀」) 후 `{ ok:false, reason }`. `deliver` 는 지금 런 디스패치가 만드는 것과 같은 함수로 만들되 `kind: "background"`, `threadId` = 스레드 루트, `sessionKey` = 원래 런의 세션 키.
+  - 추가 응답 규칙(설계 5.5): 원래 런 → 대화·에이전트·채널. 스레드 루트 = 원래 런이 스레드 런이면 그 `threadRootId`, 아니면 원래 런의 첫 정본 메시지 id, 없으면 원래 런의 트리거 메시지. 관문(`gate.check` + 에이전트 활성·채널 보관·대화 닫힘)에 막히면 그 스레드에 시스템 글 「백그라운드 작업이 끝났지만 <사유> 이어서 답하지 못했습니다」(사유에 조사까지: 한도 「오늘 런 한도로」, 보관 「채널이 보관돼」, 비활성 「에이전트가 꺼져」, 닫힘 「세션이 닫혀」) 후 `{ ok:false, reason }`. `deliver` 는 지금 런 디스패치가 만드는 것과 같은 함수로 만들되 `kind: "background"`, `threadId` = 스레드 루트, `sessionKey` = 원래 런의 세션 키.
   - `onCanonical`: 런이 `triggerKind === "background"` 이고 `msg.threadId === run.threadRootId` 면 세션 키의 스레드 대조를 통과시킨다. 그 밖은 지금 그대로.
   - 작업 목록: 키 `connectionId + sessionKey`, 값 `{ conversationId, channelId, agentId, tasks, runnerConnected, lastSeen }`. 바뀔 때마다 채널 룸에 `tasks.updated`. `{ disconnected:true }` 면 그 러너 몫을 `runnerConnected:false` 로. 러너가 다시 붙고 `BACKGROUND_RESYNC_MS` 안에 오지 않은 세션은 지우고, 그 작업마다 원래 런의 응답 스레드에 「백그라운드 작업이 끝나지 못했습니다 — 러너가 다시 시작됐습니다」(같은 스레드에 한 번).
   - 대기 사유(D7): 러너 ack 의 `heldSlots` 를 `RUN_QUEUED.heldSlots` 로 싣는다(런 디스패치 자리).

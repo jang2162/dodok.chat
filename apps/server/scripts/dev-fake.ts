@@ -57,6 +57,7 @@ import {
   formatGroupDmLine,
   formatSessionInviteLine,
   formatSessionLine,
+  type BackgroundTask,
   type GatewayLinkState,
   type InboundDeliver,
   type OpenClawGatewayStatus,
@@ -77,7 +78,7 @@ import {
 } from "@dodok/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { pluginDirCandidates, readPluginFile } from "../src/modules/setup/plugin-file";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -125,6 +126,7 @@ import {
   FAKE_RUNNER_ROOT,
   type FakeNode,
   type FakeRunner,
+  type FakeRunner as FakeRunnerHandle,
   type FakeRunnerRun,
   type FakeTree,
   fakeRunnerHello,
@@ -379,6 +381,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
         "botMcp",
         "runnerControl",
         "remoteUpdate",
+        "backgroundTasks",
       ],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
@@ -886,6 +889,7 @@ export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "제어",
   "구독",
   "천장",
+  "백그라운드",
   CALL_ME,
   ...COMPONENT_CARDS.map(([keyword]) => keyword),
   ...ATTACHMENT_REPLIES.map(([keyword]) => keyword),
@@ -1038,6 +1042,84 @@ export function fakeContextBreakdown(sessionKey: string): RunnerContextBreakdown
 }
 const RUNNER_COST_USD = 0.02;
 
+/** 대본 「백그라운드」가 띄우는 셸 둘 — 하나는 이 시간 뒤 끝나 추가 응답을 열고, 하나는 「종료」로만 끝난다 */
+export const BACKGROUND_SHELL_MS = 5_000;
+export const BACKGROUND_SHELL_TIMED_COMMAND = "sleep 5 && echo done";
+export const BACKGROUND_SHELL_ENDLESS_COMMAND = "tail -f /dev/null";
+const BACKGROUND_FOLLOWUP_TEXT = "띄워 둔 셸이 끝났습니다(exit 0).";
+
+/**
+ * 가짜 러너의 백그라운드 작업 — 실제 러너가 붙든 세션 프로세스를 흉내 낸다. 작업은 세션 키마다 쥐고(tasks.update 는 그 세션의 전체 값),
+ * 끝나는 셸은 `run.followup` 으로 추가 응답 런을 청해 그 런으로 답한다. 끈 셸(task.stop)은 추가 응답을 열지 않는다.
+ * 서버가 hello 결과 features 에 backgroundTasks 를 싣지 않았으면 실제 러너처럼 붙들지 않는다(셸이 첫 result 에 죽는다) — 작업을 내지 않는다
+ */
+export type FakeBackground = {
+  /** 이 대본 런이 셸 둘을 띄운다. 붙들 수 없으면 false(아무것도 내지 않았다) */
+  launch(run: FakeRunnerRun): boolean;
+  /** 서버의 task.stop — 그 작업을 쥐고 있으면 끄고 ok */
+  stopTask(req: { sessionKey: string; taskId: string }): { ok: boolean };
+};
+
+export function createFakeBackground(
+  runner: () => FakeRunnerHandle | undefined,
+  opts: { shellMs?: number } = {},
+): FakeBackground {
+  const shellMs = opts.shellMs ?? BACKGROUND_SHELL_MS;
+  const sessions = new Map<string, BackgroundTask[]>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const publish = (sessionKey: string) => runner()?.tasks(sessionKey, sessions.get(sessionKey) ?? []);
+  const drop = (sessionKey: string, taskId: string): boolean => {
+    const list = sessions.get(sessionKey) ?? [];
+    if (!list.some((t) => t.taskId === taskId)) return false;
+    sessions.set(
+      sessionKey,
+      list.filter((t) => t.taskId !== taskId),
+    );
+    clearTimeout(timers.get(taskId));
+    timers.delete(taskId);
+    publish(sessionKey);
+    return true;
+  };
+  const task = (description: string, originRunId: string): BackgroundTask => ({
+    taskId: `bash_${randomUUID().slice(0, 8)}`,
+    kind: "shell",
+    description,
+    startedAt: new Date().toISOString(),
+    originRunId,
+  });
+  return {
+    launch(run) {
+      const handle = runner();
+      // 실제 러너의 규칙 — 자기 능력이 있고(hello) 서버가 이번 연결에서 지원을 알렸을 때(hello 결과 features)만 붙든다
+      if (
+        !handle?.hello.capabilities.includes("backgroundTasks") ||
+        handle.helloResult?.ok !== true ||
+        !handle.helloResult.features?.includes("backgroundTasks")
+      )
+        return false;
+      const { sessionKey } = run.start.deliver;
+      const timed = task(BACKGROUND_SHELL_TIMED_COMMAND, run.runId);
+      const endless = task(BACKGROUND_SHELL_ENDLESS_COMMAND, run.runId);
+      sessions.set(sessionKey, [...(sessions.get(sessionKey) ?? []), timed, endless]);
+      publish(sessionKey);
+      const timer = setTimeout(() => {
+        // 끝난 셸 — 목록에서 빠지고 CLI 가 연 턴을 추가 응답 런으로 청한다(서버가 거절하면 그 턴은 없다)
+        if (!drop(sessionKey, timed.taskId)) return;
+        void runner()
+          ?.followup({ sessionKey, originRunId: run.runId, taskIds: [timed.taskId] }, (followup) => {
+            followup.text(BACKGROUND_FOLLOWUP_TEXT);
+            followup.final(BACKGROUND_FOLLOWUP_TEXT);
+          })
+          .catch(() => {});
+      }, shellMs);
+      timer.unref();
+      timers.set(timed.taskId, timer);
+      return true;
+    },
+    stopTask: ({ sessionKey, taskId }) => ({ ok: drop(sessionKey, taskId) }),
+  };
+}
+
 /** ms 만큼 쉰다 — 런이 중지되면 곧바로 풀린다 */
 const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
   Promise.race([new Promise<void>((resolve) => setTimeout(resolve, ms)), run.aborted]);
@@ -1047,12 +1129,12 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
  * 늘 추론 한 덩이(FAKE_REASONING)와 도구 하나(Read)를 먼저 부르고, 러너 키워드: 천장(도구 없이 run.error RUNNER_CEILING permissionMode — 천장 카드)·
  * 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
  * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
- * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
+ * 구독(비용을 subscription_estimate 로)·백그라운드(셸 둘 — `FakeBackground`)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
  * 중지되면 더 보내지 않는다 — 가짜 러너가 `stopReason: "aborted"` 로 끝낸다. breakdown false 면 런 끝 세부를 싣지 않는다(옛 러너)
  */
 export async function fakeRunnerScript(
   run: FakeRunnerRun,
-  opts: { breakdown?: boolean } = {},
+  opts: { breakdown?: boolean; background?: FakeBackground } = {},
 ): Promise<void> {
   const d = run.start.deliver;
   const { text } = d.message;
@@ -1093,6 +1175,13 @@ export async function fakeRunnerScript(
       run.tool("Bash", { command: RUNNER_APPROVAL_COMMAND }, "exit 0");
       lines.push("허용받아 실행했습니다.");
     }
+  }
+  if (text.includes("백그라운드")) {
+    lines.push(
+      opts.background?.launch(run)
+        ? `셸 둘을 띄웠습니다. 하나는 ${BACKGROUND_SHELL_MS / 1000}초 뒤 끝나고, 하나는 활동 탭의 「종료」로만 끝납니다.`
+        : "이 서버는 셸을 남겨 두지 않아 띄우지 않았습니다.",
+    );
   }
   if (text.includes("게시")) {
     const ack = await run.post({ text: RUNNER_POST_TEXT, components: RUNNER_POST_CARD });
@@ -2130,8 +2219,11 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       }, DEV_FAKE_UPDATE_RESTART_MS);
       return { ok: true };
     };
-    const connectRunner = (spec: DevFakeRunnerSpec, hello: Partial<RunnerHello>, token: string) =>
-      startFakeRunner({
+    const connectRunner = (spec: DevFakeRunnerSpec, hello: Partial<RunnerHello>, token: string) => {
+      // 백그라운드 작업은 러너 연결마다 — 능력이 없는 러너(제한)는 hello 에 싣지 않아 서버가 부르지 않는다
+      let handle: FakeRunnerHandle | undefined;
+      const background = createFakeBackground(() => handle);
+      return startFakeRunner({
         url: live.url,
         token,
         hello,
@@ -2144,13 +2236,16 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             { runId: run.start.deliver.runId, model, effort: effort ?? null, permissionMode },
             "dev:fake runner settings",
           );
-          return fakeRunnerScript(run, { breakdown: spec.key !== "limited" });
+          return fakeRunnerScript(run, { breakdown: spec.key !== "limited", background });
         },
       }).then((runner) => {
+        handle = runner;
+        runner.onTaskStop = background.stopTask;
         const slot = runnerSlots.find((s) => s.spec.key === spec.key);
         if (slot) runner.onRunnerUpdate = ({ version }) => answerRunnerUpdate(slot, version);
         return runner;
       });
+    };
     /** 훅의 roots·maxPermissionMode 를 그 러너의 기본 hello 위에 — 루트는 고정 목록 안의 id 만, 상한은 Claude Code 줄에 */
     const helloFor = (slot: RunnerSlot, input: RunnerInput): Partial<RunnerHello> | Rejected => {
       const roots = slot.spec.hello.roots ?? [];
