@@ -1,7 +1,7 @@
 import type { Message } from "@dodok/shared";
 import { useMe } from "@/api/queries";
 import { BotIcon } from "lucide-react";
-import type { MouseEvent, PointerEvent, ReactNode } from "react";
+import { type MouseEvent, type PointerEvent, type ReactNode, useRef } from "react";
 import { toast } from "sonner";
 import { MessageActivity } from "@/features/activity/InlineActivity";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
@@ -79,9 +79,16 @@ export function AuthorAvatar({ author, onOpen }: { author: Author; onOpen?: () =
   );
 }
 
-/** 에이전트 이름 메뉴(UI 시안 02) — 「멘션」·「프로필」. ⌘/Ctrl+클릭이면 메뉴 없이 바로 멘션 */
+/** 에이전트 이름 메뉴(UI 시안 02) — 「멘션」·「프로필」. macOS 는 ⌘+클릭, 그 밖은 Ctrl+클릭이면 메뉴 없이 바로 멘션 */
 export const NOT_MENTIONABLE = "이 자리의 작성기에서 부를 수 없는 에이전트입니다";
-const modified = (e: { metaKey: boolean; ctrlKey: boolean }) => e.metaKey || e.ctrlKey;
+/** macOS·iOS 인가 — 부를 때마다 본다(시험이 플랫폼을 바꿔 잰다) */
+export const isApplePlatform = (): boolean => {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return /mac|iphone|ipad|ipod/i.test(nav.userAgentData?.platform ?? nav.platform ?? "");
+};
+// macOS 의 Ctrl+클릭은 컨텍스트 메뉴라 바로 멘션으로 잡지 않는다
+const directMention = (e: { metaKey: boolean; ctrlKey: boolean }) =>
+  isApplePlatform() ? e.metaKey : e.ctrlKey;
 
 function AgentNameMenu({
   name,
@@ -92,19 +99,25 @@ function AgentNameMenu({
   onMention: () => void;
   onOpen?: (() => void) | undefined;
 }) {
+  // 항목을 골라 닫혔으면 초점을 이름에 되돌리지 않는다(작성기·프로필이 가져간다). Esc 로 닫으면 Radix 기본대로 이름 단추로
+  const picked = useRef(false);
+  const pick = (fn: () => void) => () => {
+    picked.current = true;
+    fn();
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           className="truncate font-semibold hover:underline"
-          title="⌘/Ctrl+클릭으로 바로 멘션"
-          // 메뉴는 누르는 순간(pointerdown) 열린다 — 수정 키가 있으면 막고 클릭에서 바로 멘션
+          title={`${isApplePlatform() ? "⌘" : "Ctrl"}+클릭으로 바로 멘션`}
+          // 메뉴는 누르는 순간(pointerdown) 열린다 — 바로 멘션 수정 키가 있으면 막고 클릭에서 바로 멘션
           onPointerDown={(e: PointerEvent) => {
-            if (modified(e)) e.preventDefault();
+            if (directMention(e)) e.preventDefault();
           }}
           onClick={(e: MouseEvent) => {
-            if (!modified(e)) return;
+            if (!directMention(e)) return;
             e.preventDefault();
             onMention();
           }}
@@ -112,9 +125,16 @@ function AgentNameMenu({
           {name}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-        <DropdownMenuItem onSelect={onMention}>멘션</DropdownMenuItem>
-        {onOpen && <DropdownMenuItem onSelect={onOpen}>프로필</DropdownMenuItem>}
+      <DropdownMenuContent
+        align="start"
+        onCloseAutoFocus={(e) => {
+          if (!picked.current) return;
+          picked.current = false;
+          e.preventDefault();
+        }}
+      >
+        <DropdownMenuItem onSelect={pick(onMention)}>멘션</DropdownMenuItem>
+        {onOpen && <DropdownMenuItem onSelect={pick(onOpen)}>프로필</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

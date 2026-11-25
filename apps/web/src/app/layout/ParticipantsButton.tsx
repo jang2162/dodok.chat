@@ -4,7 +4,7 @@ import { type ReactNode, type RefObject, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import { useMe, useMembers, usePeople } from "@/api/queries";
-import { insertMention, openAgentSettings } from "@/features/composer/insertMention";
+import { insertMention, openAgentSettings, useHasComposer } from "@/features/composer/insertMention";
 import { useRemoveInvitedAgent } from "@/features/conversations/invitedAgents";
 import { isDeactivated } from "@/features/members/deactivated";
 import { WithPresence } from "@/features/presence/PresenceDot";
@@ -74,6 +74,8 @@ export function ParticipantsButton({
   const me = useMe().data?.user;
   const remove = useRemoveInvitedAgent(conversationId);
   const titleId = useId();
+  // 넣을 작성기가 없는 자리(닫힌 세션·보관 채널 — 작성기가 등록하지 않는다)에는 「멘션」 단추를 그리지 않는다
+  const canMention = useHasComposer({ channelId, conversationId });
   // 이 세션(그 스레드 포함)에서 끝나지 않은 런의 에이전트
   const responding = new Set(
     useRunStore(
@@ -173,7 +175,7 @@ export function ParticipantsButton({
           {r.invited && " · 초대됨"}
         </span>
       </span>
-      {!r.me && (
+      {!r.me && canMention && (
         <Button
           variant="ghost"
           size="sm"

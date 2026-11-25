@@ -951,6 +951,8 @@ describe("참여자 단추 [UI 시안 03]", () => {
   afterEach(() => useRunStore.getState().reset());
 
   it("얼굴 셋(사람 먼저, 응답 중인 에이전트 다음) + 총인원 — 누르면 사람·에이전트·이 세션에만 초대 세 갈래", async () => {
+    const off = registerComposer({ channelId: CH, conversationId: CONV }, { mention: () => true });
+    onTestFinished(off);
     act(() =>
       useRunStore
         .getState()
@@ -989,6 +991,31 @@ describe("참여자 단추 [UI 시안 03]", () => {
     expect(within(people).queryByText("주인")).toBeNull();
     expect(within(people).getByText("미아")).toBeInTheDocument();
     expect(within(agents).getByText("맞는 참여자가 없습니다")).toBeInTheDocument();
+  });
+
+  it("넣을 작성기가 없는 자리(닫힌 세션·보관 채널 — 작성기가 등록하지 않는다)에는 「멘션」이 없고, 작성기가 붙으면 생긴다", async () => {
+    renderParticipants();
+    await userEvent.click(screen.getByRole("button", { name: "참여자 5명" }));
+    const dialog = await screen.findByRole("dialog", { name: "참여자 5" });
+    expect(within(dialog).queryAllByRole("button", { name: /멘션$/ })).toEqual([]);
+    // 다른 자리(스레드·다른 세션)의 작성기는 이 세션의 「멘션」을 받지 않는다
+    const offThread = registerComposer(
+      { channelId: CH, conversationId: CONV, threadRootId: uid(6_105) },
+      { mention: () => true },
+    );
+    const offOther = registerComposer({ channelId: CH, conversationId: uid(6_106) }, { mention: () => true });
+    onTestFinished(() => {
+      offThread();
+      offOther();
+    });
+    expect(within(dialog).queryAllByRole("button", { name: /멘션$/ })).toEqual([]);
+    let off = () => {};
+    act(() => {
+      off = registerComposer({ channelId: CH, conversationId: CONV }, { mention: () => true });
+    });
+    expect(within(dialog).getByRole("button", { name: "@mia 멘션" })).toBeInTheDocument();
+    act(() => off());
+    expect(within(dialog).queryByRole("button", { name: "@mia 멘션" })).toBeNull();
   });
 
   it("「멘션」은 팝오버를 닫고 그 세션 작성기에 넣는다 · ⚙ 는 그 에이전트 줄로 설정을 연다", async () => {

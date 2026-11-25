@@ -14,6 +14,8 @@ import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectScopeRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
 import { useDmView } from "@/features/dms/context";
+import { useChannelArchived } from "@/features/channels/archived";
+import { useConversationClosed } from "@/features/conversations/closed";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { AgentSettingsBar, type PendingAgentSettings } from "./AgentSettingsBar";
@@ -170,6 +172,11 @@ export function Composer({
     return all.filter((c) => participants.has(c.id));
   }, [dmKind, members.data, agents.data, me.data, people.data, invited]);
   // 부를 에이전트가 없는 자리(에이전트 DM·한 줄기 사람 DM)는 「@로 에이전트 부르기」를 권하지 않는다
+  const archived = useChannelArchived();
+  const closed = useConversationClosed();
+  const writable = !archived && !closed && (dmView?.readOnly ?? null) === null;
+  // @ 단추는 부를 에이전트가 하나라도 있을 때만(사람 1:1 DM·에이전트 DM 은 없다) — 후보에 사람이 섞이면 「사람」 갈래로 아래에
+  const canPick = candidates.some((c) => c.kind === "agent");
   const plain = dmKind !== undefined && (dmKind === "dm" || !candidates.some((c) => c.kind === "agent"));
   // 에이전트별 명령 목록(에이전트 명령 스펙 5.5) — 처음 명령 모양으로 `/` 를 칠 때 받기 시작한다(그 전에는 묻지 않는다)
   const [commandsWanted, setCommandsWanted] = useState(false);
@@ -286,20 +293,20 @@ export function Composer({
     });
   }, [editor, threadRootId]);
   // 바깥(참여자 목록의 「멘션」·메시지 작성자 이름 메뉴 — UI 시안 02·03)에서 이 자리 작성기에 멘션을 넣는다. 후보는 @ 자동완성과 같은 목록
-  useEffect(
-    () =>
-      registerComposer(
-        { channelId, conversationId, ...(threadRootId === undefined ? {} : { threadRootId }) },
-        {
-          mention: (handle) => {
-            const c = live.current.candidates.find((x) => x.label === handle);
-            if (!c) return false;
-            return live.current.insertMentions([c]);
-          },
+  // 글을 쓸 수 없는 자리(보관 채널·닫힌 세션 — 작성기는 숨겨진 채 남는다, 읽기 전용 DM)는 등록하지 않는다 — 「멘션」 단추가 그려지지 않는다
+  useEffect(() => {
+    if (!writable) return;
+    return registerComposer(
+      { channelId, conversationId, ...(threadRootId === undefined ? {} : { threadRootId }) },
+      {
+        mention: (handle) => {
+          const c = live.current.candidates.find((x) => x.label === handle);
+          if (!c) return false;
+          return live.current.insertMentions([c]);
         },
-      ),
-    [channelId, conversationId, threadRootId],
-  );
+      },
+    );
+  }, [channelId, conversationId, threadRootId, writable]);
   // 명령 목록이 늦게 오면(처음 `/`) 열린 목록을 다시 그린다
   useEffect(() => {
     commandsUi.refresh();
@@ -415,7 +422,7 @@ export function Composer({
           >
             <PaperclipIcon />
           </Button>
-          {dmKind !== "dm" && (
+          {canPick && (
             <MentionPicker
               candidates={candidates}
               inDraft={() => mentionIdsIn(editor.getJSON())}

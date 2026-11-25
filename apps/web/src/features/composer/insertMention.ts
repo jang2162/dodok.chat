@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 /** 작성기 자리 — 세션 작성기면 `threadRootId` 없이, 스레드 답글 작성기면 그 루트 */
 export type ComposerScope = { channelId: string; conversationId: string; threadRootId?: string };
 
@@ -15,19 +17,42 @@ export const scopeKey = (s: ComposerScope): string =>
 
 // 같은 자리를 둘이 등록하면(전환 중 겹침) 나중 것이 받는다
 const targets = new Map<string, ComposerTarget[]>();
+// 등록이 바뀌면 부른다 — 「멘션」 단추가 그 자리에 작성기가 있는지 따라 그려지게
+const watchers = new Set<() => void>();
+const changed = () => {
+  for (const fn of watchers) fn();
+};
 
 export function registerComposer(scope: ComposerScope, target: ComposerTarget): () => void {
   const key = scopeKey(scope);
   const list = targets.get(key) ?? [];
   list.push(target);
   targets.set(key, list);
+  changed();
   return () => {
     const now = targets.get(key);
     if (!now) return;
     const next = now.filter((t) => t !== target);
     if (next.length === 0) targets.delete(key);
     else targets.set(key, next);
+    changed();
   };
+}
+
+/** 그 자리에 멘션을 받을 작성기가 등록돼 있는가 — 닫힌 세션·보관 채널·읽기 전용 DM 의 작성기는 등록하지 않는다 */
+export const hasComposer = (scope: ComposerScope): boolean => targets.has(scopeKey(scope));
+
+const subscribe = (fn: () => void) => {
+  watchers.add(fn);
+  return () => {
+    watchers.delete(fn);
+  };
+};
+
+/** `hasComposer` 를 따라 다시 그린다 */
+export function useHasComposer(scope: ComposerScope): boolean {
+  const key = scopeKey(scope);
+  return useSyncExternalStore(subscribe, () => targets.has(key));
 }
 
 /**

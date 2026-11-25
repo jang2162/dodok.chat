@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DmViewContext } from "@/features/dms/context";
+import { ConversationClosedContext } from "@/features/conversations/closed";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
@@ -352,7 +353,97 @@ describe("@ 단추 — 클릭으로 멘션 [UI 시안 02]", () => {
   });
 });
 
+describe("@ 단추 — 넣을 에이전트가 있을 때만 [UI 시안 02]", () => {
+  const MIA = uid(6_011);
+  const direct = channelOf(CH, { kind: "direct", name: "direct", visibility: "private" });
+  async function renderDirect(members: ReturnType<typeof memberOf>[]) {
+    const view = renderComposer(CH, ME, (children) => (
+      <DmViewContext.Provider value={{ kind: "direct", channel: direct, readOnly: null }}>
+        {children}
+      </DmViewContext.Provider>
+    ));
+    await act(async () => {
+      view.qc.setQueryData(qk.people, [
+        { id: USER, handle: "owner", displayName: "주인", role: "owner" },
+        { id: MIA, handle: "mia", displayName: "미아", role: "member" },
+      ]);
+      view.qc.setQueryData(qk.members(CH), members);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    return view;
+  }
+  const people = [
+    { ...memberOf(USER), memberType: "user" as const },
+    { ...memberOf(MIA), memberType: "user" as const },
+  ];
+
+  it("사람 1:1 DM(에이전트 후보 0명)에는 @ 단추가 없다", async () => {
+    await renderDirect(people);
+    // 사람 후보(mia)는 있어도 그리지 않는다
+    expect(screen.queryByRole("button", { name: "에이전트 부르기" })).toBeNull();
+  });
+
+  it("그룹 DM 에 에이전트가 있으면 단추가 있고, 에이전트 갈래가 위·사람은 「사람」 갈래로 아래", async () => {
+    const user = userEvent.setup();
+    await renderDirect([memberOf(DEV.id), ...people]);
+    await flushEditorFrames();
+    await user.click(await screen.findByRole("button", { name: "에이전트 부르기" }));
+    const dialog = await screen.findByRole("dialog", { name: "에이전트 부르기" });
+    const groups = within(dialog).getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["에이전트", "사람"]);
+    expect(
+      within(groups[0]!)
+        .getAllByRole("checkbox")
+        .map((c) => c.getAttribute("aria-label")),
+    ).toEqual(["@dev"]);
+    expect(
+      within(groups[1]!)
+        .getAllByRole("checkbox")
+        .map((c) => c.getAttribute("aria-label")),
+    ).toEqual(["@owner", "@mia"]);
+  });
+});
+
 describe("insertMention — 바깥에서 작성기에 멘션 [UI 시안 02·03]", () => {
+  it("등록한 자리에만 넣는다 — 같은 대화의 스레드 작성기·다른 세션·닫힌 세션 작성기로는 새지 않는다", async () => {
+    const ROOT = uid(78);
+    const OTHER = uid(79);
+    const CLOSED = uid(80);
+    const { editor, qc } = renderComposer();
+    qc.setQueryData(invitedAgentKeys.of(OTHER), []);
+    qc.setQueryData(invitedAgentKeys.of(CLOSED), []);
+    render(
+      <QueryClientProvider client={qc}>
+        <Composer channelId={CH} conversationId={CH} threadRootId={ROOT} />
+        <Composer channelId={CH} conversationId={OTHER} />
+        <ConversationClosedContext.Provider value>
+          <Composer channelId={CH} conversationId={CLOSED} />
+        </ConversationClosedContext.Provider>
+      </QueryClientProvider>,
+    );
+    const boxes = screen.getAllByRole("textbox", { name: "메시지 입력" });
+    const [, other, closed] = boxes.map((b) => (b as unknown as { editor: Editor }).editor);
+    const thread = (
+      screen.getByRole("textbox", { name: "스레드 답글 입력" }) as unknown as { editor: Editor }
+    ).editor;
+    let ok = false;
+    act(() => {
+      ok = insertMention({ channelId: CH, conversationId: CH, threadRootId: ROOT }, "dev");
+    });
+    expect(ok).toBe(true);
+    await flushEditorFrames();
+    expect(mentionsIn(thread.getJSON())).toEqual(["dev"]);
+    expect(mentionsIn(editor.getJSON())).toEqual([]);
+    expect(mentionsIn(other!.getJSON())).toEqual([]);
+    // 닫힌 세션의 작성기(숨겨진 채 남는다)는 등록하지 않는다
+    expect(insertMention({ channelId: CH, conversationId: CLOSED }, "dev")).toBe(false);
+    expect(mentionsIn(closed!.getJSON())).toEqual([]);
+    // 등록하지 않은 스레드 자리
+    expect(insertMention({ channelId: CH, conversationId: CH, threadRootId: uid(81) }, "dev")).toBe(false);
+    expect(mentionsIn(thread.getJSON())).toEqual(["dev"]);
+    expect(mentionsIn(editor.getJSON())).toEqual([]);
+  });
+
   it("그 자리 작성기에 멘션 칩 + 공백을 넣고, 후보가 아니거나 다른 자리면 거짓", async () => {
     const { editor } = renderComposer();
     let ok = false;
