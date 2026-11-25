@@ -1947,6 +1947,22 @@ it("in progress count includes runs outside the loaded list — 묶음의 원래
   expect(within(aside).getByText("진행 중인 런이 없습니다.")).toBeInTheDocument();
 });
 
+it("all count includes runs outside the loaded list — 묶음의 원래 런도 「전체」에 세어 「진행 중」보다 작지 않다", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  expect(chip(aside, "전체")).toHaveTextContent("전체 1");
+  putTasks([bgTask("o1", EARLIER), bgTask("o2", EARLIER), bgTask("o3", uid(141))]);
+  // 받은 런 하나 + 묶음의 원래 런 둘
+  expect(chip(aside, "전체")).toHaveTextContent("전체 3");
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 2");
+  expect(chip(aside, "실패")).toHaveTextContent("실패 0");
+  expect(chip(aside, "승인 대기")).toHaveTextContent("승인 대기 0");
+  putTasks([]);
+  expect(chip(aside, "전체")).toHaveTextContent("전체 1");
+});
+
 it("shows earlier run tasks when the run list is empty — 런 목록이 비어도 묶음은 보인다", async () => {
   stubServer({ runs: [] });
   renderRoute(`/c/${CH}/s/${CH}/activity`);
