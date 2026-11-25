@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
 import { DEFAULT_CONFIG_PATH, loadRunnerConfig, resolveConfigPath, RunnerConfigError } from "./config";
@@ -10,6 +11,11 @@ import {
   type RunnerLogger,
 } from "./connection";
 import { createClaudeDriver } from "./drivers/claude";
+import {
+  cleanupLeftoverClis,
+  createCliProcessRegistry,
+  type CliProcessRegistry,
+} from "./drivers/claude/cli-processes";
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
 import { selfUpdate } from "./self-update";
@@ -172,6 +178,21 @@ async function main(): Promise<void> {
       `프로그램 ${Object.keys(config.programs).join(", ") || "없음"} · 동시 ${config.maxConcurrentRuns}`,
   );
 
+  // 앞 러너가 강제로 죽으며 남긴 CLI(와 그 백그라운드 셸)를 서버에 붙기 전에 끈다 — 기록은 설정 파일 옆 state/. 경로·명령은 찍지
+  // 않는다. Windows 는 하지 않는다(cli-processes.ts 머리 주석) — 기록도 쓰지 않고 SDK 기본 spawn 그대로
+  let cliProcesses: CliProcessRegistry | undefined;
+  if (process.platform !== "win32") {
+    const stateDir = join(dirname(configPath), "state");
+    const onError = () => logger.warn("dodok-runner: Claude Code 프로세스 기록을 쓰지 못했습니다");
+    const { killed, dropped } = await cleanupLeftoverClis({ stateDir, onError });
+    if (killed + dropped > 0)
+      logger.info(
+        `dodok-runner: 앞 러너가 남긴 Claude Code 프로세스 ${killed}개를 껐습니다` +
+          (dropped > 0 ? ` — 이미 끝났거나 다른 프로세스가 된 기록 ${dropped}개는 지웠습니다` : ""),
+      );
+    cliProcesses = createCliProcessRegistry({ stateDir, onError });
+  }
+
   // 백그라운드 작업(백그라운드 작업 스펙 5.2) — 드라이버가 먼저 자리를 받고 연결이 잇는다
   const background = createBackgroundHooksSlot();
   const connection = startRunnerConnection({
@@ -184,6 +205,7 @@ async function main(): Promise<void> {
         claudeCodeVersion: CLAUDE_CODE_VERSION,
         logger,
         hooks: background.hooks,
+        ...(cliProcesses ? { spawnCli: cliProcesses.spawn } : {}),
         // 모델 목록을 받는 query 의 cwd — 첫 루트(작성기 칩 스펙 C10). 봇만 쓰는 러너는 루트가 없다 — 그때는 cwd 없이 묻는다
         ...(config.roots[0] ? { modelsCwd: config.roots[0].path } : {}),
       }),
@@ -212,13 +234,22 @@ async function main(): Promise<void> {
     // 두 번째 신호는 기다리지 않고 끝낸다
     if (stopping) process.exit(130);
     stopping = true;
-    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다(최대 ${STOP_WAIT_MS / 1000}초)`);
+    // 런 대기(STOP_WAIT_MS)·전송 비우기(~1초) 뒤 CLI 대기(STOP_WAIT_MS) — 모두 상한까지 가면 그 합이다
+    const maxMs = STOP_WAIT_MS + 1000 + (cliProcesses ? STOP_WAIT_MS : 0);
+    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다(최대 약 ${Math.ceil(maxMs / 1000)}초)`);
     // stop 이 도는 런마다 interrupt 를 걸고 그 런이 final 을 낼 때까지 기다린다(리뷰 M5). 러너가 끝나면 CLI 의
-    // stdin 이 닫혀 CLI 도 끝난다 — CLI 가 띄운 도구 손자 프로세스가 남는지는 실연에서 본다
-    void connection.stop().finally(() => process.exit(0));
+    // stdin 이 닫혀 CLI 도 끝난다. 닫은 CLI 가 끝나기까지도 기다린다 — 러너가 먼저 끝나면 끝나는 중인 CLI 가 기록에 남는다(다음
+    // 시작이 확인하고 지운다). CLI 는 SIGTERM 을 받으면 자기 백그라운드 셸을 정리한다(drivers/claude/cli-processes.ts)
+    void connection
+      .stop()
+      .then(() => cliProcesses?.settle(STOP_WAIT_MS))
+      .finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // 터미널 창을 닫거나 SSH 가 끊긴 때 — CLI 는 detached 라 SIGHUP 을 함께 받지 않는다. 기본 동작(곧바로 죽음)이면 exit 처리기도
+  // 돌지 않아 CLI 와 그 백그라운드 셸이 다음 러너 시작까지 남는다
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
 }
 
 void main();

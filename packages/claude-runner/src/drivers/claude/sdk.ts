@@ -15,6 +15,8 @@ import {
   type SDKMessage,
   type SDKUserMessage,
   type SlashCommand,
+  type SpawnedProcess,
+  type SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 
 export type SdkMessage = SDKMessage;
@@ -23,6 +25,9 @@ export type SdkOptions = Options;
 export type SdkContextUsage = SDKControlGetContextUsageResponse;
 export type SdkModelInfo = ModelInfo;
 export type SdkSlashCommand = SlashCommand;
+/** CLI 를 띄우는 자리(Options.spawnClaudeCodeProcess) — 러너가 채운다(cli-processes.ts) */
+export type SdkSpawnOptions = SpawnOptions;
+export type SdkSpawnedProcess = SpawnedProcess;
 export type { CanUseTool };
 // tool() 은 입력 스키마마다 다른 제네릭을 돌려준다 — createSdkMcpServer 가 받는 원소 타입을 그대로 쓴다
 export type SdkMcpTool = NonNullable<Parameters<typeof createSdkMcpServer>[0]["tools"]>[number];

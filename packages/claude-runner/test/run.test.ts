@@ -40,7 +40,14 @@ import {
 } from "../src/drivers/claude/run";
 import { CONTROL_TOOL_FULL_NAMES, RUNNER_CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
 import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
-import { realSdk, type SdkContextUsage, type SdkMcpServer } from "../src/drivers/claude/sdk";
+import {
+  realSdk,
+  type SdkContextUsage,
+  type SdkMcpServer,
+  type SdkOptions,
+  type SdkSpawnOptions,
+} from "../src/drivers/claude/sdk";
+import type { TrackedCliProcess } from "../src/drivers/claude/cli-processes";
 import { toContextBreakdown } from "../src/drivers/claude/context-usage";
 import { createRunSink } from "../src/sink";
 import { alwaysAllowKey } from "../src/drivers/claude/approvals";
@@ -101,6 +108,35 @@ describe("buildQueryOptions", () => {
     });
     expect(o.resume).toBeUndefined();
     expect(o.pathToClaudeCodeExecutable).toBeUndefined();
+  });
+
+  it("spawn 훅은 받았을 때만 싣는다 — 없으면 SDK 기본 spawn(Windows)", () => {
+    expect(buildQueryOptions(runSpec(), deps(false)).spawnClaudeCodeProcess).toBeUndefined();
+    const hook = (() => {}) as unknown as NonNullable<SdkOptions["spawnClaudeCodeProcess"]>;
+    expect(
+      buildQueryOptions(runSpec(), { ...deps(false), spawnClaudeCodeProcess: hook }).spawnClaudeCodeProcess,
+    ).toBe(hook);
+  });
+
+  it("런의 query 는 spawnCli 로 CLI 를 띄운다 — SDK 가 넘긴 env 를 그대로(러너 env 를 섞지 않는다)", async () => {
+    const seen: SdkSpawnOptions[] = [];
+    const spawnCli = (o: SdkSpawnOptions) => {
+      seen.push(o);
+      return { stderrTail: () => "" } as TrackedCliProcess;
+    };
+    const { fake, ctx } = harness(createFakeSdk(), { spawnCli });
+    fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runSpec(), ctx);
+    const hook = fake.calls[0]!.options.spawnClaudeCodeProcess!;
+    const env = { PATH: "/usr/bin:/bin", CLAUDE_CODE_ENTRYPOINT: "sdk-ts" };
+    hook({ command: "claude", args: ["--x"], env, signal: new AbortController().signal });
+    expect(seen).toMatchObject([{ command: "claude", args: ["--x"], env }]);
+    expect(seen[0]!.env).toBe(env);
+
+    const plain = harness();
+    plain.fake.script(script.init(), ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runSpec(), plain.ctx);
+    expect(plain.fake.calls[0]!.options.spawnClaudeCodeProcess).toBeUndefined();
   });
 
   it("사람 대화형·예약 도구는 기본으로 막는다 — 설정의 disallowedTools 와 합치고 겹치면 한 번 [최종 리뷰 P2]", () => {
@@ -673,6 +709,66 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     expect(fake.calls[0]!.options.resume).toBe(SESSION_ID);
     expect(errors(emitted)).toEqual([]);
     expect(finals(emitted)).toMatchObject([{ final: { text: "이어서" } }]);
+  });
+
+  // 커스텀 spawn(cli-processes.ts)이면 SDK 가 exit 오류에 stderr 꼬리를 붙이지 않는다 — 훅이 쥔 꼬리에서 거절 문구를 본다
+  it("spawn 훅이 쥔 stderr 꼬리에 거절 문구가 있으면 오류 글에 없어도 resume 으로 다시 연다", async () => {
+    const fake = createFakeSdk();
+    fake.script({ throw: new Error("Claude Code process exited with code 1") });
+    fake.script(script.init(), ...script.textTurn("msg_1", ["이어서"]));
+    const spawned: SdkSpawnOptions[] = [];
+    const spawnCli = (o: SdkSpawnOptions) => {
+      spawned.push(o);
+      return { stderrTail: () => `Error: Session ID ${SESSION_ID} is already in use.` } as TrackedCliProcess;
+    };
+    const { ctx, emitted } = harness(
+      {
+        ...fake,
+        // 실제 SDK 처럼 query 가 CLI 를 띄울 때 훅을 부른다
+        query: (args) => {
+          args.options.spawnClaudeCodeProcess?.({
+            command: "claude",
+            args: [],
+            env: {},
+            signal: new AbortController().signal,
+          });
+          return fake.query(args);
+        },
+      },
+      { spawnCli },
+    );
+    await runOnce(runSpec(), ctx);
+    expect(spawned).toHaveLength(2);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[1]!.options.resume).toBe(SESSION_ID);
+    expect(errors(emitted)).toEqual([]);
+  });
+
+  // 커스텀 spawn 이면 SDK 의 exit 오류 글에 stderr 가 없다 — 실패 카드에 꼬리를 붙이고, 로그인 문구가 꼬리에만 있어도 PROVIDER_AUTH
+  it("spawn 훅이 쥔 stderr 꼬리를 실패 글에 붙이고 그 글로 로그인 실패를 가른다", async () => {
+    const fake = createFakeSdk();
+    fake.script({ throw: new Error("Claude Code process exited with code 1") });
+    const spawnCli = () => ({ stderrTail: () => "Error: Invalid API key\n" }) as TrackedCliProcess;
+    const { ctx, emitted } = harness(
+      {
+        ...fake,
+        query: (args) => {
+          args.options.spawnClaudeCodeProcess?.({
+            command: "claude",
+            args: [],
+            env: {},
+            signal: new AbortController().signal,
+          });
+          return fake.query(args);
+        },
+      },
+      { spawnCli },
+    );
+    await runOnce(runSpec(), ctx);
+    expect(fake.calls).toHaveLength(1);
+    const [e] = errors(emitted);
+    expect(e).toMatchObject({ code: "PROVIDER_AUTH" });
+    expect(e!.message).toContain("process exited with code 1. stderr: Error: Invalid API key");
   });
 
   it("거절과 다시 열기 사이에 중지되면 다시 열지 않고 final aborted", async () => {

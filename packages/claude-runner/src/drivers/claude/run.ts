@@ -37,8 +37,10 @@ import type {
   SdkPort,
   SdkQuery,
   SdkSlashCommand,
+  SdkSpawnOptions,
   SdkUserMessage,
 } from "./sdk";
+import type { CliSpawner } from "./cli-processes";
 import type { BackgroundHooks } from "../../driver";
 import {
   createSessionProcess,
@@ -290,6 +292,8 @@ export function buildQueryOptions(
      * 여기서 읽는다(백그라운드 작업 스펙 5.2). 없으면 spec·alwaysAllowed 그대로
      */
     live?: () => Pick<RunBinding, "turnFacts" | "alwaysAllowed" | "permissionMode">;
+    /** CLI 를 띄우는 자리(cli-processes.ts) — 없으면 SDK 기본 spawn(Windows) */
+    spawnClaudeCodeProcess?: SdkOptions["spawnClaudeCodeProcess"];
   },
 ): SdkOptions {
   const botMcp = deps.botMcp ?? { servers: {}, allowedTools: [] };
@@ -405,6 +409,7 @@ export function buildQueryOptions(
     env,
     ...(deps.executable === undefined ? {} : { pathToClaudeCodeExecutable: deps.executable }),
     ...(deps.canUseTool ? { canUseTool: deps.canUseTool } : {}),
+    ...(deps.spawnClaudeCodeProcess ? { spawnClaudeCodeProcess: deps.spawnClaudeCodeProcess } : {}),
   };
 }
 
@@ -449,6 +454,10 @@ export type RunContext = {
   background?: BackgroundContext;
   /** 시험이 줄인다 — 알림 뒤 CLI 가 턴을 열기를 기다리는 시간(session-process SELF_TURN_WAIT_MS) */
   selfTurnWaitMs?: number;
+  /**
+   * CLI 를 띄우는 자리 — 띄운 CLI 를 기록해 러너가 강제로 죽은 뒤 다음 시작이 끈다(cli-processes.ts). 없으면 SDK 기본 spawn(Windows)
+   */
+  spawnCli?: CliSpawner;
 };
 
 export type BackgroundContext = {
@@ -649,6 +658,8 @@ type OpenedSettings = {
   dodokServer: SdkMcpServer;
   plugins: CommandWrapperPlugin[];
   costKind: RunnerRunFinal["costKind"];
+  /** spawn 훅이 쥔 CLI stderr 꼬리 — 훅이 없으면 빈 글(SDK 기본 spawn 은 exit 오류 글에 꼬리를 스스로 붙인다) */
+  stderrTail: () => string;
   /** 마지막으로 이 프로세스에 넣은 런 — 스스로 연 턴(추가 응답)이 그 정의·문맥을 잇는다 */
   last: { spec: ClaudeRunSpec; ctx: RunContext };
 };
@@ -775,8 +786,12 @@ async function attempt(
     ...(ctx.selfTurnWaitMs === undefined ? {} : { selfTurnWaitMs: ctx.selfTurnWaitMs }),
     ...(ctx.log ? { log: ctx.log } : {}),
   });
+  // 커스텀 spawn 이면 SDK 가 exit 오류에 stderr 꼬리를 붙이지 않는다 — 거절 문구는 spawn 이 쥔 꼬리에서도 본다
+  let stderrTail = () => "";
   const retryable = (error: unknown) =>
-    !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
+    !resume &&
+    isSessionInUseText(`${error instanceof Error ? error.message : String(error)}\n${stderrTail()}`);
+  const spawnCli = ctx.spawnCli;
   // dodok 도구·승인 콜백은 지금 턴의 런으로 — 제어 호출의 runId 도 지금 런으로 바꿔 싣는다. 스스로 연 턴의 런이 정해지기 전이면
   // 기다리고, 못 정해졌으면 앞 런으로 보내지 않고 거절한다(liveBinding)
   const dodokServer = createDodokMcpServer({
@@ -811,13 +826,22 @@ async function attempt(
     alwaysAllowed,
     botMcp,
     live: () => sp.bindingRef.current,
+    ...(spawnCli
+      ? {
+          spawnClaudeCodeProcess: (o: SdkSpawnOptions) => {
+            const p = spawnCli(o);
+            stderrTail = p.stderrTail;
+            return p;
+          },
+        }
+      : {}),
   });
   let q: SdkQuery;
   try {
     q = ctx.sdk.query({ prompt: sp.input(), options });
   } catch (error) {
     if (retryable(error)) return { result: "session-in-use" };
-    failedRun(ctx.sink, error);
+    failedRun(ctx.sink, error, stderrTail());
     return { result: "done" };
   }
   openedOf.set(sp, {
@@ -834,6 +858,7 @@ async function attempt(
     dodokServer,
     plugins,
     costKind: "subscription_estimate",
+    stderrTail: () => stderrTail(),
     last: { spec, ctx },
   });
   if (bg) {
@@ -978,8 +1003,11 @@ async function applyRunSettings(
 
 type TurnResult = "done" | "held" | "session-in-use";
 
-function failedRun(sink: RunSink, error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
+function failedRun(sink: RunSink, error: unknown, stderrTail = "") {
+  const message = error instanceof Error ? error.message : String(error);
+  // 커스텀 spawn 이면 SDK 의 exit 오류 글에 stderr 꼬리가 없다 — 로그인 안내(PROVIDER_AUTH)를 가르는 문구가 꼬리에만 있을 수 있다
+  const tail = stderrTail.trim();
+  const text = tail && !message.includes(tail) ? `${message}. stderr: ${tail}` : message;
   const code: ErrorCode = isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL";
   const head =
     code === "PROVIDER_AUTH" ? `러너의 ${CLAUDE_CODE_LABEL} 로그인을 확인하세요` : "Claude Code 실행 실패";
@@ -1122,7 +1150,7 @@ async function runTurn(
     if (!ended) {
       if (interrupted) sink.final(abortedFinal(costKind, signal.reason));
       else if (!sawMessage && o.retryable(error)) return "session-in-use";
-      else failedRun(sink, error);
+      else failedRun(sink, error, opened?.stderrTail());
     }
   } finally {
     ended = true;
