@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { TooltipProvider } from "@/ui/tooltip";
 import { conversationOf, shellGet } from "../../test/shellApi";
+import { LAYOUT_KEY, layoutStore } from "./layout/useLayoutWidths";
 import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
 import { channelIdOf, conversationIdOf, createAppRouter, isPublicPath, safeNext } from "./router";
@@ -111,6 +112,37 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
     const router = renderAt("/c/abc/t/root1");
     await waitFor(() => expect(router.state.location.pathname).toBe("/c/abc/s/abc/t/root1"));
     expect(lists).toEqual([]);
+  });
+
+  describe("스레드 주소의 view(UI 시안 06)", () => {
+    afterEach(() => {
+      window.localStorage.clear();
+      layoutStore.reset();
+    });
+
+    it("옛 스레드 주소도 view=main 을 넘긴다", async () => {
+      serve([{ id: SESSION }]);
+      const router = renderAt("/c/abc/t/root1?view=main");
+      await waitFor(() => expect(router.state.location.pathname).toBe("/c/abc/s/abc/t/root1"));
+      expect(router.state.location.search).toEqual({ view: "main" });
+    });
+
+    it("view 는 main 만 메인 보기다 — 다른 값이면 패널로", async () => {
+      serve([{ id: SESSION }]);
+      renderAt(`/c/abc/s/${SESSION}/t/root1?view=split`);
+      expect(await screen.findByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "thread");
+      expect(screen.queryByTestId("thread-main")).toBeNull();
+    });
+
+    it("주소에 view 가 없으면 마지막으로 고른 보기 — 메인이면 view=main 을 붙여 바꿔 쓴다", async () => {
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+      layoutStore.reset();
+      serve([{ id: SESSION }]);
+      const router = renderAt(`/c/abc/s/${SESSION}/t/root1`);
+      await waitFor(() => expect(router.state.location.search).toEqual({ view: "main" }));
+      expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/t/root1`);
+      expect(await screen.findByTestId("thread-main")).toBeInTheDocument();
+    });
   });
 
   it("/c/<ch>/s/<conv>/files 는 그 세션 화면에 파일 탭, /files 는 전체 화면", async () => {

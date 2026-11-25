@@ -2,11 +2,13 @@ import { MenuIcon } from "lucide-react";
 import { type RefObject, createContext, useCallback, useContext } from "react";
 import { useCanManage } from "@/api/queries";
 import { useOpsStatus } from "@/features/ops/queries";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 
 /**
- * 좁은 화면(768px 미만)에서 사이드바 시트를 여는 함수 — 넓은 화면이면 undefined. AppShell 이 넣는다.
- * 페이지 헤더는 이 값이 있을 때만 메뉴 버튼을 그린다(배너는 시트를 열 일이 없다)
+ * 사이드바를 여는 함수 — 좁은 화면(768px 미만)이면 시트를 열고, 넓은 화면이면 접힌 사이드바를 편다(UI 시안 04). 사이드바가 보이는
+ * 넓은 화면이면 undefined. AppShell 이 넣는다. 페이지 헤더는 이 값이 있을 때만 메뉴 버튼을 그린다(배너는 시트를 열 일이 없다)
  */
 export const OpenSidebarContext = createContext<(() => void) | undefined>(undefined);
 
@@ -32,8 +34,8 @@ export const SidebarSheetOpenContext = createContext(false);
 export const useSidebarSheetOpen = (): boolean => useContext(SidebarSheetOpenContext);
 
 /**
- * 페이지 헤더 왼쪽의 「채널 목록 열기」 — 넓은 화면에서는 아무것도 그리지 않는다. 좁은 화면에서는 사이드바 「설정」의 운영 배지가
- * 서랍 안에 숨으므로, admin 이상에게 확인 안 한 warn·error 가 있으면 버튼에 점을 찍고 이름에 그 수를 싣는다(브라우저 검증 O3)
+ * 페이지 헤더 왼쪽의 「채널 목록 열기」 — 사이드바가 보이는 넓은 화면에서는 아무것도 그리지 않는다(접혔으면 그린다). 사이드바 「설정」의
+ * 운영 배지가 서랍·접힌 칸 안에 숨으므로, admin 이상에게 확인 안 한 warn·error 가 있으면 버튼에 점을 찍고 이름에 그 수를 싣는다(브라우저 검증 O3)
  */
 export function OpenSidebarButton() {
   const openSidebar = useOpenSidebar();
@@ -41,6 +43,7 @@ export function OpenSidebarButton() {
   const unacked = useOpsStatus({ enabled: manager && openSidebar !== undefined }).data?.unacked;
   const n = manager && unacked ? unacked.warn + unacked.error : 0;
   const trigger = useContext(SidebarTriggerContext);
+  const narrow = useIsNarrow();
   const ref = useCallback(
     (el: HTMLButtonElement | null) => {
       if (!trigger) return;
@@ -59,8 +62,8 @@ export function OpenSidebarButton() {
       variant="ghost"
       size="icon-sm"
       aria-label={n > 0 ? `채널 목록 열기 (확인 안 한 운영 사건 ${n})` : "채널 목록 열기"}
-      // 좁은 화면에서만 그린다 — 손가락 단추 44px(스펙 2026-11-19 U6)
-      className="relative size-11"
+      // 좁은 화면은 손가락 단추 44px(스펙 2026-11-19 U6), 넓은 화면(접힌 사이드바)은 머리의 다른 아이콘 단추와 같은 크기
+      className={cn("relative", narrow && "size-11")}
       onClick={openSidebar}
     >
       <MenuIcon />
@@ -68,7 +71,10 @@ export function OpenSidebarButton() {
         <span
           data-ops-dot
           aria-hidden
-          className="absolute top-2 right-2 size-2 rounded-full bg-destructive ring-2 ring-background"
+          className={cn(
+            "absolute size-2 rounded-full bg-destructive ring-2 ring-background",
+            narrow ? "top-2 right-2" : "top-1 right-1",
+          )}
         />
       )}
     </Button>

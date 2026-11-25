@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useParams } from "@tanstack/react-router";
+import { Link, Outlet, useMatch, useNavigate, useParams } from "@tanstack/react-router";
 import { type FocusEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
-import { PanelTabs, usePanelTab } from "@/app/layout/PanelTabs";
+import { PanelTabs, type ThreadMain, usePanelTab } from "@/app/layout/PanelTabs";
 import { useSidebarSheetOpen } from "@/app/layout/sidebarSheet";
 import { selectPendingCount, useApprovalStore } from "@/features/approvals/approvalStore";
 import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
@@ -22,7 +22,7 @@ import { ConversationList } from "@/features/conversations/ConversationList";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
 import { DirectHeader } from "@/features/directs/DirectHeader";
-import { isDirectChannel, isOneStream, useDirect } from "@/features/directs/queries";
+import { directTitle, isDirectChannel, isOneStream, useDirect } from "@/features/directs/queries";
 import { type DmView, DmViewContext } from "@/features/dms/context";
 import { DmHeader } from "@/features/dms/DmHeader";
 import { DmReadOnlyNotice } from "@/features/dms/DmNotices";
@@ -37,10 +37,11 @@ import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { ChannelLoading, ChannelUnavailable } from "./ChannelStatus";
+import { requestJump } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
-import { NEW_CONVERSATION } from "./timeline";
-import { useTimelineState } from "./useTimeline";
+import { NEW_CONVERSATION, type Timeline } from "./timeline";
+import { timelineQuery, useTimelineState } from "./useTimeline";
 
 /**
  * 세션 화면(`/c/<채널>/s/<대화>` — 채널 세션 계획 판정 PS6): 헤더 · 세션 목록(넓은 화면은 왼쪽 접히는 칸, 좁은 화면은 시트) · 그 세션의
@@ -53,6 +54,8 @@ import { useTimelineState } from "./useTimeline";
  * DM 채널(`kind === "dm"`)이면 같은 자리를 DM 꼴로 그린다(에이전트 DM 계획 판정 PD2) — 머리는 `DmHeader`, 오른쪽 패널은 활동 탭만(설정·스레드
  * 없음), 작성기 자리는 읽기 전용 사유가 있으면 그 줄, 세션 목록은 날짜 묶음, 빈 DM 은 첫 안내. 아래(메시지·카드·작성기·활동)는
  * `DmViewContext` 로 안다.
+ * 스레드 탭을 메인 보기(`?view=main`, UI 시안 06)로 연 넓은 화면이면 세션 칸(머리·세션 목록·목록·작성기)을 숨기고 `PanelTabs` 가 그 자리를
+ * 스레드로 채운다 — 숨길 뿐 내리지 않는다(세션 초안·목록 자리가 그대로). ←·Esc 는 세션으로 돌아가 원글로 가서 초점을 준다.
  * 사람 DM·그룹 DM(`kind === "direct"` — 사람 간 DM 스펙 「화면」)도 같은 자리에 그린다 — 머리는 `DirectHeader`, 설정 탭 없음, 스레드는 연다.
  * 에이전트가 있는 그룹은 채널처럼 세션 목록·활동 탭이 있고 세션이 하나도 없으면 그룹 DM 첫 안내, 한 줄기(에이전트 없음)는 세션 목록·활동이
  * 없다(채널 주소는 그 하나뿐인 대화로 넘겨진다 — 계획 판정 PH4). 읽기 전용(1:1 상대 비활성)은 에이전트 DM 과 같은 사유 줄
@@ -110,10 +113,15 @@ export function ChannelPage() {
   // 활동 탭 머리의 「승인 대기 N」 — 그 채널의 미해결 승인 수(재설계 스펙 목표 5). 패널이 닫혀 있으면 머리가 없어 그리지 않는다
   const pendingApprovals = useApprovalStore(selectPendingCount(channelId));
   const badges = useMemo(() => ({ activity: pendingApprovals }), [pendingApprovals]);
+  // 스레드 메인 보기 — 넓은 화면에서 스레드 탭이 주소의 `view=main` 으로 열렸다(좁은 화면은 늘 시트). 라우터는 검증한 값을 위 라우트의
+  // 원문 검색 값 위에 덧씌울 뿐 원문 키를 지우지 않으므로(`?view=split` 도 남는다) 판정은 여기서 "main" 과 견준다
+  const view = useMatch({ from: "/app/c/$channelId/s/$conversationId/t/$rootId", shouldThrow: false })?.search
+    .view;
+  const threadMain = !useIsNarrow() && tab === "thread" && rootId !== undefined && view === "main";
   // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다).
-  // 왼쪽 사이드바 시트도 같다(AppShell 이 연 채로 둔다)
+  // 왼쪽 사이드바 시트도 같다(AppShell 이 연 채로 둔다). 스레드 메인 보기도 세션 목록을 숨긴다
   const sidebarSheetOpen = useSidebarSheetOpen();
-  const covered = (useIsNarrow() && tab !== undefined) || sidebarSheetOpen;
+  const covered = (useIsNarrow() && tab !== undefined) || sidebarSheetOpen || threadMain;
   // 읽기 전용 사유 줄이 초점을 받는 것은 이 화면에서 쓸 수 있던 DM 이 읽기 전용이 됐을 때만(`DmReadOnlyNotice` 의 focusOnMount)
   const [seenWritable, setSeenWritable] = useState<string>();
   if (summary && readOnly === null && seenWritable !== channelId) setSeenWritable(channelId);
@@ -172,6 +180,19 @@ export function ChannelPage() {
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게.
   // 세션은 받은 것만 그 채널의 마지막으로 본 세션으로(사본이 채널마다 그 세션 하나만 담는다) — 새 세션 창은 남길 것이 없다
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  // 스레드 메인 보기의 ←·Esc — 세션으로 옮긴 뒤 원글로 가서 그 행이 초점을 받는다(검색 결과로 가기와 같은 길). 원글 seq 는 받아 둔
+  // 스레드에서 — 아직 못 받았으면 세션으로만 간다
+  const backFromThread = useCallback(() => {
+    if (rootId === undefined) return;
+    const thread = qc.getQueryData<Timeline>(timelineQuery(qc, channelId, conversationId, rootId).queryKey);
+    const root = thread?.items.find((m) => m.id === rootId);
+    void navigate({ to: "/c/$channelId/s/$conversationId", params: { channelId, conversationId } }).then(
+      () => {
+        if (root) requestJump({ conversationId, messageId: rootId, seq: root.seq }, { focus: true });
+      },
+    );
+  }, [qc, navigate, channelId, conversationId, rootId]);
   const sessionKnown = conversationId !== NEW_CONVERSATION && session.timeline !== undefined;
   useEffect(() => {
     if (known) touchRecentChannel(qc, channelId);
@@ -186,6 +207,15 @@ export function ChannelPage() {
     () => ({ retry: (id) => void retry(id).catch(() => undefined), discard }),
     [retry, discard],
   );
+
+  const threadMainHead = useMemo<ThreadMain | undefined>(() => {
+    if (!channel.data || dmChannel) return undefined;
+    return {
+      channelLabel: directChannel ? (direct ? directTitle(direct) : "") : `# ${channel.data.name}`,
+      sessionTitle: conversation.data?.title,
+      onBack: backFromThread,
+    };
+  }, [channel.data, dmChannel, directChannel, direct, conversation.data?.title, backFromThread]);
 
   if (!channel.data) {
     return (
@@ -248,7 +278,7 @@ export function ChannelPage() {
             <ClosedFocusContext.Provider value={closedFocus}>
               <PendingActionsContext.Provider value={pendingActions}>
                 <ThreadOpenerContext.Provider value={threadOpenerRef}>
-                  <section className="flex min-w-0 flex-1 flex-col">
+                  <section hidden={threadMain} className="flex min-w-0 flex-1 flex-col">
                     {directChannel ? (
                       <DirectHeader
                         channel={directChannel}
@@ -341,6 +371,8 @@ export function ChannelPage() {
                   profile={tab === "profile" && kind && id ? { kind, id } : undefined}
                   active={tab}
                   badges={badges}
+                  view={threadMain ? "main" : "panel"}
+                  main={threadMainHead}
                   openerRef={settingsRef}
                   threadOpenerRef={threadOpenerRef}
                   only={

@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { LAYOUT_KEY, layoutStore } from "@/app/layout/useLayoutWidths";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { MessageList } from "@/features/messages/MessageList";
@@ -509,6 +510,115 @@ describe("URL 로 열기", () => {
     await waitFor(() =>
       expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: { conversationId: CH, rootId: ROOT.id } }),
     );
+  });
+});
+
+describe("스레드 메인 보기(UI 시안 06)", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    layoutStore.reset();
+  });
+  const main = () => screen.findByTestId("thread-main");
+  const stored = () =>
+    JSON.parse(window.localStorage.getItem(LAYOUT_KEY) ?? "null") as Record<string, unknown> | null;
+  const textOf = (box: HTMLElement) => (box as unknown as { editor: Editor }).editor.getText();
+
+  it("주소의 view=main 이면 가운데 칸 전체가 그 스레드 — 경로 머리, 세션 칸은 숨긴다", async () => {
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    expect(within(view).getByRole("heading", { name: /스레드$/ })).toHaveTextContent(/^#/);
+    expect(within(view).getByRole("button", { name: "채널로 돌아가기" })).toBeInTheDocument();
+    expect(within(view).getByRole("link", { name: "패널로 보기" })).toHaveAttribute(
+      "href",
+      `/c/${CH}/s/${CH}/t/${ROOT.id}`,
+    );
+    const thread = await panel();
+    expect(view).toContainElement(thread);
+    expect(await within(thread).findByText("답글 3")).toBeInTheDocument();
+    expect(within(thread).getByRole("textbox", { name: "스레드 답글 입력" })).toBeInTheDocument();
+    // 오른쪽 패널은 없고, 세션 칸(머리·목록·작성기)은 숨긴 채 남는다
+    expect(screen.queryByTestId("page-channel-panel")).toBeNull();
+    expect(screen.getByTestId("channel-header").closest("section")).toHaveAttribute("hidden");
+  });
+
+  it("「크게 보기」↔「패널로 보기」 — 주소·기억이 바뀌고, 고치던 초안과 작성기가 그대로다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const box = await within(await panel()).findByRole("textbox", { name: "스레드 답글 입력" });
+    act(() => {
+      (box as unknown as { editor: Editor }).editor.commands.setContent("쓰던 답");
+    });
+    const panelHead = await screen.findByTestId("page-channel-panel");
+    await userEvent.click(within(panelHead).getByRole("link", { name: "크게 보기" }));
+
+    const view = await main();
+    expect(router.state.location.search).toEqual({ view: "main" });
+    expect(stored()).toMatchObject({ threadView: "main" });
+    // 같은 작성기(다시 마운트되지 않았다)라 초안이 남는다
+    expect(within(view).getByRole("textbox", { name: "스레드 답글 입력" })).toBe(box);
+    expect(textOf(box)).toBe("쓰던 답");
+    // 누른 단추가 사라졌으니 초점은 반대쪽 단추로
+    await waitFor(() => expect(within(view).getByRole("link", { name: "패널로 보기" })).toHaveFocus());
+
+    await userEvent.click(within(view).getByRole("link", { name: "패널로 보기" }));
+    const back = await screen.findByTestId("page-channel-panel");
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(router.state.location.search).toEqual({});
+    expect(stored()).toMatchObject({ threadView: "panel" });
+    expect(within(back).getByRole("textbox", { name: "스레드 답글 입력" })).toBe(box);
+    expect(textOf(box)).toBe("쓰던 답");
+    await waitFor(() => expect(within(back).getByRole("link", { name: "크게 보기" })).toHaveFocus());
+  });
+
+  it("마지막으로 고른 보기로 다음 스레드를 연다 — 칩을 눌러도 메인", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
+    const chip = await within(await screen.findByRole("region", { name: "메시지" })).findByRole("link", {
+      name: /답글 2개/,
+    });
+    await userEvent.click(chip);
+    expect(await main()).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`);
+    expect(router.state.location.search).toEqual({ view: "main" });
+  });
+
+  it("Esc 는 세션으로 — 원글 자리로 가서 그 행이 초점을 받는다", async () => {
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const view = await main();
+    const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
+    await within(view).findByText("답글 3");
+    box.focus();
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(screen.getByTestId("channel-header").closest("section")).not.toHaveAttribute("hidden");
+    await waitFor(() => {
+      const focused = document.activeElement as HTMLElement;
+      expect(channelList()).toContainElement(focused);
+      expect(focused).toHaveTextContent("루트 질문");
+    });
+  });
+
+  it("← 「채널로 돌아가기」도 같다 · 보기 기억(메인)은 그대로", async () => {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ threadView: "main" }));
+    layoutStore.reset();
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
+    const view = await main();
+    await within(view).findByText("답글 3");
+    await userEvent.click(within(view).getByRole("button", { name: "채널로 돌아가기" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
+    expect(stored()).toMatchObject({ threadView: "main" });
+    expect(layoutStore.get().threadView).toBe("main");
+  });
+
+  it("좁은 화면은 view=main 이어도 전체 화면 시트 — 「크게 보기」가 없다", async () => {
+    stubMedia(true);
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}?view=main`, channelClient());
+    const sheet = await screen.findByRole("dialog");
+    expect(sheet).toHaveAttribute("data-panel-tab", "thread");
+    expect(screen.queryByTestId("thread-main")).toBeNull();
+    expect(within(sheet).queryByRole("link", { name: "크게 보기" })).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,8 +29,11 @@ import {
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
 import { PanelTabs } from "./PanelTabs";
+import { LAYOUT_KEY, layoutStore } from "./useLayoutWidths";
 
 afterEach(() => {
+  window.localStorage.clear();
+  layoutStore.reset();
   useWireStatus.getState().setStatus("idle");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -406,7 +409,10 @@ describe("PanelTabs 머리", () => {
     const tabs = within(panel).getByRole("navigation", { name: "패널 탭" });
     // 닫기는 탭과 같은 줄이다
     expect(tabs.parentElement).toContainElement(within(panel).getByRole("link", { name: "설정 닫기" }));
-    expect(panel).toHaveClass("w-[384px]");
+    // 기본 너비 384px — 창이 넉넉할 때(가운데 최소 420 과 사이드바 260 을 빼고도 남는다)
+    vi.stubGlobal("innerWidth", 1440);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(panel).toHaveStyle({ width: "384px" });
   });
 
   it("badges — 수가 있으면 탭 이름에 붙고, 0·없음이면 그리지 않는다", () => {
@@ -668,5 +674,168 @@ describe("AppShell", () => {
     );
     await screen.findByTestId("page-channel");
     await waitFor(() => expect(scrollTo.mock.contexts).toContain(screen.getByTestId("page-scroll")));
+  });
+});
+
+describe("사이드바·패널 너비(UI 시안 04)", () => {
+  function stubChannels() {
+    const channels = [channelOf("a", { name: "general" })];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (url === "/api/v1/auth/me") return json(200, ME);
+        if (url === "/api/v1/channels") return json(200, { channels });
+        if (url === "/api/v1/channels/a") return json(200, { channel: channels[0] });
+        return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
+      }),
+    );
+  }
+  const wide = (width = 1440) => vi.stubGlobal("innerWidth", width);
+  const sidebar = () => screen.getByTestId("app-sidebar");
+  const sidebarHandle = () => screen.findByRole("separator", { name: "사이드바 너비" });
+  const stored = () =>
+    JSON.parse(window.localStorage.getItem(LAYOUT_KEY) ?? "null") as Record<string, unknown> | null;
+
+  it("손잡이는 separator — 값·범위를 알리고, ←/→ 16px·Home/End·Enter 로 바꿔 저장한다", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a");
+    const handle = await sidebarHandle();
+    expect(handle).toHaveAttribute("aria-orientation", "vertical");
+    expect(handle).toHaveAttribute("aria-valuenow", "260");
+    expect(handle).toHaveAttribute("aria-valuemin", "200");
+    expect(handle).toHaveAttribute("aria-valuemax", "420");
+    expect(handle).toHaveAttribute("tabindex", "0");
+    expect(sidebar()).toHaveStyle({ width: "260px" });
+
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(handle).toHaveAttribute("aria-valuenow", "276");
+    expect(sidebar()).toHaveStyle({ width: "276px" });
+    expect(stored()).toMatchObject({ sidebar: 276 });
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(handle).toHaveAttribute("aria-valuenow", "244");
+    await userEvent.keyboard("{End}");
+    expect(handle).toHaveAttribute("aria-valuenow", "420");
+    await userEvent.keyboard("{Home}");
+    expect(handle).toHaveAttribute("aria-valuenow", "200");
+    // 최솟값에서 ← 를 더 눌러도 접히지 않는다 — 키보드 접기는 ⌘\\
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(handle).toHaveAttribute("aria-valuenow", "200");
+    await userEvent.keyboard("{Enter}");
+    expect(handle).toHaveAttribute("aria-valuenow", "260");
+    expect(stored()).toMatchObject({ sidebar: 260, collapsed: false });
+  });
+
+  it("끌면 따라오고(범위 안으로), 놓을 때 저장한다 · 더블클릭은 기본값", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a");
+    const handle = await sidebarHandle();
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 260 });
+    // 끄는 동안 문서 전체가 col-resize·선택 없음
+    expect(document.documentElement.style.cursor).toBe("col-resize");
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 340 });
+    expect(sidebar()).toHaveStyle({ width: "340px" });
+    expect(stored()).toBeNull();
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 900 });
+    expect(sidebar()).toHaveStyle({ width: "420px" });
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 900 });
+    expect(stored()).toMatchObject({ sidebar: 420 });
+    expect(document.documentElement.style.cursor).toBe("");
+
+    fireEvent.doubleClick(handle);
+    expect(sidebar()).toHaveStyle({ width: "260px" });
+    expect(stored()).toMatchObject({ sidebar: 260 });
+  });
+
+  it("저장된 너비로 연다 — 망가진 값이면 기본값", async () => {
+    wide();
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sidebar: 333 }));
+    layoutStore.reset();
+    stubChannels();
+    renderRoute("/c/a");
+    expect(await sidebarHandle()).toHaveAttribute("aria-valuenow", "333");
+    expect(sidebar()).toHaveStyle({ width: "333px" });
+  });
+
+  it("최소보다 더 끌면 접힌다 — 머리에 「채널 목록 열기」가 나오고 누르면 다시 편다", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a");
+    const handle = await sidebarHandle();
+    // 세션 화면의 머리가 선 뒤에 — 넘기는 동안의 임시 머리에 있던 단추를 누르지 않게
+    await screen.findByTestId("channel-header");
+    expect(screen.queryByRole("button", { name: "채널 목록 열기" })).toBeNull();
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 260 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 100 });
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+    expect(sidebar()).toHaveStyle({ width: "0px" });
+    expect(sidebar()).toHaveAttribute("inert");
+    // 손잡이가 사라져 놓기가 오지 않아도 저장하고 문서 잠금을 푼다
+    expect(stored()).toMatchObject({ collapsed: true, sidebar: 260 });
+    expect(document.documentElement.style.cursor).toBe("");
+
+    await userEvent.click(await screen.findByRole("button", { name: "채널 목록 열기" }));
+    expect(sidebar()).not.toHaveAttribute("data-collapsed");
+    expect(sidebar()).toHaveStyle({ width: "260px" });
+    expect(stored()).toMatchObject({ collapsed: false });
+    expect(screen.queryByRole("button", { name: "채널 목록 열기" })).toBeNull();
+    // 누른 단추는 사라진다 — 초점은 다시 나온 손잡이로
+    await waitFor(async () => expect(await sidebarHandle()).toHaveFocus());
+  });
+
+  it("⌘\\(Ctrl+\\) 로 접고 편다", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a");
+    await sidebarHandle();
+    await userEvent.keyboard("{Meta>}\\{/Meta}");
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+    expect(await screen.findByRole("button", { name: "채널 목록 열기" })).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}\\{/Control}");
+    expect(sidebar()).not.toHaveAttribute("data-collapsed");
+  });
+
+  it("오른쪽 패널 — 왼쪽으로 끌면 넓어지고, 창이 모자라면 저장값은 두고 그리는 너비만 줄인다", async () => {
+    wide();
+    stubChannels();
+    renderRoute("/c/a/s/a/settings");
+    const panel = await screen.findByTestId("page-channel-panel");
+    const handle = within(panel).getByRole("separator", { name: "패널 너비" });
+    expect(handle).toHaveAttribute("aria-valuemin", "320");
+    expect(handle).toHaveAttribute("aria-valuemax", "720");
+    expect(panel).toHaveStyle({ width: "384px" });
+    fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 1000 });
+    fireEvent.pointerMove(handle, { pointerId: 2, clientX: 900 });
+    fireEvent.pointerUp(handle, { pointerId: 2, clientX: 900 });
+    expect(panel).toHaveStyle({ width: "484px" });
+    expect(stored()).toMatchObject({ panel: 484 });
+    // ← 는 손잡이를 왼쪽으로 — 패널이 넓어진다
+    handle.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(panel).toHaveStyle({ width: "500px" });
+
+    // 1024px 창: 가운데 420 을 지키려고 패널부터 줄인다(1024 − 260 − 420 = 344). 저장값은 그대로
+    wide(1024);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(panel).toHaveStyle({ width: "344px" });
+    expect(sidebar()).toHaveStyle({ width: "260px" });
+    expect(stored()).toMatchObject({ panel: 500 });
+    // 더 좁으면 패널이 최소(320)에 닿은 뒤 사이드바를 줄인다
+    wide(900);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(panel).toHaveStyle({ width: "320px" });
+    expect(sidebar()).toHaveStyle({ width: "200px" });
+  });
+
+  it("좁은 화면은 손잡이가 없다 — 시트 그대로", async () => {
+    stubMedia(true);
+    stubChannels();
+    renderRoute("/c/a/s/a/settings");
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "사이드바 너비" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "패널 너비" })).toBeNull();
   });
 });
