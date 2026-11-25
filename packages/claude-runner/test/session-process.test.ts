@@ -23,7 +23,10 @@ type Hooks = BackgroundHooks & {
   tasksLog: Array<[string, BackgroundTask[]]>;
   followups: RunnerFollowupRequest[];
   /** 추가 응답 런마다 낸 것 */
-  followupRuns: Map<string, { emitted: Emitted[]; controller: AbortController; closed: boolean }>;
+  followupRuns: Map<
+    string,
+    { emitted: Emitted[]; controller: AbortController; closed: boolean; bridge: FakeBridge }
+  >;
   /** 모든 런의 final 차례 — [runId, text] */
   order: Array<[string, unknown]>;
 };
@@ -47,11 +50,16 @@ function hooksSpy(followup?: BackgroundHooks["requestFollowup"]): Hooks {
       return followup ? followup(req) : { ok: false, reason: "unknown" };
     },
     openFollowup: ({ runId, workdir }) => {
-      const entry = { emitted: [] as Emitted[], controller: new AbortController(), closed: false };
+      const entry = {
+        emitted: [] as Emitted[],
+        controller: new AbortController(),
+        closed: false,
+        bridge: createFakeBridge(),
+      };
       followupRuns.set(runId, entry);
       const sink = createRunSink({
         workdir,
-        bridge: createFakeBridge(),
+        bridge: entry.bridge,
         emit: {
           event: (event) => entry.emitted.push({ kind: "event", event }),
           final: (final) => {
@@ -216,6 +224,29 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     await start(spec2(), b2).done;
     expect(b1.posts.map((p) => [p.text, p.runId])).toEqual([["첫째 글", RUN_1]]);
     expect(b2.posts.map((p) => [p.text, p.runId])).toEqual([["둘째 글", RUN_2]]);
+  });
+
+  it("sends control calls of a held run with that run's id", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake);
+    const getChannel = { callTool: { name: "get_channel", input: { channelId: RUN_1 } } };
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      getChannel,
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { waitInput: true },
+      script.init(),
+      getChannel,
+      ...script.textTurn("msg_2", ["둘째 답"]),
+      { waitInput: true },
+    );
+    const b1 = createFakeBridge();
+    const b2 = createFakeBridge();
+    await start(runSpec(), b1).done;
+    await start(spec2(), b2).done;
+    expect(b1.controls.map((c) => [c.tool, c.runId])).toEqual([["get_channel", RUN_1]]);
+    expect(b2.controls.map((c) => [c.tool, c.runId])).toEqual([["get_channel", RUN_2]]);
   });
 
   it("keeps alwaysAllowed per run", async () => {
@@ -501,6 +532,31 @@ describe("세션 프로세스 — 스스로 연 턴·한 번에 한 턴·끄기(
     // 작업이 비어 추가 응답 뒤 닫았다
     expect(call.inputClosed).toBe(true);
     expect(call.prompts).toHaveLength(1);
+  });
+
+  it("sends control calls of a follow-up turn with the follow-up run id", async () => {
+    const fake = createFakeSdk();
+    const hooks = hooksSpy(followupOk());
+    const { start } = runner(fake, hooks);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["띄웠어요"]),
+      { sleep: 10 },
+      ...shellDone(),
+      script.init(),
+      // 모델이 도구를 부르기까지의 시간 — 그 사이 서버가 추가 응답 런을 받아 준다
+      { sleep: 20 },
+      { callTool: { name: "get_channel", input: { channelId: RUN_1 } } },
+      ...script.textTurn("msg_f", ["다 끝났어요"]),
+      { waitInput: true },
+    );
+    const b1 = createFakeBridge();
+    await start(runSpec(), b1).done;
+    await until(() => fake.calls[0]!.finished);
+    expect(b1.controls).toEqual([]);
+    const run = hooks.followupRuns.get(FOLLOW)!;
+    expect(run.bridge.controls.map((c) => [c.tool, c.runId])).toEqual([["get_channel", FOLLOW]]);
   });
 
   it("interrupts a follow-up turn when the followup request fails", async () => {
