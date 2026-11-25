@@ -234,7 +234,9 @@ async function main(): Promise<void> {
     // 두 번째 신호는 기다리지 않고 끝낸다
     if (stopping) process.exit(130);
     stopping = true;
-    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다(최대 ${STOP_WAIT_MS / 1000}초)`);
+    // 런 대기(STOP_WAIT_MS)·전송 비우기(~1초) 뒤 CLI 대기(STOP_WAIT_MS) — 모두 상한까지 가면 그 합이다
+    const maxMs = STOP_WAIT_MS + 1000 + (cliProcesses ? STOP_WAIT_MS : 0);
+    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다(최대 약 ${Math.ceil(maxMs / 1000)}초)`);
     // stop 이 도는 런마다 interrupt 를 걸고 그 런이 final 을 낼 때까지 기다린다(리뷰 M5). 러너가 끝나면 CLI 의
     // stdin 이 닫혀 CLI 도 끝난다. 닫은 CLI 가 끝나기까지도 기다린다 — 러너가 먼저 끝나면 끝나는 중인 CLI 가 기록에 남는다(다음
     // 시작이 확인하고 지운다). CLI 는 SIGTERM 을 받으면 자기 백그라운드 셸을 정리한다(drivers/claude/cli-processes.ts)
@@ -245,6 +247,9 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // 터미널 창을 닫거나 SSH 가 끊긴 때 — CLI 는 detached 라 SIGHUP 을 함께 받지 않는다. 기본 동작(곧바로 죽음)이면 exit 처리기도
+  // 돌지 않아 CLI 와 그 백그라운드 셸이 다음 러너 시작까지 남는다
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
 }
 
 void main();
