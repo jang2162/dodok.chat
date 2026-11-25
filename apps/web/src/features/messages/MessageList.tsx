@@ -133,7 +133,7 @@ function ChannelMessages({
   );
   const me = useMe().data?.user.id;
   // 답 묶음(설계 「정한 것」) — 세션 타임라인에서만. 스레드 패널은 이미 따로 떨어진 공간이라 묶지 않는다. 런의 루트는 저장소의 `roots`
-  // (지운 런도 남는다 — 실시간 메시지에는 runRoot 가 없다)와 지난 메시지의 runRoot 로 안다
+  // (run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운 런도 남는다)와 메시지의 runRoot 로 안다
   const runRoots = useRunStore((s) => s.roots);
   const bundleRuns = useMemo(
     (): BundleRun[] =>

@@ -32,7 +32,7 @@ import { useBundleExpansion } from "./bundleExpansion";
 import { requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
-import { addPending, emptyTimeline, NEW_CONVERSATION, type Timeline, upsert } from "./timeline";
+import { addPending, appendNewer, emptyTimeline, NEW_CONVERSATION, type Timeline, upsert } from "./timeline";
 
 const RECT = { width: 800, height: 600 };
 const ROW = 64;
@@ -2068,6 +2068,49 @@ describe("MessageList 「답 도착」 칩", () => {
     ];
     act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(latest)));
     await screen.findByText("본문 160");
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, old(161, FIN, RB))));
+    expect(await screen.findByRole("button", { name: "@fin 답 도착 — 보기" })).toBeInTheDocument();
+  });
+
+  it("떨어진 창을 아래로 이어 받는 동안 옛 답에 칩이 없다 — 다 붙은 뒤 실시간 답에는 뜬다", async () => {
+    const top = msg(21, { bodyMd: "@dev @fin 봐줘" });
+    const old = (seq: number, agentId: string, runId: string) =>
+      msg(seq, {
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        bodyMd: `옛 답 ${seq}`,
+        runRoot: { runId, agentId, rootMessageId: top.id, triggerMessageId: top.id },
+      });
+    const { qc } = draw({ ...timelineOf(range(1, 20)), hasNewer: true, lastSeq: 160 });
+    await screen.findByText("본문 20");
+    act(() =>
+      updateTimeline(qc, CH, CH, (t) =>
+        appendNewer(
+          t,
+          [
+            top,
+            old(22, AGENT, RA),
+            old(23, FIN, RB),
+            ...range(24, 100, { authorType: "user", authorId: USER }),
+          ],
+          true,
+        ),
+      ),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
+    act(() =>
+      updateTimeline(qc, CH, CH, (t) =>
+        appendNewer(
+          t,
+          [old(101, FIN, RB), ...range(102, 160, { authorType: "user", authorId: USER })],
+          false,
+        ),
+      ),
+    );
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(screen.queryByRole("button", { name: /답 도착/ })).toBeNull();
     act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, old(161, FIN, RB))));
