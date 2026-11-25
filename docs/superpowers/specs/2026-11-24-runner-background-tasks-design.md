@@ -116,7 +116,7 @@
   - **보낼 자리:** 대화는 원래 런의 대화, 스레드 루트는 원래 런의 첫 응답 메시지(`RUN_FINISHED.messageIds[0]`). 지금 런은 세션 키로 보낼 자리를 정한다(「에이전트의 글은 그 세션 키의 대화에만」). 이 런은 **채널 세션 키로 돌면서 스레드에 쓴다** — 런에 「응답 스레드 루트」 칸을 더한다. 원래 런의 응답 메시지가 없으면(도구만 쓰고 답이 없던 런) 그 런의 트리거 메시지를 루트로 쓴다(제 판단).
   - 거절되면 스레드에 시스템 글: 「백그라운드 작업이 끝났지만 <사유> 이어서 답하지 못했습니다」 — 사유에 조사까지 들어 있다(「오늘 런 한도로」·「채널이 보관돼」·「에이전트가 꺼져」·「세션이 닫혀」, `apps/server/src/modules/runs/background.ts` 의 `followupRefusedText`).
 - **런 타임아웃(`runMs` 10분)** 은 추가 응답 런에도 그대로다 — 붙든 시간이 아니라 그 턴의 시간이다.
-- **끄기:** `POST /api/v1/runs/:runId/tasks/:taskId/stop` → 러너 → 서버 프레임 `task.stop { sessionKey, taskId }` → `q.stopTask(taskId)`. 권한은 그 런의 「중지」와 같다(제 판단). 끈 결과는 `tasks.update` 로 돌아온다.
+- **끄기:** wire `task.stop { runId, taskId }`(설계 때는 REST `POST /api/v1/runs/:runId/tasks/:taskId/stop` 였다 — 6장) → 러너 → 서버 프레임 `task.stop { sessionKey, taskId }` → `q.stopTask(taskId)`. 권한은 그 런의 「중지」와 같다(제 판단). 끈 결과는 `tasks.update` 로 돌아온다.
 - **함께 끄는 때:** 세션 닫기(`abortConversation`)·에이전트 보관·채널 보관·대화에서 에이전트 내보내기(`abortConversationAgent`)는 그 세션의 작업을 모두 끄고 붙든 프로세스를 닫는다. 새 프레임 `session.release { sessionKey }`.
 - **작업이 죽은 채 끝났을 때:** 러너 재시작·원격 업데이트·연결 끊김 뒤 작업이 사라지면, 그 작업의 원래 런 응답 스레드에 시스템 글 「백그라운드 작업이 끝나지 못했습니다 — 러너가 다시 시작됐습니다」를 남긴다.
 
