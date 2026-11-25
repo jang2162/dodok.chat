@@ -22,6 +22,7 @@ import {
   textDelta,
   uid,
 } from "../../test/fixtures";
+import { useBackgroundTaskStore } from "@/features/activity/useBackgroundTasks";
 import { attachHandlers } from "./handlers";
 import { createSubscriptions, restFetchPage } from "./subscriptions";
 import {
@@ -293,6 +294,32 @@ describe("createSubscriptions", () => {
     // 종료 상태 런은 버블 정리(태스크 8)가, 다른 채널 런은 그 채널이 맡는다
     expect(runs[DONE]?.state.status).toBe("done");
     expect(runs[RUN2]?.state.status).toBe("streaming");
+  });
+
+  it("구독 응답의 tasks 는 그 채널 백그라운드 작업의 정본이다 — 실리지 않은 대화의 작업은 지운다(끊긴 사이 끝남)", async () => {
+    const { fake, subs } = setup();
+    const task = (taskId: string) => ({
+      taskId,
+      kind: "shell" as const,
+      description: "pnpm dev",
+      startedAt: "2027-01-15T08:00:00.000Z",
+      originRunId: RUN,
+    });
+    const bg = useBackgroundTaskStore.getState();
+    bg.apply(CH, { conversationId: B, runnerConnected: true, tasks: [task("old")] });
+    bg.apply(CH2, { conversationId: CH2, runnerConnected: true, tasks: [task("other")] });
+    fake.onAck("channel.subscribe", () =>
+      subscribed([], { tasks: [{ conversationId: CH, runnerConnected: false, tasks: [task("t1")] }] }),
+    );
+
+    await subs.enter(CH);
+
+    const byChannel = useBackgroundTaskStore.getState().byChannel;
+    expect(Object.keys(byChannel[CH] ?? {})).toEqual([CH]);
+    expect(byChannel[CH]?.[CH]).toEqual({ conversationId: CH, runnerConnected: false, tasks: [task("t1")] });
+    // 다른 채널은 그 채널의 구독이 맡는다
+    expect(byChannel[CH2]?.[CH2]?.tasks).toHaveLength(1);
+    useBackgroundTaskStore.getState().reset();
   });
 
   it("구독 응답의 pendingApprovals 로 승인 카드를 맞춘다 — 늦게 연 탭·재연결한 탭이 카드를 본다", async () => {

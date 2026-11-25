@@ -8,6 +8,8 @@ import {
   filterRuns,
   freezeDurations,
   hasFlowingDuration,
+  HELD_SETTINGS,
+  isHeldSettingsEvent,
   isTimelineEvent,
   isTruncated,
   keepTimelineEvents,
@@ -287,6 +289,25 @@ describe("toActivityRows — 추론", () => {
     expect(rows[0]).not.toHaveProperty("truncated");
     expect(isTimelineEvent(runEvent({ type: "CUSTOM", seq: 2, name: "뭔가" }))).toBe(false);
     expect(isTimelineEvent(runEvent({ type: "CUSTOM", seq: 2, name: REASONING_TRUNCATED }))).toBe(true);
+  });
+
+  it("D6 설정 표시(CUSTOM dodok.held_settings)는 활동 기록에 남지만 행도 활동 시간도 아니다", () => {
+    const held = runEvent({ type: "CUSTOM", seq: 1, name: HELD_SETTINGS, ts: "2027-01-15T08:00:00.000Z" });
+    expect(isTimelineEvent(held)).toBe(true);
+    expect(isHeldSettingsEvent(held)).toBe(true);
+    const tool = [
+      runEvent({
+        type: "TOOL_CALL_START",
+        seq: 2,
+        toolCallId: "t",
+        toolCallName: "Read",
+        ts: "2027-01-15T08:00:10.000Z",
+      }),
+      runEvent({ type: "TOOL_CALL_END", seq: 3, toolCallId: "t", ts: "2027-01-15T08:00:12.000Z" }),
+    ];
+    const rows = toActivityRows([held, ...tool]);
+    expect(rows.map((r) => r.kind)).toEqual(["tool"]);
+    expect(summarizeActivity(rows, [held, ...tool]).durationMs).toBe(2_000);
   });
 });
 
@@ -601,6 +622,20 @@ describe("filterRuns · countRuns", () => {
     expect(countRuns(runs)).toEqual({ all: 8, running: 5, approval: 1, failed: 1 });
     for (const f of ["all", "running", "approval", "failed"] as const)
       expect(countRuns(runs)[f]).toBe(filterRuns(runs, f).length);
+  });
+
+  it("「진행 중」에는 백그라운드 작업이 남은 끝난 런도 든다 — 다른 칩은 그대로", () => {
+    const done = runs.find((r) => r.status === "done")!;
+    const background = new Set([done.id]);
+    expect(filterRuns(runs, "running", background).map((r) => r.status)).toEqual([
+      "queued",
+      "streaming",
+      "tool",
+      "awaiting_approval",
+      "finalizing",
+      "done",
+    ]);
+    expect(countRuns(runs, background)).toEqual({ all: 8, running: 6, approval: 1, failed: 1 });
   });
 
   it("전체는 받은 목록을 그대로(순서 유지), 빈 목록이면 빈 목록", () => {

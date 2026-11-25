@@ -1,6 +1,7 @@
 import { SquareIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { heldSlotsText } from "@/features/activity/BackgroundTasks";
 import { InlineActivity } from "@/features/activity/InlineActivity";
 import { summarizeActivity, toActivityRows } from "@/features/activity/timeline";
 import { MessageBody } from "@/features/messages/MessageBody";
@@ -53,6 +54,12 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
                 </span>
               </AuthorLine>
             </div>
+            {/* 러너 자리를 붙든 프로세스가 쥐어 기다리는 까닭(백그라운드 작업 스펙 D7) — 대기 중일 때만 */}
+            {status === "queued" && view.heldSlots !== undefined && view.heldSlots > 0 && (
+              <p data-slot="held-slots" className="text-xs text-muted-foreground">
+                {heldSlotsText(view.heldSlots)}
+              </p>
+            )}
             <BubbleActivity runId={runId} hasText={view.text !== ""} live={!TERMINAL.has(status)} />
             {phase.textVisible && (
               <div data-cursor={streaming || undefined} aria-busy={!TERMINAL.has(status)}>

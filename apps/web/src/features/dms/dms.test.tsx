@@ -4,12 +4,14 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { useBackgroundTaskStore } from "@/features/activity/useBackgroundTasks";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { resetApprovalNotices } from "@/features/approvals/notify";
 import { DATE_GROUP_LABEL, dateGroupOf } from "@/features/conversations/dateGroups";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { useUnread } from "@/features/reads/useUnread";
+import { useRunStore } from "@/features/runs/runStore";
 import { attachHandlers } from "@/realtime/handlers";
 import { createSubscriptions } from "@/realtime/subscriptions";
 import { useWireStatus } from "@/realtime/wire";
@@ -17,7 +19,7 @@ import { flushEditorFrames } from "../../../test/composerHarness";
 import { dmChannelOf, dmOf } from "../../../test/dms";
 import { stubEditorDom, stubNotification } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { AGENT, approval, CH, msg, uid } from "../../../test/fixtures";
+import { AGENT, approval, CH, msg, runState, uid } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import { renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
@@ -529,6 +531,44 @@ describe("DM 화면", () => {
         .getAllByRole("link")
         .map((a) => a.textContent),
     ).toEqual(["활동", "파일"]);
+  });
+
+  it("dm activity shows background rows — DM 활동 탭도 같은 런 카드라 작업 줄·칩·「종료」가 보인다", async () => {
+    stubServer();
+    renderRoute(`/c/${DM}/s/${A}/activity`);
+    const panel = await screen.findByTestId("page-channel-panel");
+    await within(panel).findByText("아직 실행 기록이 없습니다.");
+    const RUN = uid(5_101);
+    act(() => {
+      useRunStore
+        .getState()
+        .applyState(runState({ id: RUN, channelId: DM, conversationId: A, status: "done" }));
+      useBackgroundTaskStore.getState().apply(DM, {
+        conversationId: A,
+        runnerConnected: true,
+        tasks: [
+          {
+            taskId: "t1",
+            kind: "shell",
+            description: "pnpm dev",
+            startedAt: new Date().toISOString(),
+            originRunId: RUN,
+          },
+        ],
+      });
+    });
+    const card = await waitFor(() => {
+      const el = panel.querySelector<HTMLElement>(`[data-run-id="${RUN}"]`);
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(card.querySelector('[data-slot="background-chip"]')).toHaveTextContent("백그라운드 1");
+    expect(within(card).getByText("pnpm dev")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "셸 pnpm dev 종료" })).toBeInTheDocument();
+    act(() => {
+      useBackgroundTaskStore.getState().reset();
+      useRunStore.getState().reset();
+    });
   });
 
   it("파일 주소로 오면 패널을 그린다 — 탭은 활동·파일, 머리에 「파일」 단추", async () => {

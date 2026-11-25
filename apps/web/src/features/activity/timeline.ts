@@ -90,9 +90,21 @@ const TIMELINE_TYPES: ReadonlySet<RunEvent["type"]> = new Set([
   "REASONING_MESSAGE_END",
 ] satisfies ReadonlyArray<RunEvent["type"]>);
 
-/** 이 이벤트가 타임라인 행에 쓰이는가 — `toActivityRows` 가 버릴 것을 미리 거른다. CUSTOM 은 추론 잘림 표시만 */
+/**
+ * 러너가 붙든 프로세스에 이어 넣은 런에서 못 바꾼 설정이 있을 때 내는 CUSTOM 이름(runner `HELD_SETTINGS_EVENT`, 백그라운드 작업 스펙 D6).
+ * 행이 아니라 런 카드의 표시다
+ */
+export const HELD_SETTINGS = "dodok.held_settings";
+export const isHeldSettingsEvent = (event: RunEvent): boolean =>
+  event.type === "CUSTOM" && event.name === HELD_SETTINGS;
+
+/**
+ * 이 이벤트가 활동 기록에 남는가 — `toActivityRows` 가 버릴 것을 미리 거른다. CUSTOM 은 추론 잘림 표시와 D6 설정 표시(런 카드가 읽는다 —
+ * 행은 아니다)만
+ */
 export const isTimelineEvent = (event: RunEvent): boolean =>
-  TIMELINE_TYPES.has(event.type) || (event.type === "CUSTOM" && event.name === REASONING_TRUNCATED);
+  TIMELINE_TYPES.has(event.type) ||
+  (event.type === "CUSTOM" && (event.name === REASONING_TRUNCATED || event.name === HELD_SETTINGS));
 
 /** 행이 되는 것만 남긴다. 버릴 것이 없으면 받은 배열을 그대로 돌려준다 */
 export function keepTimelineEvents(events: readonly RunEvent[]): readonly RunEvent[] {
@@ -308,7 +320,8 @@ export function summarizeActivity(
   let first: number | undefined;
   let last: number | undefined;
   for (const e of events) {
-    if (!isTimelineEvent(e)) continue;
+    // 설정 표시는 런 머리에 한 번 — 활동 시간에 넣지 않는다
+    if (!isTimelineEvent(e) || isHeldSettingsEvent(e)) continue;
     const t = Date.parse(e.ts);
     if (first === undefined || t < first) first = t;
     if (last === undefined || t > last) last = t;
@@ -483,15 +496,31 @@ const MATCHES: Record<RunFilter, (status: RunStatus) => boolean> = {
   failed: (s) => s === "error",
 };
 
+/**
+ * 그 런이 그 칩에 드는가. 「진행 중」에는 끝났어도 백그라운드 작업이 남은 런(`background` — 작업의 originRunId)도 든다(백그라운드 작업
+ * 스펙 5.7)
+ */
+const matches = (run: { id: string; status: RunStatus }, f: RunFilter, background: ReadonlySet<string>) =>
+  MATCHES[f](run.status) || (f === "running" && background.has(run.id));
+
+const NO_BACKGROUND: ReadonlySet<string> = new Set();
+
 /** 거른 런(순서 유지). 전체는 받은 배열 그대로 */
-export function filterRuns<R extends { status: RunStatus }>(runs: readonly R[], f: RunFilter): readonly R[] {
+export function filterRuns<R extends { id: string; status: RunStatus }>(
+  runs: readonly R[],
+  f: RunFilter,
+  background: ReadonlySet<string> = NO_BACKGROUND,
+): readonly R[] {
   if (f === "all") return runs;
-  return runs.filter((r) => MATCHES[f](r.status));
+  return runs.filter((r) => matches(r, f, background));
 }
 
 /** 칩마다 수 — 거르기와 상관없이 전체에서 센다 */
-export function countRuns(runs: readonly { status: RunStatus }[]): Record<RunFilter, number> {
+export function countRuns(
+  runs: readonly { id: string; status: RunStatus }[],
+  background: ReadonlySet<string> = NO_BACKGROUND,
+): Record<RunFilter, number> {
   const counts: Record<RunFilter, number> = { all: 0, running: 0, approval: 0, failed: 0 };
-  for (const run of runs) for (const f of RUN_FILTERS) if (MATCHES[f](run.status)) counts[f] += 1;
+  for (const run of runs) for (const f of RUN_FILTERS) if (matches(run, f, background)) counts[f] += 1;
   return counts;
 }

@@ -13,6 +13,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError, api, NetworkError } from "@/api/http";
 import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
+import { useBackgroundTaskStore } from "@/features/activity/useBackgroundTasks";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
@@ -268,6 +269,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (resync) void subscriptions.runReplay.resync(run);
     },
     "run.event": ({ event }) => subscriptions.runReplay.live(event),
+    // 백그라운드 작업 — 그 대화의 전체 값이라 바꿔 끼운다(백그라운드 작업 스펙 5.7)
+    "tasks.updated": ({ channelId, ...value }) => useBackgroundTaskStore.getState().apply(channelId, value),
     /**
      * 승인 요구·확정. 같은 승인이 프레임 둘로 와 두 번 발행될 수 있어(p2-t6 Ruling C) 스토어가 id 로 병합한다 —
      * 카드는 하나다. 확정 사실은 클라이언트 시계로 그린 「만료됨」을 덮는다

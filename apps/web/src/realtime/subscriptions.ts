@@ -1,6 +1,7 @@
 import type { ChannelSubscribeResult, Message, RunState } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
+import { useBackgroundTaskStore } from "@/features/activity/useBackgroundTasks";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { qk } from "@/api/queries";
 import {
@@ -94,6 +95,8 @@ export function createSubscriptions(deps: { socket: WireSocket; queryClient: Que
         store.remove(v.state.id);
     }
     for (const run of res.activeRuns) store.applyState(run);
+    // 백그라운드 작업은 ack 이 그 채널의 정본이다 — 끊긴 사이 끝난 작업이 카드에 남지 않게
+    useBackgroundTaskStore.getState().sync(channelId, res.tasks);
     await Promise.all(res.activeRuns.filter((r) => REPLAY_STATUSES.has(r.status)).map(runReplay.fromStart));
   }
 

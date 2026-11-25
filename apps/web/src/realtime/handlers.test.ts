@@ -16,6 +16,7 @@ import { agentSettingsKeys } from "@/features/conversations/agentSettings";
 import { fromLatest, jumpAround, threadFromPage } from "@/features/messages/timeline";
 import { conversationTimelineQuery } from "@/features/messages/useTimeline";
 import { threadQuery } from "@/features/threads/queries";
+import { useBackgroundTaskStore } from "@/features/activity/useBackgroundTasks";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
@@ -500,6 +501,30 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
 });
 
 describe("런 이벤트", () => {
+  it("tasks.updated 는 그 대화의 백그라운드 작업을 바꿔 끼운다", () => {
+    const { fake } = setup();
+    const task = {
+      taskId: "t1",
+      kind: "shell" as const,
+      description: "pnpm dev",
+      startedAt: "2027-01-15T08:00:00.000Z",
+      originRunId: RUN,
+    };
+    fake.serverEmit("tasks.updated", {
+      channelId: CH,
+      conversationId: CH,
+      runnerConnected: true,
+      tasks: [task],
+    });
+    expect(useBackgroundTaskStore.getState().byChannel[CH]?.[CH]).toEqual({
+      conversationId: CH,
+      runnerConnected: true,
+      tasks: [task],
+    });
+    fake.serverEmit("tasks.updated", { channelId: CH, conversationId: CH, runnerConnected: true, tasks: [] });
+    expect(useBackgroundTaskStore.getState().byChannel[CH]).toEqual({});
+  });
+
   it("run.state 는 applyState, run.event 는 applyEvent", () => {
     const { fake } = setup();
     fake.serverEmit("run.state", { run: runState({ status: "queued" }) });

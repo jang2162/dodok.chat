@@ -6,9 +6,11 @@ import { useChannelRuns } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, useRunStore } from "@/features/runs/runStore";
+import { EarlierRunTasks } from "./BackgroundTasks";
 import { Notice } from "./Notice";
 import { RunCards } from "./RunCard";
 import { countRuns, filterRuns, freezeDurations, mergeRuns, RUN_FILTERS, type RunFilter } from "./timeline";
+import { useBackgroundTasks } from "./useBackgroundTasks";
 import { useSettledRuns } from "./useSettledRuns";
 
 /**
@@ -53,10 +55,30 @@ function ActivityBody({ channelId }: { channelId: string }) {
     void refetchRuns();
   }, [settledKey, refetchRuns]);
 
+  /** 백그라운드 작업(스펙 5.7) — 작업은 원래 런 카드에 붙고, 작업이 남은 끝난 런도 「진행 중」에 든다 */
+  const background = useBackgroundTasks(channelId);
+  /** 추가 응답 런 카드가 원래 런의 시작 시각을 찾는 길 — 거르기와 상관없이 받은 목록 전체에서 */
+  const startedAtOf = useCallback((runId: string) => runs.find((r) => r.id === runId)?.startedAt, [runs]);
+
   /** 거르기 — 수는 전체에서 세고, 고른 칩에 맞는 카드만 그린다. 펼침은 거르기와 따로 기억한다(거르기를 바꿔도 펼친 채) */
   const [filter, setFilter] = useState<RunFilter>("all");
-  const counts = useMemo(() => countRuns(runs), [runs]);
-  const visible = useMemo(() => filterRuns(runs, filter), [runs, filter]);
+  /**
+   * 작업이 남았는데 받은 런 목록(REST 최근 50 + 실시간·끝난 런 기억)에 없는 원래 런(리뷰 B1) — 붙을 카드가 없으니 패널 맨 위 묶음에
+   * 따로 보이고, 「진행 중」 수에도 든다. 원래 런이 나중에 목록에 들어오면(재조회·실시간) 묶음에서 빠져 그 카드로 옮겨 간다
+   */
+  const earlier = useMemo(() => {
+    const known = new Set(runs.map((r) => r.id));
+    return [...background.activeRunIds].filter((id) => !known.has(id));
+  }, [runs, background.activeRunIds]);
+  const counts = useMemo(() => {
+    const c = countRuns(runs, background.activeRunIds);
+    return { ...c, running: c.running + earlier.length };
+  }, [runs, background.activeRunIds, earlier]);
+  const showEarlier = earlier.length > 0 && (filter === "all" || filter === "running");
+  const visible = useMemo(
+    () => filterRuns(runs, filter, background.activeRunIds),
+    [runs, filter, background.activeRunIds],
+  );
 
   /**
    * 펼침 — 사람이 아직 어떤 카드도 펴거나 접지 않았으면 가장 최근 런만 펼친다(런이 수백 개여도 처음엔 하나만 — 타임라인 조회는
@@ -115,13 +137,24 @@ function ActivityBody({ channelId }: { channelId: string }) {
        * 조회가 실패해도 실시간으로 아는 런은 그대로 그린다(태스크 7 리뷰 이월 6) —
        * 잠깐 끊긴 사이에 진행 중인 런이 화면에서 사라지면 「멈춘 것」처럼 보인다
        */}
-      {runs.length > 0 ? (
+      {runs.length > 0 || earlier.length > 0 ? (
         <>
           <FilterChips value={filter} counts={counts} onChange={setFilter} />
+          {showEarlier && <EarlierRunTasks channelId={channelId} runIds={earlier} byRun={background.byRun} />}
           {visible.length > 0 ? (
-            <RunCards runs={visible} isExpanded={isExpanded} onToggle={toggle} approval={approvalOf} />
+            <RunCards
+              runs={visible}
+              isExpanded={isExpanded}
+              onToggle={toggle}
+              approval={approvalOf}
+              background={background.byRun}
+              startedAtOf={startedAtOf}
+            />
+          ) : runs.length === 0 && rest.isPending ? (
+            <Notice>불러오는 중…</Notice>
           ) : (
-            <Notice>{EMPTY[filter]}</Notice>
+            // 묶음이 보이면 「진행 중인 런이 없습니다」는 거짓이다 — 그 칩에 든 것이 묶음에 있다
+            !showEarlier && <Notice>{EMPTY[filter]}</Notice>
           )}
         </>
       ) : (
