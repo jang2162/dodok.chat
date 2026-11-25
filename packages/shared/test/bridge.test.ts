@@ -9,6 +9,7 @@ import {
   InboundDeliver,
   InboundDeliverResult,
   InboundReaction,
+  LINKED_MESSAGES_MAX,
   OutboundMessage,
   PluginUpdate,
   PluginUpdateResult,
@@ -195,6 +196,29 @@ describe("InboundDeliver.dm — 선택 필드", () => {
     expect(InboundDeliver.parse(base).groupDm).toBeUndefined();
     expect(InboundDeliver.parse({ ...base, groupDm: true }).groupDm).toBe(true);
     expect(InboundDeliver.safeParse({ ...base, groupDm: false }).success).toBe(false);
+  });
+});
+
+describe("InboundContext.linkedMessages — 선택 필드", () => {
+  const linked = (n: number) => ({
+    messageId: ID(n),
+    channelName: "c",
+    conversationTitle: "t",
+    author: { type: "automation" as const, handle: "a" },
+    text: "x",
+    ts: NOW,
+    attachments: [],
+  });
+  const ctx = (extra: object) => ({ recentMessages: [], participants: [], relayRules: "", ...extra });
+  it("없으면 통과하고 키가 없다", () => {
+    expect(InboundContext.parse(ctx({})).linkedMessages).toBeUndefined();
+  });
+  it(`${LINKED_MESSAGES_MAX} 개까지, 넘으면 실패`, () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => linked(i + 1));
+    expect(InboundContext.safeParse(ctx({ linkedMessages: list(LINKED_MESSAGES_MAX) })).success).toBe(true);
+    expect(InboundContext.safeParse(ctx({ linkedMessages: list(LINKED_MESSAGES_MAX + 1) })).success).toBe(
+      false,
+    );
   });
 });
 

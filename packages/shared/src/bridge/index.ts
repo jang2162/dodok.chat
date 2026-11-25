@@ -91,6 +91,39 @@ export const InboundThreadUpdate = z.object({
 });
 export type InboundThreadUpdate = z.infer<typeof InboundThreadUpdate>;
 
+/** 한 런에 펼치는 링크한 메시지 수의 상한(InboundContext.linkedMessages) — 링크 찾기(`findMessageLinks`)가 이 수에서 멈춘다 */
+export const LINKED_MESSAGES_MAX = 3;
+/** LinkedMessage.text 의 길이 상한 — 서버가 이 안으로 자른다 */
+export const LINKED_MESSAGE_TEXT_MAX = 4000;
+/** LinkedMessage.root.text 의 길이 상한 */
+export const LINKED_MESSAGE_ROOT_TEXT_MAX = 1000;
+/** LinkedMessage.attachments(이름)의 수 상한 */
+export const LINKED_MESSAGE_ATTACHMENTS_MAX = 10;
+
+const LinkedMessageAuthor = z.object({
+  type: z.enum(["user", "agent", "system", "automation"]),
+  handle: z.string(),
+});
+
+/**
+ * 트리거 글이 링크한 메시지 하나(메시지 링크 스펙 「에이전트 문맥」) — 서버가 런 주체의 읽기 범위로 펼친다. 문구는 formatLinkedMessages
+ * 가 만든다. 스레드 답글이면 threadRootId 와 루트(root)를 싣는다
+ */
+export const LinkedMessage = z.object({
+  messageId: Id,
+  channelName: z.string(),
+  conversationTitle: z.string(),
+  threadRootId: Id.optional(),
+  author: LinkedMessageAuthor,
+  text: z.string().max(LINKED_MESSAGE_TEXT_MAX), // renderForAgent 결과
+  ts: IsoDateTime,
+  attachments: z.array(z.string()).max(LINKED_MESSAGE_ATTACHMENTS_MAX), // 이름만
+  root: z
+    .object({ author: LinkedMessageAuthor, text: z.string().max(LINKED_MESSAGE_ROOT_TEXT_MAX) })
+    .optional(),
+});
+export type LinkedMessage = z.infer<typeof LinkedMessage>;
+
 export const InboundContext = z.object({
   recentMessages: z.array(InboundContextMessage).max(20), // 스레드 런이면 비어 있다 — 채널 대화는 스레드에 싣지 않는다
   /** 스레드 런만. 루트 본문은 서버가 4,000자에서 자른다 */
@@ -125,6 +158,11 @@ export const InboundContext = z.object({
    */
   threadUpdates: z.array(InboundThreadUpdate).max(INBOUND_THREAD_UPDATES_MAX).optional(),
   threadUpdatesOmitted: z.int().min(1).optional(), // 상한 밖으로 밀린 스레드 수
+  /**
+   * 트리거 글이 링크한 같은 앱의 메시지(메시지 링크 스펙) — 런 종류 mention·auto_respond·relay 만, 런 주체가 읽을 수 있는 것만. 없으면 키가
+   * 없다. 선택 필드라 옛 플러그인은 버리고 받는다(링크 글만 본다)
+   */
+  linkedMessages: z.array(LinkedMessage).max(LINKED_MESSAGES_MAX).optional(),
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 
@@ -250,7 +288,8 @@ export function formatSessionInviteLine(participants: InboundContext["participan
     : null;
 }
 
-function foldHeaderText(text: string): string {
+/** 사람이 쓴 글을 헤더 한 줄로 접는다 — `formatSessionLine` 주석의 까닭. 링크한 메시지의 머리 줄도 쓴다 */
+export function foldHeaderText(text: string): string {
   return text
     .replace(/\p{Cf}/gu, "")
     .replace(/[\s\p{Cc}\p{Zl}\p{Zp}]+/gu, " ")
