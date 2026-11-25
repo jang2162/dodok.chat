@@ -12,6 +12,11 @@ type BackgroundTaskStore = {
   apply(channelId: string, value: ConversationBackgroundTasks): void;
   /** 구독 결과 — 그 채널의 값을 통째로 바꾼다(끊긴 사이 끝난 작업이 남지 않게) */
   sync(channelId: string, list: readonly ConversationBackgroundTasks[]): void;
+  /**
+   * 그 작업 하나를 지운다 — 「종료」에 서버가 NOT_FOUND 로 답했을 때(서버가 그 런을 모른다). 다음 `tasks.updated` 를 기다리지 않고
+   * 줄·「백그라운드 N」 칩·「진행 중」 수가 함께 맞게 스토어에서 뺀다. 비고 러너가 붙어 있으면 대화 자리도 지운다
+   */
+  drop(channelId: string, taskId: string): void;
   reset(): void;
 };
 
@@ -34,6 +39,24 @@ export const useBackgroundTaskStore = create<BackgroundTaskStore>()((set) => ({
         [channelId]: Object.fromEntries(list.filter((v) => !isEmpty(v)).map((v) => [v.conversationId, v])),
       },
     })),
+  drop: (channelId, taskId) =>
+    set((s) => {
+      const prev = s.byChannel[channelId];
+      if (!prev) return s;
+      let changed = false;
+      const next: Record<string, ConversationBackgroundTasks> = {};
+      for (const [conversationId, value] of Object.entries(prev)) {
+        const tasks = value.tasks.filter((t) => t.taskId !== taskId);
+        if (tasks.length === value.tasks.length) {
+          next[conversationId] = value;
+          continue;
+        }
+        changed = true;
+        const kept = { ...value, tasks };
+        if (!isEmpty(kept)) next[conversationId] = kept;
+      }
+      return changed ? { byChannel: { ...s.byChannel, [channelId]: next } } : s;
+    }),
   reset: () => set({ byChannel: {} }),
 }));
 

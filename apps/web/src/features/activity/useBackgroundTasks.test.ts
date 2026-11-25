@@ -68,4 +68,28 @@ describe("useBackgroundTasks", () => {
     expect(result.current.byRun(RUN)).toEqual({ tasks: [task("a1", RUN)], runnerConnected: false });
     expect([...result.current.activeRunIds]).toEqual([RUN]);
   });
+
+  it("drops one task — NOT_FOUND 로 지운 작업만 빼고, 비고 러너가 붙어 있으면 대화 자리도 지운다(리뷰 N1)", () => {
+    const store = useBackgroundTaskStore.getState();
+    store.apply(CH, {
+      conversationId: CONV_A,
+      runnerConnected: true,
+      tasks: [task("a1", RUN), task("a2", RUN)],
+    });
+    store.apply(CH, { conversationId: CONV_B, runnerConnected: false, tasks: [task("b1", RUN2)] });
+    const { result } = renderHook(() => useBackgroundTasks(CH));
+    act(() => useBackgroundTaskStore.getState().drop(CH, "a1"));
+    expect(result.current.byRun(RUN).tasks.map((t) => t.taskId)).toEqual(["a2"]);
+    act(() => useBackgroundTaskStore.getState().drop(CH, "a2"));
+    expect(useBackgroundTaskStore.getState().byChannel[CH]).not.toHaveProperty(CONV_A);
+    expect([...result.current.activeRunIds]).toEqual([RUN2]);
+    // 끊긴 채 비면 자리를 남긴다(「러너 연결 끊김」을 계속 보인다)
+    act(() => useBackgroundTaskStore.getState().drop(CH, "b1"));
+    expect(useBackgroundTaskStore.getState().byChannel[CH]?.[CONV_B]?.tasks).toEqual([]);
+    // 모르는 작업·채널은 그대로
+    const before = useBackgroundTaskStore.getState().byChannel;
+    useBackgroundTaskStore.getState().drop(CH, "nope");
+    useBackgroundTaskStore.getState().drop(CH2, "a1");
+    expect(useBackgroundTaskStore.getState().byChannel).toBe(before);
+  });
 });

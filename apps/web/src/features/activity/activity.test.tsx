@@ -47,6 +47,19 @@ vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
   useWire: () => ({ socket: wire.socket, subscriptions: undefined }),
 }));
 
+// 런 카드가 다시 그려진 수 — `RunCard` 는 그릴 때마다 `useAgents` 를 한 번 부른다(리뷰 M1 시험)
+const agentsCalls = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/api/queries", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/queries")>();
+  return {
+    ...actual,
+    useAgents: (...args: Parameters<typeof actual.useAgents>) => {
+      agentsCalls.n += 1;
+      return actual.useAgents(...args);
+    },
+  };
+});
+
 const DEV = agentOf(AGENT, "dev");
 const TOOL_EVENTS: RunEvent[] = [
   runEvent({ type: "TOOL_CALL_START", seq: 1, toolCallId: "t1", toolCallName: "Read" }),
@@ -1843,10 +1856,144 @@ it("stop sends task.stop and disables the button — 원래 런 id 로 보내고
     "aria-disabled",
   );
 
-  // 서버가 그 런을 모른다 — 줄을 지운다
+  // 서버가 그 런을 모른다 — 줄을 지운다. 칩·「진행 중」 수도 함께 맞는다(스토어에서 뺀다 — 리뷰 N1)
+  expect(card(aside, RUN).querySelector('[data-slot="background-chip"]')).toHaveTextContent("백그라운드 2");
   await userEvent.click(within(row).getByRole("button", { name: "셸 pnpm dev s1 종료" }));
   await act(async () => release({ ok: false, error: { code: "NOT_FOUND", message: "x" } }));
   expect(taskRows(card(aside, RUN)).map((r) => r.dataset.taskId)).toEqual(["s2"]);
+  expect(card(aside, RUN).querySelector('[data-slot="background-chip"]')).toHaveTextContent("백그라운드 1");
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 1");
+
+  // 마지막 작업도 NOT_FOUND — 칩이 사라지고 「진행 중」 수가 0
+  await userEvent.click(within(card(aside, RUN)).getByRole("button", { name: "셸 pnpm dev s2 종료" }));
+  await act(async () => release({ ok: false, error: { code: "NOT_FOUND", message: "x" } }));
+  expect(taskRows(card(aside, RUN))).toHaveLength(0);
+  expect(card(aside, RUN).querySelector('[data-slot="background-chip"]')).toBeNull();
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 0");
+});
+
+it("stop buttons of same-named tasks have distinct names — 같은 종류·설명 작업 둘이면 「종료」 이름에 순번", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  putTasks([
+    bgTask("d1", RUN, { description: "pnpm dev" }),
+    bgTask("d2", RUN, { description: "pnpm dev" }),
+    bgTask("s1", RUN),
+  ]);
+  const names = within(card(aside, RUN))
+    .getAllByRole("button", { name: /종료$/ })
+    .map((b) => b.getAttribute("aria-label"));
+  expect(names).toEqual(["셸 pnpm dev (1) 종료", "셸 pnpm dev (2) 종료", "셸 pnpm dev s1 종료"]);
+  expect(new Set(names).size).toBe(3);
+});
+
+const EARLIER = uid(140);
+const earlierGroup = (aside: HTMLElement) =>
+  aside.querySelector<HTMLElement>('[data-slot="earlier-run-tasks"]');
+
+it("shows tasks of runs outside the loaded list at the top — 카드 없는 원래 런의 작업은 맨 위 묶음에, 「종료」는 그 런 id 로", async () => {
+  fake.onAck("task.stop", async () => ({ ok: true, data: null }));
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  expect(earlierGroup(aside)).toBeNull();
+  putTasks([bgTask("o1", EARLIER), bgTask("o2", EARLIER, { kind: "subagent", description: "훑기" })]);
+
+  const group = earlierGroup(aside)!;
+  expect(group).not.toBeNull();
+  expect(group).toHaveAccessibleName("이전 런의 백그라운드 작업 2개");
+  expect(within(group).getByRole("heading")).toHaveTextContent("이전 런의 백그라운드 작업2");
+  expect(taskRows(group).map((r) => r.dataset.taskId)).toEqual(["o1", "o2"]);
+  // 런 카드 목록 위에 있다
+  const list = within(aside).getByRole("list", { name: "런 목록" });
+  expect(group.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // 카드 안 줄과 같은 「종료」 — 원래 런 id 로 보낸다
+  await userEvent.click(within(group).getByRole("button", { name: "셸 pnpm dev o1 종료" }));
+  expect(fake.sentOf("task.stop")).toEqual([{ runId: EARLIER, taskId: "o1" }]);
+  // 러너가 끊기면 카드 안 줄처럼 흐리고 「종료」가 없다
+  putTasks([bgTask("o1", EARLIER)], false);
+  expect(within(earlierGroup(aside)!).getByText("러너 연결 끊김")).toBeInTheDocument();
+  expect(within(earlierGroup(aside)!).queryByRole("button", { name: /종료/ })).not.toBeInTheDocument();
+  putTasks([bgTask("o1", EARLIER)]);
+
+  // 원래 런이 목록에 들어오면 묶음에서 빠져 그 카드로 옮겨 간다
+  act(() => useRunStore.getState().applyState(runState({ id: EARLIER, status: "streaming" })));
+  await waitFor(() => expect(earlierGroup(aside)).toBeNull());
+  expect(taskRows(card(aside, EARLIER)).map((r) => r.dataset.taskId)).toEqual(["o1"]);
+});
+
+it("in progress count includes runs outside the loaded list — 묶음의 원래 런도 「진행 중」에 세고, 고르면 묶음이 보인다", async () => {
+  stubServer({ runs: [runOf(RUN)] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByRole("region", { name: /^@dev 런/ });
+  putTasks([bgTask("o1", EARLIER), bgTask("o2", EARLIER), bgTask("o3", uid(141))]);
+  // 원래 런 둘
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 2");
+  await userEvent.click(chip(aside, "진행 중"));
+  expect(taskRows(earlierGroup(aside)!)).toHaveLength(3);
+  expect(runIds(aside)).toEqual([]);
+  expect(within(aside).queryByText("진행 중인 런이 없습니다.")).not.toBeInTheDocument();
+  // 「실패」를 고르면 묶음은 숨는다
+  await userEvent.click(chip(aside, "실패"));
+  expect(earlierGroup(aside)).toBeNull();
+  await userEvent.click(chip(aside, "진행 중"));
+  putTasks([]);
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 0");
+  expect(earlierGroup(aside)).toBeNull();
+  expect(within(aside).getByText("진행 중인 런이 없습니다.")).toBeInTheDocument();
+});
+
+it("shows earlier run tasks when the run list is empty — 런 목록이 비어도 묶음은 보인다", async () => {
+  stubServer({ runs: [] });
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("아직 실행 기록이 없습니다.");
+  putTasks([bgTask("o1", EARLIER)]);
+  expect(taskRows(earlierGroup(aside)!)).toHaveLength(1);
+  expect(chip(aside, "진행 중")).toHaveTextContent("진행 중 1");
+  expect(within(aside).queryByText("아직 실행 기록이 없습니다.")).not.toBeInTheDocument();
+});
+
+it("task elapsed ticks without re-rendering run cards — 작업이 있어도 끝난 런 카드 목록은 매초 다시 그리지 않는다(리뷰 M1)", async () => {
+  const NOW = Date.parse("2027-01-15T09:00:00.000Z");
+  vi.useFakeTimers({ now: NOW });
+  try {
+    stubServer({ runs: [] });
+    act(() =>
+      useBackgroundTaskStore.getState().apply(CH, {
+        conversationId: CH,
+        runnerConnected: true,
+        tasks: [bgTask("s1", RUN, { startedAt: iso(NOW - 10_000) })],
+      }),
+    );
+    const done = { ...runState({ status: "done" }), endedAt: iso(NOW - 5_000) } as ActivityRun;
+    function Cards() {
+      const tasks = useBackgroundTaskStore((s) => s.byChannel[CH]?.[CH]);
+      return (
+        <RunCards
+          runs={[done]}
+          isExpanded={() => false}
+          onToggle={() => {}}
+          approval={() => undefined}
+          background={() => ({ tasks: tasks?.tasks ?? [], runnerConnected: true })}
+        />
+      );
+    }
+    renderWithClient(<Cards />);
+    const row = () => document.querySelector<HTMLElement>('[data-task-id="s1"]');
+    expect(row()).toHaveTextContent("10초째");
+    const before = agentsCalls.n;
+    for (let i = 0; i < 3; i += 1) await act(async () => void vi.advanceTimersByTime(TICK_MS));
+    // 걸린 시간은 흐르고, 카드는 그대로
+    expect(row()).toHaveTextContent("13초째");
+    expect(agentsCalls.n - before).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("marks disconnected runner rows — 줄을 흐리고 「러너 연결 끊김」, 「종료」는 없다", async () => {

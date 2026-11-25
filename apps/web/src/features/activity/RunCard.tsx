@@ -54,8 +54,8 @@ const noBackground: BackgroundOf = () => NO_BACKGROUND;
 const noStartedAt = (): string | undefined => undefined;
 
 /**
- * 런 카드들(재설계 스펙 목표 7) — 펼침은 부르는 쪽이 쥔다. 아직 안 끝난 런의 소요와 백그라운드 작업의 걸린 시간만 흐른다 — 그런 것이
- * 있을 때만 1초 틱을 돌리고(조건은 `hasFlowingDuration` 이 잠근다) 모든 카드가 그 시계 하나를 본다(D6). 목록 전체가 한 스크롤 영역이다(D10).
+ * 런 카드들(재설계 스펙 목표 7) — 펼침은 부르는 쪽이 쥔다. 아직 안 끝난 런의 소요만 흐른다 — 그런 런이
+ * 있을 때만 1초 틱을 돌리고(조건은 `hasFlowingDuration` 이 잠근다) 모든 카드가 그 시계 하나를 본다(D6). 백그라운드 작업의 걸린 시간은 그 칸만 따로 틱을 받는다(리뷰 M1 — 작업은 상한이 없다). 목록 전체가 한 스크롤 영역이다(D10).
  * `background` 는 런마다 그 런이 띄운 백그라운드 작업, `startedAtOf` 는 추가 응답 런이 원래 런의 시작 시각을 찾는 길(백그라운드 작업 스펙 5.7)
  */
 export function RunCards({
@@ -73,8 +73,7 @@ export function RunCards({
   background?: BackgroundOf;
   startedAtOf?: (runId: string) => string | undefined;
 }) {
-  const anyTasks = runs.some((r) => background(r.id).tasks.length > 0);
-  const now = useNowTick(hasFlowingDuration(runs) || anyTasks);
+  const now = useNowTick(hasFlowingDuration(runs));
   return (
     <ul aria-label="런 목록" className="min-h-0 flex-1 overflow-y-auto">
       {runs.map((run) => (
@@ -222,10 +221,10 @@ export function RunCard({
         </p>
       )}
       <BackgroundTasks
+        channelId={run.channelId}
         originRunId={run.id}
         tasks={background.tasks}
         runnerConnected={background.runnerConnected}
-        now={now}
       />
       {expanded ? (
         <div id={bodyId} className="pb-1">
