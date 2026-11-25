@@ -276,11 +276,22 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const tasksThrottleMs = opts.tasksThrottleMs ?? TASKS_THROTTLE_MS;
   const taskSends = new Map<
     string,
-    { last: number; timer?: ReturnType<typeof setTimeout>; pending?: BackgroundTask[] }
+    {
+      last: number;
+      timer?: ReturnType<typeof setTimeout>;
+      pending?: BackgroundTask[];
+      /** 서버에 마지막으로 닿은 목록이 비어 있지 않다 — 다시 붙을 때 비었는지 알려야 하는 세션 */
+      shown?: boolean;
+      /** 드라이버가 마지막으로 준 목록 — 끊긴 동안 버려졌을 수 있다 */
+      latest: BackgroundTask[];
+    }
   >();
 
   function sendTasks(sessionKey: string, tasks: BackgroundTask[]): void {
-    if (socket.connected && ready) socket.emit("tasks.update", { sessionKey, tasks });
+    if (!socket.connected || !ready) return;
+    socket.emit("tasks.update", { sessionKey, tasks });
+    const st = taskSends.get(sessionKey);
+    if (st) st.shown = tasks.length > 0;
   }
 
   // 세션마다 tasksThrottleMs 에 한 번 — 묶는 동안 온 것은 마지막 값만(바꿔 끼우는 값이라 사이 값은 필요 없다)
@@ -288,9 +299,10 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const now = Date.now();
     let st = taskSends.get(sessionKey);
     if (!st) {
-      st = { last: 0 };
+      st = { last: 0, latest: tasks };
       taskSends.set(sessionKey, st);
     }
+    st.latest = tasks;
     if (st.timer) {
       st.pending = tasks;
       return;
@@ -487,15 +499,27 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         logger.info(`dodok-runner: 연결됨(서버 ${result.serverVersion})`);
         ready = true;
         // 끊긴 사이에도 CLI 와 작업은 살아 있다 — 붙은 뒤 세션마다 지금 목록을 한 번 보낸다(스펙 5.4)
-        for (const h of background?.held() ?? []) {
+        const held = background?.held() ?? [];
+        for (const h of held) {
           const st = taskSends.get(h.sessionKey);
-          if (st) {
-            if (st.timer) clearTimeout(st.timer);
-            st.timer = undefined;
-            st.pending = undefined;
-          }
-          taskSends.set(h.sessionKey, { last: Date.now() });
+          if (st?.timer) clearTimeout(st.timer);
+          taskSends.set(h.sessionKey, {
+            last: Date.now(),
+            latest: h.tasks,
+            ...(st?.shown ? { shown: true } : {}),
+          });
           sendTasks(h.sessionKey, h.tasks);
+        }
+        // 붙들지 않은 세션 — 끊긴 사이 작업이 끝나 놓은 세션의 빈 목록은 끊긴 동안 버려졌다. 서버가 아직 작업을 보이고 있으면
+        // 마지막 목록(비었으면 [])을 한 번 보낸다(안 보내면 서버는 러너가 다시 시작된 것으로 읽는다 — 리뷰 C2)
+        const heldKeys = new Set(held.map((h) => h.sessionKey));
+        for (const [key, st] of taskSends) {
+          if (heldKeys.has(key) || st.timer) continue;
+          if (st.shown || st.latest.length > 0) {
+            st.last = Date.now();
+            sendTasks(key, st.latest);
+          }
+          if (st.latest.length === 0) taskSends.delete(key);
         }
       } catch (error) {
         if (stopped) return;

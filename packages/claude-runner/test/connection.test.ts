@@ -1965,6 +1965,31 @@ describe("백그라운드 작업 프레임(백그라운드 작업 스펙 5.3·5.
     expect(fake.calls[0]!.finished).toBe(false);
   });
 
+  it("sends an empty list for sessions emptied while disconnected", async () => {
+    // 둘째 핸드셰이크를 한 번 거절해 끊긴 동안이 생기게 한다
+    const { server, slot } = await setup({
+      background: true,
+      tasksThrottleMs: 10,
+      reject: (n) => (n === 1 ? "RATE_LIMITED" : undefined),
+    });
+    await waitFor(() => server.hellos.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const hooks = slot!.hooks;
+    hooks.tasksChanged("k1", [TASK]);
+    hooks.tasksChanged("k2", []);
+    await waitFor(() => server.tasksUpdates.length === 2);
+    server.sockets[0]!.conn.close();
+    await waitFor(() => server.handshakes === 2);
+    // 끊긴 동안 k1 의 작업이 끝났다 — 이 목록은 버려진다
+    hooks.tasksChanged("k1", []);
+    await waitFor(() => server.hellos.length === 2);
+    await waitFor(() => server.tasksUpdates.length === 3);
+    expect(server.tasksUpdates[2]).toEqual({ sessionKey: "k1", tasks: [] });
+    // 서버가 이미 빈 목록을 본 k2 는 다시 보내지 않는다
+    await new Promise((r) => setTimeout(r, 60));
+    expect(server.tasksUpdates).toHaveLength(3);
+  });
+
   it("answers task.stop from the driver", async () => {
     const { server, fake } = await setup({ background: true, tasksThrottleMs: 10 });
     await waitFor(() => server.hellos.length === 1);
