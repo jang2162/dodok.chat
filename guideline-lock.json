@@ -1,7 +1,7 @@
 {
   "version": 3,
   "revisions": {
-    "default": 35
+    "default": 36
   },
   "sources": {
     "default:rules/base/00-agent.md": "8769ce88bbe59ad56fb00ab23e4b303befafc1d73f764be15033b245ff66bb89",
@@ -50,7 +50,7 @@
     "default:rules/ruler/SETUP.md": "4ec303a0399bc671a5309fdad1852456ca3ee40fd2486a73fad6f2c03a27cb9f",
     "default:rules/web/00-llms-txt.md": "6955a39ebcfb57a41677a9a9bbd0d2ffca45f1474737d10d988ac772ad450060",
     "default:skills/guideline-export": "78f0ac736d5f6d04a1673b490e8602333e51ca7b1bb94ceb56f5daab54efe92b",
-    "default:skills/guideline-sync": "b0cc253ce07d28b7c1d6d3ca9c4d7bd67f4b8b9fc7e9cc3d8c73fc9a371e3f1d",
+    "default:skills/guideline-sync": "f9a035e6cb2a9107af0dd7a2fa26f8079ae6e962af3d53a1d1722e8a0442c57f",
     "default:skills/orca-worker": "cb0f73fe1f9d67ab6c674274dc8a4045cc20bbd06eb5858eed4211dcb7579055"
   },
   "outputs": [
@@ -381,7 +381,7 @@
       "items": [
         "default:skills/guideline-sync"
       ],
-      "hash": "0568f50e11fb1af01ea1b24c8bf9f9affe2e2fd0010031d097953fa34cd33af1"
+      "hash": "599a1b9e06b805d9045bbe5874296d5d4cf4a3d503402f90f7f4b70548b87833"
     },
     {
       "path": ".guideline/skills/orca-worker/SKILL.md",

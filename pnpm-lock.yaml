@@ -12,8 +12,8 @@ importers:
         specifier: 0.3.44
         version: 0.3.44
       guideline-manage:
-        specifier: 0.24.0
-        version: 0.24.0
+        specifier: 0.26.1
+        version: 0.26.1
       oxfmt:
         specifier: 0.68.0
         version: 0.68.0
@@ -5004,8 +5004,8 @@ packages:
     resolution: {integrity: sha512-/8Qw+iisrUdOMk+p2mjEHouMm/BBdBEN1DHh16wiTpRUZkxDG3PxexdjCvR+wvK3LWPdrEvnQbdrwpU954sPhg==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
-  guideline-manage@0.24.0:
-    resolution: {integrity: sha512-xL5A+k0f+2Bls7u5XXKh+8E7XFsR2f0CTTPb9F5q0Iws8Ut6eoappGH7capC0kLhA5EAopHIismG/WR7rpDzaQ==}
+  guideline-manage@0.26.1:
+    resolution: {integrity: sha512-mpdz1iuoLnyFoSGLyWnnvzT7D1daw1/GY4KFW6ndGW6JjvFhAhV2SmSyDfTzUU+bw1WJLjBILDWDCZmLAVjOrA==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -11857,7 +11857,7 @@ snapshots:
       - encoding
       - supports-color
 
-  guideline-manage@0.24.0: {}
+  guideline-manage@0.26.1: {}
 
   has-bigints@1.1.0: {}
 
