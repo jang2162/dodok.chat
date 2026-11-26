@@ -210,3 +210,36 @@ it("mentionContent — 고른 순서대로 멘션 노드, 노드마다 뒤에 �
     { type: "text", text: " " },
   ]);
 });
+
+it("후보는 아바타 사진을 싣는다 — 에이전트·초대한 에이전트·사람·나, 사진이 없으면 키가 없다", () => {
+  const pic = (n: number) => `https://example.test/a${n}.png`;
+  const withPic = agent(31, "pic", { avatarUrl: pic(1) });
+  const guest = agent(32, "guest", { avatarUrl: pic(2) });
+  const people: Person[] = [
+    {
+      id: uid(41),
+      handle: "mia",
+      displayName: "미아",
+      role: "member",
+      deactivatedAt: null,
+      avatarUrl: pic(3),
+      statusMessage: null,
+    },
+  ];
+  const list = mentionCandidates(
+    [member("agent", withPic.id), member("agent", DEV.id)],
+    [withPic, DEV],
+    ME,
+    people,
+    [guest],
+  );
+  expect(list.map((c) => [c.label, c.avatarUrl])).toEqual([
+    ["pic", pic(1)],
+    ["dev", undefined],
+    ["guest", pic(2)],
+    ["mia", pic(3)],
+  ]);
+  expect("avatarUrl" in (list[1] as MentionCandidate)).toBe(false);
+  const meOnly = mentionCandidates([], [], { ...ME, user: { ...ME.user, avatarUrl: pic(4) } });
+  expect(meOnly.map((c) => c.avatarUrl)).toEqual([pic(4)]);
+});

@@ -28,6 +28,13 @@ vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
   useWire: () => ({ socket: wire.socket, subscriptions: undefined }),
 }));
 
+/** 후보 줄의 글 — 아바타 이니셜은 뺀다 */
+const rowText = (o: Element) =>
+  Array.from(o.childNodes)
+    .filter((n) => !(n instanceof Element && n.matches('[data-slot="avatar"]')))
+    .map((n) => n.textContent)
+    .join("");
+
 let fake: FakeSocket;
 let restoreDom: () => void;
 
@@ -67,7 +74,7 @@ describe("멘션", () => {
     const ref: { current: { onKeyDown(e: KeyboardEvent): boolean } | null } = { current: null };
     render(<MentionList items={candidates()} command={command} ref={ref} />);
     const options = within(screen.getByRole("listbox", { name: "멘션 후보" })).getAllByRole("option");
-    expect(options.map((o) => o.textContent)).toEqual(["@dev개발봇AI", "@finFinanceAI꺼짐", "@owner주인"]);
+    expect(options.map(rowText)).toEqual(["개발봇@devAI", "Finance@finAI꺼짐", "주인@owner"]);
     expect(options[1]).not.toHaveAttribute("aria-disabled"); // 꺼져 있어도 고를 수 있다
     expect(options[1]).toHaveClass("opacity-50");
     expect(options[0]).toHaveAttribute("aria-selected", "true");
@@ -106,7 +113,7 @@ describe("멘션", () => {
     ];
     render(<MentionList items={items} command={vi.fn()} />);
     const options = screen.getAllByRole("option");
-    expect(options.map((o) => o.textContent)).toEqual(["@main-officeMain사무실AI", "@main-homeMain집AI"]);
+    expect(options.map(rowText)).toEqual(["Main@main-office사무실AI", "Main@main-home집AI"]);
     expect(within(options[1] as HTMLElement).getByText("집")).toHaveClass("text-xs");
   });
 
@@ -121,11 +128,7 @@ describe("멘션", () => {
     // 그 전에 후보를 확정하면 Tiptap 멘션이 부르는 collapseToEnd() 가 던진다(composerHarness 주석)
     await flushEditorFrames();
     const list = await screen.findByRole("listbox", { name: "멘션 후보" });
-    expect(
-      within(list)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["@dev개발봇AI"]);
+    expect(within(list).getAllByRole("option").map(rowText)).toEqual(["개발봇@devAI"]);
 
     fireEvent.keyDown(box, { key: "Enter" });
     expect(fake.sentOf("message.send")).toEqual([]);
@@ -262,20 +265,18 @@ it("그 세션에 초대한 에이전트는 「초대됨」 후보 — 같은 �
     });
     await flushEditorFrames();
     const list = await screen.findByRole("listbox", { name: "멘션 후보" });
-    const texts = within(list)
-      .getAllByRole("option")
-      .map((o) => o.textContent);
+    const texts = within(list).getAllByRole("option").map(rowText);
     await flushEditorFrames();
     cleanup();
     return texts;
   };
   expect(await optionsIn(CH)).toEqual([
-    "@dev개발봇AI",
-    "@finFinanceAI꺼짐",
-    "@guest손님AI초대됨",
-    "@owner주인",
+    "개발봇@devAI",
+    "Finance@finAI꺼짐",
+    "손님@guestAI초대됨",
+    "주인@owner",
   ]);
-  expect(await optionsIn(OTHER)).toEqual(["@dev개발봇AI", "@finFinanceAI꺼짐", "@owner주인"]);
+  expect(await optionsIn(OTHER)).toEqual(["개발봇@devAI", "Finance@finAI꺼짐", "주인@owner"]);
 });
 
 /** 문서 안 멘션 노드(순서대로) */
@@ -464,5 +465,184 @@ describe("insertMention — 바깥에서 작성기에 멘션 [UI 시안 02·03]"
     renderComposer();
     cleanup();
     expect(insertMention({ channelId: CH, conversationId: CH }, "dev")).toBe(false);
+  });
+});
+
+describe("@ 입력 목록 — 여럿 고르기", () => {
+  async function openAt(text = "@") {
+    const view = renderComposer();
+    act(() => {
+      view.editor.commands.focus();
+      view.editor.commands.insertContent(text);
+    });
+    await flushEditorFrames();
+    const list = await screen.findByRole("listbox", { name: "멘션 후보" });
+    return { ...view, list };
+  }
+  const option = (label: string) =>
+    screen.getAllByRole("option").find((o) => rowText(o).includes(`@${label}`)) as HTMLElement;
+  const closed = () => waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+
+  it("목록은 여럿 고르기 listbox — 줄마다 aria-checked, 처음엔 하나도 체크 안 됨", async () => {
+    const { list } = await openAt();
+    expect(list).toHaveAttribute("aria-multiselectable", "true");
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((o) => o.getAttribute("aria-checked")),
+    ).toEqual(["false", "false", "false"]);
+    expect(screen.queryByRole("button", { name: /명 넣기$/ })).toBeNull();
+  });
+
+  it("Tab 은 강조된 줄의 체크를 켜고 끈다 — 목록은 열린 채, 넣지 않는다", async () => {
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "Tab" });
+    await waitFor(() => expect(option("dev")).toHaveAttribute("aria-checked", "true"));
+    expect(screen.getByRole("listbox", { name: "멘션 후보" })).toBeInTheDocument();
+    expect(mentionsIn(editor.getJSON())).toEqual([]);
+    expect(screen.getByRole("button", { name: "1명 넣기" })).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: "Tab" });
+    await waitFor(() => expect(option("dev")).toHaveAttribute("aria-checked", "false"));
+    expect(screen.queryByRole("button", { name: /명 넣기$/ })).toBeNull();
+  });
+
+  it("Tab 둘(↓ 사이) → Enter — 체크한 둘이 `@쿼리` 자리에 목록 순서로, 칩마다 공백", async () => {
+    fake.onAck("message.send", confirmed);
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Tab" }); // fin
+    fireEvent.keyDown(box, { key: "ArrowUp" });
+    fireEvent.keyDown(box, { key: "Tab" }); // dev
+    await waitFor(() => expect(screen.getByRole("button", { name: "2명 넣기" })).toBeInTheDocument());
+    fireEvent.keyDown(box, { key: "Enter" });
+    await closed();
+    expect(fake.sentOf("message.send")).toEqual([]);
+    expect(editor.getText()).toBe("@dev @fin ");
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: "mention", attrs: { id: `a:${DEV.id}`, label: "dev", mentionSuggestionChar: "@" } },
+      { type: "text", text: " " },
+      { type: "mention", attrs: { id: `a:${FIN.id}`, label: "fin", mentionSuggestionChar: "@" } },
+      { type: "text", text: " " },
+    ]);
+  });
+
+  it("Enter 는 체크가 없으면 강조된 하나만", async () => {
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await closed();
+    expect(mentionsIn(editor.getJSON())).toEqual(["fin"]);
+    expect(editor.getText()).toBe("@fin ");
+  });
+
+  it("클릭은 체크를 켜고 끄고, 「N명 넣기」가 넣는다", async () => {
+    const user = userEvent.setup();
+    const { editor } = await openAt();
+    await user.click(option("owner"));
+    await user.click(option("dev"));
+    await user.click(option("owner"));
+    await user.click(option("owner"));
+    expect(option("dev")).toHaveAttribute("aria-checked", "true");
+    expect(mentionsIn(editor.getJSON())).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "2명 넣기" }));
+    await closed();
+    expect(mentionsIn(editor.getJSON())).toEqual(["dev", "owner"]);
+  });
+
+  it("검색어를 더 쳐서 줄이 좁혀져도 체크는 남고, N 은 체크 전체", async () => {
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "Tab" }); // dev
+    await waitFor(() => expect(option("dev")).toHaveAttribute("aria-checked", "true"));
+    act(() => void editor.commands.insertContent("f"));
+    await waitFor(() => expect(screen.getAllByRole("option").map(rowText)).toEqual(["Finance@finAI꺼짐"]));
+    expect(screen.getByRole("button", { name: "1명 넣기" })).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: "Tab" }); // fin
+    await waitFor(() => expect(screen.getByRole("button", { name: "2명 넣기" })).toBeInTheDocument());
+    // 맞는 줄이 없어도 체크가 있으면 목록(넣기 단추)은 남고 Enter 는 넣기
+    act(() => void editor.commands.insertContent("zz"));
+    await waitFor(() => expect(screen.queryAllByRole("option")).toEqual([]));
+    expect(screen.getByRole("button", { name: "2명 넣기" })).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: "Enter" });
+    await closed();
+    expect(fake.sentOf("message.send")).toEqual([]);
+    expect(editor.getText()).toBe("@dev @fin ");
+  });
+
+  it("이미 초안에 든 후보는 체크된 채 잠기고 「이미 넣음」 — Tab·클릭으로 바뀌지 않는다", async () => {
+    const user = userEvent.setup();
+    const view = renderComposer();
+    setDoc(view.editor, doc(p(mention(`a:${DEV.id}`, "dev"), t(" "))));
+    act(() => {
+      view.editor.commands.focus("end");
+      view.editor.commands.insertContent("@");
+    });
+    await flushEditorFrames();
+    await screen.findByRole("listbox", { name: "멘션 후보" });
+    expect(option("dev")).toHaveAttribute("aria-checked", "true");
+    expect(option("dev")).toHaveTextContent("이미 넣음");
+    fireEvent.keyDown(view.box, { key: "Tab" });
+    await user.click(option("dev"));
+    expect(option("dev")).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("button", { name: /명 넣기$/ })).toBeNull();
+  });
+
+  it("Esc 로 닫으면 체크를 버린다 — 다시 @ 를 치면 빈 체크", async () => {
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "Tab" });
+    await waitFor(() => expect(option("dev")).toHaveAttribute("aria-checked", "true"));
+    fireEvent.keyDown(box, { key: "Escape" });
+    await closed();
+    act(() => void editor.commands.insertContent(" @"));
+    await flushEditorFrames();
+    await screen.findByRole("listbox", { name: "멘션 후보" });
+    expect(option("dev")).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByRole("button", { name: /명 넣기$/ })).toBeNull();
+    expect(mentionsIn(editor.getJSON())).toEqual([]);
+  });
+});
+
+describe("후보 줄 — @ 입력 목록과 @ 단추 피커가 같은 줄", () => {
+  const LONG = {
+    ...DEV,
+    id: uid(9_201),
+    handle: "keyring-notes-market",
+    name: "keyring-notes-market 에이전트",
+  };
+  const expectOneLine = (row: HTMLElement) => {
+    expect(row.querySelector('[data-slot="avatar"]')).not.toBeNull();
+    const handle = within(row).getByText("@keyring-notes-market");
+    const name = within(row).getByText("keyring-notes-market 에이전트");
+    for (const el of [handle, name]) expect(el).toHaveClass("truncate", "whitespace-nowrap");
+    // 이름이 먼저 줄고 핸들은 최소 폭을 지킨다
+    expect(name).toHaveClass("min-w-0", "shrink-[4]");
+    expect(handle).toHaveClass("min-w-12");
+    expect(handle.parentElement).toHaveAttribute(
+      "title",
+      "keyring-notes-market 에이전트 · @keyring-notes-market",
+    );
+  };
+
+  it("두 목록 모두 아바타·이름·핸들 한 줄(줄바꿈 없이 말줄임, title 로 전체)", async () => {
+    const user = userEvent.setup();
+    const view = renderComposer();
+    await act(async () => {
+      view.qc.setQueryData(qk.agents, [DEV, FIN, LONG]);
+      view.qc.setQueryData(qk.members(CH), [memberOf(DEV.id), memberOf(FIN.id), memberOf(LONG.id)]);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    act(() => {
+      view.editor.commands.focus();
+      view.editor.commands.insertContent("@key");
+    });
+    await flushEditorFrames();
+    const list = await screen.findByRole("listbox", { name: "멘션 후보" });
+    expectOneLine(within(list).getByRole("option"));
+    fireEvent.keyDown(view.box, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "에이전트 부르기" }));
+    const dialog = await screen.findByRole("dialog", { name: "에이전트 부르기" });
+    expect(dialog).toHaveClass("w-80");
+    expectOneLine(within(dialog).getByRole("checkbox", { name: "@keyring-notes-market" }).closest("label")!);
   });
 });

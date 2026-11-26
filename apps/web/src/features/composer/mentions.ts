@@ -18,6 +18,8 @@ export type MentionCandidate = {
   gateway?: string;
   /** 이 세션에만 초대한 에이전트(세션 에이전트 초대 스펙 5.4) — 「초대됨」 */
   invited?: true;
+  /** 후보 줄의 아바타 사진 — 없으면 이니셜 */
+  avatarUrl?: string;
 };
 
 /** 후보 목록에 보이는 최대 수 */
@@ -50,6 +52,7 @@ export function mentionCandidates(
             aliases: m.aliases,
             enabled: a.enabled,
             ...(a.gateway ? { gateway: a.gateway.name } : {}),
+            ...(a.avatarUrl ? { avatarUrl: a.avatarUrl } : {}),
           },
         ]
       : [];
@@ -66,6 +69,7 @@ export function mentionCandidates(
                 kind: "user",
                 aliases: [],
                 enabled: true,
+                ...(p.avatarUrl ? { avatarUrl: p.avatarUrl } : {}),
               },
             ],
       )
@@ -78,6 +82,7 @@ export function mentionCandidates(
             kind: "user",
             aliases: [],
             enabled: true,
+            ...(me.user.avatarUrl ? { avatarUrl: me.user.avatarUrl } : {}),
           },
         ]
       : [];
@@ -94,6 +99,7 @@ export function mentionCandidates(
             aliases: [],
             enabled: a.enabled,
             ...(a.gateway ? { gateway: a.gateway.name } : {}),
+            ...(a.avatarUrl ? { avatarUrl: a.avatarUrl } : {}),
             invited: true,
           },
         ],

@@ -1,10 +1,10 @@
 import { AtSignIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
+import { CANDIDATE_ROW_CLASS, MentionCandidateRow } from "./MentionCandidateRow";
 import type { MentionCandidate } from "./mentions";
 
 export const PICKER_LABEL = "에이전트 부르기";
@@ -72,31 +72,26 @@ export function MentionPicker({
             <label
               key={c.id}
               className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
+                CANDIDATE_ROW_CLASS,
+                "hover:bg-accent",
                 has && "cursor-default opacity-60 hover:bg-transparent",
                 !c.enabled && "opacity-50",
               )}
             >
-              <input
-                type="checkbox"
-                className="size-4 shrink-0 accent-primary"
-                checked={has || picked.has(c.id)}
-                disabled={has}
-                aria-label={`@${c.label}${has ? " — 이미 넣음" : ""}`}
-                onChange={(e) => toggle(c.id, e.currentTarget.checked)}
+              <MentionCandidateRow
+                candidate={c}
+                locked={has}
+                check={
+                  <input
+                    type="checkbox"
+                    className="size-4 shrink-0 accent-primary"
+                    checked={has || picked.has(c.id)}
+                    disabled={has}
+                    aria-label={`@${c.label}${has ? " — 이미 넣음" : ""}`}
+                    onChange={(e) => toggle(c.id, e.currentTarget.checked)}
+                  />
+                }
               />
-              <span className="font-medium">@{c.label}</span>
-              <span className="min-w-0 truncate text-muted-foreground">{c.name}</span>
-              {c.gateway !== undefined && (
-                <span className="shrink-0 text-xs text-muted-foreground">{c.gateway}</span>
-              )}
-              {c.kind === "agent" && (
-                <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                  AI
-                </Badge>
-              )}
-              {c.invited && <span className="shrink-0 text-xs text-muted-foreground">초대됨</span>}
-              {!c.enabled && <span className="ml-auto shrink-0 text-xs">꺼짐</span>}
             </label>
           );
         })}
@@ -121,7 +116,7 @@ export function MentionPicker({
         side="top"
         align="start"
         aria-label={PICKER_LABEL}
-        className="flex w-72 max-w-[calc(100vw-2rem)] flex-col gap-2 p-2"
+        className="flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 p-2"
         onCloseAutoFocus={(e) => {
           const run = pending.current;
           pending.current = null;
