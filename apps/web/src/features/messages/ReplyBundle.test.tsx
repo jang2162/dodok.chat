@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { setChannelSeq } from "@/realtime/timelineCache";
-import { listKey, requestJump, useJumpStore } from "./jumpTarget";
+import { requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
-import { emptyTimeline, threadFromPage } from "./timeline";
+import { emptyTimeline } from "./timeline";
 import { AGENT, APPROVAL, approval, CH, msg, uid } from "../../../test/fixtures";
 import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
@@ -161,7 +161,7 @@ describe("ReplyBundle", () => {
   });
 });
 
-describe("ReplyBundle — 채널에도 보낸 답글의 묶음(답은 스레드에)", () => {
+describe("ReplyBundle — 스레드 답글의 묶음(부른 글 기준 설계 2026-11-26 덧붙임: 메인에서도 그 자리에서 펼침)", () => {
   const TROOT = msg(1, { bodyMd: "스레드 루트" });
   const ALSO = msg(5, { threadRootId: TROOT.id, alsoInChannel: true, bodyMd: "@dev @fin 봐줘" });
   const runOn = (runId: string, agentId: string, status: BundleRun["status"] = "streaming"): BundleRun => ({
@@ -178,57 +178,59 @@ describe("ReplyBundle — 채널에도 보낸 답글의 묶음(답은 스레드�
     threadRootId: TROOT.id,
     bodyMd: "dev 의 스레드 답\n둘째 줄",
   });
-  function drawThread(withThreadCache: boolean) {
-    const items = [TROOT, ALSO];
+  /** 메인이 받은 스레드 타임라인까지 합친 items 로 그린다 — `inThread` 면 스레드 패널의 묶음 */
+  function drawThread(inThread = false) {
+    const items = [TROOT, ALSO, devAnswer];
     const bundle = computeBundles(items, [runOn(RA, AGENT, "done"), runOn(RB, FIN)]).get(ALSO.id);
     if (!bundle) throw new Error("묶음이 없다");
     const qc = authorsClient([DEV, FIN_AGENT]);
-    if (withThreadCache)
-      qc.setQueryData(
-        qk.thread(ALSO.channelId, ALSO.conversationId, TROOT.id),
-        threadFromPage(undefined, TROOT, [ALSO, devAnswer], false),
-      );
     return renderWithClient(
-      <ReplyBundle bundle={bundle} messagesById={new Map(items.map((m) => [m.id, m]))} />,
+      <ReplyBundle bundle={bundle} messagesById={new Map(items.map((m) => [m.id, m]))} inThread={inThread} />,
       qc,
     );
   }
-  const laneLink = (handle: string) => screen.getByRole("link", { name: new RegExp(`^@${handle} `) });
 
-  beforeEach(() => useJumpStore.setState({ targets: {} }));
-
-  it("머리 「@dev·@fin 답 · 스레드에서 진행」", () => {
-    drawThread(false);
-    expect(screen.getByRole("group", { name: "@dev·@fin 답 · 스레드에서 진행" })).toBeInTheDocument();
-    expect(screen.getByText("@dev·@fin 답 · 스레드에서 진행")).toBeInTheDocument();
+  it("머리는 보통 묶음과 같이 「@dev·@fin 답」 — 「스레드에서 진행」은 없다", () => {
+    drawThread();
+    expect(screen.getByRole("group", { name: "@dev·@fin 답" })).toBeInTheDocument();
+    expect(screen.queryByText(/스레드에서 진행/)).toBeNull();
   });
 
-  it("줄 미리보기: 스레드 캐시에 그 런의 메시지가 있으면 첫 줄, 없으면 상태 문구만", () => {
-    const { unmount } = drawThread(true);
-    expect(laneLink("dev")).toHaveTextContent("dev 의 스레드 답");
-    expect(laneLink("dev")).not.toHaveTextContent("둘째 줄");
-    unmount();
-    drawThread(false);
-    expect(laneLink("dev")).not.toHaveTextContent("dev 의 스레드 답");
-    expect(laneLink("fin")).toHaveTextContent(/.+/);
-  });
-
-  it("줄을 누르면 펼치지 않고 그 스레드로 가 그 답으로 점프한다", async () => {
-    const { router } = drawThread(true);
-    const dev = laneLink("dev");
-    expect(dev).toHaveAttribute("href", `/c/${ALSO.channelId}/s/${ALSO.conversationId}/t/${TROOT.id}`);
-    expect(dev).not.toHaveAttribute("aria-expanded");
+  it("줄을 누르면 그 자리에서 스레드의 답을 펼친다 — 스레드로 옮기지 않는다", async () => {
+    const { router } = drawThread();
+    const before = router.state.location.pathname;
+    const dev = lane("dev");
+    expect(dev).toHaveAttribute("aria-expanded", "false");
+    expect(dev).toHaveTextContent("dev 의 스레드 답");
+    expect(screen.queryByText("둘째 줄")).toBeNull();
     await userEvent.click(dev);
-    expect(useJumpStore.getState().targets[listKey(ALSO.conversationId, TROOT.id)]).toEqual({
-      messageId: devAnswer.id,
-      seq: devAnswer.seq,
-    });
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/둘째 줄/)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(before);
+  });
+
+  it("메인 묶음 맨 아래 「스레드에서 보기」는 그 스레드로 — 패널의 묶음에는 없다", async () => {
+    const { router, unmount } = drawThread();
+    const link = screen.getByRole("link", { name: "스레드에서 보기" });
+    expect(link).toHaveAttribute("href", `/c/${ALSO.channelId}/s/${ALSO.conversationId}/t/${TROOT.id}`);
+    await userEvent.click(link);
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(
         `/c/${ALSO.channelId}/s/${ALSO.conversationId}/t/${TROOT.id}`,
       ),
     );
-    expect(screen.queryByText(/둘째 줄/)).toBeNull();
+    unmount();
+    drawThread(true);
+    expect(screen.queryByRole("link", { name: "스레드에서 보기" })).toBeNull();
+  });
+
+  it("펼침 상태는 화면마다 따로 — 패널에서 펼친 줄은 메인에서 접힌 채", async () => {
+    const { unmount } = drawThread(true);
+    await userEvent.click(lane("dev"));
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
+    unmount();
+    drawThread();
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
   });
 });
 

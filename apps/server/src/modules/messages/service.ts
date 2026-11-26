@@ -123,6 +123,38 @@ export function resolveAlsoInChannel(input: {
   return input.agentMentionCount >= ALSO_IN_CHANNEL_AUTO_AGENTS;
 }
 
+/**
+ * 스레드 안에서 서로 다른 에이전트 2명 이상을 실제로 부른 글을 채널 타임라인에도 올린다(부른 글 기준 설계 2026-11-26 「덧붙임 — 스레드 안의
+ * 다중 호출도 메인에」). 판정은 실제 런 — 그 글을 트리거로 한 런의 서로 다른 에이전트가 ALSO_IN_CHANNEL_AUTO_AGENTS 명 이상(진행 중·막혀
+ * 닫힌 런 포함 — 묶음 줄이 서는 런과 같다). 작성자는 사람·에이전트 모두. 사람이 작성기에서 「채널에도 보내기」를 끈 글은 그대로 둔다 —
+ * 끈 값은 따로 저장하지 않지만 서로 다른 에이전트 둘 이상을 멘션한 사람 답글이 0 이면 명시한 false 다(없으면 resolveAlsoInChannel 이 켰다).
+ * 켰으면 message.updated 로 알린다(웹이 세션 타임라인에 새로 넣는다). 대상이 아니거나 이미 켜졌으면 아무것도 하지 않고 undefined
+ */
+export function markMultiCallInChannel(db: DbOrTx, bus: ServerBus, messageId: string): Message | undefined {
+  const row = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!row || row.threadRootId === null || row.alsoInChannel === 1 || row.kind !== "normal") return undefined;
+  if (row.authorType !== "user" && row.authorType !== "agent") return undefined;
+  const message = rowToMessage(row);
+  if (message.authorType === "user" && new Set(message.mentions.agents).size >= ALSO_IN_CHANNEL_AUTO_AGENTS)
+    return undefined;
+  const called = db
+    .selectDistinct({ agentId: runs.agentId })
+    .from(runs)
+    .where(eq(runs.triggerMessageId, messageId))
+    .all();
+  if (called.length < ALSO_IN_CHANNEL_AUTO_AGENTS) return undefined;
+  const updated = db
+    .update(messages)
+    .set({ alsoInChannel: 1 })
+    .where(and(eq(messages.id, messageId), eq(messages.alsoInChannel, 0)))
+    .returning()
+    .get();
+  if (!updated) return undefined;
+  const result = rowToMessage(updated);
+  bus.emit("message.updated", { message: result });
+  return result;
+}
+
 export type CreateAgentMessageInput = {
   conversationId: string;
   agentId: string;
@@ -348,13 +380,11 @@ export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
 }
 
 /**
- * rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 보통 글(사람 또는 에이전트): 최상위 글 또는 채널에도 보낸 답글(웹 bundles.ts canRoot 와
- * 같은 조건). 스레드 안 사람 글로 시작한 런은 rootMessageId 가 그 글이다
+ * rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 보통 글(사람 또는 에이전트): 최상위 글과 스레드 답글 모두(스레드 패널 안에서도 묶는다 —
+ * 부른 글 기준 설계 2026-11-26 덧붙임). 웹 bundles.ts canRoot 의 패널 모드와 같은 조건
  */
 const canRootRuns = (m: Message): boolean =>
-  (m.authorType === "user" || m.authorType === "agent") &&
-  m.kind === "normal" &&
-  (m.threadRootId === undefined || m.alsoInChannel === true);
+  (m.authorType === "user" || m.authorType === "agent") && m.kind === "normal";
 
 /**
  * 글에 그 글이 부른 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계 「줄의 원천은

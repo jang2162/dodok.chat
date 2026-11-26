@@ -160,8 +160,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       updateThread(qc, channelId, conversationId, rootId, (prev) =>
         keeps(prev, m, updated) ? upsert(prev, m) : prev,
       );
-      // 채널에도 보낸 답글은 세션 타임라인에도 든다 — 그 수정(반응 등)도 두 캐시를 함께 바꾼다. 적재 범위 규칙은 루트와 같다
-      if (isChannelVisible(m)) patchTimeline(qc, channelId, conversationId, inRange(m, stale));
+      // 채널에도 보낸 답글은 세션 타임라인에도 든다 — 그 수정(반응 등)도 두 캐시를 함께 바꾼다. 서버가 뒤늦게 채널에도 올린 답글(스레드
+      // 안에서 둘 이상을 부른 글 — 부른 글 기준 설계 덧붙임)은 수정으로 와서 캐시에 없으므로 적재 범위 안이면 새로 넣는다
+      if (isChannelVisible(m)) patchTimeline(qc, channelId, conversationId, inLoaded(m, stale));
       else if (!stale) patchTimeline(qc, channelId, conversationId, (prev) => noteSeq(prev, m.seq));
       return;
     }
@@ -176,6 +177,18 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
    */
   function inRange(m: Message, stale: boolean): (prev: Timeline) => Timeline {
     return (prev) => (stale && !prev.items.some((x) => x.id === m.id) ? prev : upsert(prev, m));
+  }
+
+  /**
+   * 채널에도 보낸 답글을 세션 타임라인에 넣는 변경 — 수정이어도 가진 것이거나 적재 범위(가장 옛 항목 뒤, 더 옛것이 없으면 어디든) 안이면
+   * 넣는다. 떨어진 창의 끝보다 새것은 `upsert` 가 버린다
+   */
+  function inLoaded(m: Message, stale: boolean): (prev: Timeline) => Timeline {
+    return (prev) => {
+      const oldest = prev.items[0]?.seq;
+      const loaded = !prev.hasOlder || (oldest !== undefined && m.seq > oldest);
+      return !stale || loaded || prev.items.some((x) => x.id === m.id) ? upsert(prev, m) : prev;
+    };
   }
 
   /** 스레드 캐시에 넣을 답글인가 — 수정이면 가진 것이거나 적재 범위(가장 옛 답글) 안일 때만 */

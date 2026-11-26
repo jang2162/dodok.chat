@@ -1,18 +1,15 @@
 import type { Message } from "@dodok/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MessageSquareReplyIcon } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { runStatusLabel } from "@/features/activity/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
-import { threadQuery } from "@/features/threads/queries";
 import { useNoteThreadOpener, useThreadOpenSearch } from "@/features/threads/threadOpener";
 import { cn } from "@/lib/utils";
 import { IdentityAvatar } from "@/ui/identity-avatar";
 import { useBundleExpansion } from "./bundleExpansion";
-import { listKey, useJumpStore } from "./jumpTarget";
-import { type Bundle, type BundleLane, previewOf } from "./bundles";
+import { type Bundle, type BundleLane, laneKey, previewOf } from "./bundles";
 import { MessageItem } from "./MessageItem";
 import { SystemCard } from "./SystemCard";
 import { useAuthors } from "./useAuthors";
@@ -32,6 +29,8 @@ export type ReplyBundleProps = {
   onApproval?: (approvalId: string) => void;
   /** 결과로 가기가 도착한 메시지 — 묶음 안이면 그 메시지를 강조한다 */
   highlighted?: string;
+  /** 스레드 패널의 묶음 — 펼침 상태를 메인과 따로 두고(`laneKey`) 「스레드에서 보기」를 두지 않는다 */
+  inThread?: boolean;
 };
 
 /**
@@ -83,15 +82,12 @@ function groupName(handles: string[]): string {
   return `@${distinct[0]} 외 ${distinct.length - 1} 답`;
 }
 
-/** 채널에도 보낸 답글의 묶음 머리 — 답은 스레드에서 이어진다 */
-const IN_THREAD = "스레드에서 진행";
-
 /**
  * 여러 에이전트 답 묶음(답 묶음 설계) — 루트 글 아래 런마다 한 줄. 줄을 누르면 그 자리에서 그 답을 펼친다. 처음엔 접혀 있고, 누를 수
  * 있는 카드가 든 줄만 펼친 채(사람이 손으로 펼치거나 접은 것은 그대로). 도구 승인 카드는 목록 맨 아래 제자리 — 줄에는 「승인 대기」
  * 배지를 두고 누르면 그 카드로 간다. 그 체인의 relay_limit·relay_denied 는 묶음 맨 아래.
- * 루트가 채널에도 보낸 스레드 답글이면(`bundle.threadRootId`) 답은 그 스레드에 있다 — 머리에 「… 답 · 스레드에서 진행」, 줄은 그 자리에서
- * 펼치지 않고 누르면 그 스레드를 열어 그 답으로 간다(같은 답이 두 화면에 생기지 않게, 스레드 글 채널에도 보이기 설계).
+ * 루트가 스레드 답글이면(`bundle.threadRootId`) 답은 그 스레드에 있다 — 메인에서도 보통 묶음처럼 그 자리에서 펼치고(줄의 내용은 목록이 받은
+ * 그 스레드 타임라인), 묶음 맨 아래에 「스레드에서 보기」를 둔다(부른 글 기준 설계 2026-11-26 덧붙임 — 같은 답이 메인과 스레드 양쪽에 보인다).
  * 줄 안 글이 다시 여럿을 불렀으면(`bundle.parent` 가 있는 하위 묶음) 그 줄을 펼쳤을 때 그 글 바로 아래에 같은 컴포넌트로 작게 그린다
  * (부른 글 기준 설계 2026-11-26)
  */
@@ -101,31 +97,6 @@ export function ReplyBundle(props: ReplyBundleProps) {
   const handles = bundle.lanes.map((l) => author({ authorType: "agent", authorId: l.agentId }).handle ?? "?");
   const tail = bundle.tailSystemIds.flatMap((id) => messagesById.get(id) ?? []);
   const root = messagesById.get(bundle.rootId);
-  const threadRootId = bundle.threadRootId;
-  if (threadRootId !== undefined && root) {
-    const name = `${groupName(handles)} · ${IN_THREAD}`;
-    return (
-      <div
-        role="group"
-        aria-label={name}
-        data-slot="reply-bundle"
-        className="mx-4 my-1 ml-16 flex flex-col overflow-hidden rounded-md border bg-muted/20"
-      >
-        <div aria-hidden className="border-b px-2 py-1 text-xs text-muted-foreground">
-          {name}
-        </div>
-        {bundle.lanes.map((lane) => (
-          <ThreadLane
-            key={lane.runId}
-            lane={lane}
-            channelId={root.channelId}
-            conversationId={root.conversationId}
-            threadRootId={threadRootId}
-          />
-        ))}
-      </div>
-    );
-  }
   const nested = bundle.parent !== undefined;
   return (
     <div
@@ -154,6 +125,13 @@ export function ReplyBundle(props: ReplyBundleProps) {
           <SystemCard message={m} />
         </div>
       ))}
+      {!props.inThread && !nested && bundle.threadRootId !== undefined && root && (
+        <ThreadLink
+          channelId={root.channelId}
+          conversationId={root.conversationId}
+          threadRootId={bundle.threadRootId}
+        />
+      )}
     </div>
   );
 }
@@ -165,8 +143,11 @@ function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleP
   const from = lane.fromAgentId ? author({ authorType: "agent", authorId: lane.fromAgentId }) : undefined;
   const messages = lane.messageIds.flatMap((id) => messagesById.get(id) ?? []);
   const systems = lane.systemIds.flatMap((id) => messagesById.get(id) ?? []);
-  const manual = useBundleExpansion((s) => s.open[lane.runId]);
+  const key = laneKey(lane.runId, parent.inThread);
+  const manual = useBundleExpansion((s) => s.open[key]);
   const setOpen = useBundleExpansion((s) => s.set);
+  // 스레드 답글이 루트인 묶음의 줄 안 글은 스레드 글이다 — 메인에서 그려도 스레드 안처럼(칩·「스레드에서 답하기」 없음)
+  const threadMessages = parent.inThread === true || parent.bundle.threadRootId !== undefined;
   const under = lanesUnder(bundles, lane);
   const now = Date.now();
   const live = [
@@ -225,7 +206,7 @@ function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleP
           type="button"
           aria-expanded={open}
           aria-label={`@${handle} 답 · ${lane.status === "done" ? "완료" : runStatusLabel(lane.status)}${from ? ` · @${from.handle ?? "?"} 이 부름` : ""}${followText ? ` · ${followText}` : ""}`}
-          onClick={() => setOpen(lane.runId, !open)}
+          onClick={() => setOpen(key, !open)}
           className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <ChevronRightIcon
@@ -290,7 +271,7 @@ function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleP
                     m.id === highlighted && "bg-yellow-100/70 dark:bg-yellow-500/15",
                   )}
                 >
-                  <MessageItem message={m} head={false} activity={i === 0} />
+                  <MessageItem message={m} head={false} inThread={threadMessages} activity={i === 0} />
                 </div>
                 {sub && <ReplyBundle {...parent} bundle={sub} />}
               </Fragment>
@@ -308,64 +289,28 @@ function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleP
   );
 }
 
-/**
- * 답이 스레드에 있는 줄 — 누르면 그 스레드(마지막으로 쓴 보기)를 열고 그 런의 첫 답으로 간다. 미리보기는 그 스레드 캐시에 그 런의
- * 메시지가 있으면 첫 줄, 없으면 상태 문구만(스레드를 연 적이 없으면 캐시가 없다 — 여기서 받지 않는다)
- */
-function ThreadLane({
-  lane,
+/** 메인의 스레드 답글 묶음 맨 아래 — 그 스레드(마지막으로 쓴 보기)를 연다 */
+function ThreadLink({
   channelId,
   conversationId,
   threadRootId,
 }: {
-  lane: BundleLane;
   channelId: string;
   conversationId: string;
   threadRootId: string;
 }) {
-  const qc = useQueryClient();
-  const { author, mention } = useAuthors();
-  const me = author({ authorType: "agent", authorId: lane.agentId });
-  const thread = useQuery({
-    ...threadQuery(qc, channelId, conversationId, threadRootId),
-    enabled: false,
-  }).data;
-  const first = thread?.items.find((m) => m.authorType === "agent" && m.runId === lane.runId);
-  const preview = first ? previewOf(first.bodyMd, mention) : "";
   const noteOpener = useNoteThreadOpener(threadRootId);
   const search = useThreadOpenSearch();
-  const running = lane.status !== "done" && lane.status !== "error" && lane.status !== "aborted";
-  const handle = me.handle ?? "?";
   return (
     <Link
       to="/c/$channelId/s/$conversationId/t/$rootId"
       params={{ channelId, conversationId, rootId: threadRootId }}
       search={search}
-      data-run-id={lane.runId}
-      aria-label={`@${handle} 답 · ${lane.status === "done" ? "완료" : runStatusLabel(lane.status)} · 스레드에서 보기`}
-      onClick={(e) => {
-        noteOpener(e);
-        if (!first) return;
-        const key = listKey(conversationId, threadRootId);
-        useJumpStore.setState((s) => ({
-          targets: { ...s.targets, [key]: { messageId: first.id, seq: first.seq } },
-        }));
-      }}
-      className="flex min-w-0 items-center gap-2 border-b px-2 py-1.5 text-left text-sm last:border-b-0 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      onClick={noteOpener}
+      className="flex items-center justify-end gap-1 border-t px-2 py-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
     >
-      <MessageSquareReplyIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-      <IdentityAvatar
-        kind="agent"
-        id={lane.agentId}
-        name={me.name}
-        handle={me.handle}
-        avatarUrl={me.avatarUrl}
-        size={24}
-        className="size-5 shrink-0"
-      />
-      <span className="shrink-0 font-medium">@{handle}</span>
-      <span className="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
-      <LaneStatus status={lane.status} running={running} />
+      <MessageSquareReplyIcon aria-hidden className="size-3.5" />
+      스레드에서 보기
     </Link>
   );
 }

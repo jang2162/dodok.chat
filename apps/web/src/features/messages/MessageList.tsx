@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryObserverResult, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
@@ -20,11 +20,13 @@ import { useChannelArchived } from "@/features/channels/archived";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
 import { useReadAtEnd } from "@/features/reads/readSender";
 import { useUnread } from "@/features/reads/useUnread";
-import { useRunStore } from "@/features/runs/runStore";
+import { planBubbles } from "@/features/runs/bubblePhase";
+import { type RunRoot, selectChannelRuns, useRunStore } from "@/features/runs/runStore";
 import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
+import { threadQuery } from "@/features/threads/queries";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { type Bundle, type BundleRun, bundleIndex, bundlesUnder, computeBundles } from "./bundles";
+import { type Bundle, type BundleRun, bundleIndex, bundlesUnder, computeBundles, laneKey } from "./bundles";
 import { useBundleExpansion } from "./bundleExpansion";
 import { groupRows, type Row } from "./groupRows";
 import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
@@ -55,6 +57,14 @@ const UNREAD_CONTEXT_PX = 128;
 const AWAIT_UNREAD_MAX_MS = 5_000;
 const NO_RUNS: readonly string[] = [];
 const NO_BUNDLES: ReadonlyMap<string, Bundle> = new Map();
+const NO_ITEMS: readonly Message[] = [];
+const NO_IDS: readonly string[] = [];
+/** 메인이 받은 스레드 타임라인들의 메시지를 하나로 — 모듈 함수라 결과가 같으면 같은 배열(useQueries combine) */
+const threadItemsOf = (results: QueryObserverResult<Timeline>[]): readonly Message[] =>
+  results.flatMap((r) => r.data?.items ?? NO_ITEMS);
+/** 그 스레드 타임라인들의 에이전트 메시지가 만든 runId — 메인 묶음 줄 안 스트리밍 버블을 그 메시지가 오면 거둔다 */
+const messageRunIdsOf = (items: readonly Message[]): Set<string> =>
+  new Set(items.flatMap((m) => (m.authorType === "agent" && m.runId ? [m.runId] : [])));
 const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
 export type MessageListProps = {
@@ -133,10 +143,10 @@ function ChannelMessages({
   );
   const me = useMe().data?.user.id;
   // 답 묶음(설계 「정한 것」). 런의 루트는 저장소의 `roots`(run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운
-  // 런도 남는다)와 메시지의 runRoot 로 안다. 스레드 런은 그 글이 세션 타임라인에 있는 채널에도 보낸 답글일 때만(스레드 글 채널에도
-  // 보이기 설계). 스레드 패널은 루트 글의 묶음(과 그 하위 묶음)만 루트 바로 아래에 그린다 — 줄의 메시지는 세션 타임라인 캐시의 것을
-  // 읽기만 하고(새로 받지 않는다) 스레드 타임라인에 섞지 않는다. 패널 안 스레드 답글은 묶지 않는다(부른 글 기준 설계 2026-11-26).
-  // 캐시가 없으면(스레드만 주소로 열었다) 루트 글의 rootRuns 로 줄만 선다
+  // 런도 남는다)와 메시지의 runRoot 로 안다. 스레드 안에서 여럿을 부른 글(채널에도 보낸 답글)은 메인에서도 그 자리에서 펼친다 — 메인은
+  // 그 스레드 타임라인을 받아 줄의 내용으로 쓴다(부른 글 기준 설계 2026-11-26 덧붙임). 스레드 패널은 루트 글의 묶음(세션 타임라인 쪽 답 —
+  // 그 캐시를 읽기만 한다)과 스레드 답글의 묶음(`threadReplies`)을 그린다. 펼침 상태는 화면마다 따로(`laneKey`)
+  const inThreadList = threadRootId !== undefined;
   const runRoots = useRunStore((s) => s.roots);
   const timelineItems = timeline?.items;
   const qc = useQueryClient();
@@ -149,34 +159,101 @@ function ChannelMessages({
     () => new Set((sessionItems ?? []).flatMap((m) => (m.alsoInChannel ? [m.id] : []))),
     [sessionItems],
   );
-  const bundleRuns = useMemo(
-    (): BundleRun[] =>
-      Object.values(runRoots).filter(
+  const conversationRuns = useMemo(
+    (): RunRoot[] =>
+      Object.values(runRoots).filter((r) => r.channelId === channelId && r.conversationId === conversationId),
+    [runRoots, channelId, conversationId],
+  );
+  /** 세션 런 + 채널에도 보낸 답글이 부른 스레드 런 — 메인의 첫 판정(어느 스레드를 받을지)과 패널의 루트 글 묶음이 쓴다 */
+  const sessionRuns = useMemo(
+    () =>
+      conversationRuns.filter(
         (r) =>
-          r.channelId === channelId &&
-          r.conversationId === conversationId &&
-          (r.threadRootId === undefined || alsoIds.has(r.rootMessageId)),
+          r.threadRootId === undefined ||
+          alsoIds.has(r.rootMessageId) ||
+          (r.triggerMessageId !== undefined && alsoIds.has(r.triggerMessageId)),
       ),
-    [runRoots, channelId, conversationId, alsoIds],
+    [conversationRuns, alsoIds],
   );
-  const threadRoot =
-    threadRootId === undefined ? undefined : timelineItems?.find((m) => m.id === threadRootId);
+  // 메인 — 채널에도 보낸 답글의 묶음이 있는 스레드들을 받는다(그 줄의 답은 그 스레드에 있다)
+  const mainThreadKey = useMemo(() => {
+    if (inThreadList || !timelineItems) return "";
+    const first = computeBundles(timelineItems, sessionRuns);
+    return [...new Set([...first.values()].flatMap((b) => (b.threadRootId ? [b.threadRootId] : [])))]
+      .sort()
+      .join(",");
+  }, [inThreadList, timelineItems, sessionRuns]);
+  const mainThreadIds = useMemo(
+    () => (mainThreadKey === "" ? NO_IDS : mainThreadKey.split(",")),
+    [mainThreadKey],
+  );
+  const mainThreadItems = useQueries({
+    queries: mainThreadIds.map((id) => threadQuery(qc, channelId, conversationId, id)),
+    combine: threadItemsOf,
+  });
+  const bundleRuns = useMemo((): BundleRun[] => {
+    const threads = new Set(inThreadList ? [threadRootId] : mainThreadIds);
+    return conversationRuns.filter(
+      (r) =>
+        r.threadRootId === undefined ||
+        threads.has(r.threadRootId) ||
+        alsoIds.has(r.rootMessageId) ||
+        (r.triggerMessageId !== undefined && alsoIds.has(r.triggerMessageId)),
+    );
+  }, [conversationRuns, inThreadList, threadRootId, mainThreadIds, alsoIds]);
   const bundleItems = useMemo((): readonly Message[] | undefined => {
-    if (threadRootId === undefined) return timelineItems;
-    if (!threadRoot) return undefined;
-    // 루트는 스레드 쪽 것(새로 받은 rootRuns)이 이긴다
-    return [threadRoot, ...(sessionItems ?? []).filter((m) => m.id !== threadRoot.id)];
-  }, [threadRootId, timelineItems, threadRoot, sessionItems]);
+    if (!timelineItems) return undefined;
+    // 메인은 세션 글이, 패널은 스레드 쪽 글(새로 받은 rootRuns)이 이긴다
+    const extra = inThreadList ? (sessionItems ?? NO_ITEMS) : mainThreadItems;
+    if (extra.length === 0) return timelineItems;
+    const own = new Set(timelineItems.map((m) => m.id));
+    return [...timelineItems, ...extra.filter((m) => !own.has(m.id))];
+  }, [inThreadList, timelineItems, sessionItems, mainThreadItems]);
   const bundles = useMemo(() => {
-    if (!bundleItems) return NO_BUNDLES;
-    const all = computeBundles(bundleItems, bundleRuns);
-    return threadRootId === undefined ? all : bundlesUnder(all, threadRootId);
-  }, [bundleItems, bundleRuns, threadRootId]);
+    if (!bundleItems || !timelineItems) return NO_BUNDLES;
+    if (!inThreadList) {
+      // 받은 스레드 글은 줄의 내용으로만 — 바깥 루트가 메인 창에 없는 묶음은 뺀다(루트가 불러온 범위 밖이면 묶지 않는다). 바깥이 빠진
+      // 하위 묶음은 메인 창의 글이 루트라 맨 바깥 묶음으로 선다
+      const kept = bundlesUnder(
+        computeBundles(bundleItems, bundleRuns),
+        new Set(timelineItems.map((m) => m.id)),
+      );
+      for (const [id, b] of kept)
+        if (b.parent && !kept.has(b.parent.rootId)) {
+          const { parent: _, ...top } = b;
+          kept.set(id, top);
+        }
+      return kept;
+    }
+    if (!timelineItems.some((m) => m.id === threadRootId)) return NO_BUNDLES;
+    const all = computeBundles(bundleItems, bundleRuns, { threadReplies: true });
+    return bundlesUnder(all, new Set(timelineItems.map((m) => m.id)));
+  }, [bundleItems, bundleRuns, inThreadList, threadRootId, timelineItems]);
   const messagesById = useMemo(
-    () => new Map([...(sessionItems ?? []), ...(timelineItems ?? [])].map((m) => [m.id, m])),
-    [sessionItems, timelineItems],
+    () =>
+      new Map([...(sessionItems ?? []), ...mainThreadItems, ...(timelineItems ?? [])].map((m) => [m.id, m])),
+    [sessionItems, mainThreadItems, timelineItems],
   );
-  const bubbleSet = useMemo(() => new Set(bubbleRunIds), [bubbleRunIds]);
+  // 메인 묶음 줄 안 스레드 런의 스트리밍 버블 — 목록의 버블(`bubbleRunIds`)은 세션 런만이라 받은 스레드의 런은 여기서 본다. 줄 밖 행으로는
+  // 세우지 않는다(groupRows 에 넘기지 않는다). 숨김·정리는 그 스레드를 연 패널(`useChannelBubbles`)이 맡는다
+  const threadRunMessages = useMemo(() => messageRunIdsOf(mainThreadItems), [mainThreadItems]);
+  const threadBubbleIds = useRunStore(
+    useShallow((s) => {
+      if (mainThreadIds.length === 0) return NO_RUNS;
+      const threads = new Set(mainThreadIds);
+      const views = selectChannelRuns(channelId)(s).filter(
+        (v) =>
+          v.state.conversationId === conversationId &&
+          v.threadRootId !== undefined &&
+          threads.has(v.threadRootId),
+      );
+      return planBubbles(views, threadRunMessages, Date.now()).visible;
+    }),
+  );
+  const bubbleSet = useMemo(
+    () => new Set([...bubbleRunIds, ...threadBubbleIds]),
+    [bubbleRunIds, threadBubbleIds],
+  );
   const bundled = useMemo(() => bundleIndex(bundles), [bundles]);
   /**
    * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
@@ -321,8 +398,9 @@ function ChannelMessages({
       bubbles,
       onApproval: toApproval,
       highlighted,
+      inThread: inThreadList,
     }),
-    [bundles, messagesById, bubbleSet, bubbles, toApproval, highlighted],
+    [bundles, messagesById, bubbleSet, bubbles, toApproval, highlighted, inThreadList],
   );
   /** 그 행이 지금 뷰포트에 걸쳐 있는가 — 잰 자리(추정 포함)와 스크롤 위치로 본다 */
   const rowInView = useCallback(
@@ -371,7 +449,7 @@ function ChannelMessages({
   const toArrival = () => {
     if (!arrival) return;
     setArrival(undefined);
-    useBundleExpansion.getState().set(arrival.runId, true);
+    useBundleExpansion.getState().set(laneKey(arrival.runId, inThreadList), true);
     const index = rowsRef.current.findIndex((r) => r.key === `bundle:${arrival.rootId}`);
     if (index >= 0) arrive(index);
   };
@@ -884,6 +962,8 @@ type BundleView = {
   bubbles: ((runId: string) => ReactNode) | undefined;
   onApproval: (approvalId: string) => void;
   highlighted?: string;
+  /** 스레드 패널의 묶음인가 — 펼침 상태를 메인과 따로 두고(`laneKey`), 「스레드에서 보기」를 두지 않는다 */
+  inThread: boolean;
 };
 
 type RowProps = {

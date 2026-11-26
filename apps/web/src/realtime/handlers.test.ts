@@ -359,6 +359,17 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     expect(getThread(queryClient, CH, CH, ROOT.id)?.items[1]?.reactions).toEqual(reactions);
   });
 
+  it("뒤늦게 채널에도 올린 답글(message.updated, 지난 seq)은 세션 타임라인 적재 범위 안이면 새로 넣는다 — 범위 밖(더 옛것)은 넣지 않는다", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [msg(5), msg(9)]);
+    updateTimeline(queryClient, CH, CH, (x) => ({ ...x, hasOlder: true }));
+    setChannelSeq(queryClient, CH, 12);
+    fake.serverEmit("message.updated", { message: reply(7, { alsoInChannel: true }) });
+    fake.serverEmit("message.updated", { message: reply(3, { alsoInChannel: true }) });
+    expect(seqs(queryClient)).toEqual([5, 7, 9]);
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.alsoInChannel).toBe(true);
+  });
+
   it("답글 뒤의 루트는 빈틈이 아니다 — 루트만 든 타임라인에서 거짓 빈틈을 내지 않는다", () => {
     const { fake, queryClient, subscriptions } = setup();
     const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();

@@ -27,8 +27,8 @@ export type BundleLane = {
 
 /**
  * 루트 글 하나의 묶음 — 줄은 런 id(uuid v7 = 생성) 순. `tailSystemIds` 는 루트 글이 막힌 relay_limit·relay_denied(묶음 맨 아래).
- * `threadRootId` 는 루트 글이 채널에도 보낸 스레드 답글일 때 그 스레드 — 답은 스레드에 있어 세션 타임라인에 없다(줄은 런으로 선다).
- * `parent` 는 하위 묶음일 때 그 루트 글이 든 바깥 묶음·줄
+ * `threadRootId` 는 루트 글이 스레드 답글일 때 그 스레드 — 답은 스레드에 있다(메인은 그 스레드 타임라인을 받아 줄의 내용으로 쓴다,
+ * 부른 글 기준 설계 2026-11-26 덧붙임). `parent` 는 하위 묶음일 때 그 루트 글이 든 바깥 묶음·줄
  */
 export type Bundle = {
   rootId: string;
@@ -50,11 +50,25 @@ export type BundleRun = {
   status: RunState["status"];
 };
 
-/** 묶음 루트가 될 수 있는 글 — 사람·에이전트의 최상위 보통 글 또는 채널에도 보낸 답글(서버 canRootRuns 와 같은 조건) */
-const canRoot = (m: Message): boolean =>
-  (m.authorType === "user" || m.authorType === "agent") &&
-  m.kind === "normal" &&
-  (m.threadRootId === undefined || m.alsoInChannel === true);
+/**
+ * 묶음 루트가 될 수 있는 글 — 사람·에이전트의 보통 글. 메인은 최상위 글 또는 채널에도 보낸 답글만(답글이 메인에 보여야 그 아래에 단다),
+ * 스레드 패널(`threadReplies`)은 스레드 답글도(부른 글 기준 설계 2026-11-26 덧붙임 — 서버 canRootRuns 와 같은 조건)
+ */
+const canRootIn =
+  (threadReplies: boolean) =>
+  (m: Message): boolean =>
+    (m.authorType === "user" || m.authorType === "agent") &&
+    m.kind === "normal" &&
+    (threadReplies || m.threadRootId === undefined || m.alsoInChannel === true);
+
+/** `computeBundles` 의 자리 — `threadReplies` 면 스레드 패널(스레드 답글도 묶음 루트가 된다) */
+export type BundleOptions = { threadReplies?: boolean };
+
+/**
+ * 줄의 펼침 상태 키(`useBundleExpansion`) — 같은 런의 줄이 메인과 스레드 패널 양쪽에 서므로 화면마다 따로 둔다(부른 글 기준 설계 덧붙임).
+ * 메인은 런 id 그대로, 패널은 `t:` 를 붙인다
+ */
+export const laneKey = (runId: string, inThread = false): string => (inThread ? `t:${runId}` : runId);
 
 /** 앵커 사슬을 위로 따라갈 때의 깊이 상한 — 깨진 데이터(순환)에서도 끝나게 */
 const MAX_DEPTH = 32;
@@ -77,7 +91,12 @@ type Draft = {
  * 부른 런은 앵커 글의 자리를 따른다 — 앵커가 메인이면 메인, 어떤 줄 안이면 그 줄 안. 줄 안 글이 묶음 루트면 하위 묶음(`parent`).
  * 같은 런이 저장소와 메시지 양쪽에 있으면 저장소 상태가 이긴다
  */
-export function computeBundles(items: readonly Message[], runs: readonly BundleRun[]): Map<string, Bundle> {
+export function computeBundles(
+  items: readonly Message[],
+  runs: readonly BundleRun[],
+  opts: BundleOptions = {},
+): Map<string, Bundle> {
+  const canRoot = canRootIn(opts.threadReplies === true);
   const byId = new Map(items.map((m) => [m.id, m]));
   const drafts = new Map<string, Draft>();
   const draftOf = (runId: string, agentId: string, anchorId: string, triggerMessageId?: string): Draft => {
@@ -266,14 +285,19 @@ export function bundleIndex(bundles: ReadonlyMap<string, Bundle>): {
   return { byMessage, byRun };
 }
 
-/** 그 글의 묶음과 그 아래 하위 묶음들만 — 스레드 패널이 루트 글 하나의 묶음을 그린다. 그 글이 묶음 루트가 아니면 빈 맵 */
-export function bundlesUnder(bundles: ReadonlyMap<string, Bundle>, rootId: string): Map<string, Bundle> {
+/**
+ * 그 글(들)의 묶음과 그 아래 하위 묶음들만 — 스레드 패널이 루트 글과 스레드 답글의 묶음을 그린다. 어느 글도 묶음 루트가 아니면 빈 맵
+ */
+export function bundlesUnder(
+  bundles: ReadonlyMap<string, Bundle>,
+  rootIds: string | ReadonlySet<string>,
+): Map<string, Bundle> {
+  const ids = typeof rootIds === "string" ? new Set([rootIds]) : rootIds;
   const out = new Map<string, Bundle>();
-  if (!bundles.has(rootId)) return out;
   for (const b of bundles.values()) {
     let cur: Bundle | undefined = b;
     for (let i = 0; i <= MAX_DEPTH && cur; i++) {
-      if (cur.rootId === rootId) {
+      if (ids.has(cur.rootId)) {
         out.set(b.rootId, b);
         break;
       }

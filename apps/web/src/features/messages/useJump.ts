@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getThread, getTimeline } from "@/realtime/timelineCache";
 import { useBundleExpansion } from "./bundleExpansion";
-import { type Bundle, bundlePath, laneOfMessage } from "./bundles";
+import { type Bundle, bundlePath, laneKey, laneOfMessage } from "./bundles";
 import type { Row } from "./groupRows";
 import { jumpToSeq } from "./jump";
 import { clearJump, HIGHLIGHT_MS, type JumpTarget, listKey, useJumpStore } from "./jumpTarget";
@@ -31,8 +31,8 @@ export function rowHolds(row: Row, messageId: string, bundled?: ReadonlyMap<stri
  * (처음 구독·오프라인 사본 복원 뒤)가 최신 페이지로 덮는다.
  * `pending` 이면 목표가 남아 있다 — 목록은 첫 붙임(맨 아래로)을 하지 않는다. 목표가 초점을 바라면(`JumpTarget.focus`) 도착한 뒤
  * `focus` 에 그 메시지 id 를 내놓는다 — 목록이 그 행으로 초점을 옮기고 `focused()` 로 거둔다.
- * 목표가 답 묶음 안이면 그 묶음 행으로 가고 그 줄을 펼친다(`useBundleExpansion`) — 하위 묶음 안이면 바깥 줄부터 그 줄까지 차례로
- * (`bundlePath`). 강조는 묶음 안의 그 메시지가 맡는다
+ * 목표가 답 묶음 안이면 그 묶음 행으로 가고 그 줄을 펼친다(`useBundleExpansion`, 이 목록의 화면 키 `laneKey`) — 하위 묶음 안이면
+ * 바깥 줄부터 그 줄까지 차례로(`bundlePath`). 강조는 묶음 안의 그 메시지가 맡는다
  */
 const NO_BUNDLES: ReadonlyMap<string, Bundle> = new Map();
 
@@ -65,7 +65,10 @@ export function useJump(
         const path = bundlePath(bundles, target.messageId);
         const runIds =
           path.length > 0 ? path.map((p) => p.runId) : [laneOfMessage(row.bundle, target.messageId)];
-        for (const runId of runIds) if (runId !== undefined) useBundleExpansion.getState().set(runId, true);
+        // 메인에서 온 이동이면 메인 묶음을, 스레드 패널이면 패널 묶음을 펼친다 — 펼침 상태가 화면마다 따로다
+        for (const runId of runIds)
+          if (runId !== undefined)
+            useBundleExpansion.getState().set(laneKey(runId, threadRootId !== undefined), true);
       }
       arrive(index);
       setHighlighted(target.messageId);
