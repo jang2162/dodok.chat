@@ -261,6 +261,23 @@ export function bundleIndex(bundles: ReadonlyMap<string, Bundle>): {
   return { byMessage, byRun };
 }
 
+/** 그 글의 묶음과 그 아래 하위 묶음들만 — 스레드 패널이 루트 글 하나의 묶음을 그린다. 그 글이 묶음 루트가 아니면 빈 맵 */
+export function bundlesUnder(bundles: ReadonlyMap<string, Bundle>, rootId: string): Map<string, Bundle> {
+  const out = new Map<string, Bundle>();
+  if (!bundles.has(rootId)) return out;
+  for (const b of bundles.values()) {
+    let cur: Bundle | undefined = b;
+    for (let i = 0; i <= MAX_DEPTH && cur; i++) {
+      if (cur.rootId === rootId) {
+        out.set(b.rootId, b);
+        break;
+      }
+      cur = cur.parent ? bundles.get(cur.parent.rootId) : undefined;
+    }
+  }
+  return out;
+}
+
 /**
  * 메시지 id → 바깥부터 그 메시지가 든 줄까지의 자리(펼칠 차례). 묶음에 없으면 빈 배열. 꼬리 시스템 글은 줄이 없어 그 묶음에 이르는
  * 바깥 경로까지만(꼬리 판정은 쓰는 쪽이 tailSystemIds 로)
