@@ -296,6 +296,65 @@ describe("ReplyBundle — 줄 안 하위 묶음·따라온 런(부른 글 기준
     await userEvent.click(lane("fin"));
     expect(screen.getAllByText(`버블 ${RC}`)).toHaveLength(1);
   });
+
+  it("접힌 줄 안 따라온 런이 답하는 중이면 줄 머리에 「@c 응답 중」", async () => {
+    drawAll(
+      [root, a, b],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "streaming" }],
+    );
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
+    expect(lane("dev")).toHaveTextContent("@c 응답 중");
+    expect(lane("dev")).toHaveAccessibleName(/@c 응답 중$/);
+    // 펼치면 버블이 그 줄 안에 있으므로 머리에서 뺀다
+    await userEvent.click(lane("dev"));
+    expect(lane("dev")).not.toHaveTextContent("@c 응답 중");
+  });
+
+  it("접힌 줄 안 따라온 런이 실패하면 줄 머리에 「@c 실패」", () => {
+    drawAll(
+      [root, a, b],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "error" }],
+    );
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
+    expect(lane("dev")).toHaveTextContent("@c 실패");
+  });
+
+  it("하위 묶음 안 누를 수 있는 카드가 있으면 바깥 줄도 펼친 채", () => {
+    const card = reply(4, C, RC, {
+      bodyMd: "c 의 카드",
+      components: CARD,
+      componentState: { expiresAt: future, consumed: [] },
+      runRoot: { runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id },
+    });
+    drawAll([root, a, b, card, called(5, D, RD, "d 의 답")]);
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
+    expect(lane("c")).toHaveAttribute("aria-expanded", "true");
+    expect(lane("fin")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("하위 묶음 안 런이 승인 대기면 바깥 줄에 「승인 대기」", async () => {
+    useApprovalStore.getState().apply(approval({ runId: RC, agentId: C }));
+    const onApproval = vi.fn();
+    const bundles = computeBundles(
+      [root, a, b, called(5, D, RD, "d 의 답")],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "awaiting_approval" }],
+    );
+    const items = [root, a, b, called(5, D, RD, "d 의 답")];
+    renderWithClient(
+      <ReplyBundle
+        bundle={bundles.get(R)!}
+        bundles={bundles}
+        messagesById={new Map(items.map((m) => [m.id, m]))}
+        onApproval={onApproval}
+      />,
+      authorsClient([DEV, FIN_AGENT, C_AGENT, D_AGENT]),
+    );
+    // 승인 배지도 「@dev …」라 줄 단추는 「@dev 답」으로 맞춘다
+    expect(screen.getByRole("button", { name: /^@dev 답/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("button", { name: /승인 카드로$/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "@dev 승인 대기 — 승인 카드로" }));
+    expect(onApproval).toHaveBeenCalledWith(APPROVAL);
+  });
 });
 
 describe("ReplyBundle — 하위 묶음 안 메시지로 결과로 가기", () => {

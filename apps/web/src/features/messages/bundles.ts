@@ -18,6 +18,8 @@ export type BundleLane = {
   systemIds: string[];
   /** 이 줄 안 글이 1명만 불러 따라온 런(런 id 순) — 그 줄의 버블·「결과로 가기」가 쓴다 */
   followRunIds: string[];
+  /** 따라온 런의 에이전트·상태(`followRunIds` 와 같은 순) — 접힌 줄 머리가 진행 중·실패를 보인다 */
+  followRuns: { runId: string; agentId: string; status: RunState["status"] }[];
   /** 저장소 → 글의 rootRuns → 메시지로 짐작(에이전트 글 있음 → done, run_error 만 → error) 순 */
   status: RunState["status"];
   firstSeq?: number;
@@ -164,6 +166,7 @@ export function computeBundles(items: readonly Message[], runs: readonly BundleR
 
   const bundles = new Map<string, Bundle>();
   if (roots.size === 0) return bundles;
+  const statusOf = (d: Draft): RunState["status"] => d.status ?? (d.messages.length > 0 ? "done" : "error");
   type LaneDraft = { lane: BundleLane; messages: Message[]; systems: Message[] };
   const lanesByRun = new Map<string, LaneDraft>();
   for (const rootId of roots) {
@@ -176,7 +179,8 @@ export function computeBundles(items: readonly Message[], runs: readonly BundleR
         messageIds: [],
         systemIds: [],
         followRunIds: [],
-        status: d.status ?? (d.messages.length > 0 ? "done" : "error"),
+        followRuns: [],
+        status: statusOf(d),
       };
       if (trigger?.authorType === "agent" && trigger.authorId !== undefined)
         lane.fromAgentId = trigger.authorId;
@@ -198,6 +202,7 @@ export function computeBundles(items: readonly Message[], runs: readonly BundleR
     const target = p && lanesByRun.get(p.runId);
     if (!target) continue;
     target.lane.followRunIds.push(d.runId);
+    target.lane.followRuns.push({ runId: d.runId, agentId: d.agentId, status: statusOf(d) });
     target.messages.push(...d.messages);
     target.systems.push(...d.systems);
   }
