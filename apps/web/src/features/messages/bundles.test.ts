@@ -1,7 +1,7 @@
 import type { Message } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { AGENT, msg, uid } from "../../../test/fixtures";
-import { type BundleRun, bundleIndex, bundlePath, computeBundles } from "./bundles";
+import { type BundleRun, bundleIndex, bundlePath, bundlesUnder, computeBundles } from "./bundles";
 
 const FIN = uid(12);
 const [RA, RB, RA2] = [uid(301), uid(302), uid(303)];
@@ -182,6 +182,40 @@ describe("computeBundles — 채널에도 보낸 답글(스레드 글 채널에�
     };
     const b = computeBundles([threadRoot, withRuns], []).get(also.id);
     expect(b?.lanes.map((l) => l.status)).toEqual(["done", "error"]);
+  });
+
+  it("스레드 패널(threadReplies)에서는 보통 스레드 답글도 루트 — 답이 그 답글 아래 줄에 든다(부른 글 기준 설계 덧붙임)", () => {
+    const a = reply(7, AGENT, RA, {
+      threadRootId: threadRoot.id,
+      runRoot: { runId: RA, agentId: AGENT, rootMessageId: plain.id, triggerMessageId: plain.id },
+    });
+    const b = reply(8, FIN, RB, {
+      threadRootId: threadRoot.id,
+      runRoot: { runId: RB, agentId: FIN, rootMessageId: plain.id, triggerMessageId: plain.id },
+    });
+    const bundles = computeBundles([threadRoot, plain, a, b], [], { threadReplies: true });
+    expect([...bundles.keys()]).toEqual([plain.id]);
+    expect(bundles.get(plain.id)?.lanes.map((l) => l.messageIds)).toEqual([[a.id], [b.id]]);
+    expect(bundles.get(plain.id)?.threadRootId).toBe(threadRoot.id);
+    // 메인(옵션 없음)에서는 그대로 묶지 않는다
+    expect(computeBundles([threadRoot, plain, a, b], []).size).toBe(0);
+  });
+
+  it("bundlesUnder 는 여러 루트를 받아 그 묶음과 하위 묶음만 — 다른 최상위 묶음은 뺀다", () => {
+    const other = msg(20);
+    const bundles = computeBundles(
+      [threadRoot, plain, other],
+      [
+        runOn(plain.id, RA, AGENT),
+        runOn(plain.id, RB, FIN),
+        runOn(other.id, uid(311), AGENT),
+        runOn(other.id, uid(312), FIN),
+      ],
+      { threadReplies: true },
+    );
+    expect([...bundles.keys()].sort()).toEqual([plain.id, other.id].sort());
+    expect([...bundlesUnder(bundles, new Set([threadRoot.id, plain.id])).keys()]).toEqual([plain.id]);
+    expect([...bundlesUnder(bundles, other.id).keys()]).toEqual([other.id]);
   });
 });
 
