@@ -8,6 +8,8 @@ import { createQueryClient } from "@/app/queryClient";
 import { LAYOUT_KEY, layoutStore } from "@/app/layout/useLayoutWidths";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { MessageItem } from "@/features/messages/MessageItem";
+import { useBundleExpansion } from "@/features/messages/bundleExpansion";
+import { requestJump } from "@/features/messages/jumpTarget";
 import { MessageList } from "@/features/messages/MessageList";
 import { emptyTimeline, threadFromPage, type Timeline } from "@/features/messages/timeline";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
@@ -314,11 +316,19 @@ describe("채널에도 보낸 답글(스레드 글 채널에도 보이기 설계
     expect(row.querySelector('[data-slot="thread-chip"]')).toBeNull();
   });
 
-  it("그 글이 두 에이전트 런을 일으켰으면 세션 타임라인의 그 글 아래 묶음 「… 답 · 스레드에서 진행」", async () => {
+  it("그 글이 두 에이전트 런을 일으켰으면 세션 타임라인의 그 글 아래 묶음 — 스레드를 받아 그 자리에서 답을 펼친다(부른 글 기준 설계 덧붙임)", async () => {
     const FIN = { ...DEV, id: uid(22), handle: "fin", providerAgentId: "fin", name: "fin" };
+    const devAnswer = reply(5, {
+      authorType: "agent",
+      authorId: AGENT,
+      runId: RUN,
+      bodyMd: "dev 의 스레드 답",
+      runRoot: { runId: RUN, agentId: AGENT, rootMessageId: ALSO.id, triggerMessageId: ALSO.id },
+    });
+    threadReply = () => json(200, threadPage([ROOT, ALSO, devAnswer]));
     const qc = authorsClient([DEV, FIN]);
     qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, ALSO], lastSeq: 4 });
-    setChannelSeq(qc, CH, 4);
+    setChannelSeq(qc, CH, 5);
     for (const [id, agentId] of [
       [RUN, AGENT],
       [RUN2, FIN.id],
@@ -329,7 +339,60 @@ describe("채널에도 보낸 답글(스레드 글 채널에도 보이기 설계
           runState({ id, agentId, rootMessageId: ALSO.id, triggerMessageId: ALSO.id, threadRootId: ROOT.id }),
         );
     renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
-    expect(await screen.findByRole("group", { name: "@dev·@fin 답 · 스레드에서 진행" })).toBeInTheDocument();
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    expect(screen.queryByText(/스레드에서 진행/)).toBeNull();
+    // 메인이 그 스레드를 받아 줄의 미리보기로 쓴다
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: /^@dev / })).toHaveTextContent("dev 의 스레드 답"),
+    );
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(`/threads/${ROOT.id}/messages`))).toBe(
+      true,
+    );
+    await userEvent.click(within(group).getByRole("button", { name: /^@dev / }));
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByText("dev 의 스레드 답")
+          .some((el) => el.closest("article")),
+      ).toBe(true),
+    );
+    expect(within(group).getByRole("link", { name: "스레드에서 보기" })).toHaveAttribute(
+      "href",
+      `/c/${CH}/s/${CH}/t/${ROOT.id}`,
+    );
+  });
+
+  it("메인에서 온 이동이 메인 묶음 안 스레드 답이면 메인 묶음의 그 줄을 펼친다 — 패널 키는 건드리지 않는다", async () => {
+    const FIN = { ...DEV, id: uid(22), handle: "fin", providerAgentId: "fin", name: "fin" };
+    const devAnswer = reply(5, {
+      authorType: "agent",
+      authorId: AGENT,
+      runId: RUN,
+      bodyMd: "dev 의 스레드 답",
+      runRoot: { runId: RUN, agentId: AGENT, rootMessageId: ALSO.id, triggerMessageId: ALSO.id },
+    });
+    const qc = authorsClient([DEV, FIN]);
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, ALSO], lastSeq: 4 });
+    qc.setQueryData<Timeline>(
+      qk.thread(CH, CH, ROOT.id),
+      threadFromPage(undefined, ROOT, [ALSO, devAnswer], false),
+    );
+    setChannelSeq(qc, CH, 5);
+    for (const [id, agentId] of [
+      [RUN, AGENT],
+      [RUN2, FIN.id],
+    ] as const)
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id, agentId, rootMessageId: ALSO.id, triggerMessageId: ALSO.id, threadRootId: ROOT.id }),
+        );
+    useBundleExpansion.getState().reset();
+    renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    await screen.findByRole("group", { name: "@dev·@fin 답" });
+    act(() => requestJump({ conversationId: CH, messageId: devAnswer.id, seq: devAnswer.seq }));
+    await waitFor(() => expect(useBundleExpansion.getState().open[RUN]).toBe(true));
+    expect(useBundleExpansion.getState().open[`t:${RUN}`]).toBeUndefined();
   });
 
   it("루트가 어느 캐시에도 없으면 「원래 글」", () => {
@@ -1358,8 +1421,15 @@ describe("스레드 패널 루트 아래 답 묶음(부른 글 기준 2026-11-26
     expect(screen.getByText("답글 2")).toBeInTheDocument();
   });
 
-  it("패널 안 채널에도 보낸 답글이 여럿을 불러도 패널에는 묶지 않는다(세션 타임라인에만)", async () => {
+  it("패널 안 답글(채널에도 보낸 것 포함)이 여럿을 부르면 패널에서도 그 답글 아래에 묶는다 — 답은 줄 안(부른 글 기준 설계 덧붙임)", async () => {
     const also = reply(4, { bodyMd: "채널에도 올린 답", alsoInChannel: true });
+    const devAnswer = reply(5, {
+      authorType: "agent",
+      authorId: AGENT,
+      runId: RUN,
+      bodyMd: "dev 의 스레드 답",
+      runRoot: { runId: RUN, agentId: AGENT, rootMessageId: also.id, triggerMessageId: also.id },
+    });
     for (const [id, agentId] of [
       [RUN, AGENT],
       [RUN2, FIN.id],
@@ -1371,14 +1441,34 @@ describe("스레드 패널 루트 아래 답 묶음(부른 글 기준 2026-11-26
         );
     const qc = authorsClient([DEV, FIN]);
     qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, also], lastSeq: 9 });
-    qc.setQueryData<Timeline>(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, [also], false));
-    threadReply = () => json(200, { root: ROOT, messages: [ROOT, also], hasMore: false });
+    qc.setQueryData<Timeline>(
+      qk.thread(CH, CH, ROOT.id),
+      threadFromPage(undefined, ROOT, [also, devAnswer], false),
+    );
+    threadReply = () => json(200, { root: ROOT, messages: [ROOT, also, devAnswer], hasMore: false });
+    setChannelSeq(qc, CH, 9);
+    useBundleExpansion.getState().reset();
     renderWithClient(
       <MessageList channelId={CH} conversationId={CH} threadRootId={ROOT.id} initialRect={RECT} />,
       qc,
     );
-    expect(await screen.findByText("채널에도 올린 답")).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: /답/ })).toBeNull();
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    expect(before(screen.getByText("채널에도 올린 답"), group)).toBe(true);
+    // 답은 패널 행에서 빠지고 줄 안에 — 접힌 줄에는 미리보기만
+    expect(screen.getByText("dev 의 스레드 답").closest("article")).toBeNull();
+    // 패널 안 이동은 패널 묶음(t: 키)을 펼친다 — 메인 키는 그대로
+    act(() =>
+      requestJump({ conversationId: CH, messageId: devAnswer.id, seq: devAnswer.seq, threadRootId: ROOT.id }),
+    );
+    await waitFor(() => expect(useBundleExpansion.getState().open[`t:${RUN}`]).toBe(true));
+    expect(useBundleExpansion.getState().open[RUN]).toBeUndefined();
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByText("dev 의 스레드 답")
+          .some((el) => el.closest("article")),
+      ).toBe(true),
+    );
   });
 
   it("묶음 루트가 아닌 글의 스레드에는 묶음 없음", async () => {

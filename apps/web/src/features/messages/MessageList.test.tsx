@@ -1954,8 +1954,9 @@ describe("MessageList 답 묶음", () => {
     expect(Number(groupRow.dataset.index)).toBe(Number(rootRow.dataset.index) + 1);
   });
 
-  it("스레드 패널(threadRootId)에서는 묶지 않는다", async () => {
+  it("스레드 패널(threadRootId)에서는 여럿을 부른 스레드 답글 아래에 묶는다 — 답은 그 줄 안(부른 글 기준 설계 덧붙임)", async () => {
     const r = msg(1, { bodyMd: "루트" });
+    const q = msg(2, { bodyMd: "둘에게 묻는다", threadRootId: r.id });
     const inThread = (seq: number, agentId: string, runId: string, bodyMd: string) =>
       msg(seq, {
         authorType: "agent",
@@ -1963,11 +1964,24 @@ describe("MessageList 답 묶음", () => {
         runId,
         bodyMd,
         threadRootId: r.id,
-        runRoot: { runId, agentId, rootMessageId: r.id },
+        runRoot: { runId, agentId, rootMessageId: q.id, triggerMessageId: q.id },
       });
-    draw([r, inThread(2, AGENT, RA, "dev 스레드 답"), inThread(3, FIN, RB, "fin 스레드 답")], r.id);
-    expect((await screen.findByText("dev 스레드 답")).closest("article")).not.toBeNull();
-    expect(screen.queryByRole("group", { name: /답$/ })).toBeNull();
+    draw([r, q, inThread(3, AGENT, RA, "dev 스레드 답"), inThread(4, FIN, RB, "fin 스레드 답")], r.id);
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    // 접힌 줄에는 미리보기뿐 — 답 글(article)은 펼쳐야 보인다
+    expect(screen.getByText("dev 스레드 답").closest("article")).toBeNull();
+    // 묶음은 그 답글 바로 아래
+    expect(
+      screen.getByText("둘에게 묻는다").compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await userEvent.click(within(group).getByRole("button", { name: /^@dev 답/ }));
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByText("dev 스레드 답")
+          .some((el) => el.closest("article")),
+      ).toBe(true),
+    );
   });
 
   it("둘째 런이 시작되면 첫 답이 묶음으로 옮겨 가고 바닥 고정이 유지된다", async () => {
