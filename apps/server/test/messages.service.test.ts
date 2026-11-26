@@ -662,7 +662,7 @@ describe("hydrateForClient 의 runRoot(답 묶음 설계)", () => {
       });
     const say = (agentId: string, runId: string, externalId: string) =>
       createAgentMessage(db, bus, { conversationId, agentId, runId, externalId, bodyMd: "답" });
-    return { db, bus, conversationId, root, devId, finId: fin.id, run, say };
+    return { db, bus, channelId, conversationId, root, devId, finId: fin.id, run, say };
   }
 
   it("hydrateForClient 는 에이전트 메시지에 runRoot 를 붙인다", () => {
@@ -731,6 +731,34 @@ describe("hydrateForClient 의 runRoot(답 묶음 설계)", () => {
       { runId: b.id, agentId: finId, status: "aborted", triggerMessageId: root.id },
     ]);
     expect(agent?.rootRuns).toBeUndefined();
+  });
+
+  it("에이전트 글이 부른 런 둘이 그 에이전트 글의 rootRuns 에 실린다", () => {
+    const { db, root, devId, finId, run, say } = chain();
+    const a = run(devId, root.id);
+    const m1 = say(devId, a.id, "o1");
+    const b = run(finId, m1.id, { parentRunId: a.id, relayDepth: 1 });
+    const c = run(devId, m1.id, { parentRunId: a.id, relayDepth: 1 });
+    const [h, agent] = hydrateForClient(db, [root, m1]);
+    expect(h?.rootRuns?.map((r) => r.runId)).toEqual([a.id]);
+    expect(agent?.rootRuns?.map((r) => r.runId)).toEqual([b.id, c.id]);
+  });
+
+  it("trigger 없는 런은 root 글에 실린다", () => {
+    const { db, channelId, conversationId, root, devId } = chain();
+    const r = insertRun(db, {
+      channelId,
+      conversationId,
+      agentId: devId,
+      triggerKind: "mention",
+      triggerMessageId: null,
+      rootMessageId: root.id,
+      relayDepth: 0,
+      sessionKey: `agent:${devId}:dodok:channel:${conversationId}`,
+      createdAt: new Date(),
+    });
+    const [h] = hydrateForClient(db, [root]);
+    expect(h?.rootRuns).toEqual([{ runId: r.id, agentId: devId, status: "queued" }]);
   });
 
   it("rootRuns 는 스레드 답·런 없는 글에는 없고, ROOT_RUNS_MAX 를 넘으면 최근 것만", () => {

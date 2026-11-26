@@ -348,23 +348,24 @@ export function withRunRoots(db: DbOrTx, msgs: Message[]): Message[] {
 }
 
 /**
- * rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 사람 보통 글: 최상위 글 또는 채널에도 보낸 답글(웹 bundles.ts canRoot 와 같은 조건).
- * 스레드 안 사람 글로 시작한 런은 rootMessageId 가 그 글이다
+ * rootRuns 를 붙일 글 — 묶음 루트가 될 수 있는 보통 글(사람 또는 에이전트): 최상위 글 또는 채널에도 보낸 답글(웹 bundles.ts canRoot 와
+ * 같은 조건). 스레드 안 사람 글로 시작한 런은 rootMessageId 가 그 글이다
  */
 const canRootRuns = (m: Message): boolean =>
-  m.authorType === "user" &&
+  (m.authorType === "user" || m.authorType === "agent") &&
   m.kind === "normal" &&
   (m.threadRootId === undefined || m.alsoInChannel === true);
 
 /**
- * 사람 최상위 글에 그 글이 루트인 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계
- * 「줄의 원천은 런」). 대상이 없으면 질의하지 않고, 있으면 runs_root 인덱스로 한 번. 글마다 최근 ROOT_RUNS_MAX 개를 런 id 순으로 싣고,
- * 런이 없는 글에는 붙이지 않는다
+ * 글에 그 글이 부른 런 목록(rootRuns)을 붙인다 — 메시지 없이 중지·실패한 런도 새로 불러온 뒤 묶음 줄이 서게(답 묶음 설계 「줄의 원천은
+ * 런」). 「그 글이 부른 런」은 triggerMessageId 가 그 글인 런, trigger 가 없으면 rootMessageId 가 그 글인 런이다(부른 글 기준 설계
+ * 2026-11-26). 대상이 없으면 질의하지 않고, 있으면 runs_trigger·runs_root 인덱스로 한 번. 글마다 최근 ROOT_RUNS_MAX 개를 런 id 순으로
+ * 싣고, 런이 없는 글에는 붙이지 않는다
  */
 export function withRootRuns(db: DbOrTx, msgs: Message[]): Message[] {
   const ids = [...new Set(msgs.flatMap((m) => (canRootRuns(m) ? [m.id] : [])))];
   if (ids.length === 0) return msgs;
-  const byRoot = new Map<string, MessageRootRun[]>();
+  const byAnchor = new Map<string, MessageRootRun[]>();
   const rows = db
     .select({
       id: runs.id,
@@ -374,11 +375,17 @@ export function withRootRuns(db: DbOrTx, msgs: Message[]): Message[] {
       triggerMessageId: runs.triggerMessageId,
     })
     .from(runs)
-    .where(inArray(runs.rootMessageId, ids))
+    .where(
+      or(
+        inArray(runs.triggerMessageId, ids),
+        and(isNull(runs.triggerMessageId), inArray(runs.rootMessageId, ids)),
+      ),
+    )
     .orderBy(desc(runs.id))
     .all();
   for (const r of rows) {
-    const list = byRoot.get(r.rootMessageId) ?? [];
+    const anchor = r.triggerMessageId ?? r.rootMessageId;
+    const list = byAnchor.get(anchor) ?? [];
     if (list.length >= ROOT_RUNS_MAX) continue;
     list.push({
       runId: r.id,
@@ -386,10 +393,10 @@ export function withRootRuns(db: DbOrTx, msgs: Message[]): Message[] {
       status: r.status as RunStatus,
       ...(r.triggerMessageId ? { triggerMessageId: r.triggerMessageId } : {}),
     });
-    byRoot.set(r.rootMessageId, list);
+    byAnchor.set(anchor, list);
   }
   return msgs.map((m) => {
-    const list = canRootRuns(m) ? byRoot.get(m.id) : undefined;
+    const list = canRootRuns(m) ? byAnchor.get(m.id) : undefined;
     return list ? { ...m, rootRuns: [...list].reverse() } : m;
   });
 }
