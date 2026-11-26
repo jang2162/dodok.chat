@@ -2,7 +2,7 @@ import type { Message } from "@dodok/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MessageSquareReplyIcon } from "lucide-react";
-import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { runStatusLabel } from "@/features/activity/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -19,6 +19,11 @@ import { useAuthors } from "./useAuthors";
 
 export type ReplyBundleProps = {
   bundle: Bundle;
+  /**
+   * 모든 깊이의 묶음(`computeBundles`) — 펼친 줄 안 글이 하위 묶음 루트면 그 글 아래에 하위 묶음을 그린다. 없으면 하위 묶음을 그리지
+   * 않는다
+   */
+  bundles?: ReadonlyMap<string, Bundle>;
   messagesById: ReadonlyMap<string, Message>;
   /** 지금 보일 스트리밍 버블의 런(`useChannelBubbles`) — 펼친 줄 안에서 그 런의 버블을 그린다 */
   bubbleRunIds?: ReadonlySet<string>;
@@ -64,16 +69,12 @@ const IN_THREAD = "스레드에서 진행";
  * 있는 카드가 든 줄만 펼친 채(사람이 손으로 펼치거나 접은 것은 그대로). 도구 승인 카드는 목록 맨 아래 제자리 — 줄에는 「승인 대기」
  * 배지를 두고 누르면 그 카드로 간다. 그 체인의 relay_limit·relay_denied 는 묶음 맨 아래.
  * 루트가 채널에도 보낸 스레드 답글이면(`bundle.threadRootId`) 답은 그 스레드에 있다 — 머리에 「… 답 · 스레드에서 진행」, 줄은 그 자리에서
- * 펼치지 않고 누르면 그 스레드를 열어 그 답으로 간다(같은 답이 두 화면에 생기지 않게, 스레드 글 채널에도 보이기 설계)
+ * 펼치지 않고 누르면 그 스레드를 열어 그 답으로 간다(같은 답이 두 화면에 생기지 않게, 스레드 글 채널에도 보이기 설계).
+ * 줄 안 글이 다시 여럿을 불렀으면(`bundle.parent` 가 있는 하위 묶음) 그 줄을 펼쳤을 때 그 글 바로 아래에 같은 컴포넌트로 작게 그린다
+ * (부른 글 기준 설계 2026-11-26)
  */
-export function ReplyBundle({
-  bundle,
-  messagesById,
-  bubbleRunIds,
-  bubbles,
-  onApproval,
-  highlighted,
-}: ReplyBundleProps) {
+export function ReplyBundle(props: ReplyBundleProps) {
+  const { bundle, messagesById, bubbleRunIds, bubbles } = props;
   const { author } = useAuthors();
   const handles = bundle.lanes.map((l) => author({ authorType: "agent", authorId: l.agentId }).handle ?? "?");
   const tail = bundle.tailSystemIds.flatMap((id) => messagesById.get(id) ?? []);
@@ -103,21 +104,27 @@ export function ReplyBundle({
       </div>
     );
   }
+  const nested = bundle.parent !== undefined;
   return (
     <div
       role="group"
       aria-label={groupName(handles)}
       data-slot="reply-bundle"
-      className="mx-4 my-1 ml-16 flex flex-col overflow-hidden rounded-md border bg-muted/20"
+      className={cn(
+        "my-1 flex flex-col overflow-hidden rounded-md border bg-muted/20",
+        // 하위 묶음은 줄 안 글(머리 없는 MessageItem)의 본문 자리에 맞춘다
+        nested ? "mr-2 ml-14" : "mx-4 ml-16",
+      )}
     >
       {bundle.lanes.map((lane) => (
         <Lane
           key={lane.runId}
           lane={lane}
-          messagesById={messagesById}
-          bubble={bubbleRunIds?.has(lane.runId) ? bubbles?.(lane.runId) : undefined}
-          onApproval={onApproval}
-          highlighted={highlighted}
+          parent={props}
+          // 그 런과 이 줄 안 글을 따라온 1명 런의 버블 — 런 id 순
+          bubble={[lane.runId, ...lane.followRunIds].map((runId) =>
+            bubbleRunIds?.has(runId) ? <Fragment key={runId}>{bubbles?.(runId)}</Fragment> : null,
+          )}
         />
       ))}
       {tail.map((m) => (
@@ -129,19 +136,8 @@ export function ReplyBundle({
   );
 }
 
-function Lane({
-  lane,
-  messagesById,
-  bubble,
-  onApproval,
-  highlighted,
-}: {
-  lane: BundleLane;
-  messagesById: ReadonlyMap<string, Message>;
-  bubble: ReactNode;
-  onApproval: ((approvalId: string) => void) | undefined;
-  highlighted: string | undefined;
-}) {
+function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleProps; bubble: ReactNode }) {
+  const { bundles, messagesById, onApproval, highlighted } = parent;
   const { author, mention } = useAuthors();
   const me = author({ authorType: "agent", authorId: lane.agentId });
   const from = lane.fromAgentId ? author({ authorType: "agent", authorId: lane.fromAgentId }) : undefined;
@@ -225,19 +221,25 @@ function Lane({
       </div>
       {open && (
         <LaneBody>
-          {messages.map((m, i) => (
-            <div
-              key={m.id}
-              data-message-id={m.id}
-              data-highlighted={m.id === highlighted || undefined}
-              className={cn(
-                "transition-colors duration-700 motion-reduce:transition-none",
-                m.id === highlighted && "bg-yellow-100/70 dark:bg-yellow-500/15",
-              )}
-            >
-              <MessageItem message={m} head={false} activity={i === 0} />
-            </div>
-          ))}
+          {messages.map((m, i) => {
+            // 이 글이 다시 여럿을 불렀다 — 그 답은 이 글 아래 하위 묶음
+            const sub = bundles?.get(m.id);
+            return (
+              <Fragment key={m.id}>
+                <div
+                  data-message-id={m.id}
+                  data-highlighted={m.id === highlighted || undefined}
+                  className={cn(
+                    "transition-colors duration-700 motion-reduce:transition-none",
+                    m.id === highlighted && "bg-yellow-100/70 dark:bg-yellow-500/15",
+                  )}
+                >
+                  <MessageItem message={m} head={false} activity={i === 0} />
+                </div>
+                {sub && <ReplyBundle {...parent} bundle={sub} />}
+              </Fragment>
+            );
+          })}
           {bubble}
           {systems.map((m) => (
             <div key={m.id} data-message-id={m.id} data-highlighted={m.id === highlighted || undefined}>

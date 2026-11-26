@@ -211,6 +211,8 @@ function ChannelMessages({
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const bundledRef = useRef(bundled);
+  bundledRef.current = bundled;
   /**
    * 초점이 든 행의 key — 범위 밖으로 밀려나도 그 행은 늘 그린다. 지우면 그 안의 초점이 body 로 떨어진다(새 글이 몰려 들어오거나
    * 스크롤해도). 행은 절대 위치라 범위 밖에 하나 더 그려도 자리가 맞다
@@ -275,7 +277,17 @@ function ChannelMessages({
     },
     [setStuck, virtualizer],
   );
-  const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  const jump = useJump(
+    channelId,
+    conversationId,
+    threadRootId,
+    timeline,
+    ready,
+    rows,
+    arrive,
+    bundles,
+    bundled.byMessage,
+  );
   // 묶음 줄의 「승인 대기」 — 목록 맨 아래 그 승인 카드로
   const toApproval = useCallback(
     (approvalId: string) => {
@@ -287,13 +299,14 @@ function ChannelMessages({
   const highlighted = jump.highlighted;
   const bundleView = useMemo(
     (): BundleView => ({
+      bundles,
       messagesById,
       bubbleRunIds: bubbleSet,
       bubbles,
       onApproval: toApproval,
       highlighted,
     }),
-    [messagesById, bubbleSet, bubbles, toApproval, highlighted],
+    [bundles, messagesById, bubbleSet, bubbles, toApproval, highlighted],
   );
   /** 그 행이 지금 뷰포트에 걸쳐 있는가 — 잰 자리(추정 포함)와 스크롤 위치로 본다 */
   const rowInView = useCallback(
@@ -392,7 +405,7 @@ function ChannelMessages({
     let raf = 0;
     const doc = el.ownerDocument;
     const tick = () => {
-      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId));
+      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId, bundledRef.current.byMessage));
       const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
       if (doc.activeElement !== row && !focusIsFree(doc, el)) {
         focused();
@@ -765,7 +778,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
-                tabIndex={landed !== undefined && rowHolds(row, landed) ? -1 : undefined}
+                tabIndex={landed !== undefined && rowHolds(row, landed, bundled.byMessage) ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",
@@ -849,6 +862,7 @@ function sameRow(a: Row, b: Row): boolean {
 
 /** 묶음 행이 그릴 때 보는 목록의 것 — 메시지·버블·승인 카드로 가기 */
 type BundleView = {
+  bundles: ReadonlyMap<string, Bundle>;
   messagesById: ReadonlyMap<string, Message>;
   bubbleRunIds: ReadonlySet<string>;
   bubbles: ((runId: string) => ReactNode) | undefined;
