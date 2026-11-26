@@ -396,6 +396,46 @@ describe("채널에도 보낸 답글(스레드 글 채널에도 보이기 설계
     expect(useBundleExpansion.getState().open[`t:${RUN}`]).toBeUndefined();
   });
 
+  it("묶음 루트(채널에도 보낸 답글)가 메인 창 밖이면 그 묶음을 세우지 않는다 — 창 안의 답 A 가 메인 행에 서고 A 가 부른 묶음이 그 아래(루트가 불러온 범위 밖이면 묶지 않는다)", async () => {
+    const FIN = { ...DEV, id: uid(22), handle: "fin", providerAgentId: "fin", name: "fin" };
+    const OPS = { ...DEV, id: uid(23), handle: "ops", providerAgentId: "ops", name: "ops" };
+    const [RUN3, RUN4] = [uid(103), uid(104)];
+    const answer = reply(5, {
+      authorType: "agent",
+      authorId: AGENT,
+      runId: RUN,
+      alsoInChannel: true,
+      bodyMd: "dev 의 스레드 답",
+      runRoot: { runId: RUN, agentId: AGENT, rootMessageId: ALSO.id, triggerMessageId: ALSO.id },
+    });
+    const qc = authorsClient([DEV, FIN, OPS]);
+    // 메인 창에는 A 만 — Rm(ALSO)은 더 옛것(hasOlder)
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [answer], hasOlder: true, lastSeq: 5 });
+    qc.setQueryData<Timeline>(
+      qk.thread(CH, CH, ROOT.id),
+      threadFromPage(undefined, ROOT, [ALSO, answer], false),
+    );
+    setChannelSeq(qc, CH, 5);
+    for (const [id, agentId, trigger] of [
+      [RUN, AGENT, ALSO.id],
+      [RUN2, FIN.id, ALSO.id],
+      [RUN3, FIN.id, answer.id],
+      [RUN4, OPS.id, answer.id],
+    ] as const)
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id, agentId, rootMessageId: trigger, triggerMessageId: trigger, threadRootId: ROOT.id }),
+        );
+    useBundleExpansion.getState().reset();
+    renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    await screen.findByRole("group", { name: "@fin·@ops 답" });
+    const row = screen.getByText("dev 의 스레드 답").closest("article");
+    expect(row).not.toBeNull();
+    expect(row?.closest('[role="group"]')).toBeNull();
+    expect(screen.queryByRole("group", { name: "@dev·@fin 답" })).toBeNull();
+  });
+
   it("루트가 어느 캐시에도 없으면 「원래 글」", () => {
     renderWithClient(<MessageItem message={ALSO} head />);
     expect(screen.getByRole("link", { name: /스레드에 댓글 남김/ })).toHaveTextContent(

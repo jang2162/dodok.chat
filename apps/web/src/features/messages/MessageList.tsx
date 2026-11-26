@@ -211,7 +211,20 @@ function ChannelMessages({
   }, [inThreadList, timelineItems, sessionItems, mainThreadItems]);
   const bundles = useMemo(() => {
     if (!bundleItems || !timelineItems) return NO_BUNDLES;
-    if (!inThreadList) return computeBundles(bundleItems, bundleRuns);
+    if (!inThreadList) {
+      // 받은 스레드 글은 줄의 내용으로만 — 바깥 루트가 메인 창에 없는 묶음은 뺀다(루트가 불러온 범위 밖이면 묶지 않는다). 바깥이 빠진
+      // 하위 묶음은 메인 창의 글이 루트라 맨 바깥 묶음으로 선다
+      const kept = bundlesUnder(
+        computeBundles(bundleItems, bundleRuns),
+        new Set(timelineItems.map((m) => m.id)),
+      );
+      for (const [id, b] of kept)
+        if (b.parent && !kept.has(b.parent.rootId)) {
+          const { parent: _, ...top } = b;
+          kept.set(id, top);
+        }
+      return kept;
+    }
     if (!timelineItems.some((m) => m.id === threadRootId)) return NO_BUNDLES;
     const all = computeBundles(bundleItems, bundleRuns, { threadReplies: true });
     return bundlesUnder(all, new Set(timelineItems.map((m) => m.id)));
