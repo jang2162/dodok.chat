@@ -751,7 +751,7 @@ describe("hydrateForClient 의 runRoot(답 묶음 설계)", () => {
       conversationId,
       agentId: devId,
       triggerKind: "mention",
-      triggerMessageId: null,
+      triggerMessageId: undefined,
       rootMessageId: root.id,
       relayDepth: 0,
       sessionKey: `agent:${devId}:dodok:channel:${conversationId}`,
