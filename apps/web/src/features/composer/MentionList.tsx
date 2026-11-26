@@ -4,7 +4,7 @@ import type { SuggestionOptions, SuggestionProps } from "@tiptap/suggestion";
 import { type Ref, useEffect, useId, useImperativeHandle, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { CANDIDATE_ROW_CLASS, CheckMark, MentionCandidateRow } from "./MentionCandidateRow";
+import { CANDIDATE_ROW_CLASS, candidateName, CheckMark, MentionCandidateRow } from "./MentionCandidateRow";
 import { type MentionCandidate, matchMentions, mentionContent, mentionIdsIn } from "./mentions";
 
 export type MentionListHandle = { onKeyDown(event: KeyboardEvent): boolean };
@@ -50,7 +50,9 @@ export function MentionList({
   const [checked, setChecked] = useState<ReadonlyMap<string, MentionCandidate>>(new Map());
   // 후보가 바뀌면 첫 줄부터
   const index = active.items === items ? active.index : 0;
-  const move = (delta: number) => setActive({ items, index: (index + delta + items.length) % items.length });
+  const move = (delta: number) => {
+    if (items.length > 0) setActive({ items, index: (index + delta + items.length) % items.length });
+  };
   const pickOne = (c: MentionCandidate) => command({ id: c.id, label: c.label });
   const toggle = (c: MentionCandidate) => {
     if (inDraft.has(c.id)) return;
@@ -79,11 +81,11 @@ export function MentionList({
   }, [activeId, onActive]);
   useEffect(() => onCheckedChange?.(checked.size), [checked.size, onCheckedChange]);
 
+  // 목록이 열려 있으면 보이는 줄이 0개여도 ↑↓·Tab 을 먹는다 — 새면 초점이 편집기 밖으로 나가거나 커서가 움직여 체크가 버려진다
   useImperativeHandle(ref, () => ({
     onKeyDown(event) {
       if (items.length === 0 && checked.size === 0) return false;
       if (event.key === "Enter") choose(index);
-      else if (items.length === 0) return false;
       else if (event.key === "ArrowUp") move(-1);
       else if (event.key === "ArrowDown") move(1);
       else if (event.key === "Tab") {
@@ -112,6 +114,7 @@ export function MentionList({
               key={c.id}
               id={`${listboxId}-${i}`}
               role="option"
+              aria-label={candidateName(c, has)}
               aria-selected={i === index}
               {...(multi ? { "aria-checked": on } : {})}
               // 누르는 동안 편집기 포커스를 뺏지 않는다

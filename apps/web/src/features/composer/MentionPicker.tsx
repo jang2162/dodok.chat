@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { CANDIDATE_ROW_CLASS, MentionCandidateRow } from "./MentionCandidateRow";
+import { CANDIDATE_ROW_CLASS, candidateName, MentionCandidateRow } from "./MentionCandidateRow";
 import type { MentionCandidate } from "./mentions";
 
 export const PICKER_LABEL = "에이전트 부르기";
@@ -87,7 +87,7 @@ export function MentionPicker({
                     className="size-4 shrink-0 accent-primary"
                     checked={has || picked.has(c.id)}
                     disabled={has}
-                    aria-label={`@${c.label}${has ? " — 이미 넣음" : ""}`}
+                    aria-label={candidateName(c, has)}
                     onChange={(e) => toggle(c.id, e.currentTarget.checked)}
                   />
                 }

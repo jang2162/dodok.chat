@@ -9,6 +9,10 @@ import type { MentionCandidate } from "./mentions";
 export const CANDIDATE_ROW_CLASS =
   "flex min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm";
 
+/** 두 후보 목록의 줄(option·체크박스)이 함께 쓰는 화면 읽기 이름 */
+export const candidateName = (c: MentionCandidate, locked: boolean) =>
+  `@${c.label}${locked ? " — 이미 넣음" : ""}`;
+
 /** @ 입력 목록의 체크 표시 — 줄(option)이 aria-checked 를 싣고 이것은 그림일 뿐이다(option 안에 조작 요소를 두지 않는다) */
 export function CheckMark({ checked }: { checked: boolean }) {
   return (
@@ -27,7 +31,8 @@ export function CheckMark({ checked }: { checked: boolean }) {
 
 /**
  * 후보 한 줄: [체크] [아바타 24px] [이름(굵게)] [@핸들(흐리게)] [Gateway·AI·초대됨·이미 넣음·꺼짐]. 한 줄을 넘기지 않는다 — 이름과
- * 핸들은 줄바꿈 없이 말줄임(핸들 안의 `-` 에서 꺾이지 않게), 이름이 먼저 줄고 핸들은 최소 폭을 지킨다. 잘려도 `title` 로 전체
+ * 핸들은 줄바꿈 없이 말줄임(핸들 안의 `-` 에서 꺾이지 않게), 이름이 먼저 줄고 핸들은 최소 폭을 지킨다. Gateway 이름은 이름·핸들
+ * 뒤 순위라 자리가 모자라면 먼저 준다. 잘려도 `title` 로 전체
  */
 export function MentionCandidateRow({
   candidate: c,
@@ -39,6 +44,7 @@ export function MentionCandidateRow({
   /** 이미 초안에 든 후보 */
   locked?: boolean;
 }) {
+  const title = [c.name, `@${c.label}`, c.gateway].filter((s) => s !== undefined).join(" · ");
   return (
     <>
       {check}
@@ -52,12 +58,14 @@ export function MentionCandidateRow({
         size={24}
         className="shrink-0"
       />
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5" title={`${c.name} · @${c.label}`}>
+      <span className="flex min-w-0 flex-auto items-baseline gap-1.5" title={title}>
         <span className="min-w-0 shrink-[4] truncate font-medium whitespace-nowrap">{c.name}</span>
         <span className="min-w-12 shrink truncate whitespace-nowrap text-muted-foreground">@{c.label}</span>
       </span>
       {c.gateway !== undefined && (
-        <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground">{c.gateway}</span>
+        <span className="min-w-0 shrink-[999] truncate text-xs text-muted-foreground" title={title}>
+          {c.gateway}
+        </span>
       )}
       {c.kind === "agent" && (
         <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">

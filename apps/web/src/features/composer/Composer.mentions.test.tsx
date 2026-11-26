@@ -568,6 +568,22 @@ describe("@ 입력 목록 — 여럿 고르기", () => {
     expect(editor.getText()).toBe("@dev @fin ");
   });
 
+  it("체크만 있고 보이는 줄이 0개여도 Tab·↑↓ 는 목록이 먹는다 — 초점·커서가 새지 않고 체크는 그대로", async () => {
+    const { box, editor } = await openAt();
+    fireEvent.keyDown(box, { key: "Tab" }); // dev
+    await waitFor(() => expect(option("dev")).toHaveAttribute("aria-checked", "true"));
+    act(() => void editor.commands.insertContent("zz"));
+    await waitFor(() => expect(screen.queryAllByRole("option")).toEqual([]));
+    for (const key of ["Tab", "ArrowUp", "ArrowDown"]) {
+      // false = preventDefault 됨
+      expect(fireEvent.keyDown(box, { key }), key).toBe(false);
+    }
+    expect(screen.getByRole("button", { name: "1명 넣기" })).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: "Enter" });
+    await closed();
+    expect(editor.getText()).toBe("@dev ");
+  });
+
   it("이미 초안에 든 후보는 체크된 채 잠기고 「이미 넣음」 — Tab·클릭으로 바뀌지 않는다", async () => {
     const user = userEvent.setup();
     const view = renderComposer();
@@ -584,6 +600,26 @@ describe("@ 입력 목록 — 여럿 고르기", () => {
     await user.click(option("dev"));
     expect(option("dev")).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("button", { name: /명 넣기$/ })).toBeNull();
+  });
+
+  it("줄의 화면 읽기 이름은 @ 단추 피커와 같다 — `@핸들`, 이미 든 것은 「— 이미 넣음」", async () => {
+    const user = userEvent.setup();
+    const view = renderComposer();
+    setDoc(view.editor, doc(p(mention(`a:${DEV.id}`, "dev"), t(" "))));
+    act(() => {
+      view.editor.commands.focus("end");
+      view.editor.commands.insertContent("@");
+    });
+    await flushEditorFrames();
+    const list = await screen.findByRole("listbox", { name: "멘션 후보" });
+    const names = ["@dev — 이미 넣음", "@fin", "@owner"];
+    for (const name of names) expect(within(list).getByRole("option", { name })).toBeInTheDocument();
+    fireEvent.keyDown(view.box, { key: "Escape" });
+    await closed();
+
+    await user.click(screen.getByRole("button", { name: "에이전트 부르기" }));
+    const dialog = await screen.findByRole("dialog", { name: "에이전트 부르기" });
+    for (const name of names) expect(within(dialog).getByRole("checkbox", { name })).toBeInTheDocument();
   });
 
   it("Esc 로 닫으면 체크를 버린다 — 다시 @ 를 치면 빈 체크", async () => {
@@ -621,6 +657,30 @@ describe("후보 줄 — @ 입력 목록과 @ 단추 피커가 같은 줄", () =
       "keyring-notes-market 에이전트 · @keyring-notes-market",
     );
   };
+
+  it("긴 Gateway 이름은 줄을 넘기지 않고 이름보다 먼저 줄며, title 에 전체가 있다", () => {
+    const gateway = "사무실 3층 서버실의 오래된 미니 PC Gateway";
+    const item: MentionCandidate = {
+      id: "a:1",
+      label: "main",
+      name: "Main",
+      kind: "agent",
+      aliases: [],
+      enabled: true,
+      gateway,
+    };
+    render(<MentionList items={[item]} command={vi.fn()} />);
+    const option = screen.getByRole("option");
+    const cell = within(option).getByText(gateway);
+    expect(cell).toHaveClass("min-w-0", "shrink-[999]", "truncate");
+    expect(cell).not.toHaveClass("shrink-0");
+    // 이름·핸들 묶음은 내용 폭에서 시작해야 Gateway 칸이 먼저 준다
+    const names = within(option).getByText("Main").parentElement;
+    expect(names).toHaveClass("min-w-0", "flex-auto");
+    const title = `Main · @main · ${gateway}`;
+    expect(names).toHaveAttribute("title", title);
+    expect(cell).toHaveAttribute("title", title);
+  });
 
   it("두 목록 모두 아바타·이름·핸들 한 줄(줄바꿈 없이 말줄임, title 로 전체)", async () => {
     const user = userEvent.setup();
