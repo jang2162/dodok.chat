@@ -119,14 +119,15 @@ describe("ReplyBundle", () => {
     expect(lane("fin")).toHaveTextContent("중지됨");
   });
 
-  it("릴레이 줄은 「@dev → @fin」", () => {
-    const m = reply(2, AGENT, RA);
-    const relayed = reply(3, FIN, RB, {
-      runRoot: { runId: RB, agentId: FIN, rootMessageId: R, triggerMessageId: m.id },
-    });
-    draw([root, m, relayed]);
+  it("에이전트 글이 부른 줄은 「@dev → @fin」, 사람 글이 부른 줄은 화살표 없음", () => {
+    // 묶음 루트가 dev 의 글(부른 글 기준 2026-11-26) — 그 글이 부른 줄마다 부른 쪽을 적는다
+    const agentRoot = msg(1, { authorType: "agent", authorId: AGENT, runId: uid(300), bodyMd: "@fin @dev" });
+    const first = draw([agentRoot, reply(2, FIN, RB), reply(3, AGENT, RA)]);
     expect(lane("fin")).toHaveTextContent("@dev → @fin");
+    first.unmount();
+    draw([root, reply(2, AGENT, RA), reply(3, FIN, RB)]);
     expect(lane("dev")).not.toHaveTextContent("→");
+    expect(lane("fin")).not.toHaveTextContent("→");
   });
 
   it("승인 대기 배지를 누르면 승인 행으로 스크롤", async () => {
