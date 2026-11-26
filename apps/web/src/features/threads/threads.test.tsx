@@ -1358,6 +1358,29 @@ describe("스레드 패널 루트 아래 답 묶음(부른 글 기준 2026-11-26
     expect(screen.getByText("답글 2")).toBeInTheDocument();
   });
 
+  it("패널 안 채널에도 보낸 답글이 여럿을 불러도 패널에는 묶지 않는다(세션 타임라인에만)", async () => {
+    const also = reply(4, { bodyMd: "채널에도 올린 답", alsoInChannel: true });
+    for (const [id, agentId] of [
+      [RUN, AGENT],
+      [RUN2, FIN.id],
+    ] as const)
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id, agentId, rootMessageId: also.id, triggerMessageId: also.id, threadRootId: ROOT.id }),
+        );
+    const qc = authorsClient([DEV, FIN]);
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, also], lastSeq: 9 });
+    qc.setQueryData<Timeline>(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, [also], false));
+    threadReply = () => json(200, { root: ROOT, messages: [ROOT, also], hasMore: false });
+    renderWithClient(
+      <MessageList channelId={CH} conversationId={CH} threadRootId={ROOT.id} initialRect={RECT} />,
+      qc,
+    );
+    expect(await screen.findByText("채널에도 올린 답")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /답/ })).toBeNull();
+  });
+
   it("묶음 루트가 아닌 글의 스레드에는 묶음 없음", async () => {
     drawThread(ROOT, [ROOT, answer(4, AGENT, RUN, "dev 의 답")]);
     expect(await screen.findByText("답글 2")).toBeInTheDocument();
