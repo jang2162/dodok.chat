@@ -1292,3 +1292,98 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     },
   );
 });
+
+describe("스레드 패널 루트 아래 답 묶음(부른 글 기준 2026-11-26)", () => {
+  const FIN = { ...DEV, id: uid(22), handle: "fin", providerAgentId: "fin", name: "fin" };
+  const answer = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+    msg(seq, {
+      authorType: "agent",
+      authorId: agentId,
+      runId,
+      bodyMd,
+      runRoot: { runId, agentId, rootMessageId: ROOT.id, triggerMessageId: ROOT.id },
+    });
+  /** 스레드 캐시(루트 + 답글 2·3)와, 있으면 세션 타임라인 캐시를 채우고 스레드 목록을 그린다 */
+  function drawThread(root: Message, session: Message[] | undefined) {
+    const qc = authorsClient([DEV, FIN]);
+    if (session) qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: session, lastSeq: 9 });
+    qc.setQueryData<Timeline>(
+      qk.thread(CH, CH, root.id),
+      threadFromPage(undefined, root, [reply(2), reply(3)], false),
+    );
+    threadReply = () => json(200, { root, messages: [root, reply(2), reply(3)], hasMore: false });
+    renderWithClient(
+      <MessageList channelId={CH} conversationId={CH} threadRootId={root.id} initialRect={RECT} />,
+      qc,
+    );
+  }
+  const before = (a: Element, b: Element) =>
+    (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("묶음 루트 글의 스레드를 열면 루트 아래 묶음, 그 밑에 스레드 답글", async () => {
+    drawThread(ROOT, [ROOT, answer(4, AGENT, RUN, "dev 의 답"), answer(5, FIN.id, RUN2, "fin 의 답")]);
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    const rootEl = screen.getByText("루트 질문");
+    const firstReply = screen.getByText("답글 2");
+    expect(before(rootEl, group)).toBe(true);
+    expect(before(group, firstReply)).toBe(true);
+    // 줄 미리보기는 세션 타임라인 캐시의 답
+    expect(screen.getByRole("button", { name: /^@dev / })).toHaveTextContent("dev 의 답");
+    // 묶음의 답은 스레드 타임라인에 섞이지 않는다 — 접힌 줄 밖에 본문이 없다
+    expect(screen.queryByText("dev 의 답", { selector: "p" })).toBeNull();
+    // 세션 캐시는 읽기만 한다
+    expect(
+      fetchMock.mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) => u.includes(`/conversations/${CH}/messages`)),
+    ).toEqual([]);
+  });
+
+  it("세션 캐시가 없으면 rootRuns 로 줄만", async () => {
+    const withRuns = {
+      ...ROOT,
+      rootRuns: [
+        { runId: RUN, agentId: AGENT, status: "done" as const, triggerMessageId: ROOT.id },
+        { runId: RUN2, agentId: FIN.id, status: "streaming" as const, triggerMessageId: ROOT.id },
+      ],
+    };
+    drawThread(withRuns, undefined);
+    const group = await screen.findByRole("group", { name: "@dev·@fin 답" });
+    const lanes = within(group).getAllByRole("button", { name: /^@(dev|fin) 답/ });
+    expect(lanes).toHaveLength(2);
+    // 미리보기 없이 상태만 — 답 메시지가 없다
+    expect(within(group).getByRole("button", { name: /^@dev / })).toHaveAccessibleName(/완료/);
+    await userEvent.click(within(group).getByRole("button", { name: /^@dev / }));
+    expect(within(group).queryAllByRole("article")).toEqual([]);
+    expect(screen.getByText("답글 2")).toBeInTheDocument();
+  });
+
+  it("패널 안 채널에도 보낸 답글이 여럿을 불러도 패널에는 묶지 않는다(세션 타임라인에만)", async () => {
+    const also = reply(4, { bodyMd: "채널에도 올린 답", alsoInChannel: true });
+    for (const [id, agentId] of [
+      [RUN, AGENT],
+      [RUN2, FIN.id],
+    ] as const)
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id, agentId, rootMessageId: also.id, triggerMessageId: also.id, threadRootId: ROOT.id }),
+        );
+    const qc = authorsClient([DEV, FIN]);
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT, also], lastSeq: 9 });
+    qc.setQueryData<Timeline>(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, [also], false));
+    threadReply = () => json(200, { root: ROOT, messages: [ROOT, also], hasMore: false });
+    renderWithClient(
+      <MessageList channelId={CH} conversationId={CH} threadRootId={ROOT.id} initialRect={RECT} />,
+      qc,
+    );
+    expect(await screen.findByText("채널에도 올린 답")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /답/ })).toBeNull();
+  });
+
+  it("묶음 루트가 아닌 글의 스레드에는 묶음 없음", async () => {
+    drawThread(ROOT, [ROOT, answer(4, AGENT, RUN, "dev 의 답")]);
+    expect(await screen.findByText("답글 2")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /답$/ })).toBeNull();
+  });
+});

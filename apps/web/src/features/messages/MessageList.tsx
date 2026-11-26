@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
@@ -24,7 +24,7 @@ import { useRunStore } from "@/features/runs/runStore";
 import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { type Bundle, type BundleRun, bundleIndex, computeBundles } from "./bundles";
+import { type Bundle, type BundleRun, bundleIndex, bundlesUnder, computeBundles } from "./bundles";
 import { useBundleExpansion } from "./bundleExpansion";
 import { groupRows, type Row } from "./groupRows";
 import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
@@ -39,7 +39,7 @@ import { rowHolds, useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
 import { NEW_CONVERSATION, type Timeline } from "./timeline";
-import { useTimelineState } from "./useTimeline";
+import { conversationTimelineQuery, useTimelineState } from "./useTimeline";
 
 /** 하단에서 이만큼 안이면 「맨 아래에 붙어 있다」 — 새 행을 따라간다(스펙 5.5) */
 const STICK_PX = 80;
@@ -132,33 +132,50 @@ function ChannelMessages({
     [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
-  // 답 묶음(설계 「정한 것」) — 세션 타임라인에서만. 스레드 패널은 이미 따로 떨어진 공간이라 묶지 않는다. 런의 루트는 저장소의 `roots`
-  // (run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운 런도 남는다)와 메시지의 runRoot 로 안다
-  // 스레드 런은 그 글이 세션 타임라인에 있는 채널에도 보낸 답글일 때만(스레드 글 채널에도 보이기 설계)
+  // 답 묶음(설계 「정한 것」). 런의 루트는 저장소의 `roots`(run.state 로 메시지보다 먼저 알고, 메시지 없는 런도 줄이 서게 한다. 지운
+  // 런도 남는다)와 메시지의 runRoot 로 안다. 스레드 런은 그 글이 세션 타임라인에 있는 채널에도 보낸 답글일 때만(스레드 글 채널에도
+  // 보이기 설계). 스레드 패널은 루트 글의 묶음(과 그 하위 묶음)만 루트 바로 아래에 그린다 — 줄의 메시지는 세션 타임라인 캐시의 것을
+  // 읽기만 하고(새로 받지 않는다) 스레드 타임라인에 섞지 않는다. 패널 안 스레드 답글은 묶지 않는다(부른 글 기준 설계 2026-11-26).
+  // 캐시가 없으면(스레드만 주소로 열었다) 루트 글의 rootRuns 로 줄만 선다
   const runRoots = useRunStore((s) => s.roots);
   const timelineItems = timeline?.items;
+  const qc = useQueryClient();
+  const sessionCache = useQuery({
+    ...conversationTimelineQuery(qc, channelId, conversationId),
+    enabled: false,
+  }).data;
+  const sessionItems = threadRootId === undefined ? timelineItems : sessionCache?.items;
   const alsoIds = useMemo(
-    () => new Set((timelineItems ?? []).flatMap((m) => (m.alsoInChannel ? [m.id] : []))),
-    [timelineItems],
+    () => new Set((sessionItems ?? []).flatMap((m) => (m.alsoInChannel ? [m.id] : []))),
+    [sessionItems],
   );
   const bundleRuns = useMemo(
     (): BundleRun[] =>
-      threadRootId !== undefined
-        ? []
-        : Object.values(runRoots).filter(
-            (r) =>
-              r.channelId === channelId &&
-              r.conversationId === conversationId &&
-              (r.threadRootId === undefined || alsoIds.has(r.rootMessageId)),
-          ),
-    [runRoots, channelId, conversationId, threadRootId, alsoIds],
+      Object.values(runRoots).filter(
+        (r) =>
+          r.channelId === channelId &&
+          r.conversationId === conversationId &&
+          (r.threadRootId === undefined || alsoIds.has(r.rootMessageId)),
+      ),
+    [runRoots, channelId, conversationId, alsoIds],
   );
-  const bundles = useMemo(
-    () =>
-      threadRootId !== undefined || !timelineItems ? NO_BUNDLES : computeBundles(timelineItems, bundleRuns),
-    [timelineItems, bundleRuns, threadRootId],
+  const threadRoot =
+    threadRootId === undefined ? undefined : timelineItems?.find((m) => m.id === threadRootId);
+  const bundleItems = useMemo((): readonly Message[] | undefined => {
+    if (threadRootId === undefined) return timelineItems;
+    if (!threadRoot) return undefined;
+    // 루트는 스레드 쪽 것(새로 받은 rootRuns)이 이긴다
+    return [threadRoot, ...(sessionItems ?? []).filter((m) => m.id !== threadRoot.id)];
+  }, [threadRootId, timelineItems, threadRoot, sessionItems]);
+  const bundles = useMemo(() => {
+    if (!bundleItems) return NO_BUNDLES;
+    const all = computeBundles(bundleItems, bundleRuns);
+    return threadRootId === undefined ? all : bundlesUnder(all, threadRootId);
+  }, [bundleItems, bundleRuns, threadRootId]);
+  const messagesById = useMemo(
+    () => new Map([...(sessionItems ?? []), ...(timelineItems ?? [])].map((m) => [m.id, m])),
+    [sessionItems, timelineItems],
   );
-  const messagesById = useMemo(() => new Map((timelineItems ?? []).map((m) => [m.id, m])), [timelineItems]);
   const bubbleSet = useMemo(() => new Set(bubbleRunIds), [bubbleRunIds]);
   const bundled = useMemo(() => bundleIndex(bundles), [bundles]);
   /**
@@ -211,6 +228,8 @@ function ChannelMessages({
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const bundledRef = useRef(bundled);
+  bundledRef.current = bundled;
   /**
    * 초점이 든 행의 key — 범위 밖으로 밀려나도 그 행은 늘 그린다. 지우면 그 안의 초점이 body 로 떨어진다(새 글이 몰려 들어오거나
    * 스크롤해도). 행은 절대 위치라 범위 밖에 하나 더 그려도 자리가 맞다
@@ -255,7 +274,6 @@ function ChannelMessages({
   const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef, bundled.byMessage);
   const older = useOlderPages(channelId, conversationId, threadRootId);
   const newer = useNewerPages(channelId, conversationId, threadRootId, hasNewer);
-  const qc = useQueryClient();
 
   /** 첫 붙임이 겨누는 곳 — 안 읽은 곳(「새 메시지」 행)이면 true, 아니면 맨 아래 */
   const aimUnread = useRef(false);
@@ -275,7 +293,17 @@ function ChannelMessages({
     },
     [setStuck, virtualizer],
   );
-  const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  const jump = useJump(
+    channelId,
+    conversationId,
+    threadRootId,
+    timeline,
+    ready,
+    rows,
+    arrive,
+    bundles,
+    bundled.byMessage,
+  );
   // 묶음 줄의 「승인 대기」 — 목록 맨 아래 그 승인 카드로
   const toApproval = useCallback(
     (approvalId: string) => {
@@ -287,13 +315,14 @@ function ChannelMessages({
   const highlighted = jump.highlighted;
   const bundleView = useMemo(
     (): BundleView => ({
+      bundles,
       messagesById,
       bubbleRunIds: bubbleSet,
       bubbles,
       onApproval: toApproval,
       highlighted,
     }),
-    [messagesById, bubbleSet, bubbles, toApproval, highlighted],
+    [bundles, messagesById, bubbleSet, bubbles, toApproval, highlighted],
   );
   /** 그 행이 지금 뷰포트에 걸쳐 있는가 — 잰 자리(추정 포함)와 스크롤 위치로 본다 */
   const rowInView = useCallback(
@@ -392,7 +421,7 @@ function ChannelMessages({
     let raf = 0;
     const doc = el.ownerDocument;
     const tick = () => {
-      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId));
+      const index = rowsRef.current.findIndex((r) => rowHolds(r, focusId, bundledRef.current.byMessage));
       const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
       if (doc.activeElement !== row && !focusIsFree(doc, el)) {
         focused();
@@ -765,7 +794,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
-                tabIndex={landed !== undefined && rowHolds(row, landed) ? -1 : undefined}
+                tabIndex={landed !== undefined && rowHolds(row, landed, bundled.byMessage) ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",
@@ -849,6 +878,7 @@ function sameRow(a: Row, b: Row): boolean {
 
 /** 묶음 행이 그릴 때 보는 목록의 것 — 메시지·버블·승인 카드로 가기 */
 type BundleView = {
+  bundles: ReadonlyMap<string, Bundle>;
   messagesById: ReadonlyMap<string, Message>;
   bubbleRunIds: ReadonlySet<string>;
   bubbles: ((runId: string) => ReactNode) | undefined;

@@ -2,7 +2,7 @@ import type { Message } from "@dodok/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MessageSquareReplyIcon } from "lucide-react";
-import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { runStatusLabel } from "@/features/activity/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -19,6 +19,11 @@ import { useAuthors } from "./useAuthors";
 
 export type ReplyBundleProps = {
   bundle: Bundle;
+  /**
+   * 모든 깊이의 묶음(`computeBundles`) — 펼친 줄 안 글이 하위 묶음 루트면 그 글 아래에 하위 묶음을 그린다. 없으면 하위 묶음을 그리지
+   * 않는다
+   */
+  bundles?: ReadonlyMap<string, Bundle>;
   messagesById: ReadonlyMap<string, Message>;
   /** 지금 보일 스트리밍 버블의 런(`useChannelBubbles`) — 펼친 줄 안에서 그 런의 버블을 그린다 */
   bubbleRunIds?: ReadonlySet<string>;
@@ -46,6 +51,28 @@ export function hasLiveCard(m: Message, now: number): boolean {
   return ids.some((id) => !consumed.has(id));
 }
 
+/** 끝나지 않은 런인가 — 줄 상태 문구(`runStatusLabel`)를 진행 중으로 보이는 상태 */
+const isRunning = (status: BundleLane["status"]): boolean =>
+  status !== "done" && status !== "error" && status !== "aborted";
+
+/** 하위 묶음 깊이 상한 — computeBundles 가 순환을 걷어 내지만 깨진 맵에서도 끝나게 */
+const MAX_NEST = 32;
+
+/**
+ * 줄 안 글이 루트인 하위 묶음들의 줄(재귀, 모든 깊이) — 바깥 줄이 접혀 있으면 그 안의 누를 카드·승인 대기가 화면에 없으므로 바깥 줄의
+ * 자동 펼침·「승인 대기」 배지가 이 줄들까지 본다
+ */
+function lanesUnder(
+  bundles: ReadonlyMap<string, Bundle> | undefined,
+  lane: BundleLane,
+  depth = 0,
+): BundleLane[] {
+  if (!bundles || depth >= MAX_NEST) return [];
+  return lane.messageIds.flatMap((id) =>
+    (bundles.get(id)?.lanes ?? []).flatMap((l) => [l, ...lanesUnder(bundles, l, depth + 1)]),
+  );
+}
+
 /** setTimeout 최대 지연(약 24.8일) — 그보다 먼 만료는 그때 다시 잰다 */
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -64,16 +91,12 @@ const IN_THREAD = "스레드에서 진행";
  * 있는 카드가 든 줄만 펼친 채(사람이 손으로 펼치거나 접은 것은 그대로). 도구 승인 카드는 목록 맨 아래 제자리 — 줄에는 「승인 대기」
  * 배지를 두고 누르면 그 카드로 간다. 그 체인의 relay_limit·relay_denied 는 묶음 맨 아래.
  * 루트가 채널에도 보낸 스레드 답글이면(`bundle.threadRootId`) 답은 그 스레드에 있다 — 머리에 「… 답 · 스레드에서 진행」, 줄은 그 자리에서
- * 펼치지 않고 누르면 그 스레드를 열어 그 답으로 간다(같은 답이 두 화면에 생기지 않게, 스레드 글 채널에도 보이기 설계)
+ * 펼치지 않고 누르면 그 스레드를 열어 그 답으로 간다(같은 답이 두 화면에 생기지 않게, 스레드 글 채널에도 보이기 설계).
+ * 줄 안 글이 다시 여럿을 불렀으면(`bundle.parent` 가 있는 하위 묶음) 그 줄을 펼쳤을 때 그 글 바로 아래에 같은 컴포넌트로 작게 그린다
+ * (부른 글 기준 설계 2026-11-26)
  */
-export function ReplyBundle({
-  bundle,
-  messagesById,
-  bubbleRunIds,
-  bubbles,
-  onApproval,
-  highlighted,
-}: ReplyBundleProps) {
+export function ReplyBundle(props: ReplyBundleProps) {
+  const { bundle, messagesById, bubbleRunIds, bubbles } = props;
   const { author } = useAuthors();
   const handles = bundle.lanes.map((l) => author({ authorType: "agent", authorId: l.agentId }).handle ?? "?");
   const tail = bundle.tailSystemIds.flatMap((id) => messagesById.get(id) ?? []);
@@ -103,21 +126,27 @@ export function ReplyBundle({
       </div>
     );
   }
+  const nested = bundle.parent !== undefined;
   return (
     <div
       role="group"
       aria-label={groupName(handles)}
       data-slot="reply-bundle"
-      className="mx-4 my-1 ml-16 flex flex-col overflow-hidden rounded-md border bg-muted/20"
+      className={cn(
+        "my-1 flex flex-col overflow-hidden rounded-md border bg-muted/20",
+        // 하위 묶음은 줄 안 글(머리 없는 MessageItem)의 본문 자리에 맞춘다
+        nested ? "mr-2 ml-14" : "mx-4 ml-16",
+      )}
     >
       {bundle.lanes.map((lane) => (
         <Lane
           key={lane.runId}
           lane={lane}
-          messagesById={messagesById}
-          bubble={bubbleRunIds?.has(lane.runId) ? bubbles?.(lane.runId) : undefined}
-          onApproval={onApproval}
-          highlighted={highlighted}
+          parent={props}
+          // 그 런과 이 줄 안 글을 따라온 1명 런의 버블 — 런 id 순
+          bubble={[lane.runId, ...lane.followRunIds].map((runId) =>
+            bubbleRunIds?.has(runId) ? <Fragment key={runId}>{bubbles?.(runId)}</Fragment> : null,
+          )}
         />
       ))}
       {tail.map((m) => (
@@ -129,19 +158,8 @@ export function ReplyBundle({
   );
 }
 
-function Lane({
-  lane,
-  messagesById,
-  bubble,
-  onApproval,
-  highlighted,
-}: {
-  lane: BundleLane;
-  messagesById: ReadonlyMap<string, Message>;
-  bubble: ReactNode;
-  onApproval: ((approvalId: string) => void) | undefined;
-  highlighted: string | undefined;
-}) {
+function Lane({ lane, parent, bubble }: { lane: BundleLane; parent: ReplyBundleProps; bubble: ReactNode }) {
+  const { bundles, messagesById, onApproval, highlighted } = parent;
   const { author, mention } = useAuthors();
   const me = author({ authorType: "agent", authorId: lane.agentId });
   const from = lane.fromAgentId ? author({ authorType: "agent", authorId: lane.fromAgentId }) : undefined;
@@ -149,8 +167,12 @@ function Lane({
   const systems = lane.systemIds.flatMap((id) => messagesById.get(id) ?? []);
   const manual = useBundleExpansion((s) => s.open[lane.runId]);
   const setOpen = useBundleExpansion((s) => s.set);
+  const under = lanesUnder(bundles, lane);
   const now = Date.now();
-  const live = messages.filter((m) => hasLiveCard(m, now));
+  const live = [
+    ...messages,
+    ...under.flatMap((l) => l.messageIds.flatMap((id) => messagesById.get(id) ?? [])),
+  ].filter((m) => hasLiveCard(m, now));
   const auto = live.length > 0;
   const open = manual ?? auto;
   // 자동으로 펼친 줄은 카드가 만료되는 순간 접힌 기본으로 돌아간다 — 그 시각에 한 번 다시 그린다
@@ -164,25 +186,45 @@ function Lane({
     const timer = setTimeout(redraw, Math.min(Math.max(0, expiry - Date.now()) + 50, MAX_TIMER_MS));
     return () => clearTimeout(timer);
   }, [expiry]);
+  // 그 런·따라온 런·하위 묶음 줄(과 그 따라온 런)의 승인 — 접힌 줄 안에 있어도 바깥 줄에서 보인다
+  const approvalRuns = new Set([
+    lane.runId,
+    ...lane.followRunIds,
+    ...under.flatMap((l) => [l.runId, ...l.followRunIds]),
+  ]);
   const approvalId = useApprovalStore(
     useShallow((s) => {
       for (const channel of Object.values(s.byChannel))
         for (const v of Object.values(channel))
-          if (v.approval.runId === lane.runId && v.approval.status === "pending") return v.approval.id;
+          if (
+            v.approval.runId !== undefined &&
+            approvalRuns.has(v.approval.runId) &&
+            v.approval.status === "pending"
+          )
+            return v.approval.id;
       return undefined;
     }),
   );
-  const running = lane.status !== "done" && lane.status !== "error" && lane.status !== "aborted";
+  const running = isRunning(lane.status);
   const first = messages[0];
   const preview = first ? previewOf(first.bodyMd, mention) : "";
   const handle = me.handle ?? "?";
+  // 접힌 줄 안 따라온 런 — 버블은 펼친 줄 안에만 있으므로 진행 중(가장 최근 하나), 없으면 실패를 머리에 보인다
+  const follow = open
+    ? undefined
+    : (lane.followRuns.filter((f) => isRunning(f.status)).at(-1) ??
+      lane.followRuns.filter((f) => f.status === "error").at(-1));
+  const followText =
+    follow && !(follow.status === "awaiting_approval" && approvalId !== undefined)
+      ? `@${author({ authorType: "agent", authorId: follow.agentId }).handle ?? "?"} ${runStatusLabel(follow.status)}`
+      : undefined;
   return (
     <div data-run-id={lane.runId} className="border-b last:border-b-0">
       <div className="flex items-center gap-2 pr-2">
         <button
           type="button"
           aria-expanded={open}
-          aria-label={`@${handle} 답 · ${lane.status === "done" ? "완료" : runStatusLabel(lane.status)}${from ? ` · @${from.handle ?? "?"} 이 부름` : ""}`}
+          aria-label={`@${handle} 답 · ${lane.status === "done" ? "완료" : runStatusLabel(lane.status)}${from ? ` · @${from.handle ?? "?"} 이 부름` : ""}${followText ? ` · ${followText}` : ""}`}
           onClick={() => setOpen(lane.runId, !open)}
           className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
@@ -209,6 +251,16 @@ function Lane({
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
+          {followText !== undefined && follow && (
+            <span
+              className={cn(
+                "shrink-0 text-xs",
+                follow.status === "error" ? "text-destructive" : "text-primary",
+              )}
+            >
+              {followText}
+            </span>
+          )}
           {/* 승인 배지가 있으면 같은 말(「승인 대기」)을 두 번 쓰지 않는다 */}
           {approvalId === undefined && <LaneStatus status={lane.status} running={running} />}
         </button>
@@ -225,19 +277,25 @@ function Lane({
       </div>
       {open && (
         <LaneBody>
-          {messages.map((m, i) => (
-            <div
-              key={m.id}
-              data-message-id={m.id}
-              data-highlighted={m.id === highlighted || undefined}
-              className={cn(
-                "transition-colors duration-700 motion-reduce:transition-none",
-                m.id === highlighted && "bg-yellow-100/70 dark:bg-yellow-500/15",
-              )}
-            >
-              <MessageItem message={m} head={false} activity={i === 0} />
-            </div>
-          ))}
+          {messages.map((m, i) => {
+            // 이 글이 다시 여럿을 불렀다 — 그 답은 이 글 아래 하위 묶음
+            const sub = bundles?.get(m.id);
+            return (
+              <Fragment key={m.id}>
+                <div
+                  data-message-id={m.id}
+                  data-highlighted={m.id === highlighted || undefined}
+                  className={cn(
+                    "transition-colors duration-700 motion-reduce:transition-none",
+                    m.id === highlighted && "bg-yellow-100/70 dark:bg-yellow-500/15",
+                  )}
+                >
+                  <MessageItem message={m} head={false} activity={i === 0} />
+                </div>
+                {sub && <ReplyBundle {...parent} bundle={sub} />}
+              </Fragment>
+            );
+          })}
           {bubble}
           {systems.map((m) => (
             <div key={m.id} data-message-id={m.id} data-highlighted={m.id === highlighted || undefined}>

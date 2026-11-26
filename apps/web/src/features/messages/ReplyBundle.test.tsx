@@ -1,13 +1,16 @@
 import { type Agent, type Message, StoredComponentsV1 } from "@dodok/shared";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
-import { listKey, useJumpStore } from "./jumpTarget";
-import { threadFromPage } from "./timeline";
-import { AGENT, APPROVAL, approval, msg, uid } from "../../../test/fixtures";
+import { setChannelSeq } from "@/realtime/timelineCache";
+import { listKey, requestJump, useJumpStore } from "./jumpTarget";
+import { MessageList } from "./MessageList";
+import { emptyTimeline, threadFromPage } from "./timeline";
+import { AGENT, APPROVAL, approval, CH, msg, uid } from "../../../test/fixtures";
 import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
+import { stubScrollLayout } from "../../../test/scrollLayout";
 import { useBundleExpansion } from "./bundleExpansion";
 import { type BundleRun, computeBundles } from "./bundles";
 import { ReplyBundle } from "./ReplyBundle";
@@ -119,14 +122,15 @@ describe("ReplyBundle", () => {
     expect(lane("fin")).toHaveTextContent("중지됨");
   });
 
-  it("릴레이 줄은 「@dev → @fin」", () => {
-    const m = reply(2, AGENT, RA);
-    const relayed = reply(3, FIN, RB, {
-      runRoot: { runId: RB, agentId: FIN, rootMessageId: R, triggerMessageId: m.id },
-    });
-    draw([root, m, relayed]);
+  it("에이전트 글이 부른 줄은 「@dev → @fin」, 사람 글이 부른 줄은 화살표 없음", () => {
+    // 묶음 루트가 dev 의 글(부른 글 기준 2026-11-26) — 그 글이 부른 줄마다 부른 쪽을 적는다
+    const agentRoot = msg(1, { authorType: "agent", authorId: AGENT, runId: uid(300), bodyMd: "@fin @dev" });
+    const first = draw([agentRoot, reply(2, FIN, RB), reply(3, AGENT, RA)]);
     expect(lane("fin")).toHaveTextContent("@dev → @fin");
+    first.unmount();
+    draw([root, reply(2, AGENT, RA), reply(3, FIN, RB)]);
     expect(lane("dev")).not.toHaveTextContent("→");
+    expect(lane("fin")).not.toHaveTextContent("→");
   });
 
   it("승인 대기 배지를 누르면 승인 행으로 스크롤", async () => {
@@ -225,5 +229,187 @@ describe("ReplyBundle — 채널에도 보낸 답글의 묶음(답은 스레드�
       ),
     );
     expect(screen.queryByText(/둘째 줄/)).toBeNull();
+  });
+});
+
+describe("ReplyBundle — 줄 안 하위 묶음·따라온 런(부른 글 기준 2026-11-26)", () => {
+  const [C, D] = [uid(31), uid(32)];
+  const [RC, RD] = [uid(331), uid(332)];
+  const C_AGENT: Agent = { ...DEV, id: C, handle: "c", name: "C", providerAgentId: "c" };
+  const D_AGENT: Agent = { ...DEV, id: D, handle: "d", name: "D", providerAgentId: "d" };
+  const a = reply(2, AGENT, RA, { bodyMd: "dev 가 c·d 를 부른다" });
+  const b = reply(3, FIN, RB);
+  const called = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+    reply(seq, agentId, runId, {
+      bodyMd,
+      runRoot: { runId, agentId, rootMessageId: R, triggerMessageId: a.id },
+    });
+  function drawAll(items: Message[], runs: BundleRun[] = [], bubbleRunIds: string[] = []) {
+    const bundles = computeBundles(items, runs);
+    const bundle = bundles.get(R);
+    if (!bundle) throw new Error("묶음이 없다");
+    const qc = authorsClient([DEV, FIN_AGENT, C_AGENT, D_AGENT]);
+    return renderWithClient(
+      <ReplyBundle
+        bundle={bundle}
+        bundles={bundles}
+        messagesById={new Map(items.map((m) => [m.id, m]))}
+        bubbleRunIds={new Set(bubbleRunIds)}
+        bubbles={(runId) => <p>버블 {runId}</p>}
+      />,
+      qc,
+    );
+  }
+
+  it("펼친 줄 안 글이 하위 묶음 루트면 그 글 아래에 하위 묶음 group", async () => {
+    drawAll([root, a, b, called(4, C, RC, "c 의 답"), called(5, D, RD, "d 의 답")]);
+    // 바깥 줄을 펼치기 전에는 하위 묶음이 없다
+    expect(screen.queryByRole("group", { name: "@c·@d 답" })).toBeNull();
+    await userEvent.click(lane("dev"));
+    const sub = screen.getByRole("group", { name: "@c·@d 답" });
+    const outer = screen.getByRole("group", { name: "@dev·@fin 답" });
+    expect(outer).toContainElement(sub);
+    const aEl = screen.getByText("dev 가 c·d 를 부른다", { selector: "p" }).closest("[data-message-id]");
+    expect(aEl).not.toBeNull();
+    // 하위 묶음은 그 글 바로 뒤 — 강조 상자(그 글의 data-message-id) 밖
+    expect(aEl?.contains(sub)).toBe(false);
+    expect(aEl!.compareDocumentPosition(sub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // c·d 의 답은 바깥 줄에 바로 그리지 않는다 — 하위 줄을 펼쳐야 보인다
+    expect(screen.queryByText("c 의 답", { selector: "p" })).toBeNull();
+    await userEvent.click(lane("c"));
+    expect(screen.getByText("c 의 답", { selector: "p" })).toBeInTheDocument();
+  });
+
+  it("따라온 런이 스트리밍 중이면 그 줄 안에 버블", async () => {
+    // dev 의 글이 c 하나만 불렀다 — c 의 런은 dev 줄을 따라간다
+    drawAll(
+      [root, a, b],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "streaming" }],
+      [RC],
+    );
+    expect(screen.queryByText(`버블 ${RC}`)).toBeNull();
+    await userEvent.click(lane("dev"));
+    const devLane = screen.getByText("dev 가 c·d 를 부른다", { selector: "p" }).closest("[data-run-id]");
+    expect(devLane).toHaveAttribute("data-run-id", RA);
+    expect(devLane).toContainElement(screen.getByText(`버블 ${RC}`));
+    // fin 줄에는 없다
+    await userEvent.click(lane("fin"));
+    expect(screen.getAllByText(`버블 ${RC}`)).toHaveLength(1);
+  });
+
+  it("접힌 줄 안 따라온 런이 답하는 중이면 줄 머리에 「@c 응답 중」", async () => {
+    drawAll(
+      [root, a, b],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "streaming" }],
+    );
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
+    expect(lane("dev")).toHaveTextContent("@c 응답 중");
+    expect(lane("dev")).toHaveAccessibleName(/@c 응답 중$/);
+    // 펼치면 버블이 그 줄 안에 있으므로 머리에서 뺀다
+    await userEvent.click(lane("dev"));
+    expect(lane("dev")).not.toHaveTextContent("@c 응답 중");
+  });
+
+  it("접힌 줄 안 따라온 런이 실패하면 줄 머리에 「@c 실패」", () => {
+    drawAll(
+      [root, a, b],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "error" }],
+    );
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "false");
+    expect(lane("dev")).toHaveTextContent("@c 실패");
+  });
+
+  it("하위 묶음 안 누를 수 있는 카드가 있으면 바깥 줄도 펼친 채", () => {
+    const card = reply(4, C, RC, {
+      bodyMd: "c 의 카드",
+      components: CARD,
+      componentState: { expiresAt: future, consumed: [] },
+      runRoot: { runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id },
+    });
+    drawAll([root, a, b, card, called(5, D, RD, "d 의 답")]);
+    expect(lane("dev")).toHaveAttribute("aria-expanded", "true");
+    expect(lane("c")).toHaveAttribute("aria-expanded", "true");
+    expect(lane("fin")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("하위 묶음 안 런이 승인 대기면 바깥 줄에 「승인 대기」", async () => {
+    useApprovalStore.getState().apply(approval({ runId: RC, agentId: C }));
+    const onApproval = vi.fn();
+    const bundles = computeBundles(
+      [root, a, b, called(5, D, RD, "d 의 답")],
+      [{ runId: RC, agentId: C, rootMessageId: R, triggerMessageId: a.id, status: "awaiting_approval" }],
+    );
+    const items = [root, a, b, called(5, D, RD, "d 의 답")];
+    renderWithClient(
+      <ReplyBundle
+        bundle={bundles.get(R)!}
+        bundles={bundles}
+        messagesById={new Map(items.map((m) => [m.id, m]))}
+        onApproval={onApproval}
+      />,
+      authorsClient([DEV, FIN_AGENT, C_AGENT, D_AGENT]),
+    );
+    // 승인 배지도 「@dev …」라 줄 단추는 「@dev 답」으로 맞춘다
+    expect(screen.getByRole("button", { name: /^@dev 답/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("button", { name: /승인 카드로$/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "@dev 승인 대기 — 승인 카드로" }));
+    expect(onApproval).toHaveBeenCalledWith(APPROVAL);
+  });
+});
+
+describe("ReplyBundle — 하위 묶음 안 메시지로 결과로 가기", () => {
+  const [C, D] = [uid(31), uid(32)];
+  const [RC, RD] = [uid(331), uid(332)];
+  const RECT = { width: 800, height: 600 };
+  let restore: () => void;
+  beforeEach(() => {
+    restore = stubScrollLayout(RECT);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(JSON.stringify({ code: "NOT_FOUND", message: "없음" }), { status: 404 }),
+      ),
+    );
+  });
+  afterEach(() => {
+    restore();
+    vi.unstubAllGlobals();
+    useJumpStore.setState({ targets: {} });
+  });
+
+  it("바깥 줄과 하위 줄이 펼쳐지고 강조", async () => {
+    const a = reply(2, AGENT, RA, { bodyMd: "dev 가 c·d 를 부른다" });
+    const called = (seq: number, agentId: string, runId: string, bodyMd: string) =>
+      reply(seq, agentId, runId, {
+        bodyMd,
+        runRoot: { runId, agentId, rootMessageId: R, triggerMessageId: a.id },
+      });
+    const target = called(5, D, RD, "d 의 답");
+    const filler = Array.from({ length: 96 }, (_, i) => msg(6 + i, { bodyMd: `본문 ${6 + i}` }));
+    const items = [root, a, reply(3, FIN, RB), called(4, C, RC, "c 의 답"), target, ...filler];
+    const qc = authorsClient([
+      DEV,
+      FIN_AGENT,
+      { ...DEV, id: C, handle: "c", name: "C", providerAgentId: "c" },
+      { ...DEV, id: D, handle: "d", name: "D", providerAgentId: "d" },
+    ]);
+    qc.setQueryData(qk.timeline(CH, CH), {
+      ...emptyTimeline(),
+      items,
+      hasOlder: false,
+      lastSeq: items.at(-1)?.seq ?? 0,
+    });
+    setChannelSeq(qc, CH, items.at(-1)?.seq ?? 0);
+    renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
+    // 묶음은 맨 위 — 처음에는 끝에 붙어 그려지지 않는다
+    await waitFor(() => expect(screen.queryByRole("group", { name: /답$/ })).toBeNull());
+    act(() => requestJump({ conversationId: CH, messageId: target.id, seq: target.seq }));
+    await waitFor(() => expect(lane("dev")).toHaveAttribute("aria-expanded", "true"));
+    await waitFor(() => expect(lane("d")).toHaveAttribute("aria-expanded", "true"));
+    const lit = screen.getByText("d 의 답", { selector: "p" }).closest("[data-message-id]");
+    expect(lit).toHaveAttribute("data-highlighted", "true");
+    // 다른 줄은 그대로 접힘
+    expect(lane("fin")).toHaveAttribute("aria-expanded", "false");
+    expect(lane("c")).toHaveAttribute("aria-expanded", "false");
   });
 });

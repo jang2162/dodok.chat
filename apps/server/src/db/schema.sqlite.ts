@@ -481,6 +481,8 @@ export const runs = sqliteTable(
     index("runs_channel_created").on(t.channelId, t.createdAt),
     index("runs_conversation_created").on(t.conversationId, t.createdAt),
     index("runs_root").on(t.rootMessageId),
+    // 묶음 rootRuns — 그 글이 부른 런(service withRootRuns)
+    index("runs_trigger").on(t.triggerMessageId),
     index("runs_session_status").on(t.sessionKey, t.status),
     index("runs_connection_session_status").on(t.connectionId, t.sessionKey, t.status),
   ],

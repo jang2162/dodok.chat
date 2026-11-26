@@ -428,7 +428,8 @@ export const RunStatus = z.enum([
 export type RunStatus = z.infer<typeof RunStatus>;
 
 /**
- * 사람 최상위 글에 실리는 그 글이 루트인 런 하나(답 묶음 설계 「줄의 원천은 런」). 메시지 없이 중지·실패한 런도 새로 불러온 뒤 줄이
+ * 사람·에이전트 보통 글(최상위 또는 채널에도 보낸 답글)에 실리는, 그 글이 부른 런 하나(`triggerMessageId`, 없으면 `rootMessageId` 가
+ * 그 글 — 답 묶음 설계 「줄의 원천은 런」). 메시지 없이 중지·실패한 런도 새로 불러온 뒤 줄이
  * 서게 서버(hydrateForClient)가 붙인다. 실시간 상태 변화는 run.state 가 맡고 루트 글을 다시 보내지는 않는다
  */
 export const MessageRootRun = z.object({
@@ -479,7 +480,10 @@ export const Message = z.object({
   alsoInChannel: z.literal(true).optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
   runRoot: MessageRunRoot.optional(),
-  /** 사람 최상위 글이면 그 글이 루트인 런(런 id 순, 최대 ROOT_RUNS_MAX). 옛 서버·대상 아닌 글이면 없다 */
+  /**
+   * 사람·에이전트 보통 글(최상위 또는 채널에도 보낸 답글)이면 그 글이 부른 런(`triggerMessageId`, 없으면 `rootMessageId` 가 그 글 — 런 id
+   * 순, 최대 ROOT_RUNS_MAX). 옛 서버·대상 아닌 글이면 없다
+   */
   rootRuns: z.array(MessageRootRun).max(ROOT_RUNS_MAX).optional(),
   clientMsgId: z.string().max(64).optional(), // 사용자 전송 멱등 키
   externalId: z.string().max(128).optional(), // 브리지 outboundId

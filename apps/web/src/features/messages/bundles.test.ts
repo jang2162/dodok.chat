@@ -1,7 +1,7 @@
 import type { Message } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { AGENT, msg, uid } from "../../../test/fixtures";
-import { type BundleRun, bundleIndex, computeBundles } from "./bundles";
+import { type BundleRun, bundleIndex, bundlePath, computeBundles } from "./bundles";
 
 const FIN = uid(12);
 const [RA, RB, RA2] = [uid(301), uid(302), uid(303)];
@@ -49,15 +49,12 @@ describe("computeBundles", () => {
     expect(computeBundles(items, []).size).toBe(0);
   });
 
-  it("1명만 불렀어도 릴레이로 둘째가 답하면 묶는다", () => {
+  it("1명만 불렀고 릴레이로 둘째가 답해도 묶지 않는다 — 앵커가 각각 1명(2026-11-26 부른 글 기준)", () => {
     const m = reply(2, AGENT, RA);
     const relayed = reply(3, FIN, RB, {
       runRoot: { runId: RB, agentId: FIN, rootMessageId: R, triggerMessageId: m.id },
     });
-    const lanes = computeBundles([root, m, relayed], []).get(R)?.lanes ?? [];
-    expect(lanes).toHaveLength(2);
-    expect(lanes[0]?.fromAgentId).toBeUndefined();
-    expect(lanes[1]?.fromAgentId).toBe(AGENT);
+    expect(computeBundles([root, m, relayed], []).size).toBe(0);
   });
 
   it("진행 중 런도 센다 — 메시지 없는 줄", () => {
@@ -116,28 +113,13 @@ describe("computeBundles", () => {
     expect(lane).toMatchObject({ runId: RB, messageIds: [], systemIds: [err.id], status: "error" });
   });
 
-  it("relay_limit 은 tailSystemIds", () => {
-    const limit = msg(4, {
-      kind: "system",
-      authorType: "system",
-      authorId: undefined,
-      systemMeta: {
-        kind: "relay_limit",
-        relay: { fromAgentId: AGENT, toAgentId: FIN, sourceRunId: RA, rootMessageId: R },
-      },
-    });
-    const bundle = computeBundles([root, reply(2, AGENT, RA), reply(3, FIN, RB), limit], []).get(R);
-    expect(bundle?.tailSystemIds).toEqual([limit.id]);
-    expect(bundleIndex(new Map([[R, bundle!]])).byMessage.get(limit.id)).toBe(R);
-  });
-
   it("루트가 items 에 없으면 묶지 않는다", () => {
     expect(computeBundles([reply(2, AGENT, RA), reply(3, FIN, RB)], []).size).toBe(0);
   });
 
-  it("에이전트 글이 루트면 묶지 않는다", () => {
+  it("에이전트 글도 여럿을 부르면 루트 — 작성자는 묻지 않는다(2026-11-26)", () => {
     const agentRoot = msg(1, { authorType: "agent", authorId: AGENT });
-    expect(computeBundles([agentRoot, reply(2, AGENT, RA), reply(3, FIN, RB)], []).size).toBe(0);
+    expect([...computeBundles([agentRoot, reply(2, AGENT, RA), reply(3, FIN, RB)], []).keys()]).toEqual([R]);
   });
 
   it("스레드 답글이 루트면 묶지 않는다", () => {
@@ -200,5 +182,179 @@ describe("computeBundles — 채널에도 보낸 답글(스레드 글 채널에�
     };
     const b = computeBundles([threadRoot, withRuns], []).get(also.id);
     expect(b?.lanes.map((l) => l.status)).toEqual(["done", "error"]);
+  });
+});
+
+describe("computeBundles — 부른 글 기준(2026-11-26)", () => {
+  const [C1, C2, C3, C4, C5, C6] = [uid(21), uid(22), uid(23), uid(24), uid(25), uid(26)];
+  const [RC, RD] = [uid(304), uid(305)];
+  /** triggerId 글이 부른 런의 답 — 체인 루트는 R */
+  const called = (seq: number, agentId: string, runId: string, triggerId: string) =>
+    reply(seq, agentId, runId, {
+      runRoot: { runId, agentId, rootMessageId: R, triggerMessageId: triggerId },
+    });
+  const sys = (seq: number, kind: "relay_limit" | "relay_denied", sourceRunId: string) =>
+    msg(seq, {
+      kind: "system",
+      authorType: "system",
+      authorId: undefined,
+      systemMeta: { kind, relay: { fromAgentId: AGENT, toAgentId: FIN, sourceRunId, rootMessageId: R } },
+    });
+
+  it("사람 → 1명, 그 답 → 6명: 묶음 루트는 에이전트 답", () => {
+    const a = reply(2, AGENT, RA);
+    const six = [C1, C2, C3, C4, C5, C6].map((agent, i) => called(3 + i, agent, uid(400 + i), a.id));
+    const bundles = computeBundles([root, a, ...six], []);
+    expect([...bundles.keys()]).toEqual([a.id]);
+    expect(bundles.get(a.id)?.lanes).toHaveLength(6);
+    expect(bundles.get(a.id)?.parent).toBeUndefined();
+    expect(bundles.get(a.id)?.lanes.every((l) => l.fromAgentId === AGENT)).toBe(true);
+    // 여럿을 부른 글은 메인에 남는다
+    expect(bundleIndex(bundles).byMessage.has(a.id)).toBe(false);
+    expect(bundleIndex(bundles).byMessage.get(six[0]!.id)).toBe(a.id);
+  });
+
+  it("사람이 2명을 부르면 지금처럼 사람 글이 루트", () => {
+    const bundles = computeBundles([root, reply(2, AGENT, RA), reply(3, FIN, RB)], []);
+    expect([...bundles.keys()]).toEqual([R]);
+  });
+
+  it("1명 릴레이는 앵커 자리를 따른다(메인)", () => {
+    const a = reply(2, AGENT, RA);
+    expect(computeBundles([root, a, called(3, FIN, RB, a.id)], []).size).toBe(0);
+  });
+
+  it("줄 안 글이 1명을 부르면 그 줄에 따라 들어간다", () => {
+    const a = reply(2, AGENT, RA);
+    const b = reply(3, FIN, RB);
+    const c = called(4, C1, RC, a.id);
+    const bundles = computeBundles([root, a, b, c], []);
+    expect([...bundles.keys()]).toEqual([R]);
+    const laneA = bundles.get(R)?.lanes.find((l) => l.runId === RA);
+    expect(bundles.get(R)?.lanes).toHaveLength(2);
+    expect(laneA?.messageIds).toEqual([a.id, c.id]);
+    expect(laneA?.followRunIds).toEqual([RC]);
+    expect(bundles.get(R)?.lanes.find((l) => l.runId === RB)?.followRunIds).toEqual([]);
+    expect(bundleIndex(bundles).byRun.get(RC)).toBe(R);
+  });
+
+  it("줄 안 글이 2명을 부르면 하위 묶음", () => {
+    const a = reply(2, AGENT, RA);
+    const b = reply(3, FIN, RB);
+    const c = called(4, C1, RC, a.id);
+    const d = called(5, C2, RD, a.id);
+    const bundles = computeBundles([root, a, b, c, d], []);
+    expect(new Set(bundles.keys())).toEqual(new Set([R, a.id]));
+    const sub = bundles.get(a.id);
+    expect(sub?.parent).toEqual({ rootId: R, runId: RA });
+    expect(sub?.lanes.map((l) => l.runId)).toEqual([RC, RD]);
+    expect(bundles.get(R)?.parent).toBeUndefined();
+    const laneA = bundles.get(R)?.lanes.find((l) => l.runId === RA);
+    expect(laneA?.messageIds).toEqual([a.id]);
+    expect(laneA?.followRunIds).toEqual([]);
+    const { byMessage, byRun } = bundleIndex(bundles);
+    // 가장 바깥 묶음을 가리킨다
+    expect(byMessage.get(c.id)).toBe(R);
+    expect(byMessage.get(a.id)).toBe(R);
+    expect(byRun.get(RD)).toBe(R);
+  });
+
+  it("줄 안 글이 둘째 런을 얻으면 하위 묶음", () => {
+    const a = reply(2, AGENT, RA);
+    const b = reply(3, FIN, RB);
+    const c = called(4, C1, RC, a.id);
+    const items = [root, a, b, c];
+    const before = computeBundles(items, []);
+    expect([...before.keys()]).toEqual([R]);
+    expect(before.get(R)?.lanes.find((l) => l.runId === RA)?.messageIds).toEqual([a.id, c.id]);
+    const after = computeBundles(items, [
+      { runId: RD, agentId: C2, rootMessageId: R, triggerMessageId: a.id, status: "streaming" },
+    ]);
+    expect(new Set(after.keys())).toEqual(new Set([R, a.id]));
+    expect(after.get(R)?.lanes).toHaveLength(2);
+    expect(after.get(R)?.lanes.find((l) => l.runId === RA)?.messageIds).toEqual([a.id]);
+    expect(after.get(a.id)?.lanes.map((l) => [l.runId, l.messageIds])).toEqual([
+      [RC, [c.id]],
+      [RD, []],
+    ]);
+  });
+
+  it("bundlePath 는 바깥부터", () => {
+    const a = reply(2, AGENT, RA);
+    const c = called(4, C1, RC, a.id);
+    const bundles = computeBundles([root, a, reply(3, FIN, RB), c, called(5, C2, RD, a.id)], []);
+    expect(bundlePath(bundles, c.id)).toEqual([
+      { rootId: R, runId: RA },
+      { rootId: a.id, runId: RC },
+    ]);
+    expect(bundlePath(bundles, a.id)).toEqual([{ rootId: R, runId: RA }]);
+    expect(bundlePath(bundles, R)).toEqual([]);
+  });
+
+  it("앵커가 items 에 없으면 메인에 남는다", () => {
+    const missing = uid(9998);
+    const a = reply(2, AGENT, RA);
+    const b = reply(3, FIN, RB);
+    // 둘을 부른 글도, 하나를 부른 글도 아직 위로 안 불렸다
+    const x = called(4, C1, RC, missing);
+    const y = called(5, C2, RD, missing);
+    const z = called(6, C3, uid(306), uid(9997));
+    const bundles = computeBundles([root, a, b, x, y, z], []);
+    expect([...bundles.keys()]).toEqual([R]);
+    const { byMessage } = bundleIndex(bundles);
+    expect([x, y, z].map((m) => byMessage.has(m.id))).toEqual([false, false, false]);
+  });
+
+  it("앵커 사슬 순환은 메인", () => {
+    // 런 X 의 trigger 가 X 자신의 메시지(깨진 데이터) — 1명이면 따라감 순환, 2명이면 자기 줄 안에 자기 묶음
+    const X = uid(310);
+    const x = msg(2, {
+      authorType: "agent",
+      authorId: AGENT,
+      runId: X,
+      runRoot: { runId: X, agentId: AGENT, rootMessageId: R, triggerMessageId: uid(10_002) },
+    });
+    expect(x.id).toBe(uid(10_002));
+    expect(computeBundles([root, x], []).size).toBe(0);
+    const y = called(3, FIN, RB, x.id);
+    const bundles = computeBundles([root, x, y], []);
+    expect(bundles.size).toBe(0);
+    expect(bundlePath(bundles, y.id)).toEqual([]);
+  });
+
+  it("trigger 없는 런은 rootMessageId 를 앵커로", () => {
+    const bundles = computeBundles(
+      [root],
+      [
+        { runId: RA, agentId: AGENT, rootMessageId: R, status: "streaming" },
+        { runId: RB, agentId: FIN, rootMessageId: R, status: "streaming" },
+      ],
+    );
+    expect(bundles.get(R)?.lanes.map((l) => [l.runId, l.fromAgentId])).toEqual([
+      [RA, undefined],
+      [RB, undefined],
+    ]);
+  });
+
+  it("relay_limit 은 sourceRunId 런의 글 자리", () => {
+    const a = reply(2, AGENT, RA);
+    const b = reply(3, FIN, RB);
+    // ① 막힌 멘션을 쓴 글이 묶음 루트 → 그 묶음 맨 아래
+    const asRoot = computeBundles(
+      [root, a, called(4, C1, RC, a.id), called(5, C2, RD, a.id), sys(6, "relay_limit", RA)],
+      [],
+    );
+    expect(asRoot.get(a.id)?.tailSystemIds).toEqual([sys(6, "relay_limit", RA).id]);
+    expect(bundleIndex(asRoot).byMessage.get(sys(6, "relay_limit", RA).id)).toBe(a.id);
+    // ② 글이 줄 안 → 그 줄의 systemIds
+    const inLane = computeBundles([root, a, b, sys(6, "relay_denied", RA)], []);
+    expect(inLane.get(R)?.tailSystemIds).toEqual([]);
+    expect(inLane.get(R)?.lanes.find((l) => l.runId === RA)?.systemIds).toEqual([
+      sys(6, "relay_denied", RA).id,
+    ]);
+    expect(bundlePath(inLane, sys(6, "relay_denied", RA).id)).toEqual([{ rootId: R, runId: RA }]);
+    // ③ 글이 메인 → 묶음 없음
+    const main = computeBundles([root, a, sys(6, "relay_limit", RA)], []);
+    expect(main.size).toBe(0);
   });
 });

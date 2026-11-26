@@ -1,0 +1,1 @@
+CREATE INDEX `runs_trigger` ON `runs` (`trigger_message_id`);

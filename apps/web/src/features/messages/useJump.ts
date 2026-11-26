@@ -3,18 +3,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getThread, getTimeline } from "@/realtime/timelineCache";
 import { useBundleExpansion } from "./bundleExpansion";
-import { laneOfMessage } from "./bundles";
+import { type Bundle, bundlePath, laneOfMessage } from "./bundles";
 import type { Row } from "./groupRows";
 import { jumpToSeq } from "./jump";
 import { clearJump, HIGHLIGHT_MS, type JumpTarget, listKey, useJumpStore } from "./jumpTarget";
 import type { Timeline } from "./timeline";
 import { reportPageError } from "./useOlderPages";
 
-/** 그 메시지를 그리는 행인가 — 메시지 행이거나, 그 메시지가 든 답 묶음 행(묶음 안 메시지는 루트 글 자리에 있다) */
-export function rowHolds(row: Row, messageId: string): boolean {
+/**
+ * 그 메시지를 그리는 행인가 — 메시지 행이거나, 그 메시지가 든 답 묶음 행(묶음 안 메시지는 루트 글 자리에 있다). `bundled`
+ * (`bundleIndex(…).byMessage` — 메시지 → 가장 바깥 묶음)를 주면 하위 묶음 안 메시지도 바깥 묶음 행이 든다
+ */
+export function rowHolds(row: Row, messageId: string, bundled?: ReadonlyMap<string, string>): boolean {
   if (row.kind === "message") return row.message.id === messageId;
   if (row.kind === "bundle")
-    return laneOfMessage(row.bundle, messageId) !== undefined || row.bundle.tailSystemIds.includes(messageId);
+    return (
+      bundled?.get(messageId) === row.rootId ||
+      laneOfMessage(row.bundle, messageId) !== undefined ||
+      row.bundle.tailSystemIds.includes(messageId)
+    );
   return false;
 }
 
@@ -24,8 +31,11 @@ export function rowHolds(row: Row, messageId: string): boolean {
  * (처음 구독·오프라인 사본 복원 뒤)가 최신 페이지로 덮는다.
  * `pending` 이면 목표가 남아 있다 — 목록은 첫 붙임(맨 아래로)을 하지 않는다. 목표가 초점을 바라면(`JumpTarget.focus`) 도착한 뒤
  * `focus` 에 그 메시지 id 를 내놓는다 — 목록이 그 행으로 초점을 옮기고 `focused()` 로 거둔다.
- * 목표가 답 묶음 안이면 그 묶음 행으로 가고 그 줄을 펼친다(`useBundleExpansion`) — 강조는 묶음 안의 그 메시지가 맡는다
+ * 목표가 답 묶음 안이면 그 묶음 행으로 가고 그 줄을 펼친다(`useBundleExpansion`) — 하위 묶음 안이면 바깥 줄부터 그 줄까지 차례로
+ * (`bundlePath`). 강조는 묶음 안의 그 메시지가 맡는다
  */
+const NO_BUNDLES: ReadonlyMap<string, Bundle> = new Map();
+
 export function useJump(
   channelId: string,
   conversationId: string,
@@ -34,6 +44,8 @@ export function useJump(
   ready: boolean,
   rows: readonly Row[],
   arrive: (index: number) => void,
+  bundles: ReadonlyMap<string, Bundle> = NO_BUNDLES,
+  bundled?: ReadonlyMap<string, string>,
 ): { highlighted: string | undefined; pending: boolean; focus: string | undefined; focused: () => void } {
   const qc = useQueryClient();
   const key = listKey(conversationId, threadRootId);
@@ -46,12 +58,14 @@ export function useJump(
 
   useEffect(() => {
     if (!target || !ready) return;
-    const index = rows.findIndex((r) => rowHolds(r, target.messageId));
+    const index = rows.findIndex((r) => rowHolds(r, target.messageId, bundled));
     if (index >= 0) {
       const row = rows[index];
       if (row?.kind === "bundle") {
-        const runId = laneOfMessage(row.bundle, target.messageId);
-        if (runId !== undefined) useBundleExpansion.getState().set(runId, true);
+        const path = bundlePath(bundles, target.messageId);
+        const runIds =
+          path.length > 0 ? path.map((p) => p.runId) : [laneOfMessage(row.bundle, target.messageId)];
+        for (const runId of runIds) if (runId !== undefined) useBundleExpansion.getState().set(runId, true);
       }
       arrive(index);
       setHighlighted(target.messageId);
@@ -76,7 +90,20 @@ export function useJump(
         clearJump(key, target);
       },
     );
-  }, [target, ready, timeline, rows, arrive, qc, channelId, conversationId, threadRootId, key]);
+  }, [
+    target,
+    ready,
+    timeline,
+    rows,
+    arrive,
+    bundles,
+    bundled,
+    qc,
+    channelId,
+    conversationId,
+    threadRootId,
+    key,
+  ]);
 
   useEffect(() => {
     if (highlighted === undefined) return;

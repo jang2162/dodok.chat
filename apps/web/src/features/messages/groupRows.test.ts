@@ -412,6 +412,43 @@ describe("groupRows 답 묶음", () => {
     expect(rows.filter((r) => r.kind === "bubble").map((r) => r.key)).toEqual(["run:other-run"]);
   });
 
+  it("하위 묶음 메시지·따라온 런의 버블은 메인 행에 없다", () => {
+    // 사람 → dev·fin, dev 의 답(a) → C·D(하위 묶음), fin 의 답(b) → E 1명(따라온 런, 스트리밍 중)
+    const [C, D, E] = [
+      "01a00000-0000-7000-8000-000000000031",
+      "01a00000-0000-7000-8000-000000000032",
+      "01a00000-0000-7000-8000-000000000033",
+    ];
+    const [RC, RD, RE] = [
+      "01a00000-0000-7000-8000-000000000331",
+      "01a00000-0000-7000-8000-000000000332",
+      "01a00000-0000-7000-8000-000000000333",
+    ];
+    const called = (seq: number, agentId: string, runId: string, trigger: string) =>
+      msg(seq, {
+        ...at("2027-01-15T08:00:30Z"),
+        authorType: "agent",
+        authorId: agentId,
+        runId,
+        runRoot: { runId, agentId, rootMessageId: root.id, triggerMessageId: trigger },
+      });
+    const c = called(5, C, RC, a.id);
+    const d = called(6, D, RD, a.id);
+    const items = [root, a, b, c, d, after];
+    const nested = computeBundles(items, [
+      { runId: RE, agentId: E, rootMessageId: root.id, triggerMessageId: b.id, status: "streaming" },
+    ]);
+    expect(nested.get(a.id)?.parent).toEqual({ rootId: root.id, runId: RUN });
+    const rows = groupRows(timeline({ items }), [RE, RC, "other-run"], [], TZ, { bundles: nested });
+    expect(rows.map((r) => r.key)).toEqual([
+      "date:2027-01-15",
+      `msg:${root.id}`,
+      `bundle:${root.id}`,
+      `msg:${after.id}`,
+      "run:other-run",
+    ]);
+  });
+
   it("묶음 안 메시지는 새 메시지 구분선을 세우지 않는다", () => {
     const mine = { ...root, authorId: USER };
     const rows = groupRows(timeline({ items: [mine, a, b, after] }), [], [], TZ, {
