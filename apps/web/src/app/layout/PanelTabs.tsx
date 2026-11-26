@@ -362,9 +362,9 @@ export function PanelTabs({
               </Link>
             </Button>
           </div>
-          {/* 본문은 가독 폭(720px) 가운데 — 긴 코드·표가 패널보다 넓게 */}
-          <div className="flex min-h-0 flex-1 justify-center">
-            <div ref={slot} className="flex min-h-0 w-full max-w-[720px] flex-1 flex-col overflow-hidden" />
+          {/* 본문은 채널 화면과 같은 폭 — 폭을 묶으면 「크게 보기」가 넓은 화면에서 패널과 다를 바 없이 좁다 */}
+          <div className="flex min-h-0 flex-1">
+            <div ref={slot} className="flex min-h-0 w-full flex-1 flex-col overflow-hidden" />
           </div>
         </section>
       </>
