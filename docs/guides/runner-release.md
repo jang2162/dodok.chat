@@ -25,7 +25,18 @@
    git push origin runner-v0.2.0
    ```
 4. **CI** — `runner-publish` 워크플로가 돈다: 태그 커밋이 `origin/main` 에 있는지(아니면 실패) → Node·pnpm 판이 `mise.toml` 과 같은지 → 태그가 `runner-v<package.json version>` 과 같은지(다르면 실패) → `pnpm install --frozen-lockfile`(러너와 그 의존 패키지만) → 러너 typecheck·test·build → `pnpm -F @dodok/runner publish`(`prepublishOnly` 가 다시 빌드하고 `scripts/check-pack.mjs` 로 꾸러미를 확인한다).
-5. **확인** — `npm view @dodok/runner version` 이 새 판본이고, npmjs.com 패키지 화면에 provenance 표시가 붙는다. 다른 머신에서 `npm i -g @dodok/runner && dodok-runner --version`.
+5. **확인** — `npm view @dodok/runner version` 이 새 판본이고, npmjs.com 패키지 화면에 provenance 표시가 붙는다. 다른 머신에서 `npm i -g @dodok/runner && dodok-runner --version`. GitHub 의 Releases 에 「@dodok/runner <판본>」이 생겼는지도 본다(아래 「GitHub 릴리스」).
+
+## GitHub 릴리스
+
+npm 에 올린 뒤 워크플로의 마지막 단계가 같은 태그의 GitHub 릴리스를 만든다. 본문은 `scripts/runner-release-notes.sh <태그>` 가 만든다 — 설치 한 줄, 앞 `runner-v*` 태그부터의 feat·fix 커밋 제목을 「러너」(`packages/claude-runner`·`packages/shared/src/runner` 를 건드린 것)와 「함께 들어간 서버·웹 변경」(앞 20줄, 나머지는 「외 N건」)으로 가르고, 비교 링크를 붙인다. 같은 태그의 릴리스가 이미 있으면 건드리지 않는다.
+
+- 사람이 읽을 요약을 더하고 싶으면 워크플로가 끝난 뒤 `gh release edit <태그> --notes-file <파일>` 로 고친다.
+- 워크플로가 릴리스를 만들지 못했거나(0.12.1 까지는 이 단계가 없어 0.6.0~0.13.0 이 빠졌다 — 2026-11-26 에 채움) 손으로 채울 때도 같은 스크립트를 쓴다. 오래된 판부터 만들고, 가장 새 판에만 `--latest` 를 준다.
+  ```bash
+  scripts/runner-release-notes.sh runner-v0.13.0 > /tmp/notes.md
+  gh release create runner-v0.13.0 --verify-tag --latest --title "@dodok/runner 0.13.0" --notes-file /tmp/notes.md
+  ```
 
 배포한 판은 서버마다 1시간 안에 「설정 → 연결」의 러너 상세 「최신」에 뜨고, 그 상세의 「업데이트」가 러너 머신에 `npm i -g @dodok/runner@<그 판>` 을 시킨다(원격 업데이트 — `docs/guides/docker-deploy.md` 「러너 설치」의 「업데이트」). 서버는 npm 의 `latest` 태그만 본다 — 프리릴리스를 `latest` 로 올리지 않는다.
 

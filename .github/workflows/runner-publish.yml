@@ -6,7 +6,8 @@ on:
     tags: ["runner-v*"]
 
 permissions:
-  contents: read
+  # write — 끝의 GitHub 릴리스 만들기
+  contents: write
   id-token: write
 
 concurrency:
@@ -58,3 +59,13 @@ jobs:
         run: pnpm -F @dodok/runner publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # npm 에 올라간 뒤 같은 태그의 GitHub 릴리스 — 본문은 앞 runner-v* 태그부터의 feat·fix 커밋. 이미 있으면(손으로 만든 것) 두고 넘어간다
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "release $TAG exists — skip"; exit 0; fi
+          bash scripts/runner-release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --verify-tag --title "@dodok/runner ${TAG#runner-v}" --notes-file "$RUNNER_TEMP/notes.md"
