@@ -15,6 +15,7 @@ import {
   createUserMessage,
   getMessage,
   listMessages,
+  markMultiCallInChannel,
   resolveAlsoInChannel,
   threadRootsOf,
   threadSummaryOf,
@@ -373,6 +374,81 @@ describe("alsoInChannel", () => {
   });
 });
 
+describe("markMultiCallInChannel — 스레드 안 다중 호출도 채널에(부른 글 기준 설계 덧붙임)", () => {
+  /** 그 글을 트리거로 한 런 — 스레드 런 */
+  const runFor = (t: ReturnType<typeof setup>, agentId: string, trigger: Message) =>
+    insertRun(t.db, {
+      channelId: t.channel.id,
+      conversationId: trigger.conversationId,
+      agentId,
+      triggerKind: "mention",
+      triggerMessageId: trigger.id,
+      rootMessageId: trigger.id,
+      relayDepth: 0,
+      sessionKey: dodokSessionKey(agentId, trigger.conversationId, trigger.threadRootId),
+      ...(trigger.threadRootId ? { threadRootId: trigger.threadRootId } : {}),
+      createdAt: new Date(),
+    });
+
+  it("에이전트 스레드 답글 — 서로 다른 에이전트 둘째 런에서 켜고 message.updated 로 알린다, 같은 에이전트 둘은 켜지 않는다", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const fin = t.agent("fin");
+    const ops = t.agent("ops");
+    const root = t.human("루트");
+    const reply = t.agentSays(ops.id, "둘에게 넘긴다", root.id);
+    runFor(t, dev.id, reply);
+    runFor(t, dev.id, reply);
+    expect(markMultiCallInChannel(t.db, t.bus, reply.id)).toBeUndefined();
+    expect(getMessage(t.db, reply.id)?.alsoInChannel).toBeUndefined();
+    runFor(t, fin.id, reply);
+    t.updated.length = 0;
+    expect(markMultiCallInChannel(t.db, t.bus, reply.id)?.alsoInChannel).toBe(true);
+    expect(getMessage(t.db, reply.id)?.alsoInChannel).toBe(true);
+    expect(t.updated.map((m) => [m.id, m.alsoInChannel])).toEqual([[reply.id, true]]);
+    // 이미 켰으면 다시 알리지 않는다
+    expect(markMultiCallInChannel(t.db, t.bus, reply.id)).toBeUndefined();
+    expect(t.updated).toHaveLength(1);
+    // 채널(세션) 타임라인에 든다
+    const page = listMessages(t.db, t.channel.id, { limit: 50, scope: "channel" });
+    expect(page.messages.map((m) => m.id)).toEqual([root.id, reply.id]);
+  });
+
+  it("사람 스레드 답글 — 멘션이 하나뿐이어도 실제 런이 둘이면 켠다", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const fin = t.agent("fin");
+    const root = t.human("루트");
+    const reply = t.human("@dev 봐줘", { threadRootId: root.id, alsoInChannel: false });
+    runFor(t, dev.id, reply);
+    runFor(t, fin.id, reply);
+    expect(markMultiCallInChannel(t.db, t.bus, reply.id)?.alsoInChannel).toBe(true);
+  });
+
+  it("사람이 「채널에도 보내기」를 끈 글(에이전트 둘을 멘션했는데 0)은 런이 둘이어도 켜지 않는다", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const fin = t.agent("fin");
+    const root = t.human("루트");
+    const reply = t.human("@dev @fin 봐줘", { threadRootId: root.id, alsoInChannel: false });
+    runFor(t, dev.id, reply);
+    runFor(t, fin.id, reply);
+    expect(markMultiCallInChannel(t.db, t.bus, reply.id)).toBeUndefined();
+    expect(getMessage(t.db, reply.id)?.alsoInChannel).toBeUndefined();
+  });
+
+  it("최상위 글·시스템 글은 대상이 아니다", () => {
+    const t = setup();
+    const dev = t.agent("dev");
+    const fin = t.agent("fin");
+    const top = t.human("최상위");
+    runFor(t, dev.id, top);
+    runFor(t, fin.id, top);
+    expect(markMultiCallInChannel(t.db, t.bus, top.id)).toBeUndefined();
+    expect(getMessage(t.db, top.id)?.alsoInChannel).toBeUndefined();
+  });
+});
+
 describe("listMessages 스코프·around", () => {
   /** 루트 1·3·5·7, 답글 2(→1)·4(→3)·6(→1) */
   function seeded() {
@@ -455,7 +531,7 @@ describe("listMessages 스코프·around", () => {
     expect(seqs(listMessages(t.db, t.channel.id, { limit: 2, aroundSeq: also.seq }))).toEqual([1, 3]);
   });
 
-  it("채널에도 보낸 사람 답글은 그 글이 루트인 런(rootRuns)을 싣는다", () => {
+  it("스레드 답글은 채널에도 보냈든 아니든 그 글이 부른 런(rootRuns)을 싣는다 — 패널 안 묶음(부른 글 기준 설계 덧붙임)", () => {
     const t = seeded();
     const dev = t.agent("dev");
     const also = t.human("a4", { threadRootId: t.r1.id, alsoInChannel: true });
@@ -473,12 +549,14 @@ describe("listMessages 스코프·around", () => {
         createdAt: new Date(),
       });
     const r = run(also.id);
-    run(plain.id);
+    const p = run(plain.id);
     const page = listMessages(t.db, t.channel.id, { limit: 50, scope: "all" });
     expect(page.messages.find((m) => m.id === also.id)?.rootRuns).toEqual([
       { runId: r.id, agentId: dev.id, status: "queued", triggerMessageId: also.id },
     ]);
-    expect(page.messages.find((m) => m.id === plain.id)?.rootRuns).toBeUndefined();
+    expect(page.messages.find((m) => m.id === plain.id)?.rootRuns).toEqual([
+      { runId: p.id, agentId: dev.id, status: "queued", triggerMessageId: plain.id },
+    ]);
   });
 
   it("around 는 그 seq 앞뒤 절반 — hasMore 는 더 옛것, hasMoreAfter 는 더 새것", () => {
@@ -709,6 +787,60 @@ describe("wire·REST — 스레드", () => {
     };
     expect((await send("also-1", true)).alsoInChannel).toBe(true);
     expect((await send("also-2", false)).alsoInChannel).toBeUndefined();
+  });
+
+  it("오케스트레이터 — 스레드 에이전트 글이 둘째 에이전트를 부르면 구독자에게 message.updated(alsoInChannel), 세션 REST 에도 든다", async () => {
+    const socket = await connect();
+    const channel = newChannel("wire-multi-call");
+    const agentOf = (handle: string) => {
+      const a = createAgent(app.db, {
+        workspaceId: app.workspaceId,
+        providerAgentId: `${handle}-mc`,
+        handle: `${handle}-mc`,
+        name: handle,
+      });
+      addMember(app.db, channel.id, { memberType: "agent", memberId: a.id }, app.logger);
+      return a;
+    };
+    const ops = agentOf("ops");
+    const dev = agentOf("dev");
+    const fin = agentOf("fin");
+    const root = post(channel.id, "루트");
+    const conversationId = channelConversation(app.db, channel.id);
+    const reply = createAgentMessage(app.db, app.bus, {
+      conversationId,
+      agentId: ops.id,
+      externalId: "mc-1",
+      bodyMd: "둘에게",
+      threadRootId: root.id,
+    });
+    const sub = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    expect(sub.ok).toBe(true);
+    const enqueue = (agentId: string) =>
+      app.orchestrator.enqueueRun(
+        {
+          agentId,
+          channelId: channel.id,
+          conversationId,
+          triggerKind: "relay",
+          rootMessageId: root.id,
+          relayDepth: 1,
+          threadRootId: root.id,
+        },
+        { message: reply },
+      );
+    const events = recordEvents(socket, ["message.updated"]);
+    await enqueue(dev.id);
+    expect(getMessage(app.db, reply.id)?.alsoInChannel).toBeUndefined();
+    const flipped = waitFor(socket, "message.updated", (p) => p.message.id === reply.id);
+    await enqueue(fin.id);
+    const got = (await flipped).message;
+    expect(got).toMatchObject({ alsoInChannel: true, threadRootId: root.id });
+    expect(got.rootRuns?.map((r) => r.agentId).sort()).toEqual([dev.id, fin.id].sort());
+    expect(events.filter((e) => (e.payload as { message: Message }).message.id === reply.id)).toHaveLength(1);
+    const res = await get(`/conversations/${conversationId}/messages`);
+    const body = res.json() as { messages: Message[] };
+    expect(body.messages.map((m) => m.id)).toEqual([root.id, reply.id]);
   });
 
   it("message.send threadRootId 가 답글·다른 채널·없는 id 면 VALIDATION(Review Focus 1)", async () => {

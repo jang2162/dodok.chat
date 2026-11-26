@@ -46,6 +46,7 @@ import {
   createAgentMessage,
   createSystemMessage,
   getMessage,
+  markMultiCallInChannel,
   runErrorMessages,
 } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
@@ -1511,6 +1512,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { run, event };
       });
+      // 스레드 글이 이 런으로 서로 다른 에이전트 둘째를 불렀으면 그 글을 채널 타임라인에도 올린다(부른 글 기준 설계 덧붙임). 실패해도 런은 간다
+      if (run.threadRootId !== undefined && run.triggerMessageId !== undefined) {
+        try {
+          markMultiCallInChannel(db, bus, run.triggerMessageId);
+        } catch (err) {
+          logger.error({ err, runId: run.id }, "multi-call also_in_channel failed");
+        }
+      }
       if (refusal !== undefined) {
         emitEvents(run.channelId, [event]);
         bus.emit("run.state", { run: store.toRunState(run) });
