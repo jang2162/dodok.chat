@@ -97,6 +97,7 @@ afterEach(() => {
   useWireStatus.getState().setStatus("idle");
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
+  useBundleExpansion.getState().reset();
 });
 
 /** 세션 타임라인(루트만)을 채우고 그 채널을 구독한(채널 커서가 선) 클라이언트 */
