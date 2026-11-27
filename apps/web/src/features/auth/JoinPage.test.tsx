@@ -220,7 +220,7 @@ describe("JoinPage", () => {
     renderRoute(`/join/${TOKEN}`);
     await fillForm({ 핸들: "Mia!", 이메일: "mia", 비밀번호: "short", "비밀번호 확인": "short" });
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
-    expect(await screen.findByText("영문 소문자·숫자·_·- 로 2~32자")).toBeInTheDocument();
+    expect(await screen.findByText("영문 소문자·한글·숫자·_·- 로 2~32자")).toBeInTheDocument();
     expect(screen.getByText("이메일 모양이 아닙니다")).toBeInTheDocument();
     expect(screen.getByText("비밀번호는 12자 이상입니다")).toBeInTheDocument();
     expect(callsTo(fetch, "/invites/accept")).toHaveLength(0);

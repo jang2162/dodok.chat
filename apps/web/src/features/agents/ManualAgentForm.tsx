@@ -17,7 +17,7 @@ export const PROVIDER_ID_HINT = "영문 소문자·숫자로 시작, 영문 소�
 
 /** 클라이언트 검사 — shared 규칙(Handle·Agent.name)과 같다. 문구는 폼 안에 그린다 */
 export const handleProblem = (handle: string): string | undefined =>
-  Handle.safeParse(handle).success ? undefined : "영문 소문자·숫자·_·- 로 2~32자";
+  Handle.safeParse(handle).success ? undefined : "영문 소문자·한글·숫자·_·- 로 2~32자";
 export function nameProblem(name: string): string | undefined {
   const trimmed = name.trim();
   if (trimmed === "") return "이름을 입력하세요";

@@ -107,15 +107,17 @@ export function mentionCandidates(
   return [...channelAgents, ...invitedAgents, ...humans];
 }
 
-/** 핸들·이름·별칭 앞부분 일치(대소문자 무시). 빈 검색어는 전부 */
+/** 핸들·이름·별칭 앞부분 일치(대소문자 무시, NFC 로 맞춰 — 한글 핸들을 조합형으로 쳐도). 빈 검색어는 전부 */
 export function matchMentions(
   candidates: readonly MentionCandidate[],
   query: string,
   limit = MAX_MENTIONS,
 ): MentionCandidate[] {
-  const q = query.toLowerCase();
+  const q = query.normalize("NFC").toLowerCase();
   return candidates
-    .filter((c) => [c.label, c.name, ...c.aliases].some((s) => s.toLowerCase().startsWith(q)))
+    .filter((c) =>
+      [c.label, c.name, ...c.aliases].some((s) => s.normalize("NFC").toLowerCase().startsWith(q)),
+    )
     .slice(0, limit);
 }
 

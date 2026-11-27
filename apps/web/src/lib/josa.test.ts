@@ -23,3 +23,10 @@ it("알 수 없는 글자로 끝나면 받침 없는 쪽", () => {
   expect(hasFinalConsonant("")).toBe(false);
   expect(hasFinalConsonant("bot_")).toBe(false);
 });
+
+it("한글 핸들도 마지막 음절의 받침으로 고른다 — NFD(조합형)로 와도 같다", () => {
+  expect(josa("@개발봇", "이", "가")).toBe("이"); // 봇
+  expect(josa("@지아", "이", "가")).toBe("가"); // 아
+  expect(josa("@개발봇".normalize("NFD"), "이", "가")).toBe("이");
+  expect(josa("@지아".normalize("NFD"), "이", "가")).toBe("가");
+});

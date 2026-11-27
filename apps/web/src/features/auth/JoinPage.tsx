@@ -22,7 +22,7 @@ const EMPTY: Values = { handle: "", displayName: "", email: "", password: "", co
 /** 클라이언트 검사 — shared AcceptInviteBody 의 칸 규칙과 같다. 서버가 다시 막는다 */
 function problems(v: Values): Partial<Record<Field, string>> {
   return {
-    handle: Handle.safeParse(v.handle).success ? undefined : "영문 소문자·숫자·_·- 로 2~32자",
+    handle: Handle.safeParse(v.handle).success ? undefined : "영문 소문자·한글·숫자·_·- 로 2~32자",
     displayName: DisplayName.safeParse(v.displayName).success ? undefined : "표시 이름은 1~64자입니다",
     email: AcceptInviteBody.shape.email.safeParse(v.email.trim()).success
       ? undefined
@@ -134,7 +134,7 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
         )}
         <AuthField
           label="핸들"
-          hint="@멘션에 쓰는 이름 — 영문 소문자·숫자·_·-"
+          hint="@멘션에 쓰는 이름 — 영문 소문자·한글·숫자·_·-"
           autoCapitalize="none"
           autoComplete="off"
           spellCheck={false}
