@@ -290,6 +290,7 @@ export function formatTimeZoneLine(timeZone: string | undefined, atIso: string):
       .formatToParts(new Date(atIso))
       .find((p) => p.type === "timeZoneName")?.value ?? "GMT";
   // longOffset 은 `GMT+09:00`·`GMT-04:00`, 오프셋 0 이면 `GMT` 다. 빼기는 U+2212 로 올 수도 있어 ASCII 로 맞춘다
+  // (이 Node(24) 의 longOffset 은 ASCII 를 낸다 — 다른 엔진 대비라 시험이 덮지 않는다)
   const offset = name.replace(/^GMT/, "").replace("\u2212", "-");
   return `시각 기준: ${tz} (UTC${offset === "" ? "+00:00" : offset})`;
 }

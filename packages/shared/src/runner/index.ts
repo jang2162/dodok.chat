@@ -55,6 +55,9 @@ export const RunnerCapability = z.enum([
   // 백그라운드 작업(백그라운드 작업 스펙 6장) — tasks.update·run.followup 을 내고 task.stop·session.release 를 받는다. 없는 러너에는
   // 서버가 새 프레임을 보내지 않는다(옛 러너는 첫 result 에서 CLI 를 닫는 지금 동작 그대로)
   "backgroundTasks",
+  // 헤더 시간대 — InboundContext.timeZone 으로 본문 시각을 그리고 `시각 기준:` 줄을 싣는다. 없는 러너에는 서버가 턴 사실(buildTurnFacts)도
+  // UTC 로 찍는다(옛 러너 본문은 UTC 라 한 턴 안에서 시간대가 섞이지 않게)
+  "headerTimeZone",
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 
