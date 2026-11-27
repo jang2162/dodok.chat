@@ -32,7 +32,15 @@ import { waitUntilAbort } from "openclaw/plugin-sdk/channel-outbound";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { createBridgeClient, type BridgeClient, type BridgeLogger } from "./bridge-client";
-import { getBridge, getCorrelation, registerBridge, releaseBridge, setCorrelation } from "./bridge-registry";
+import {
+  getBridge,
+  getConversationChatType,
+  getCorrelation,
+  registerBridge,
+  releaseBridge,
+  setConversationChatType,
+  setCorrelation,
+} from "./bridge-registry";
 import { componentsJsonSchema } from "./components-schema";
 import {
   DEFAULT_ACCOUNT_ID,
@@ -45,7 +53,7 @@ import {
 } from "./config";
 import { writeChannelConfig } from "./config-writer";
 import { channelPromptContext } from "./context";
-import { toDeliverResult, toInboundFacts } from "./inbound";
+import { type DodokChatKind, toDeliverResult, toInboundFacts } from "./inbound";
 import { appendNotes, inboundSaveArgs, prepareInboundMedia } from "./inbound-media";
 import { bridgeHttpOrigin, downloadAttachment, uploadAttachment } from "./media-http";
 import {
@@ -104,6 +112,21 @@ export const DODOK_COMMAND_INGRESS = {
   hasControlCommand: true,
   modeWhenAccessGroupsOff: "allow",
 } as const;
+
+/**
+ * ingress 의 conversation(과 direct 면 allowFrom). 핀 SDK 는 `direct` 에 dm 송신자 게이트를 걸어 dmPolicy open 이어도 허용 목록에
+ * 와일드카드가 없으면 `dm_policy_not_allowlisted` 로 drop 한다 — 인가는 브리지 토큰이 경계라 와일드카드를 준다. 명령 갈래의 명령 게이트도
+ * 이 허용 목록으로 판정해 channel 과 같은 authorized 가 된다(시험이 핀 SDK 로 고정)
+ */
+export function dodokIngressConversation(conversation: { kind: DodokChatKind; id: string }): {
+  conversation: { kind: DodokChatKind; id: string };
+  allowFrom?: string[];
+} {
+  return {
+    conversation: { kind: conversation.kind, id: conversation.id },
+    ...(conversation.kind === "direct" ? { allowFrom: ["*"] } : {}),
+  };
+}
 
 export type InboundTurnParts = {
   message: { body: string; bodyForAgent: string; rawBody: string; commandBody: string };
@@ -188,7 +211,7 @@ async function dispatchInbound(params: {
     cfg,
     identity: { key: "sender", entryIdPrefix: "dodok-entry" },
     subject: { stableId: facts.sender.id },
-    conversation: { kind: "channel", id: facts.conversationId },
+    ...dodokIngressConversation({ kind: facts.conversation.kind, id: facts.conversationId }),
     contextBinding: {
       agentId: facts.agentId,
       sessionKey: facts.sessionKey,
@@ -207,6 +230,7 @@ async function dispatchInbound(params: {
       admission: ingress.ingress.admission,
       decision: ingress.ingress.decision,
       sessionKey: facts.sessionKey,
+      chatType: facts.conversation.kind,
       groupSystemPromptChars: entry.systemPrompt?.length ?? 0,
       channelPromptContextItems: promptContext?.length ?? 0,
     }),
@@ -270,6 +294,8 @@ async function dispatchInbound(params: {
     replyToInboundId: facts.correlation.replyToInboundId,
   };
   setCorrelation(facts.sessionKey, correlation);
+  // 아웃바운드 경로가 같은 ChatType 을 내게 — 툴 전송마다 세션 항목의 경로 chatType 이 왔다 갔다 하지 않게
+  setConversationChatType(facts.conversationId, facts.conversation.kind);
 
   // ack 는 먼저 오는 쪽으로 한 번만 정해진다 — 런 시작(onAgentRunStart) 또는 런 없이 끝난 디스패치 결과
   let resolveAck: (result: InboundDeliverResult) => void = () => {};
@@ -539,8 +565,9 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           agentId,
           channel: DODOK_CHANNEL_ID,
           accountId,
+          // peer 는 channel 고정 — `direct` 면 코어가 키를 `agent:<id>:main`(dmScope 기본)으로 만든다. ChatType 만 인바운드를 따른다
           peer: { kind: "channel", id: conversationId },
-          chatType: "channel",
+          chatType: getConversationChatType(conversationId) ?? "channel",
           from: `dodok:${accountId ?? DEFAULT_ACCOUNT_ID}`,
           to: formatDodokTarget(conversationId),
         });

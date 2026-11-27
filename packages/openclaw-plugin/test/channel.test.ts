@@ -2,12 +2,13 @@
 import { CONVERSATION_ONLY_REASON, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
-import { registerBridge, releaseBridge } from "../src/bridge-registry";
+import { registerBridge, releaseBridge, setConversationChatType } from "../src/bridge-registry";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import {
   DODOK_BRIDGE_CAPABILITIES,
   DODOK_COMMAND_INGRESS,
   dodokChannelPlugin,
+  dodokIngressConversation,
   inboundTurnParts,
 } from "../src/channel";
 import { THREAD_ONLY_REASON } from "../src/outbound";
@@ -20,7 +21,9 @@ const THREAD_KEY = `${CHANNEL_KEY}:thread:${ROOT}`;
 
 type Plugin = {
   messaging: {
-    resolveOutboundSessionRoute: (params: Record<string, unknown>) => { sessionKey: string } | null;
+    resolveOutboundSessionRoute: (
+      params: Record<string, unknown>,
+    ) => { sessionKey: string; chatType: string; peer: { kind: string; id: string } } | null;
   };
   actions: { handleAction: (ctx: Record<string, unknown>) => Promise<unknown> };
   outbound: { sendText: (ctx: Record<string, unknown>) => Promise<{ messageId: string }> };
@@ -90,6 +93,53 @@ describe("resolveOutboundSessionRoute — 스레드 인식(ADR 0006 「아웃바
 
   it("dodok 대상이 아니면 null", () => {
     expect(route({ target: "channel:general" })).toBeNull();
+  });
+  it("인바운드가 direct 로 넘긴 대화는 chatType 만 direct — peer 는 channel, 키는 그대로(main 으로 가지 않는다)", () => {
+    const DM = "01a09fc9-d204-7551-89d6-38544d07a1dd";
+    expect(route({ target: `channel:${DM}` })).toMatchObject({ chatType: "channel" });
+    setConversationChatType(DM, "direct");
+    const r = route({ target: `channel:${DM}`, currentSessionKey: `agent:main:dodok:channel:${DM}` });
+    expect(r).toMatchObject({
+      chatType: "direct",
+      peer: { kind: "channel", id: DM },
+      sessionKey: `agent:main:dodok:channel:${DM}`,
+    });
+    // 다음 인바운드가 channel 이면(주인이 바뀌었다) 되돌린다
+    setConversationChatType(DM, "channel");
+    expect(route({ target: `channel:${DM}` })).toMatchObject({ chatType: "channel" });
+    expect(route({})).toMatchObject({ chatType: "channel" });
+  });
+});
+
+describe("dodokIngressConversation — direct 는 allowFrom 와일드카드를 함께(없으면 핀 SDK 가 drop)", () => {
+  const ingress = (kind: "channel" | "direct", command = false) =>
+    resolveStableChannelMessageIngress({
+      channelId: "dodok",
+      accountId: "default",
+      cfg: {},
+      identity: { key: "sender", entryIdPrefix: "dodok-entry" },
+      subject: { stableId: "user:mia" },
+      ...dodokIngressConversation({ kind, id: "c1" }),
+      dmPolicy: "open",
+      groupPolicy: "open",
+      ...(command ? { command: { ...DODOK_COMMAND_INGRESS } } : {}),
+    });
+
+  it("channel 은 allowFrom 없이, direct 는 allowFrom ['*']", () => {
+    expect(dodokIngressConversation({ kind: "channel", id: "c1" })).toEqual({
+      conversation: { kind: "channel", id: "c1" },
+    });
+    expect(dodokIngressConversation({ kind: "direct", id: "c1" })).toEqual({
+      conversation: { kind: "direct", id: "c1" },
+      allowFrom: ["*"],
+    });
+  });
+
+  it("핀 SDK — 둘 다 dispatch, 명령 갈래도 둘 다 authorized", async () => {
+    for (const kind of ["channel", "direct"] as const) {
+      expect((await ingress(kind)).ingress.admission).toBe("dispatch");
+      expect((await ingress(kind, true)).commandAccess).toMatchObject({ requested: true, authorized: true });
+    }
   });
 });
 

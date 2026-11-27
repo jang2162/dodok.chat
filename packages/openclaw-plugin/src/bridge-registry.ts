@@ -9,10 +9,12 @@
  * SDK 를 import 하지 않는다(단위 테스트 대상).
  */
 import type { BridgeClient } from "./bridge-client";
+import type { DodokChatKind } from "./inbound";
 import type { OutboundCorrelation } from "./outbound";
 
 export const BRIDGES_KEY = Symbol.for("dodok.openclaw-plugin.bridges.v1");
 export const CORRELATIONS_KEY = Symbol.for("dodok.openclaw-plugin.correlations.v1");
+export const CHAT_KINDS_KEY = Symbol.for("dodok.openclaw-plugin.chat-kinds.v1");
 
 function globalMap<V>(key: symbol): Map<string, V> {
   const g = globalThis as Record<symbol, unknown>;
@@ -57,4 +59,18 @@ export function setCorrelation(sessionKey: string, correlation: OutboundCorrelat
 
 export function getCorrelation(sessionKey: string): OutboundCorrelation | undefined {
   return correlations().get(sessionKey);
+}
+
+/**
+ * 대화 id → 마지막 인바운드의 ChatType. 아웃바운드 경로(resolveOutboundSessionRoute)는 대상(`channel:<id>`)만 받아 DM 인지 모르므로
+ * 인바운드 때 적어 둔 것을 쓴다 — 플러그인이 다시 뜬 뒤 첫 인바운드 전에는 없다(그때는 channel). 지우는 자리는 없다(대화 수만큼 남는다)
+ */
+const chatKinds = (): Map<string, DodokChatKind> => globalMap<DodokChatKind>(CHAT_KINDS_KEY);
+
+export function setConversationChatType(conversationId: string, kind: DodokChatKind): void {
+  chatKinds().set(conversationId.toLowerCase(), kind);
+}
+
+export function getConversationChatType(conversationId: string): DodokChatKind | undefined {
+  return chatKinds().get(conversationId.toLowerCase());
 }

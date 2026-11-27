@@ -102,6 +102,30 @@ describe("toInboundFacts", () => {
     expect(res.ok && res.facts.threadId).toBe(ROOT);
   });
 
+  it("dm.direct(Gateway 주인의 1:1 DM)만 conversation.kind direct — 키·route·label 은 그대로", () => {
+    const direct = toInboundFacts(deliver({ dm: { ownerHandle: "jang", direct: true } }), {
+      accountId: "default",
+    });
+    expect(direct.ok && direct.facts.conversation).toEqual({ kind: "direct", id: CH, label: CH });
+    expect(direct.ok && direct.facts.sessionKey).toBe(`agent:main:dodok:channel:${CH}`);
+    expect(direct.ok && direct.facts.route.dispatchSessionKey).toBe(`agent:main:dodok:channel:${CH}`);
+    // 주인이 아닌 DM·그룹 DM·일반 채널은 channel 그대로
+    for (const extra of [{ dm: { ownerHandle: "jang" } }, { groupDm: true as const }, {}]) {
+      const res = toInboundFacts(deliver(extra), { accountId: "default" });
+      expect(res.ok && res.facts.conversation.kind).toBe("channel");
+    }
+    const thread = toInboundFacts(
+      deliver({ dm: { ownerHandle: "jang", direct: true }, sessionKey: THREAD_KEY, threadId: ROOT }),
+      { accountId: "default" },
+    );
+    expect(thread.ok && thread.facts.conversation).toEqual({
+      kind: "direct",
+      id: CH,
+      label: CH,
+      threadId: ROOT,
+    });
+  });
+
   it("채널 인바운드에는 스레드 필드가 없다", () => {
     const res = toInboundFacts(deliver(), { accountId: "default" });
     expect(res.ok).toBe(true);
