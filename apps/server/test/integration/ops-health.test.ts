@@ -3,6 +3,7 @@
  * 60초 임계 자체(깜빡임 0줄·61초 한 줄)는 가짜 타이머 단위 테스트(ops.health.test.ts)가 잰다 — 여기서는 실제 시계로
  * 잴 수 있게 임계를 줄여(disconnectEventMs) 어댑터 상태 → 사건 → owner 소켓 → 복구 닫힘이 이어지는지를 본다
  */
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents } from "../../src/db/schema.sqlite";
@@ -135,7 +136,7 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     const lastVersion = (l: LiveApp) => getGatewayRow(l.app.db, l.app.workspaceId, l.gatewayId)?.lastVersion;
     const pinned = await boot();
     await until(() => lastVersion(pinned), "기억");
-    expect(lastVersion(pinned)).toBe("2026.9.4");
+    expect(lastVersion(pinned)).toBe(OPENCLAW_PINNED_VERSION);
     expect(eventsOf(pinned, "gateway_version_untested")).toEqual([]);
     await pinned.close();
 

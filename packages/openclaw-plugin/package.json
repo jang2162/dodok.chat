@@ -18,7 +18,7 @@
     "@dodok/shared": "workspace:*",
     "@types/node": "^24.13.4",
     "esbuild": "0.28.2",
-    "openclaw": "2026.9.4",
+    "openclaw": "2026.11.10",
     "socket.io-client": "4.8.3",
     "typescript": "5.9.3",
     "vitest": "4.1.11",
@@ -37,7 +37,7 @@
       "pluginApi": ">=2026.9.4"
     },
     "build": {
-      "openclawVersion": "2026.9.4"
+      "openclawVersion": "2026.11.10"
     }
   }
 }

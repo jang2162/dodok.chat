@@ -71,7 +71,7 @@
 | 멀티에이전트 발언 규칙 | **멘션 + 자동 릴레이** — @멘션된 에이전트가 응답, 에이전트가 다른 에이전트를 @멘션하면 앱이 릴레이 (턴 제한·루프 가드) |
 | 기술 스택 / 실행 형태 | **TypeScript 풀스택 + 셀프호스팅** — React(Vite) PWA, Node 백엔드(Fastify + Socket.IO), SQLite→Postgres, Docker Compose |
 | Gateway 배치 | **본인 운영 원격 Gateway에 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버의 브리지로 아웃바운드 WSS 접속. 로컬 개발은 `openclaw --dev`(Compose 동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5) |
-| 버전 정책 | `@openclaw/gateway-client`·`@openclaw/gateway-protocol`·`openclaw`(플러그인 SDK)를 **Gateway와 같은 버전으로 정확히 핀**. 시작 버전 2026.9.4, 프로토콜 v4 |
+| 버전 정책 | `@openclaw/gateway-client`·`@openclaw/gateway-protocol`·`openclaw`(플러그인 SDK)를 **Gateway와 같은 버전으로 정확히 핀**. 시작 버전 2026.9.4, 지금 2026.11.10(2026-11-27), 프로토콜 v4 |
 | 산출물 | 마크다운 계획서 (본 문서) + 구성 가이드(`docs/guides/project-structure.md`), 저장소에 저장 |
 
 ---
@@ -116,6 +116,8 @@ OpenClaw는 단일 장기 실행 **Gateway 데몬**(기본 포트 18789)이 모�
 ### 3.1 Gateway 클라이언트 (WS API) — 스트리밍·작업 로그·승인용
 
 기준 버전: `@openclaw/gateway-client` / `@openclaw/gateway-protocol` **2026.9.4** (2026-09-14 npm latest). 아래 사실은 해당 버전의 `protocol.schema.json`, 패키지 README/CHANGELOG, 공식 문서(`rpc-bootstrap-and-events`)를 대조해 확인했다.
+
+2026.11.10 으로 올릴 때(2026-11-27) 두 판의 `protocol.schema.json` 을 견줬다 — 프로토콜은 v4 그대로(`PROTOCOL_VERSION`·`MIN_CLIENT_PROTOCOL_VERSION` 모두 4)이고, 우리가 쓰는 메서드·이벤트(`connect`·`hello-ok`·`agents.list`·`chat.send`·`chat.abort`·`sessions.*`·`approval.resolve`·`chat`·`agent`·`session.message`·`session.approval`)의 바뀜은 선택 필드·열거 값 추가뿐이다(`chat` status 의 새 `phase`, error 의 `errorKind: "unknown"` 등 — 어댑터는 `z.string()`·`looseObject` 로 읽어 그대로 지나간다).
 
 - **프로토콜 v4** (`PROTOCOL_VERSION = 4`, `MIN_CLIENT_PROTOCOL_VERSION = 4`). 일반 클라이언트는 `minProtocol: 4, maxProtocol: 4`로 고정 협상. v5 후보 변경(`SessionsPatchMutation`의 `execSecurity/execAsk` 제거 등)은 CHANGELOG의 "Deferred to the next wire version"에 보류 중이므로, 와이어 버전 상승은 명시적 파손 이벤트로 취급한다. 패키지 버전(`YYYY.M.PATCH`)과 와이어 버전은 별개다.
 - **버전 핀**: 정확 핀(`--save-exact`)하고 **배포하는 Gateway와 같은 버전**으로 맞춘다. 현재 Gateway는 2026.9.2, npm 최신은 2026.9.4 → Phase 0 첫 단계에서 Gateway를 2026.9.4로 올린 뒤 핀한다. Node `>=22.19.0` 필요.
@@ -391,9 +393,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 | --- | --- | --- |
 | 프런트 | React 19 + Vite + TypeScript, TanStack Query/Router, Zustand, Tailwind, `vite-plugin-pwa` | PWA 설치·오프라인 캐시, 이후 Tauri/Capacitor 래핑 용이 |
 | 렌더링 | Streamdown(스트리밍 마크다운) + shiki(코드), 자체 컴포넌트 렌더러 | 에이전트 출력·UI 블록 |
-| 백엔드 | Node 24(openclaw 2026.9.4 의 engines 에 맞춰 `mise.toml` 핀) + Fastify(REST) + **Socket.IO**(실시간; 채널 = 룸, 자동 재연결·ack), Zod 스키마 공유 | 장기 WS 연결·스트리밍에 적합, Open WebUI·OpenClaw 플러그인 사례와 동일 |
+| 백엔드 | Node 24(openclaw 2026.9.4 의 engines 에 맞춰 `mise.toml` 핀 — 2026.11.10 의 engines `>=24.16.0 <25 || >=26.1.0` 도 맞는다) + Fastify(REST) + **Socket.IO**(실시간; 채널 = 룸, 자동 재연결·ack), Zod 스키마 공유 | 장기 WS 연결·스트리밍에 적합, Open WebUI·OpenClaw 플러그인 사례와 동일 |
 | DB | SQLite(better-sqlite3) → Postgres, Drizzle ORM | 개인→팀 전환 경로 |
-| OpenClaw | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw`(plugin-sdk) — **2026.9.4 정확 핀, Gateway와 동일 버전** | 공식 경로 |
+| OpenClaw | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw`(plugin-sdk) — **2026.11.10 정확 핀, Gateway와 동일 버전** | 공식 경로 |
 | 모노레포 | pnpm workspaces + Turborepo: `apps/web`, `apps/server`, `packages/shared`(타입·컴포넌트 스키마·이벤트·wire 계약), `packages/openclaw-plugin`, `packages/openclaw-adapter`. npm 스코프 `@dodok/*` | 스키마 단일 소스 |
 | 배포 | Docker Compose(앱 컨테이너 하나 — 서버 번들이 웹까지 낸다, 루트 `compose.yaml`, 배포 호스트에서 소스로 빌드. HTTPS 는 각 서버의 리버스 프록시, 서버별 값은 `compose.override.yaml`), 기본은 원격 Gateway 연결. 로컬 Gateway 동반 기동(`--profile gateway`)은 뺐다(배포 패키징 스펙 결정 5) | 셀프호스팅 |
 | 테스트 | Vitest, Playwright(E2E), `protocol.schema.json` 기반 계약 테스트 | |
@@ -432,7 +434,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 | **파일 업로드** | Uppy(MIT) 또는 단순 multipart + sharp 썸네일 | tus 재개 가능 업로드 | MVP는 단순 multipart |
 | **검색** | SQLite FTS5 → Postgres tsvector | Meilisearch | Phase 4 ① 이 SQLite FTS5 `trigram` 으로 넣었다 |
 | **로깅/관측** | pino, OpenTelemetry | — | |
-| **OpenClaw 연동** | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw/plugin-sdk/*`; **Discord 플러그인 소스**(components 구현 참조), **openclaw-open-webui-channels**(봇-인-채널 패턴 참조) | — | 2026.9.4 핀 |
+| **OpenClaw 연동** | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw/plugin-sdk/*`; **Discord 플러그인 소스**(components 구현 참조), **openclaw-open-webui-channels**(봇-인-채널 패턴 참조) | — | 2026.11.10 핀 |
 | **데스크톱/모바일(후속)** | Tauri(데스크톱), Capacitor(모바일) | Electron / React Native | 같은 웹 번들 재사용 |
 
 #### (C) 직접 만드는 것 (차별점)
@@ -719,6 +721,9 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **9.5 라이브 재로드를 쓰기 전에 볼 것** — 전역 레지스트리의 삭제 가드는 **Map 만** 지킨다(c2-t15 리뷰 L2·L3). ① `finally` 의 `setStatus({running:false, connected:false})` 는 `releaseBridge` 결과와 무관하게 돈다. 핫 리로드에서 B 가 `onReady` 로 connected 를 보고한 뒤 A 의 finally 가 오면, 같은 계정을 down 으로 덮을 수 있다. 계정 상태가 인스턴스별인지 계정별인지는 확인하지 않았다(9.5 SDK). 지금은 라이브 재로드를 쓰지 않는다(`packages/openclaw-plugin/src/channel.ts:286`). ② 두 세대 브리지가 겹치면 서버가 옛 연결을 `replaced` 로 끊는다. 옛 클라이언트는 `disconnect` 핸들러에서 `scheduleReconnect` 를 걸고, `system.notice replaced` 를 받아도 재연결을 멈추지 않는다. 그래서 옛 세대가 abort 될 때까지 **두 연결이 서로 교체하는 핑퐁**이 가능하다. 이번 변경 전에도 같았다(`packages/openclaw-plugin/src/bridge-client.ts:164-167`·`packages/openclaw-adapter/src/bridge/server.ts:130-133`). 고칠 자리: `releaseBridge` 가 false 면 status 를 건드리지 않는 방안, `replaced` 공지를 받으면 재연결하지 않도록 할지 — 9.5 재로드를 쓸 때 정한다.
 - **dev Gateway 가 스스로 업데이트해 정확 핀이 조용히 깨진다.** OpenClaw.app 이 2026-09-20 에 9.4 → 9.5 로 올랐고(앱 번들 `bin/openclaw` 심링크 수정 시각), 저장소 핀(`openclaw`·`@openclaw/gateway-*` `2026.9.4`)과 실연 Gateway 가 달라진 채 결함 1 을 만났다. 실연 전 `oc --version` 적기(`docs/guides/live-smoke.md` 「전제」 절)는 알아챌 뿐 막지 못한다. **사람이 할 일**: 앱의 자동 업데이트를 끌 수 있는지 확인한다. 그다음 핀 정책(9.5 로 올릴지 — 저장소 devDependency·`pluginApi`·`docs/guides/live-smoke.md` 「전제」 절)을 원격 버전과 함께 정한다(ADR 0004 3절 길 B). 앱 2026.9.6(2026-09-24 자동 업데이트)부터 번들에 CLI 가 없어, 실연 CLI 는 스크래치 npm 설치로 버전을 고정한다(`docs/guides/live-smoke.md` 「전제」 절) — 앱 업데이트가 더는 실연 Gateway 버전을 바꾸지 않는다. 다만 dev 설정을 9.6 CLI 로 한 번 쓰면 9.5 로 되돌리지 못할 수 있다(9.4↔9.5 가 그랬다, 9.6 은 재지 않음 — s2-t7 걱정 1). 원격이 9.6 으로 오르면 dev 도 한 방향으로 따라 올린다.
 - **원격(배포) Gateway 버전을 아직 모른다.** 원격이 9.5 이상이면 ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다. 서버가 이제 접속 로그에 싣는다 — `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version`)·`gatewayBuildId`(`server.buildId`, 같은 버전 문자열의 두 빌드를 가른다 — 없으면 `null`)와 `"bridge plugin hello"` 의 `gatewayVersion`(플러그인의 `runtime.version`). **원격에 한 번 붙으면 알 수 있다**(사람 몫, `docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를 돌릴 때 다른 점」 절) — 붙으면 운영 화면·연결 페이지가 저장소 핀과 다른 버전을 「저장소가 검증한 버전(<핀>)과 다릅니다」로 알리고 사건 `gateway_version_untested` 를 남긴다. ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 `sdkVersion`)는 빌드 때 박힌 상수라 Gateway 버전이 아니다.
+- **2026.11.10 으로 올렸다(2026-11-27) — 모델 런 경로는 그 판에서 아직 안 쟀다.** 세 패키지를 `2026.11.10`(npm latest)으로 정확 핀하고 `OPENCLAW_PINNED_VERSION`·가짜 Gateway·가짜 플러그인의 기본 판을 핀에 묶었다. 잰 것(모델 런 0회): 두 판의 `protocol.schema.json`·클라이언트 타입 견주기(프로토콜 v4 그대로, 우리가 쓰는 메서드·이벤트는 선택 필드·열거 값 추가뿐 — 3.1절), 플러그인이 쓰는 SDK 하위 경로·심볼이 모두 있고 쓰는 것에 `@deprecated` 없음(2027-01 첫 stable 에서 빠지는 동기 SQLite API 는 쓰지 않는다), 스크래치 CLI 2026.11.10(`6ea542f`)으로 설치 스크립트가 부르는 명령·플래그(`gateway status --json --no-probe` 의 `service.loaded`, `gateway stop --force`, `plugins install --force --accept-capabilities` 비대화형, `plugins inspect --json` 의 `status`·`channelIds`·`rootDir`, `config patch --stdin`), 플러그인 설치·로드·번들 sha, 실물 Gateway WS 핸드셰이크(`operator.admin`)·브리지 hello(`gatewayVersion 2026.11.10`)·`agents.list`·버전 사건 없음. **안 잰 것**: 모델 런을 거치는 길 — `message` 툴 최종 답 억제(`docs/guides/agent-guide.md` — 판마다 다르다), 첨부 `media` fact, components 카드, 승인 카드, 스레드 delivery-mirror, ADR 0004 번들 이중 평가. 다음 실연 전에 `docs/guides/live-smoke.md` 「가짜 claude CLI — 결함 1·2 재현·합격 확인(정본)」 하네스를 11.10 에서 한 번 돈다. **사람 몫: 원격 Gateway 를 2026.11.10 으로 올린다**(결정 #8 의 「Gateway 와 같은 PR」을 이 PR 혼자는 못 지킨다) — 그 전까지 Gateway 상세·운영 상태 카드의 「저장소가 검증한 버전(2026.11.10)과 다릅니다」, 운영 사건 「검증 안 된 Gateway 버전」, 플러그인 「다른 빌드입니다」(번들에 박힌 SDK 판 상수가 바뀌어 sha256 이 달라진다)는 예상된 것이다(순서·화면은 `docs/guides/docker-deploy.md` 「업데이트」 의 OpenClaw 핀 문단). lockfile 은 OpenClaw 밖 해석도 바꿨다 — 러너 `@anthropic-ai/claude-agent-sdk`(0.3.283 정확 핀 그대로)의 피어 `@anthropic-ai/sdk` 0.120.0→0.137.0·`@modelcontextprotocol/sdk` 1.32.0→1.32.2, 서버 drizzle 의 피어 `pg` 8.23.0→8.23.1, vite 의 피어 `yaml` 2.9.0→2.9.1, 피어 `@opentelemetry/api` 1.10.0 추가. 모두 openclaw 2026.11.10 이 정확 핀한 의존성(`@anthropic-ai/sdk` 0.137.0·`@modelcontextprotocol/sdk` 1.32.2·`pg` 8.23.1·`yaml` 2.9.1, `@openclaw/ai` 의 `@opentelemetry/api`)을 pnpm 이 워크스페이스의 피어 해석에 함께 쓴 결과라, main 의 lockfile 에서 출발해 `pnpm install --lockfile-only` 로 다시 만들어도 같은 결과다(9.4 때도 러너의 `@anthropic-ai/sdk` 피어는 openclaw 의 0.120.0 을 따랐다). 러너는 두 SDK 를 직접 import 하지 않고, npm 으로 깐 러너는 사용자 머신에서 피어를 따로 푼다. 묶으려면 러너 devDependency 나 `overrides` 가 필요해 하지 않았다. 남은 것: 11.10 CLI 가 `PATH` 의 더 새 Node(이 머신은 Homebrew 26)로 다시 떠 실연이 저장소 Node 24 핀과 다른 런타임으로 돈다(`docs/guides/live-smoke.md` 「전제」) — 재현성이 필요하면 다음 실연 때 `oc()` 의 `PATH` 에서 Homebrew 를 빼는 법을 정한다.
+  - **옛 Gateway 와 섞일 때.** 서버 ↔ 9.x Gateway 는 프로토콜이 같아(v4) 그대로 붙고, 운영 사건 `gateway_version_untested`(info)와 「저장소가 검증한 버전과 다릅니다」가 뜬다. 플러그인 `openclaw.compat.pluginApi` 하한은 **`>=2026.9.4` 그대로 뒀다** — `openclaw`·`openclaw/*` 가 번들 바깥(external)이라 11.10 으로 빌드한 번들은 hello 의 `pluginBuiltWithSdk` 문자열 말고는 9.4 로 빌드한 것과 같고(플러그인 소스는 이번에 바뀌지 않았다), 하한을 올리면 아직 9.x 인 원격 호스트에서 설치 한 줄이 설치 단계(`pluginApi` 는 설치 때 검사된다)에서 막힌다. 9.4 Gateway 위에서 다시 재지는 않았다. 원격을 11.10 으로 올린 뒤 플러그인이 11.10 에만 있는 API 를 쓰게 되면 그때 하한을 올린다.
+  - **11.10 이 플러그인 설치 때 남기는 경고.** 「Plugin runtime compatibility」 — `runtime-code-generation`(번들된 zod 의 `Function` JIT)과 `host-patch`(`globalThis` 쓰기 — zod 전역 설정과 ADR 0004 전역 레지스트리). 「Compiled hosts may interpret or disallow」 라 지금은 경고뿐이다. 호스트가 이것을 막기 시작하면 ADR 0004 「길 C」 의 올릴 신호로 본다(zod 는 `z.config({ jitless: true })` 로 JIT 를 끌 수 있다 — 재지 않았다). Gateway 기동 때 「OpenClaw can't verify where this plugin came from … plugins.allow」 경고도 뜨지만 로드는 된다.
 
 **첨부·이미지(Phase 2 ③, 2026-09-23)** — 스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md` 10장(열린 문제)·11장(구현과 맞춘 것). 아래 출처의 보고서·리뷰(a3-t*·a3-c*)와 원장은 `.superpowers/sdd/2026-09-23-attachments/`, 스파이크 보고서는 `.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md` 다(둘 다 git 제외).
 
@@ -1135,7 +1140,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 | 5 | PWA 푸시 알림 | MVP 포함 — 멘션·승인 요청·릴레이 한도 도달 시 발송 | 2026-09-14 |
 | 6 | Gateway 호스팅 관계 | **본인 운영 원격 Gateway 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버 브리지로 아웃바운드 WSS 접속. Compose 동반 기동 옵션은 뺐다(배포 패키징 스펙 결정 5, 2026-09-24) | 2026-09-14 (v0.4 변경) |
 | 7 | 프로젝트·플러그인 이름 | **`dodok`** — 저장소 dodok.chat, npm 스코프 `@dodok/*`, 플러그인 id `dodok`, 설정 키 `channels.dodok.*`, 세션 키의 채널 세그먼트 `dodok` | 2026-09-14 (v0.4) |
-| 8 | OpenClaw 버전 정책 | 세 패키지를 **배포 Gateway와 같은 버전으로 정확 핀**. 시작은 2026.9.4(Gateway 업그레이드 후). 프로토콜 v4. 업그레이드는 Gateway와 같은 PR에서 | 2026-09-14 (v0.4) |
+| 8 | OpenClaw 버전 정책 | 세 패키지를 **배포 Gateway와 같은 버전으로 정확 핀**. 시작은 2026.9.4(Gateway 업그레이드 후), 2026-11-27 에 2026.11.10 으로 올렸다(플러그인 `pluginApi` 하한은 `>=2026.9.4` 그대로 — 8장 「이월」 「플러그인·OpenClaw 버전」). 프로토콜 v4. 업그레이드는 Gateway와 같은 PR에서 | 2026-09-14 (v0.4) |
 | 9 | 실시간 전송 | **Socket.IO** (채널 = 룸, ack, 자동 재연결). `ws` 직접 구현은 채택하지 않음 | 2026-09-14 (v0.4) |
 | 10 | 브리지 방향·인증 | 플러그인 → 서버 **아웃바운드 WSS**, 공유 토큰 인증, 브리지는 Socket.IO 네임스페이스 `/bridge`(프록시는 `/socket.io` 만 넘기면 된다). 플러그인 측 아웃바운드 큐로 단절 내성 | 2026-09-14 (v0.4) |
 | 11 | 저장소 Node 버전 | **Node 24 로 전환** — `mise.toml` 에 node 24.21.0 · pnpm 11.16.0 핀, `engines >=24.16.0 <25`, `.npmrc engine-strict`. openclaw 2026.9.4 의 engines 와 일치하고 플러그인 `channel.ts` 를 SDK 테스트 유틸(`docs/plugins/sdk-testing.md`)로 단위 테스트할 수 있다. Docker 이미지도 node:24 | 2026-09-15 (ADR 0002 12절 1) |

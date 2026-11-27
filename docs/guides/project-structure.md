@@ -59,7 +59,7 @@ dodok.chat/
 
 패키지 의존 방향: `web → shared`, `server → shared, openclaw-adapter, runner-adapter`, `openclaw-adapter → shared`, `runner-adapter → shared`, `openclaw-plugin → shared`, `claude-runner → shared`(번들에 넣는다 — devDependency) + `@anthropic-ai/claude-agent-sdk`(정확 핀, 번들에 넣지 않는다). `shared`는 아무것도 의존하지 않는다(브라우저·Node·Gateway 세 곳에서 다 로드되므로 Node 전용 API 금지).
 
-OpenClaw 패키지 버전은 세 곳(`openclaw-adapter`의 `@openclaw/gateway-client`·`@openclaw/gateway-protocol`, `openclaw-plugin`의 `openclaw` devDependency) 모두 **배포 Gateway와 같은 버전으로 정확 핀**한다. 시작 버전 2026.9.4.
+OpenClaw 패키지 버전은 세 곳(`openclaw-adapter`의 `@openclaw/gateway-client`·`@openclaw/gateway-protocol`, `openclaw-plugin`의 `openclaw` devDependency) 모두 **배포 Gateway와 같은 버전으로 정확 핀**한다. 시작 버전 2026.9.4, 지금 2026.11.10(2026-11-27). 같은 값이 `packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`(시험이 대조한다)과 플러그인 `openclaw.build.openclawVersion` 에도 있다. 플러그인 `openclaw.compat.pluginApi` 는 핀이 아니라 설치 하한이라 따로 정한다(지금 `>=2026.9.4` — `docs/guides/plan.md` 8장 「이월」 「플러그인·OpenClaw 버전」).
 
 ---
 
