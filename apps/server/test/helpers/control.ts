@@ -41,7 +41,7 @@ export function newChannel(app: App, opts: { name?: string; members?: string[] }
 export function openRun(
   app: App,
   requestedBy: string | null,
-  opts: { channel?: ChannelRecord; agent?: Agent; conversationId?: string } = {},
+  opts: { channel?: ChannelRecord; agent?: Agent; conversationId?: string; triggerMessageId?: string } = {},
 ): { channel: ChannelRecord; agent: Agent; run: Run; principal: Principal } {
   const channel = opts.channel ?? newChannel(app);
   const agent = opts.agent ?? newAgent(app);
@@ -53,7 +53,8 @@ export function openRun(
     conversationId,
     agentId: agent.id,
     triggerKind: "mention",
-    rootMessageId: uuid(),
+    ...(opts.triggerMessageId === undefined ? {} : { triggerMessageId: opts.triggerMessageId }),
+    rootMessageId: opts.triggerMessageId ?? uuid(),
     relayDepth: 0,
     sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${conversationId}`,
     connectionId: FAKE_GATEWAY_ID,

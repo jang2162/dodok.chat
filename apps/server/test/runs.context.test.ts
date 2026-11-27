@@ -17,6 +17,7 @@ import {
   channelMembers,
   componentInteractions,
   gateways,
+  memberships,
   users,
 } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
@@ -924,6 +925,8 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
     const { workspaceId, userId, agentId, channelId } = seedChannelWithAgent(db, {
       channelName: "dodok-dev",
     });
+    // DM 링크 판정은 시킨 사람이 활성 멤버인지 본다(linkedConversationIds 의 roleOf) — 시드에는 membership 이 없다
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId, role: "owner" }).run();
     const general = channelConversation(db, channelId);
     const dm = createDmChannelForTest(db, { workspaceId, ownerId: userId, agentId });
     const dmConv = seedConversation(db, dm.id, { title: "DM 세션" });
@@ -1026,15 +1029,22 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
     ).not.toHaveProperty("linkedMessages");
   });
 
-  it("시킨 사람의 에이전트 DM 링크를 일반 채널 런에 붙이면 빠지고, 같은 DM 안 링크는 그 DM 런에 실린다", () => {
-    const { general, dmConv, post, url, expand } = linkSetup();
+  it("시킨 사람이 쓴 글의 자기 에이전트 DM 링크는 일반 채널 런에도 실린다 — 그 런의 트리거 글이 링크한 대화만(⑦)", () => {
+    const { db, dm, general, dmConv, post, url, expand } = linkSetup();
     const secret = post(dmConv, "DM 의 비밀");
-    expect(expand(post(general, `@dev ${url(secret)}`))).not.toHaveProperty("linkedMessages");
+    expect(expand(post(general, `@dev ${url(secret)}`)).linkedMessages).toMatchObject([
+      { messageId: secret.id, channelName: "DM", text: "DM 의 비밀" },
+    ]);
     const inDm = expand(post(dmConv, `이거 ${url(secret)}`)).linkedMessages;
     expect(inDm).toMatchObject([{ messageId: secret.id, channelName: "DM", text: "DM 의 비밀" }]);
+    // 주소의 대화와 메시지의 대화가 다르면(손으로 고친 주소) 그 메시지는 빠진다 — 넓힌 것은 주소의 대화 하나다
+    const otherConv = seedConversation(db, dm.id, { title: "다른 세션" });
+    const elsewhere = post(otherConv, "다른 세션의 글");
+    const forged = `${ORIGIN}${messageLinkPath({ channelId: dm.id, conversationId: dmConv, messageId: elsewhere.id })}`;
+    expect(expand(post(general, `@dev ${forged}`))).not.toHaveProperty("linkedMessages");
   });
 
-  it("그룹 DM 링크를 다른 채널 런에 붙이면 빠진다", () => {
+  it("시킨 사람이 참여한 그룹 DM 링크도 실리고, 시킨 사람이 아닌 사람이 쓴 글이면 빠진다", () => {
     const { db, workspaceId, userId, general, post, url, expand } = linkSetup();
     const otherId = uuid();
     db.insert(users)
@@ -1047,9 +1057,13 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
         createdAt: new Date(),
       })
       .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: otherId, role: "member" }).run();
     const direct = createDirectChannelForTest(db, { workspaceId, createdBy: userId, userIds: [otherId] });
     const secret = post(channelConversation(db, direct.id), "그룹 DM 글");
-    expect(expand(post(general, `@dev ${url(secret)}`))).not.toHaveProperty("linkedMessages");
+    const trigger = post(general, `@dev ${url(secret)}`);
+    expect(expand(trigger).linkedMessages?.map((m) => m.messageId)).toEqual([secret.id]);
+    // 트리거 글은 owner 가 썼는데 시킨 사람이 mia — 사슬을 시작한 사람이 붙인 링크가 아니라 넓히지 않는다
+    expect(expand(trigger, { requestedBy: otherId })).not.toHaveProperty("linkedMessages");
   });
 
   it("없는 id·다른 워크스페이스 메시지는 오류 없이 빠지고 읽을 수 있는 것만 남는다", () => {
@@ -1115,6 +1129,11 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
     const { run } = runFor(trigger, { requestedBy: null });
     expect(
       linkedMessagesFor(db, { run, text: trigger.bodyMd, origin: ORIGIN }).map((m) => m.messageId),
+    ).toEqual([open.id]);
+    // 시킨 사람이 있어도 트리거가 자동화 글이면 DM 링크를 넓히지 않는다 — 사람이 그 글에 붙인 링크가 아니다
+    const { run: owned } = runFor(trigger, { requestedBy: userId });
+    expect(
+      linkedMessagesFor(db, { run: owned, text: trigger.bodyMd, origin: ORIGIN }).map((m) => m.messageId),
     ).toEqual([open.id]);
   });
 });

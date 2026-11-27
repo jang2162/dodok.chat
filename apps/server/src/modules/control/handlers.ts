@@ -6,6 +6,8 @@ import {
   CreateRunnerProjectAgentBody,
   type Message,
   type OpsStatus,
+  READ_MESSAGES_LINKED_NOTICE,
+  type ReadMessagesScopeFields,
   RUNNER_UPDATE_SCHEDULED_MESSAGE,
   type RunnerControlToolName,
   type TeamRole,
@@ -13,7 +15,12 @@ import {
 import { and, eq } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
-import { readableChannelSqlFor, unreadableError } from "../../auth/channel-access";
+import {
+  linkedConversationIds,
+  readableChannelSqlFor,
+  readableConversationSqlFor,
+  unreadableError,
+} from "../../auth/channel-access";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
@@ -104,6 +111,8 @@ export type HandlerContext = {
   now(): Date;
   /** 「이 러너 설정 제어」(러너 봇 2부 스펙 T8) — 러너 REST 와 같은 문맥. 없으면(러너 어댑터 없는 시험 앱) ADAPTER_UNAVAILABLE */
   runner?: RunnerOpsContext;
+  /** 웹 오리진(APP_ORIGIN) — 런의 트리거 글이 링크한 대화를 찾는다(read_messages, conversationReaderOf). 없으면 넓히지 않는다 */
+  appOrigin?: string;
 };
 
 type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { name: N }>["input"]>;
@@ -188,6 +197,16 @@ function channelOf(ctx: HandlerContext, channelId: string): ChannelRecord {
  * 없는 자동화 사슬은 DM 을 읽지 못한다
  */
 const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
+
+/**
+ * 대화 한 행을 읽는 범위 — readerOf 에 더해, 채널 안 에이전트 런이면 시킨 사람이 그 런의 트리거 글에 링크한 대화 하나(그 런 동안만,
+ * auth/channel-access.ts readableConversationSqlFor). read_messages 만 쓴다 — 채널 단위 도구는 그 DM 을 넓히지 않는다
+ */
+function conversationReaderOf(ctx: HandlerContext, p: Principal): SQL {
+  const linked =
+    p.via === "agent" && p.runId !== undefined ? linkedConversationIds(ctx.db, p.runId, ctx.appOrigin) : [];
+  return readableConversationSqlFor(p, linked);
+}
 
 /**
  * 주체가 읽는 채널 한 행 — 못 읽으면 NOT_FOUND, 시킨 사람은 읽는데 이 런의 범위 밖이면 OUT_OF_SCOPE(auth/channel-access.ts
@@ -363,7 +382,14 @@ export const HANDLERS: Handlers = {
   },
   read_messages: {
     access: (ctx, input, principal) => {
-      if (!getReadableConversation(ctx.db, input.conversationId, ctx.workspaceId, readerOf(principal)))
+      if (
+        !getReadableConversation(
+          ctx.db,
+          input.conversationId,
+          ctx.workspaceId,
+          conversationReaderOf(ctx, principal),
+        )
+      )
         throw unreadableError(
           ctx.db,
           principal,
@@ -376,9 +402,16 @@ export const HANDLERS: Handlers = {
     // 한 세션 안만 읽는다 — 채널 경로로 읽으면 세션이 섞인다(웹 REST /conversations/:id/messages 와 같은 규칙).
     // 읽기 범위는 채널 단위 그대로다: 채널 안 에이전트도 같은 채널의 다른 세션을 읽을 수 있다(채널 세션 스펙 「wire·REST」 장 —
     // 막는 것은 세션 밖으로 보내기뿐이다)
-    run: (ctx, input) => {
+    run: (ctx, input, principal) => {
       const conversation = getConversation(ctx.db, input.conversationId, ctx.workspaceId);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
+      // access 는 링크로 넓힌 범위로 통과했다 — 넓히지 않은 범위로 못 읽으면 그 링크 덕이라 결과에 DM 이라고 적는다
+      const linked =
+        principal.via === "agent" &&
+        !getReadableConversation(ctx.db, conversation.id, ctx.workspaceId, readerOf(principal));
+      const scopeFields: ReadMessagesScopeFields = linked
+        ? { scope: "linked", notice: READ_MESSAGES_LINKED_NOTICE }
+        : {};
       if (input.threadRootId !== undefined) {
         const root = getThreadRoot(ctx.db, conversation.channelId, input.threadRootId);
         if (!root || root.conversationId !== conversation.id) throw apiError("NOT_FOUND", "thread not found");
@@ -398,6 +431,7 @@ export const HANDLERS: Handlers = {
         messages: messages.map((m) => readable(handleOf, m)),
         hasMore: page.hasMore,
         ...(page.hasMoreAfter === undefined ? {} : { hasMoreAfter: page.hasMoreAfter }),
+        ...scopeFields,
       };
     },
   },

@@ -62,6 +62,8 @@ export type ControlDeps = {
   bridgeConfirmTtlMs?: number;
   /** 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T8)·업데이트 대기(T16) — 러너 REST 와 같은 문맥. 없으면 그 도구는 ADAPTER_UNAVAILABLE */
   runner?: RunnerOpsContext;
+  /** 웹 오리진(APP_ORIGIN) — 채널 안 에이전트가 트리거 글에 링크된 DM 대화를 그 런에서 읽는다(handlers.ts conversationReaderOf) */
+  appOrigin?: string;
 };
 
 export type ControlService = {
@@ -111,6 +113,7 @@ export function createControlService(deps: ControlDeps): ControlService {
     opsStatus: deps.opsStatus,
     now: clock,
     ...(deps.runner === undefined ? {} : { runner: deps.runner }),
+    ...(deps.appOrigin === undefined ? {} : { appOrigin: deps.appOrigin }),
   };
 
   /**

@@ -87,6 +87,7 @@
 
 - **오리진 전달** — 서버의 링크 찾기가 쓰는 `APP_ORIGIN` 은 `createServices`(`apps/server/src/wiring.ts` `ServicesDeps.appOrigin`) → 오케스트레이터(`OrchestratorDeps.appOrigin`) → `buildInboundDeliver` 의 `origin` 으로 넘긴다. 없으면(시험·옛 배선) 펼치지 않는다.
 - **DM 자리 이름** — `LinkedMessage.channelName` 은 DM·그룹 DM 이면 채널 행 이름(`dm`·`direct`) 대신 `DM`·`그룹 DM` 이다. `GET /api/v1/messages/:id` 는 세 칸에 더해 `channelKind` 를 싣는다(카드가 「#」 를 붙일지 가른다). 꼴이 틀린 id 는 400 이고 웹은 404 와 같이 「볼 수 없음」으로 본다.
+- **DM 링크(2026-11-27 판정)** — 위 「읽기 판정」의 「DM·그룹 DM 은 그 런이 도는 바로 그 DM 일 때만」을 좁혔다: 시킨 사람 본인이 쓴 멘션·자동 응답 트리거 글이 링크한 DM·그룹 DM 대화는 그 런에서 그 대화 하나만 펼친다(`auth/channel-access.ts readableConversationSqlFor`). 판정은 에이전트 DM 스펙 `docs/superpowers/specs/2026-10-25-agent-dm-design.md` 9장 「접근 판정」의 「PD3 을 좁힌 판정」 줄.
 - **시스템 메시지** — 링크한 메시지가 시스템 글이면 에이전트 문맥에서 뺀다. 시스템 메시지에는 「링크 복사」가 없다.
 - **복사 자리** — 메시지에는 「⋯」 메뉴·길게 누르기 메뉴가 없어 동작 줄의 🔗 버튼 하나다(스레드에서 답하기·반응 추가 왼쪽). 터치 화면에서는 다른 동작 버튼처럼 늘 보이고, 머리 줄 없는 메시지의 본문 오른쪽 여백을 버튼 수만큼 넓힌다. 복사가 실패하면 「링크를 복사하지 못했습니다」 토스트 안에 주소가 선택된 읽기 전용 칸을 15초 띄운다.
 - **카드** — 카드를 누르면 `?m=` 주소로 간다(진입 길이 강조한다). 미리보기는 `ReplyBundle` 의 `previewOf` 를 줄 수 인자로 넓혀 쓰고, 빈 줄과 함께 가로줄(`---`·`***`·`___`)도 건너뛴다. 작성기 ✕ 뒤에는 초점을 입력으로 돌려준다(누른 ✕ 가 사라져 Enter 가 body 로 가던 것 — 브라우저 확인에서 찾았다).
