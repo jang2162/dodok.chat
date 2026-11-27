@@ -143,7 +143,10 @@ describe("CONTROL_TOOLS", () => {
         ["avatarUrl", "basePrompt", "enabled", "gatewayId", "handle", "name", "provider", "providerAgentId"],
         ["handle", "name", "providerAgentId"],
       ],
-      update_agent: [["agentId", "avatarUrl", "basePrompt", "handle", "name"], ["agentId"]],
+      update_agent: [
+        ["agentId", "avatarUrl", "basePrompt", "handle", "name", "runTimeoutMinutes"],
+        ["agentId"],
+      ],
       set_agent_enabled: [
         ["agentId", "enabled"],
         ["agentId", "enabled"],

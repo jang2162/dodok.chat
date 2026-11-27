@@ -33,6 +33,7 @@ const agentOf = (id: string, handle: string): Agent => ({
   dmAccess: "admins",
   program: null,
   createdBy: null,
+  runTimeoutMinutes: null,
 });
 const memberOf = (memberType: ChannelMember["memberType"], memberId: string): ChannelMember => ({
   id: `m-${memberId}`,

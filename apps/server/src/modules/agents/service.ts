@@ -90,6 +90,8 @@ export type AgentPatch = {
   enabled?: boolean;
   /** REST PATCH 만 — 제어 도구는 바꾸지 않는다(에이전트 DM 계획 판정 PD13) */
   dmAccess?: DmAccess;
+  /** 런 상한(분) — null 은 지움(상한 없음). OpenClaw·러너 모두, 제어 도구도 바꾼다 */
+  runTimeoutMinutes?: number | null;
   /**
    * 러너 에이전트의 정의 — REST PATCH 만(제어 도구는 러너 구성을 바꾸지 못한다 — 러너 일반화 스펙 6장), OpenClaw 에이전트면 VALIDATION.
    * 러너 천장과의 대조는 붙은 러너를 아는 REST 라우트 몫이다(만들기와 같다). sessionDefaults 는 보낸 필드만 바꾸고 null 은 「기본」
@@ -133,6 +135,7 @@ export function rowToAgent(row: AgentRow): Agent {
       createdAt: row.createdAt.toISOString(),
       archivedAt: row.archivedAt?.toISOString() ?? null,
       dmAccess: row.dmAccess,
+      runTimeoutMinutes: row.runTimeoutMinutes,
       program: row.program,
       createdBy: row.createdBy,
       // 모델은 모두에게 — 권한 모드·도구는 runnerAgent(admin 이상)에만 남는다(프로필 스펙 결정 3)
@@ -623,6 +626,7 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
     }
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.dmAccess !== undefined) set.dmAccess = patch.dmAccess;
+    if (patch.runTimeoutMinutes !== undefined) set.runTimeoutMinutes = patch.runTimeoutMinutes;
     const runnerFields = RUNNER_AGENT_FIELDS.filter((key) => patch[key] !== undefined);
     if (runnerFields.length > 0) {
       if (current.provider !== "runner")

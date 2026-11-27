@@ -43,6 +43,7 @@ export const DEV: Agent = {
   dmAccess: "admins",
   program: null,
   createdBy: null,
+  runTimeoutMinutes: null,
 };
 
 /** me·에이전트·사람 목록 캐시를 미리 채운 QueryClient — 렌더가 REST 를 부르지 않는다 */

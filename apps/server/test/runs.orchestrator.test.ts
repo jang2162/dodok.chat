@@ -69,6 +69,9 @@ function bridgeAttachment(db: DbOrTx, channelId: string, gatewayId = FAKE_GATEWA
   return id;
 }
 
+/** 런 상한을 재는 옛 시험의 값 — 기본값은 이제 상한 없음이다 */
+const RUN_MS = 600_000;
+
 function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: OrchestratorDeps["approvals"] } = {}) {
   const db = newTestDb();
   const bus = new ServerBus();
@@ -219,7 +222,7 @@ describe("orchestrator", () => {
   });
 
   it("adoptRun puts waiting runs of the session behind it", async () => {
-    const t = setup();
+    const t = setup({ timeouts: { runMs: RUN_MS } });
     const first = await t.enqueue(t.say("@dev 하나"));
     const second = await t.enqueue(t.say("@dev 둘"));
     await t.flush();
@@ -288,7 +291,7 @@ describe("orchestrator", () => {
         connectionId: FAKE_GATEWAY_ID,
       },
     );
-    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs);
+    await vi.advanceTimersByTimeAsync(RUN_MS);
     expect(t.runOf(again.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
     t.orch.stop();
   });
@@ -1008,8 +1011,8 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
-  it("run 600초", async () => {
-    const t = setup();
+  it("run 600초(runMs 오버라이드)", async () => {
+    const t = setup({ timeouts: { runMs: RUN_MS } });
     const run = await t.enqueue();
     await t.flush();
     await vi.advanceTimersByTimeAsync(60_000);
@@ -1025,6 +1028,61 @@ describe("orchestrator", () => {
       error: { code: "TIMEOUT", message: "run timeout" },
     });
     t.orch.stop();
+  });
+
+  describe("런 상한 — 기본 없음, 에이전트별 분", () => {
+    it("기본값에는 런 상한이 없다 — 몇 시간 도는 런도 닫지 않는다", async () => {
+      expect(DEFAULT_RUN_TIMEOUTS.runMs).toBeNull();
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
+      expect(t.runOf(run.id).status).toBe("streaming");
+      expect(t.runOf(run.id).error).toBeUndefined();
+      t.orch.stop();
+    });
+
+    it("에이전트에 runTimeoutMinutes 가 있으면 그 분이 지나서야 run timeout 으로 닫는다", async () => {
+      const t = setup();
+      t.db.update(agents).set({ runTimeoutMinutes: 5 }).where(eq(agents.id, t.agentId)).run();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1_000);
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(t.runOf(run.id)).toMatchObject({
+        status: "error",
+        error: { code: "TIMEOUT", message: "run timeout" },
+      });
+      t.orch.stop();
+    });
+
+    it("에이전트 상한이 시험 오버라이드(timeouts.runMs)보다 앞선다", async () => {
+      const t = setup({ timeouts: { runMs: 50 } });
+      t.db.update(agents).set({ runTimeoutMinutes: 1 }).where(eq(agents.id, t.agentId)).run();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+      t.orch.stop();
+    });
+
+    it("승인에서 돌아온 런도 상한이 없으면 시계를 걸지 않는다", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "approval_requested" });
+      expect(t.runOf(run.id).status).toBe("awaiting_approval");
+      await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
+      expect(t.runOf(run.id).status).toBe("awaiting_approval");
+      t.orch.stop();
+    });
   });
 
   it("승인 서비스 없이 awaiting_approval 에 들어가면 평소 런 상한으로 돌아간다", async () => {
@@ -1111,7 +1169,7 @@ describe("orchestrator", () => {
   ])(
     "%s 로 닫은 런은 Gateway 런을 멈추고(abort, best-effort) 어댑터 추적을 버린다(forgetRun)",
     async (_kind, ms, started) => {
-      const t = setup();
+      const t = setup({ timeouts: { runMs: RUN_MS } });
       const run = await t.enqueue();
       await t.flush();
       if (started) await t.orch.signal(run.id, { kind: "gateway_started" });
@@ -1231,7 +1289,7 @@ describe("orchestrator", () => {
   });
 
   it("send 가 queued 를 돌려주면(제공자 쪽 대기열) queuedMs 를 넘겨도 닫지 않고 runMs 로 잰다, 시작하면 runMs 가 새로 걸린다 [최종 리뷰 I1]", async () => {
-    const t = setup();
+    const t = setup({ timeouts: { runMs: RUN_MS } });
     t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
     const run = await t.enqueue();
     await t.flush();
@@ -1240,7 +1298,7 @@ describe("orchestrator", () => {
     expect(t.runOf(run.id).error).toBeUndefined();
 
     await t.orch.signal(run.id, { kind: "gateway_started" });
-    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs - 1_000);
+    await vi.advanceTimersByTimeAsync(RUN_MS - 1_000);
     expect(t.runOf(run.id)).toMatchObject({ status: "streaming" });
     await vi.advanceTimersByTimeAsync(2_000);
     expect(t.runOf(run.id)).toMatchObject({
@@ -1251,11 +1309,11 @@ describe("orchestrator", () => {
   });
 
   it("queued 런이 제공자 대기열에서 시작되지 않은 채 runMs 가 지나면 run timeout 으로 닫힌다 [최종 리뷰 I1]", async () => {
-    const t = setup();
+    const t = setup({ timeouts: { runMs: RUN_MS } });
     t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
     const run = await t.enqueue();
     await t.flush();
-    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs + 1_000);
+    await vi.advanceTimersByTimeAsync(RUN_MS + 1_000);
     expect(t.runOf(run.id)).toMatchObject({
       status: "error",
       error: { code: "TIMEOUT", message: "run timeout" },
@@ -2038,7 +2096,7 @@ describe("orchestrator", () => {
     });
 
     it("run_timeout — warn(reason run_timeout, statusBefore tool)", async () => {
-      const t = setup();
+      const t = setup({ timeouts: { runMs: RUN_MS } });
       const run = await t.enqueue();
       await t.flush();
       await vi.advanceTimersByTimeAsync(1_000);

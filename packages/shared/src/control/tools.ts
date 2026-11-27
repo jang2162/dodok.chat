@@ -235,9 +235,15 @@ export const CONTROL_TOOLS = [
     name: "update_agent",
     access: "write",
     description:
-      "Change an agent's handle, name, avatar URL or base prompt (null clears avatarUrl and basePrompt). For runner agents only name and avatarUrl can change. Admin or owner only.",
+      "Change an agent's handle, name, avatar URL, base prompt or run time limit in minutes (runTimeoutMinutes 1-1440; null clears avatarUrl, basePrompt and runTimeoutMinutes — no time limit). For runner agents only name, avatarUrl and runTimeoutMinutes can change. Admin or owner only.",
     input: AgentRef.extend(
-      UpdateAgentBody.pick({ handle: true, name: true, avatarUrl: true, basePrompt: true }).shape,
+      UpdateAgentBody.pick({
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        basePrompt: true,
+        runTimeoutMinutes: true,
+      }).shape,
     ),
   }),
   tool({

@@ -26,6 +26,7 @@ const agentOf = (id: string, handle: string, over: Partial<Agent> = {}): Agent =
   dmAccess: "admins",
   program: null,
   createdBy: null,
+  runTimeoutMinutes: null,
   ...over,
 });
 const memberOf = (memberType: ChannelMember["memberType"], memberId: string): ChannelMember => ({

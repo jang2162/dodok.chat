@@ -217,7 +217,12 @@ function basePromptLabel(ctx: HandlerContext, agentId: string): string {
  * 에이전트가 확인 카드 하나로 자기 지시를 바꾸는 길을 닫는다). 정의 필드(model 등)는 도구 입력 스키마에 없어 strict 파싱이 막는다.
  * 러너 구성은 웹의 「연결」 탭(에이전트 상세)·REST PATCH 에서만 바꾼다
  */
-const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set(["agentId", "name", "avatarUrl"]);
+const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set([
+  "agentId",
+  "name",
+  "avatarUrl",
+  "runTimeoutMinutes",
+]);
 function assertControlPatchable(ctx: HandlerContext, input: Record<string, unknown>, agentId: string): void {
   const agent = getAgent(ctx.db, agentId, ctx.workspaceId);
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
@@ -228,7 +233,7 @@ function assertControlPatchable(ctx: HandlerContext, input: Record<string, unkno
   if (field !== undefined)
     throw apiError(
       "VALIDATION",
-      "runner agents can only change name and avatarUrl here — use the dodok web app",
+      "runner agents can only change name, avatarUrl and runTimeoutMinutes here — use the dodok web app",
       {
         field,
       },
@@ -652,6 +657,9 @@ export const HANDLERS: Handlers = {
         input.basePrompt === undefined
           ? undefined
           : `${basePromptLabel(ctx, input.agentId)}: ${input.basePrompt === null ? "(지움)" : clip(input.basePrompt)}`,
+        input.runTimeoutMinutes === undefined
+          ? undefined
+          : `런 상한: ${input.runTimeoutMinutes === null ? "없음" : `${input.runTimeoutMinutes}분`}`,
       ]
         .filter((line) => line !== undefined)
         .join("\n") || undefined,

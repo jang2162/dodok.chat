@@ -1007,7 +1007,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
     const result = approvals.request(runner, parsed.data);
     if (result === "duplicate") {
-      // 러너는 결정을 영영 못 받는다 — 런이 runMs 까지 매달리는 원인을 찾을 수 있게 남긴다
+      // 러너는 결정을 영영 못 받는다 — 런이 런 상한(기본 없음)까지 매달리는 원인을 찾을 수 있게 남긴다
       logger.warn(
         { tokenId: runner.tokenId, runId: run.runId, providerApprovalId: parsed.data.providerApprovalId },
         "runner approval id already used — dropped",
@@ -1034,7 +1034,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
 
   /**
    * 버킷을 거치지 않는 프레임 — 이 러너의 열린 런을 닫는 run.final·run.error, 그 런의 새 승인 요청, 기다리는 승인의 철회.
-   * 이것을 버리면 런은 runMs(기본 10분)에서야 닫히고 러너의 canUseTool 도 그때까지 기다린다. post 를 쏟는 다른 런이 control 을
+   * 이것을 버리면 런은 에이전트의 런 상한(기본 없음 — 사람 「중지」)에서야 닫히고 러너의 canUseTool 도 그때까지 기다린다. post 를 쏟는 다른 런이 control 을
    * 비웠다고 이 런까지 매달리면 안 된다.
    *
    * 처리기가 받아들일 프레임만 예외다 — 처리기와 같은 조건(계약 스키마, 이 러너가 연 런, 승인은 중지 안 된 런·그 런의 세션 키·

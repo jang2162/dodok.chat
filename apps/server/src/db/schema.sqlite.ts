@@ -163,6 +163,8 @@ export const agents = sqliteTable(
     createdBy: text("created_by").references((): AnySQLiteColumn => users.id),
     // base_prompt(에이전트 지시)가 바뀔 때만 +1 — 러너 세션이 이 값과 다르게 시작했으면 새로 연다(계획 판정 PR2)
     instructionsRevision: integer("instructions_revision").notNull().default(0),
+    // 런 상한(분) — null 이면 상한이 없다(기본). 사람 「중지」·queued·finalizing 상한은 이 값과 따로다
+    runTimeoutMinutes: integer("run_timeout_minutes"),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),
