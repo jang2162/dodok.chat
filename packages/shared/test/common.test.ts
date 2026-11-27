@@ -37,6 +37,7 @@ describe("common", () => {
       "CONVERSATION_CLOSED",
       "DM_READ_ONLY",
       "RUNNER_CEILING",
+      "OUT_OF_SCOPE",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

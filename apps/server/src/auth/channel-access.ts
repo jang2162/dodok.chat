@@ -1,7 +1,7 @@
 import { and, eq, or, type SQL, sql } from "drizzle-orm";
 import type { DbOrTx } from "../db/client";
 import { channelMembers, channels, runs } from "../db/schema.sqlite";
-import { apiError } from "../http/errors";
+import { apiError, type HttpError } from "../http/errors";
 
 // 채널 접근 판정 — 누가 이 채널을 읽고 쓰나(사람 간 DM 스펙 4장이 정본, 그 아래 에이전트 DM 스펙 4장). 채널·대화·메시지·런·승인·첨부를 내보내거나 바꾸는 모든 경로가
 // 이 파일의 함수를 지난다. 역할 판정(403)보다 먼저 부른다 — 남의 DM 에 역할 정책이 403 을 내면 있다는 것이 드러난다.
@@ -84,6 +84,39 @@ export function readableChannelSqlFor(principal: {
       or(and(eq(channels.kind, "dm"), eq(channels.dmOwnerId, userId)), participantSql(userId)),
     ),
   )!;
+}
+
+/** 범위 밖(OUT_OF_SCOPE)의 문구 — 에이전트가 「채널 멤버가 아니라서」로 오판하지 않게 원인과 읽는 범위를 같이 말한다 */
+export const OUT_OF_SCOPE_MESSAGE =
+  "이 대화는 시킨 사람의 다른 DM 이라 이 런에서는 읽을 수 없습니다 — 채널 안 에이전트는 일반 채널과 지금 런의 DM 하나만 읽습니다";
+
+/**
+ * 주체가 못 읽은 채널의 오류 — 채널 안 에이전트(런 있음)이고 시킨 사람 본인은 그 채널을 읽을 수 있을 때만 OUT_OF_SCOPE(범위를 좁힌 것은
+ * readableChannelSqlFor — 시킨 사람이 원래 보는 DM 이라 존재가 새지 않는다). 그 밖(없음, 시킨 사람도 못 읽음, 바깥 MCP, 런 없는 주체,
+ * 시킨 사람 없음)은 notFound 그대로. channelId 는 없는 행이면 undefined 로 넘긴다
+ */
+export function unreadableError(
+  db: DbOrTx,
+  principal: { userId: string | null; via: "pat" | "agent"; runId?: string },
+  workspaceId: string,
+  channelId: string | undefined,
+  notFound: HttpError,
+): HttpError {
+  if (principal.via !== "agent" || principal.runId === undefined || principal.userId === null)
+    return notFound;
+  if (channelId === undefined) return notFound;
+  const row = db
+    .select({ id: channels.id })
+    .from(channels)
+    .where(
+      and(
+        eq(channels.id, channelId),
+        eq(channels.workspaceId, workspaceId),
+        readableChannelSql(principal.userId),
+      ),
+    )
+    .get();
+  return row ? apiError("OUT_OF_SCOPE", OUT_OF_SCOPE_MESSAGE) : notFound;
 }
 
 /** 읽는 사람 — 사람 id(REST·wire, readableChannelSql 로 푼다) 또는 이미 좁힌 범위(제어 도구 주체, readableChannelSqlFor) */

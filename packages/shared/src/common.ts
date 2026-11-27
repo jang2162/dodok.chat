@@ -34,6 +34,7 @@ export const ErrorCode = z.enum([
   "CONVERSATION_CLOSED", // 닫힌 세션 — 읽기만 된다. 보내기·카드·리액션·첨부 묶기는 거절(다시 열면 된다)
   "DM_READ_ONLY", // 읽기 전용 DM — 에이전트 보관·꺼짐·DM 허용 철회(details.reason 은 DmReadOnlyReason). 되돌리면 이어 쓴다
   "RUNNER_CEILING", // 러너 로컬 설정(천장)이 이 에이전트 정의를 허용하지 않는다 — message 는 항목 이름 하나(러너 일반화 스펙 3장)
+  "OUT_OF_SCOPE", // 제어 도구 — 시킨 사람은 읽는 채널(그의 다른 DM)이지만 채널 안 에이전트 런의 범위 밖이다. 없는 것·남의 것은 NOT_FOUND
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
