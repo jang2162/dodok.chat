@@ -166,8 +166,14 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     const gateway = section(body, "OpenClaw Gateway 호스트");
     expect(gateway).toContain(`https://chat.example.com${PLUGIN_INSTALL_SCRIPT_PATH}`);
     expect(gateway).toContain("wss://chat.example.com/bridge");
+    // 브리지 토큰은 Gateway 를 등록한 뒤에야 나온다 — 등록 폼의 「토큰」(Gateway 공유 토큰)과 섞이지 않게 순서를 싣는다
+    expect(gateway).toMatch(
+      /「＋ 연결 추가」[^\n]*「OpenClaw Gateway」[^\n]*브리지 토큰이 아니다[^\n]*「새 토큰 발급」/,
+    );
+    expect(gateway.indexOf("「＋ 연결 추가」")).toBeLessThan(gateway.indexOf("1. 사람에게 받은 브리지 토큰"));
 
     const runner = section(body, "러너 머신");
+    expect(runner).toMatch(/「＋ 연결 추가」[^\n]*「러너」[^\n]*「새 러너 토큰 발급」/);
     const [config] = jsonBlocks(runner);
     const parsed = RunnerConfig.safeParse(config);
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);

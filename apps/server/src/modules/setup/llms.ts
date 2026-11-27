@@ -61,6 +61,8 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 
 설치 스크립트가 하는 일: 이 토큰으로 플러그인 파일 받기 → 파일 sha256 대조 → Gateway 내리기(openclaw gateway stop) → 설치 → 로드·번들 sha256 대조 → 계정 설정(bridgeUrl·토큰, openclaw config patch --stdin) → Gateway 올리기(openclaw gateway start). 대조가 어긋나거나 중간에 실패하면 멈추고, 자기가 내린 Gateway 는 다시 올린다.
 
+0. 브리지 토큰은 dodok 에 이 Gateway 를 먼저 등록해야 나온다. 사람에게 브리지 토큰이 없으면 이렇게 안내하고 받을 때까지 기다린다 — dodok 설정 → 연결(${webOrigin}/settings/connection)의 「＋ 연결 추가」에서 「OpenClaw Gateway」를 골라 이름·주소(이 Gateway 의 ws:// 또는 wss:// 주소)·토큰(이 Gateway 의 공유 토큰 — 브리지 토큰이 아니다)을 넣고 「추가」한다. 저장되면 열리는 그 Gateway 상세의 「브리지 토큰」 카드에서 「새 토큰 발급」을 누른다. 이미 등록된 Gateway 면 그 상세에서 바로 「새 토큰 발급」을 누른다.
+
 1. 사람에게 받은 브리지 토큰을 0600 파일 ${BRIDGE_TOKEN_FILE} 에 둔다. 파일 쓰기 도구를 쓰거나, 아래 명령의 표준 입력으로 토큰 한 줄을 넣는다.
 
    \`\`\`bash
@@ -114,6 +116,8 @@ function runnerSection(input: LlmsInput): string {
 
 - npm 패키지: @dodok/runner
 - 러너 설정의 serverUrl: ${origin}
+
+0. 러너 토큰은 dodok 에서 발급한다. 사람에게 러너 토큰이 없으면 이렇게 안내하고 받을 때까지 기다린다 — dodok 설정 → 연결(${webOrigin}/settings/connection)의 「＋ 연결 추가」에서 「러너」를 골라 「새 러너 토큰 발급」을 누른다(원문은 그때 한 번만 보인다).
 
 1. 사람에게 받은 러너 토큰을 0600 파일 ${RUNNER_TOKEN_FILE} 에 둔다. 파일 쓰기 도구를 쓰거나, 아래 명령의 표준 입력으로 토큰 한 줄을 넣는다. 러너가 이 파일을 계속 읽으므로 지우지 않는다.
 
