@@ -147,6 +147,21 @@ describe("selfUpdate", () => {
   });
 
   // Review Focus 2 — 끈 머신은 서버가 보내도 하지 않는다
+  it.each([
+    ["launchd", "launchctl", ["kickstart", "-k", "gui/501/chat.dodok.runner"]],
+    ["systemd", "systemctl", ["--user", "--no-block", "restart", "dodok-runner"]],
+  ] as const)(
+    "서비스 모드(%s) — 분리된 러너 대신 서비스 관리자의 다시 시작을 띄우고 스스로 끝내지 않는다",
+    async (service, file, args) => {
+      const env = { PATH: "/usr/bin", DODOK_RUNNER_SERVICE: service };
+      const { opts, calls } = harness({ env, uid: 501 });
+      expect(await selfUpdate(opts)).toEqual({ ok: true });
+      expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "spawn"]);
+      expect(calls.spawn).toEqual([[file, args, { env }]]);
+      expect(calls.exit).toEqual([]);
+    },
+  );
+
   it("remoteUpdate: false 면 disabled — npm 도 다시 띄우기도 없다", async () => {
     const { opts, calls } = harness({ enabled: false });
     expect(await selfUpdate(opts)).toEqual({ ok: false, reason: "disabled", message: DISABLED_MESSAGE });

@@ -4,12 +4,19 @@ import { planCli } from "../src/setup";
 // main.ts 의 배선 — main 은 이 계획을 그대로 따른다(usage·help·version·error·token·wizard·load)
 const plan = (
   positionals: string[],
-  opts: { configExists?: boolean; interactive?: boolean; help?: boolean; version?: boolean } = {},
+  opts: {
+    configExists?: boolean;
+    interactive?: boolean;
+    help?: boolean;
+    version?: boolean;
+    follow?: boolean;
+  } = {},
 ) =>
   planCli({
     positionals,
     help: opts.help,
     version: opts.version,
+    follow: opts.follow,
     configExists: opts.configExists ?? false,
     interactive: opts.interactive ?? true,
   });
@@ -52,5 +59,25 @@ describe("planCli", () => {
     expect(plan([], { help: true })).toEqual({ kind: "help" });
     expect(plan(["setup"], { help: true })).toEqual({ kind: "help" });
     expect(plan([], { version: true, interactive: false })).toEqual({ kind: "version" });
+  });
+
+  it("service <동작> — 터미널·설정 유무와 무관, -f 는 logs 에만", () => {
+    for (const action of ["install", "uninstall", "start", "stop", "restart", "status", "logs"])
+      expect(plan(["service", action], { interactive: false })).toEqual({
+        kind: "service",
+        action,
+        follow: false,
+      });
+    expect(plan(["service", "logs"], { follow: true })).toEqual({
+      kind: "service",
+      action: "logs",
+      follow: true,
+    });
+    expect(plan(["service"])).toEqual({ kind: "usage" });
+    expect(plan(["service", "reload"])).toEqual({ kind: "usage" });
+    expect(plan(["service", "install", "x"])).toEqual({ kind: "usage" });
+    expect(plan(["service", "status"], { follow: true })).toEqual({ kind: "usage" });
+    expect(plan([], { follow: true, configExists: true })).toEqual({ kind: "usage" });
+    expect(plan(["service", "install"], { help: true })).toEqual({ kind: "help" });
   });
 });

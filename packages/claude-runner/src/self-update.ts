@@ -7,6 +7,7 @@ import {
   RUNNER_NPM_INSTALL_TIMEOUT_MS,
   type RunnerUpdateResult,
 } from "@dodok/shared";
+import { serviceRestartCommand } from "./service";
 
 // 원격 업데이트(원격 업데이트 스펙 U3) — 서버의 runner.update 에 따라 npm 레지스트리의 그 판을 이 러너가 설치된 npm 전역 자리에 깔고,
 // 같은 인자·같은 env 로 스스로 다시 띄운 뒤 끝난다. 판은 정확한 semver 만(범위·태그·경로·URL 은 npm 이 레지스트리 밖에서 받는다),
@@ -145,13 +146,16 @@ export type SelfUpdateOptions = {
   /** 설치가 끝나고 다시 띄우기 직전 — 서버에 ok 를 답하고 연결을 닫는다 */
   beforeRestart?: () => Promise<void>;
   exit?: (code: number) => void;
+  /** 서비스 모드의 launchd 도메인(gui/<uid>) — 시험이 바꾼다(기본 process.getuid()) */
+  uid?: number;
 };
 
 /**
  * 원격 업데이트 한 번. 실패면 사유와 함께 돌려주고 아무것도 다시 띄우지 않는다. 설치 뒤 새 진입 파일을 지금 설정으로
  * `--check-config` 로 돌려 보고(설정 거절·Node 하한 등으로 새 판이 못 뜨면 러너가 내려간 채로 남는다 — 리뷰 M1), 0 이 아니면 옛 판으로
- * 되돌려 깔고 failed. 통과면 beforeRestart → 같은 argv 로 분리된 자식 → exit(0) 를 차례로 부르고 ok 를 돌려준다. spawn 이 던지면
- * 그대로 던진다 — 부르는 쪽(connection)이 연결을 되살린다
+ * 되돌려 깔고 failed. 통과면 beforeRestart → 같은 argv 로 분리된 자식 → exit(0) 를 차례로 부르고 ok 를 돌려준다. env
+ * DODOK_RUNNER_SERVICE(launchd·systemd)면 분리된 자식 대신 서비스 관리자의 다시 시작 명령을 분리해 띄우고 끝내지 않는다(관리자가
+ * SIGTERM 으로 끝낸다). spawn 이 던지면 그대로 던진다 — 부르는 쪽(connection)이 연결을 되살린다
  */
 export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateResult> {
   if (!opts.enabled) return { ok: false, reason: "disabled", message: DISABLED_MESSAGE };
@@ -231,6 +235,14 @@ export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateR
   }
 
   await opts.beforeRestart?.();
+  // 서비스로 떴으면(dodok-runner service install 이 env 에 싣는다) 다시 시작을 서비스 관리자에게 맡긴다 — 분리된 자식으로 띄우면 새 판이
+  // 서비스 밖에서 돈다. 관리자가 이 프로세스에 SIGTERM 을 보내 끝내고 같은 서비스로 새 판을 띄우므로 여기서 끝내지 않는다(exit 0 이면
+  // 관리자가 다시 띄우지 않는다)
+  const restart = serviceRestartCommand(opts.env.DODOK_RUNNER_SERVICE, opts.uid ?? process.getuid?.());
+  if (restart) {
+    (opts.spawn ?? nodeSpawner)(restart.file, restart.args, { env: opts.env });
+    return { ok: true };
+  }
   (opts.spawn ?? nodeSpawner)(opts.execPath, entryArgs, { env: opts.env });
   (opts.exit ?? ((code: number) => process.exit(code)))(0);
   return { ok: true };
