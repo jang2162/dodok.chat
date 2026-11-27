@@ -322,6 +322,11 @@ export const RunnerProgramStatus = z.object({
      */
     appMcp: AppMcpMode.optional(),
     appMcpCommands: z.array(z.string().min(1).max(128)).max(64).nullable().optional(),
+    /**
+     * 작업 디렉터리 밖 접근을 열 수 있는가 — 러너 로컬 allowOutsideWorkdir(기본 false). appMcp 와 같은 까닭으로 이 객체에 둔다. 옛 러너는
+     * 싣지 않는다 — 서버는 없으면 false 로 읽는다(옛 러너는 run.start 의 allowOutsideWorkdir 를 모르고 버린다)
+     */
+    allowOutsideWorkdir: z.boolean().optional(),
   }),
   /**
    * 그 프로그램이 받는 모델(SDK supportedModels — 작성기 칩 스펙 C3). 받지 못했으면 없다. 옛 러너는 싣지 않는다 — 이 객체는
@@ -419,6 +424,12 @@ export const RunnerRunAgent = z
     /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본). 서버는 늘 null 을 보낸다 — 옛 러너가 이 키를 요구한다 */
     allowedTools: RunnerToolNames.nullable(),
     disallowedTools: RunnerToolNames,
+    /**
+     * 작업 디렉터리 밖 경로를 작업 디렉터리 안처럼 다룬다 — 밖이라서 묻거나 막는 것만 없어지고 권한 모드·도구 목록은 그대로다. 러너 천장
+     * (programs.<program>.allowOutsideWorkdir)이 false 면 RUNNER_CEILING outsideWorkdir. 서버는 켜졌을 때만 싣는다 — strict 가
+     * 아니라 옛 러너는 이 키를 버린다(그래서 서버가 천장을 알리지 않은 러너에는 보내지 않고 닫는다)
+     */
+    allowOutsideWorkdir: z.boolean().optional(),
   })
   .refine((a) => (a.project === undefined) !== (a.bot === undefined), {
     message: "agent needs exactly one of project or bot",
@@ -525,7 +536,15 @@ export const RunnerWorktreeRemoveResult = z.discriminatedUnion("ok", [
 export type RunnerWorktreeRemoveResult = z.infer<typeof RunnerWorktreeRemoveResult>;
 
 /** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
-export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools", "bot"]);
+export const RunnerCeilingItem = z.enum([
+  "root",
+  "path",
+  "program",
+  "permissionMode",
+  "allowedTools",
+  "bot",
+  "outsideWorkdir",
+]);
 export type RunnerCeilingItem = z.infer<typeof RunnerCeilingItem>;
 
 // ── 명령 목록(에이전트 명령 스펙 C8) — 서버 → 러너 ack 요청. 프로젝트마다 묻는다(프로젝트 명령이 cwd 마다 다르다). 봇은 그 봇

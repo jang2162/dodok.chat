@@ -179,6 +179,8 @@ export const Agent = z.object({
     .object({
       projectId: Id.nullable(),
       disallowedTools: RunnerToolNames,
+      /** 작업 디렉터리 밖 접근 허용(러너 천장이 열어야 런에 쓰인다). 옛 서버는 싣지 않는다 — 없으면 꺼짐 */
+      allowOutsideWorkdir: z.boolean().optional(),
       bot: RunnerBotDefinition.optional(),
     })
     .optional(),
