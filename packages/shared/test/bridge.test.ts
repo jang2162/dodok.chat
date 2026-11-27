@@ -3,7 +3,9 @@ import {
   BridgeHello,
   formatDmLine,
   formatGroupDmLine,
+  formatHeaderTime,
   formatSessionLine,
+  formatTimeZoneLine,
   INBOUND_REACTIONS_MAX,
   InboundContext,
   InboundDeliver,
@@ -128,6 +130,53 @@ describe("bridge schemas", () => {
       OutboundMessage.safeParse({ ...base, components: { blocks: [{ type: "actions", items: [] }] } })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("formatHeaderTime·formatTimeZoneLine — 헤더 시각과 그 시간대", () => {
+  it("워크스페이스 시간대로 HH:MM 을 찍는다 — Asia/Seoul", () => {
+    expect(formatHeaderTime("2026-11-27T06:35:00Z", "Asia/Seoul")).toBe("15:35");
+    expect(formatTimeZoneLine("Asia/Seoul", "2026-11-27T06:35:00Z")).toBe(
+      "시각 기준: Asia/Seoul (UTC+09:00)",
+    );
+  });
+  it("자정을 넘겨도 24시간 두 자리다", () => {
+    expect(formatHeaderTime("2026-11-27T15:05:00Z", "Asia/Seoul")).toBe("00:05");
+  });
+  it("서머타임 — 오프셋은 준 시각에서 잰다(America/New_York 7월·1월)", () => {
+    expect(formatHeaderTime("2026-07-01T12:00:00Z", "America/New_York")).toBe("08:00");
+    expect(formatHeaderTime("2026-01-15T12:00:00Z", "America/New_York")).toBe("07:00");
+    expect(formatTimeZoneLine("America/New_York", "2026-07-01T12:00:00Z")).toBe(
+      "시각 기준: America/New_York (UTC-04:00)",
+    );
+    expect(formatTimeZoneLine("America/New_York", "2026-01-15T12:00:00Z")).toBe(
+      "시각 기준: America/New_York (UTC-05:00)",
+    );
+  });
+  it("시간대가 없으면 UTC — 옛 서버 호환", () => {
+    expect(formatHeaderTime("2026-11-27T06:35:00Z", undefined)).toBe("06:35");
+    expect(formatTimeZoneLine(undefined, "2026-11-27T06:35:00Z")).toBe("시각 기준: UTC");
+    expect(formatTimeZoneLine("UTC", "2026-11-27T06:35:00Z")).toBe("시각 기준: UTC");
+  });
+  it("오프셋 0 인 다른 이름은 이름과 오프셋을 다 싣는다", () => {
+    expect(formatTimeZoneLine("Africa/Abidjan", "2026-11-27T06:35:00Z")).toBe(
+      "시각 기준: Africa/Abidjan (UTC+00:00)",
+    );
+  });
+  it("분 단위 오프셋 — Asia/Kolkata", () => {
+    expect(formatTimeZoneLine("Asia/Kolkata", "2026-11-27T06:35:00Z")).toBe(
+      "시각 기준: Asia/Kolkata (UTC+05:30)",
+    );
+  });
+  it("Intl 이 모르는 이름이면 던지지 않고 UTC 로 찍고 UTC 라고 밝힌다", () => {
+    expect(formatHeaderTime("2026-11-27T06:35:00Z", "Mars/Olympus")).toBe("06:35");
+    expect(formatTimeZoneLine("Mars/Olympus", "2026-11-27T06:35:00Z")).toBe("시각 기준: UTC");
+  });
+  it("InboundContext.timeZone 은 선택 필드다", () => {
+    const base = { recentMessages: [], participants: [], relayRules: "r" };
+    expect(InboundContext.parse(base).timeZone).toBeUndefined();
+    expect(InboundContext.parse({ ...base, timeZone: "Asia/Seoul" }).timeZone).toBe("Asia/Seoul");
+    expect(() => InboundContext.parse({ ...base, timeZone: "" })).toThrow();
   });
 });
 

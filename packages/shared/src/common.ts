@@ -8,6 +8,9 @@ export type Id = z.infer<typeof Id>;
 export const IsoDateTime = z.iso.datetime({ offset: true });
 export type IsoDateTime = z.infer<typeof IsoDateTime>;
 
+/** 시간대(IANA 이름) — 여기서는 모양만 본다. 있는 이름인지는 쓰는 쪽의 Intl 이 가른다(예약을 세는 서버, 헤더 시각) */
+export const TimeZoneName = z.string().min(1).max(64);
+
 export const ErrorCode = z.enum([
   "UNAUTHORIZED",
   "FORBIDDEN",

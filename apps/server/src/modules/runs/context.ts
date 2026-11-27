@@ -30,6 +30,7 @@ import { getChannel } from "../channels/service";
 import { invitedAgentIds, sessionParticipants } from "../conversations/invited-agents";
 import { getConversation } from "../conversations/store";
 import { getMessage, getReadableMessage } from "../messages/service";
+import { getOpsSettings } from "../ops/settings";
 import type { AgentSessionRow } from "../sessions/service";
 import * as store from "./store";
 
@@ -250,6 +251,8 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
       ...(input.needsPromptContext && channel.prompt ? { channelPrompt: channel.prompt } : {}),
       ...(override ? { promptOverride: override } : {}),
       ...linkedField(db, run, trigger.message, input.origin),
+      // 헤더 시각의 시간대 — 플러그인·러너가 `HH:MM` 을 이 시간대로 찍고 `시각 기준:` 줄로 밝힌다(옛 받는 쪽은 버리고 UTC)
+      timeZone: getOpsSettings(db, channel.workspaceId).timeZone,
     },
     options: {},
   });

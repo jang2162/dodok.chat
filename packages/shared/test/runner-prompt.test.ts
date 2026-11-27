@@ -617,6 +617,16 @@ describe("buildTurnFacts — 스레드 소식", () => {
     expect(text.startsWith(`${base}\n스레드 소식(`)).toBe(true);
   });
 
+  it("시간대를 주면 스레드 소식 시각도 그 시간대 — Asia/Seoul", () => {
+    const text = buildTurnFacts({
+      conversationTitle: TITLE,
+      participants: PARTICIPANTS,
+      threadUpdates: UPDATES,
+      timeZone: "Asia/Seoul",
+    });
+    expect(text.split("\n")).toContain("  [09:20] @mia: 고쳤어요");
+  });
+
   it("없거나 빈 배열이면 이전과 같다", () => {
     const base = buildTurnFacts({ conversationTitle: TITLE, participants: PARTICIPANTS });
     expect(
@@ -643,12 +653,59 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(text).toMatchInlineSnapshot(`
       "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 you=@coder
       보낸 사람: @mia(사람)
+      시각 기준: UTC
       최근 대화:
       [09:00] @mia: 안녕
       [09:01] @fin: 네
       ---
       @coder README 요약해 줘"
     `);
+  });
+
+  it("워크스페이스 시간대 — 보낸 사람 줄 다음에 시각 기준 줄, 시각은 그 시간대(최근 대화·스레드·링크한 메시지)", () => {
+    const base = deliver();
+    const text = renderRunnerPrompt({
+      ...base,
+      context: {
+        ...base.context,
+        timeZone: "Asia/Seoul",
+        linkedMessages: [
+          {
+            messageId: ROOT,
+            channelName: "dodok-dev",
+            conversationTitle: "스레드 UI 개선",
+            author: { type: "agent", handle: "fin" },
+            text: "변경안",
+            ts: "2026-09-27T08:30:00.000Z",
+            attachments: [],
+          },
+        ],
+      },
+    });
+    const lines = text.split("\n");
+    expect(lines[1]).toBe("보낸 사람: @mia(사람)");
+    expect(lines[2]).toBe("시각 기준: Asia/Seoul (UTC+09:00)");
+    expect(lines).toContain("[18:00] @mia: 안녕");
+    expect(lines).toContain("[17:30] @fin (#dodok-dev · 세션 「스레드 UI 개선」): 변경안");
+    const thread = renderRunnerPrompt({
+      ...base,
+      threadId: ROOT,
+      sessionKey: `${base.sessionKey}:thread:${ROOT}`,
+      context: {
+        ...base.context,
+        timeZone: "America/New_York",
+        thread: {
+          root: {
+            author: { type: "agent", handle: "fin", displayName: "Fin" },
+            text: "배포 계획",
+            ts: "2026-09-27T08:00:00.000Z",
+          },
+          recentMessages: [],
+        },
+      },
+    });
+    expect(thread).toContain("시각 기준: America/New_York (UTC-04:00)");
+    expect(thread).toContain("스레드 루트: [04:00] @fin: 배포 계획");
   });
 
   it("스레드 — 루트와 스레드 최근, 채널 최근 대화는 싣지 않는다", () => {
@@ -681,6 +738,7 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(text).toMatchInlineSnapshot(`
       "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 thread=01a09fc9-d204-7551-89d6-38544d07a1ff you=@coder
       보낸 사람: @mia(사람)
+      시각 기준: UTC
       스레드 루트: [08:00] @fin: 배포 계획
       스레드 최근:
       [08:30] @mia: 좋아요

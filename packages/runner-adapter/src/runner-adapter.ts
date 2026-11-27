@@ -1412,6 +1412,10 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           thread: input.threadId !== undefined,
           threadUpdates: input.context.threadUpdates,
           threadUpdatesOmitted: input.context.threadUpdatesOmitted,
+          // 옛 러너(능력 headerTimeZone 없음)는 본문을 UTC 로 그린다 — 턴 사실도 UTC 로 둬 한 턴 안에서 시간대가 섞이지 않게
+          ...(input.context.timeZone === undefined || !runner.capabilities.includes("headerTimeZone")
+            ? {}
+            : { timeZone: input.context.timeZone }),
           reactions: input.context.reactions,
           reactionsOmitted: input.context.reactionsOmitted,
         }),

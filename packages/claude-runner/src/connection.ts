@@ -57,6 +57,8 @@ const CAPABILITIES: RunnerCapability[] = [
   // 봇 도구(러너 봇 2부 스펙 T5·T7) — 앱의 MCP 서버를 appMcp 천장으로 다시 판정해 붙이고, runnerControl 켠 봇에 러너 제어 도구를 싣는다
   "botMcp",
   "runnerControl",
+  // 본문 시각을 InboundContext.timeZone 으로 그린다 — 서버는 이 능력이 있어야 턴 사실도 같은 시간대로 찍는다
+  "headerTimeZone",
 ];
 /** commands.list 를 끊는 시간 — 서버 ack 상한(RUNNER_COMMANDS_LIST_TIMEOUT_MS 30초)보다 앞서 failed 로 답한다 */
 export const COMMANDS_LIST_TIMEOUT_MS = 25_000;

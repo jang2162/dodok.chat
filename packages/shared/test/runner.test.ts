@@ -128,6 +128,7 @@ describe("/runner 상수(P1)", () => {
       "remoteUpdate",
       "remoteUpdateOff",
       "backgroundTasks",
+      "headerTimeZone",
     ]);
   });
 });

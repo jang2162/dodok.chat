@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id, IsoDateTime } from "../common";
+import { Id, IsoDateTime, TimeZoneName } from "../common";
 import { RunnerProgram } from "../domain";
 import { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
@@ -57,8 +57,6 @@ export type OpsEventsPage = z.infer<typeof OpsEventsPage>;
 
 /** 워크스페이스 일일 런 상한 — null 은 무제한 */
 const DailyRunLimit = z.int().min(1).max(10_000).nullable();
-/** 워크스페이스 시간대(IANA 이름) — 여기서는 모양만 본다. 있는 이름인지는 예약을 세는 서버의 Intl 이 가른다 */
-const TimeZoneName = z.string().min(1).max(64);
 
 /** 워크스페이스 운영 설정 — 저장된 키가 없으면 기본값(OPS_DEFAULT_DAILY_RUN_LIMIT·OPS_DEFAULT_TIME_ZONE)으로 채운 값 */
 export const OpsSettings = z.object({ dailyRunLimit: DailyRunLimit, timeZone: TimeZoneName });

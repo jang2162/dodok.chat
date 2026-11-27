@@ -8,7 +8,7 @@ import {
   type InboundDeliver,
   type InboundDeliverResult,
 } from "@dodok/shared";
-import { buildInboundText, type ContextFormatOptions } from "./context";
+import { buildInboundText } from "./context";
 import { formatDodokTarget } from "./outbound";
 
 export type DodokInboundFacts = {
@@ -49,10 +49,7 @@ export type DodokInboundFacts = {
 
 export type InboundFactsResult = { ok: true; facts: DodokInboundFacts } | { ok: false; error: string };
 
-export function toInboundFacts(
-  d: InboundDeliver,
-  opts: { accountId: string; context?: ContextFormatOptions },
-): InboundFactsResult {
+export function toInboundFacts(d: InboundDeliver, opts: { accountId: string }): InboundFactsResult {
   let expected: string;
   try {
     expected = dodokSessionKey(d.agentId, d.conversationId, d.threadId);
@@ -84,7 +81,7 @@ export function toInboundFacts(
     messageId: d.message.id,
     timestamp: Date.parse(d.message.ts),
     sender: { id: senderId, name: author.displayName, isBot },
-    body: buildInboundText(d, opts.context),
+    body: buildInboundText(d),
     rawBody: d.message.text,
     correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
     conversation: {

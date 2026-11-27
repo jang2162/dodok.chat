@@ -3,7 +3,9 @@ import {
   formatGroupDmLine,
   formatParticipantLabel,
   formatSessionInviteLine,
+  formatHeaderTime,
   formatSessionLine,
+  formatTimeZoneLine,
   type InboundContext,
   type InboundDeliver,
   type InboundReaction,
@@ -220,6 +222,8 @@ export function buildTurnFacts(input: {
   /** 대화 세션 런만 — `InboundContext.threadUpdates` */
   threadUpdates?: readonly InboundThreadUpdate[];
   threadUpdatesOmitted?: number;
+  /** 스레드 소식 시각의 시간대 — `InboundContext.timeZone`. 없으면 UTC. 어느 시간대인지는 renderRunnerPrompt 의 `시각 기준:` 줄이 밝힌다 */
+  timeZone?: string;
 }): string {
   const sessionInvite = formatSessionInviteLine(input.participants);
   const lines = [
@@ -241,7 +245,9 @@ export function buildTurnFacts(input: {
   if (input.relayDepth !== undefined && input.relayDepth > 0) {
     lines.push(`릴레이: 다른 에이전트의 @멘션으로 이어받은 턴입니다(깊이 ${input.relayDepth}).`);
   }
-  const threadFacts = formatThreadUpdates(input.threadUpdates ?? [], input.threadUpdatesOmitted, hhmm);
+  const threadFacts = formatThreadUpdates(input.threadUpdates ?? [], input.threadUpdatesOmitted, (iso) =>
+    formatHeaderTime(iso, input.timeZone),
+  );
   if (threadFacts) lines.push(threadFacts);
   const reactionFacts = formatReactionFacts(input.reactions ?? [], input.reactionsOmitted);
   if (reactionFacts) lines.push(reactionFacts);
@@ -249,12 +255,6 @@ export function buildTurnFacts(input: {
 }
 
 const AUTHOR_KIND = { user: "사람", agent: "에이전트", system: "시스템" } as const;
-
-/** 최근 대화 시각 — 플러그인 기본값과 같이 UTC `HH:MM` */
-function hhmm(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-}
 
 /**
  * 러너가 사용자 메시지로 보낼 본문 — 플러그인의 `packages/openclaw-plugin/src/context.ts` 가 만드는 dodok 헤더·최근 대화 꼴과
@@ -265,9 +265,13 @@ export function renderRunnerPrompt(deliver: InboundDeliver): string {
   const self = deliver.context.participants.find((p) => p.isSelf);
   const threadPart = deliver.threadId ? ` thread=${deliver.threadId}` : "";
   const author = deliver.message.author;
+  const timeZone = deliver.context.timeZone;
+  const hhmm = (iso: string) => formatHeaderTime(iso, timeZone);
+  // 시각 기준 줄은 시각을 찍는 이 본문에 둔다 — 턴 사실(buildTurnFacts)은 서버가 만들어 러너 판과 어긋날 수 있다
   const lines = [
     `[dodok context] channel=${deliver.channelId}${threadPart} you=@${self?.handle ?? deliver.agentId}`,
     `보낸 사람: @${author.handle}(${AUTHOR_KIND[author.type]})`,
+    formatTimeZoneLine(timeZone, deliver.message.ts),
   ];
   const line = (m: { author: { handle: string }; text: string; ts: string }) =>
     `[${hhmm(m.ts)}] @${m.author.handle}: ${m.text}`;

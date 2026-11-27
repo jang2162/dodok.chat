@@ -330,6 +330,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       "bots",
       "botMcp",
       "runnerControl",
+      "headerTimeZone",
     ]);
     const info = server.adapter.runnerInfo(TOKEN_ID);
     expect(info).toMatchObject({ roots: [{ id: "src", label: "my-repo" }], browse: true });

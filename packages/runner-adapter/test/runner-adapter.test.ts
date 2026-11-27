@@ -780,6 +780,43 @@ describe("send", () => {
     const block = formatThreadUpdates(threadUpdates, 1, (iso) => iso.slice(11, 16));
     expect(start?.turnFacts).toBe(`${base}\n${block}\n${formatReactionFacts(reactions)}`);
     expect(start?.turnFacts).toContain("  [00:02] @mia: 이미 제출됐어요");
+
+    // 능력 headerTimeZone 이 없는 러너(옛 러너 — 본문을 UTC 로 그린다)에는 워크스페이스 시간대가 와도 턴 사실을 UTC 로 둔다
+    const base3 = deliver();
+    const seoul = { ...base3, context: { ...base3.context, threadUpdates, timeZone: "Asia/Seoul" } };
+    await h.adapter.send(seoul, { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === seoul.runId), "run.start 3");
+    const oldStart = r.runStarts.find((s) => s.deliver.runId === seoul.runId);
+    expect(oldStart?.turnFacts).toContain("  [00:02] @mia: 이미 제출됐어요");
+    expect(oldStart?.turnFacts).not.toContain("[09:02]");
+  });
+
+  it("능력 headerTimeZone 이 있는 러너에는 워크스페이스 시간대(context.timeZone)로 스레드 소식 시각을 찍는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_A, {
+      capabilities: ["threads", "interrupt", "approvals", "headerTimeZone"],
+    });
+    const threadUpdates = [
+      {
+        rootId: randomUUID(),
+        rootExcerpt: "pick 폼",
+        newReplies: 1,
+        recent: [
+          {
+            author: { type: "user" as const, handle: "mia", displayName: "Mia" },
+            text: "이미 제출됐어요",
+            ts: "2026-09-27T00:02:00.000Z",
+          },
+        ],
+      },
+    ];
+    const base = deliver();
+    const seoul = { ...base, context: { ...base.context, threadUpdates, timeZone: "Asia/Seoul" } };
+    await h.adapter.send(seoul, { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === seoul.runId), "run.start");
+    const start = r.runStarts.find((s) => s.deliver.runId === seoul.runId);
+    expect(start?.turnFacts).toContain("  [09:02] @mia: 이미 제출됐어요");
+    expect(start?.turnFacts).not.toContain("[00:02]");
   });
 
   it("그 에이전트의 러너가 붙어 있지 않으면 ADAPTER_UNAVAILABLE", async () => {

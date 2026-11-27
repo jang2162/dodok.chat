@@ -28,6 +28,7 @@ import {
   buildInboundDeliver,
   linkedMessagesFor,
 } from "../src/modules/runs/context";
+import { patchOpsSettings } from "../src/modules/ops/settings";
 import { insertRun } from "../src/modules/runs/store";
 import { insertInvite } from "../src/modules/conversations/invited-agents";
 import { ensureSession } from "../src/modules/sessions/service";
@@ -199,6 +200,7 @@ describe("buildInboundDeliver", () => {
         recentMessages: [],
         participants: expect.any(Array),
         relayRules: rule(4),
+        timeZone: "Asia/Seoul",
       },
       options: {},
     });
@@ -355,6 +357,13 @@ describe("buildInboundDeliver", () => {
       { type: "agent", handle: "fin", displayName: "Fin", isSelf: true },
     ]);
     expect(inbound.context.participants.filter((p) => p.isSelf)).toHaveLength(1);
+  });
+
+  it("context.timeZone 은 워크스페이스 시간대 — 운영 설정을 바꾸면 따라온다(헤더 시각 기준)", () => {
+    const { db, workspaceId, say, deliver } = setup();
+    expect(deliver({ message: say("@dev 하나") }).inbound.context.timeZone).toBe("Asia/Seoul");
+    patchOpsSettings(db, workspaceId, { timeZone: "America/New_York" });
+    expect(deliver({ message: say("@dev 둘") }).inbound.context.timeZone).toBe("America/New_York");
   });
 
   it("relayRules — allowPairs 가 all 이면 최대 턴만", () => {
