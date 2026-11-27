@@ -29,6 +29,10 @@ npm 판은 서버와 다른 빌드일 수 있다 — 설정 → 연결의 러너
 
 터미널이 아니면(서비스·파이프) 묻지 않고 끝난다 — 설정 파일을 먼저 만든다.
 
+### 백그라운드로 띄우기
+
+러너는 전경에 머문다. 터미널을 닫아도·재부팅 뒤에도 돌게 하려면 위처럼 한 번 띄워 설정·로그인을 끝낸 뒤 macOS launchd(LaunchAgent)·Linux systemd(사용자 서비스)로 띄운다. 서비스로 띄우면 설정에 `"remoteUpdate": false` 를 넣고, `PATH` 와 `dodok-runner` 의 절대 경로를 서비스에 넘긴다. 종료 코드 2(토큰·판본 문제)는 다시 띄우지 않는다. plist·unit 파일과 명령은 [러너 설치 — 백그라운드로 띄우기](https://github.com/jang2162/dodok.chat/blob/main/docs/guides/docker-deploy.md#러너-설치). `nohup` 은 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받는다.
+
 ### 고급 — 직접 쓰기
 
 설정 파일을 손으로 써도 된다(다른 자리면 `dodok-runner --config <경로>`). 토큰은 본문에 적지 않는다 — `tokenFile`(0600) 또는 env `DODOK_RUNNER_TOKEN`. 러너 전용 로그인을 쓰려면 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude` 로 로그인하고 `programs.claude` 에 `"configDir": "~/.dodok-runner/claude"` 를 적는다.

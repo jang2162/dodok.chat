@@ -449,7 +449,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
    - 권한 모드에서 미리 허용하지 않은 쓰기 도구(파일 쓰기·명령 실행 등)를 CLI 가 물으면 채널에 **도구 승인 카드**가 뜨고 admin 이상이 결정한다(10분 안에 아무도 안 누르면 거절). 「항상 허용」은 그 세션에만 걸리고 이 파일·작업 디렉터리의 설정에는 쓰지 않는다. CLI 가 읽기 전용으로 보는 명령 일부(`git log` 등)는 규칙이 없어도 묻지 않고 돌린다(ADR 0007 「질문별」 권한 콜백). 러너는 `mcp__dodok__post`(채널에 카드·파일 보내기)를 늘 허용하고, 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)는 늘 막는다 — 이 파일의 `disallowedTools` 와 합친다(정본 `packages/claude-runner/src/drivers/claude/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`).
    - 러너는 작업 디렉터리의 `CLAUDE.md`·`.claude/settings.json` 을 읽지 않는다(`settingSources: []`). 계정의 claude.ai 커넥터도 붙이지 않는다.
    - ⚠ 옛 설정(에이전트를 이 파일의 `agents` 에 적던 판)은 「에이전트는 이제 앱에서 만듭니다 — 설정에서 agents 를 지우고 roots 를 적으세요」 한 줄을 찍고 끝난다.
-5. **[R] 실행** — `dodok-runner`(4번 마법사로 만들었으면 저장한 뒤 이미 돌고 있다). 첫 줄에 러너·SDK·내장 Claude Code 판본과 루트(id·라벨)·프로그램·동시 수, 이어서 실제로 쓰는 CLI(`Claude Code 설치본 2.1.322` 또는 `Claude Code 내장 2.1.283` — 경로는 찍지 않는다)와 `연결됨(서버 …)`. 그 러너 상세의 「러너 토큰」 줄에 「지금 접속 중」과 「서버와 같은 빌드입니다」가 붙고, 같은 상세 머리가 「연결됨」·판본·루트 라벨·프로그램 줄( — 판본·설치본/내장·로그인·권한 상한·허용 도구 상한)가 생긴다. v1 은 사람이 터미널에서 띄운다(OS 서비스로 자동 시작하지 않는다).
+5. **[R] 실행** — `dodok-runner`(4번 마법사로 만들었으면 저장한 뒤 이미 돌고 있다). 첫 줄에 러너·SDK·내장 Claude Code 판본과 루트(id·라벨)·프로그램·동시 수, 이어서 실제로 쓰는 CLI(`Claude Code 설치본 2.1.322` 또는 `Claude Code 내장 2.1.283` — 경로는 찍지 않는다)와 `연결됨(서버 …)`. 그 러너 상세의 「러너 토큰」 줄에 「지금 접속 중」과 「서버와 같은 빌드입니다」가 붙고, 같은 상세 머리가 「연결됨」·판본·루트 라벨·프로그램 줄( — 판본·설치본/내장·로그인·권한 상한·허용 도구 상한)가 생긴다. 러너는 전경에 머문다 — 터미널을 닫아도 돌게 하려면 아래 「백그라운드로 띄우기」.
 6. **[웹·주인] 프로젝트 더하기** — 설정 → 연결 → 그 러너 상세의 「프로젝트 추가」 → 루트 고르기 → 「둘러보기」(디렉터리만·숨김 제외·500개까지, git 저장소 표시) 또는 「직접 입력」(루트 안의 상대 경로 — 비우면 루트 자신) → 「확인하고 추가」. 서버가 러너에 그 자리를 물어 루트 밖·없음·파일이면 사유와 함께 거절한다. 같은 러너의 같은 자리는 하나다. 붙은 러너에만 더할 수 있다.
 7. **[웹·주인] 에이전트 만들기** — 그 프로젝트 상세의 「에이전트 만들기」(러너·프로젝트는 그 프로젝트로 정해져 있다) → 프로그램(못 쓰는 것은 사유와 함께 흐리다) → 핸들·이름·모델·권한 모드(러너 상한까지만 고를 수 있다)·허용 도구(상한의 부분집합)·지시·DM 허용 → 「만들기」. 끊긴 러너로는 만들 수 없다. 채널에 넣고 멘션한다 — 에이전트는 그 프로젝트 디렉터리에서 돈다. 지시와 채널 프롬프트는 **매 런** 요청에 실리고, 지시나 채널 규칙(프롬프트·채널 지시·릴레이 정책)을 바꾸면 서버가 그 에이전트의 러너 세션을 다음 런에서 새로 연다 — 사람이 새 세션을 열 필요가 없고, 대가로 세션 이력(앞 도구 결과·긴 작업 문맥)을 잃는다(`docs/guides/agent-guide.md` 「러너 에이전트」). 프로그램은 만든 뒤 바꾸지 않는다(새 에이전트를 만든다), 프로젝트는 프로젝트 상세의 「옮기기」로만 바뀐다.
 
@@ -472,6 +472,83 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 - **서버 재시작·네트워크 끊김·덮개 닫힘** — 러너가 그때 돌던 런을 멈추고, 1초~30초 백오프로 **스스로 다시 붙는다**. 서버는 그 런을 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 + 「다시 실행」으로 닫는다 — 다시 붙은 뒤 「다시 실행」은 같은 세션을 잇는다. 60초 넘게 끊겨 있으면 운영 사건 「러너 연결 끊김」이 열리고, 붙으면 닫힌다. 끊긴 동안 러너 상세는 「끊김」 하나만 보인다(서버는 러너가 알린 루트·프로그램을 메모리에만 든다).
 - **토큰 폐기·다시 발급·같은 토큰으로 다른 러너가 붙음** — 서버가 끊은 것이라 러너는 도는 런을 멈추고(아래 「끄기」와 같이 최대 5초 기다린다 — CLI 가 남아 턴을 이어 가지 않게) 사유를 한 줄 찍고 **끝난다**(종료 코드 2 — 같은 토큰의 두 러너가 서로를 밀어내지 않게). 다시 띄워야 한다. 서버가 러너를 거절하면(핸드셰이크의 토큰 거절 `UNAUTHORIZED`, hello 의 판본 불일치 `PROTOCOL_MISMATCH`) 역시 같은 방식으로 끝난다 — 토큰을 확인하거나 러너를 다시 받는다. 인증 실패가 반복돼 주소가 막힌 것(`RATE_LIMITED`)은 끝나지 않고 풀릴 때까지 다시 시도한다(아래 「운영 화면」 레이트리밋 표의 `bridgeFail`).
 - **끄기** — `Ctrl+C`(SIGINT) 또는 SIGTERM. 러너가 도는 런을 멈추고(최대 5초) 끝난다 — 그 런은 채널에 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 카드로 닫히고, 러너를 다시 띄운 뒤 「다시 실행」으로 같은 세션을 이어 간다. 대기열에 서 있던 런도 같다. 한 번 더 누르면 기다리지 않고 끝난다. ⚠ `kill -9` 는 쓰지 않는다 — 러너만 죽고 CLI 가 남아 그 턴을 끝까지 돈다(모델 비용이 들고, 채널에 없던 답이 세션 이력에 남는다 — `docs/superpowers/reports/2026-09-29-claude-runner-harness-live-smoke-report.md` 「19.4 새로 찾은 것 (코드는 고치지 않았다)」).
+
+**백그라운드로 띄우기** — 러너에는 스스로 데몬이 되는 옵션이 없다. 터미널을 닫아도, 재부팅·로그인 뒤에도 돌게 하려면 OS 의 서비스 관리자(macOS launchd · Linux systemd)로 띄운다. Windows 는 이 문서가 다루지 않는다.
+
+- **먼저 터미널에서 한 번 띄운다** — 서비스로 띄운 러너는 터미널이 아니라 설정을 묻지 않고 끝난다. 위 3~5번으로 Claude 로그인·설정 파일(`~/.dodok-runner/config.json`)·토큰 파일을 만들고 `연결됨` 을 본 뒤 `Ctrl+C` 로 끈다. `dodok-runner --check-config` 가 「설정 확인 — 이상 없음」을 찍고 0 으로 끝나면 설정은 됐다.
+- **원격 업데이트를 끈다** — 설정 파일에 `"remoteUpdate": false` 를 넣는다. 웹의 「업데이트」는 러너가 자기를 서비스 관리자 **밖에** 다시 띄우고 끝나는 방식이라(위 「업데이트」), 서비스로 띄운 러너에서는 그 뒤 동작을 재지 않았다. 올릴 때는 `npm i -g @dodok/runner` 뒤 서비스를 다시 시작한다(아래 표).
+- **두 값을 적어 둔다** — 러너가 잘 도는 그 터미널에서 `command -v dodok-runner`(실행 파일 경로)와 `echo "$PATH"`. 서비스 관리자는 로그인 셸의 `PATH` 를 읽지 않는다 — `PATH` 를 넘기지 않으면 `dodok-runner` 의 `#!/usr/bin/env node` 가 `node` 를 못 찾고(mise·nvm·Homebrew 의 node), 러너가 설치본 `claude` 대신 번들 CLI 로 돈다. 아래 `<RUNNER>`·`<PATH>` 자리에 그대로 넣는다(`~` 는 쓰지 않고 절대 경로로).
+- **다시 띄우는 조건** — 러너는 네트워크·서버가 끊겨도 스스로 다시 붙으므로(위 「끊김·끄기」) 서비스 관리자가 다시 띄울 일은 거의 없다. 러너가 **스스로 끝나는** 것은 사람이 손봐야 하는 경우다: 종료 코드 1(설정 오류)·2(토큰 폐기·다시 발급·같은 토큰의 다른 러너·`UNAUTHORIZED`·`PROTOCOL_MISMATCH`). 코드 2 를 다시 띄우면 옛 토큰으로 되풀이해 붙다가 그 주소가 잠시 막히므로 아래 설정은 2 를 다시 띄우지 않는다. 끌 때 서비스 관리자가 보내는 SIGTERM 은 `Ctrl+C` 와 같다(도는 런을 멈추고 최대 약 11초 뒤 끝난다) — 아래 설정은 30초를 기다린다.
+
+macOS — 사용자 LaunchAgent(로그인하면 뜬다. 로그인 키체인의 Claude 로그인을 그대로 쓴다). `~/Library/LaunchAgents/chat.dodok.runner.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>chat.dodok.runner</string>
+  <key>ProgramArguments</key>
+  <array><string><RUNNER></string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string><PATH></string></dict>
+  <key>RunAtLoad</key><true/>
+  <!-- 비정상 종료(신호로 죽음)만 다시 띄운다 — 코드 1·2 는 사람이 본다 -->
+  <key>KeepAlive</key><dict><key>Crashed</key><true/></dict>
+  <key>ExitTimeOut</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/<사용자>/.dodok-runner/logs/runner.log</string>
+  <key>StandardErrorPath</key><string>/Users/<사용자>/.dodok-runner/logs/runner.log</string>
+</dict>
+</plist>
+```
+
+```bash
+mkdir -p ~/.dodok-runner/logs          # launchd 는 로그 디렉터리를 만들지 않는다
+plutil -lint ~/Library/LaunchAgents/chat.dodok.runner.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/chat.dodok.runner.plist   # 등록 + 시작
+tail -f ~/.dodok-runner/logs/runner.log                                           # `연결됨` 을 본다
+```
+
+Linux — systemd 사용자 서비스. `~/.config/systemd/user/dodok-runner.service`:
+
+```ini
+[Unit]
+Description=dodok runner
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+ExecStart=<RUNNER>
+Environment=PATH=<PATH>
+# 코드 1·비정상 종료는 다시 띄우고, 2(토큰·프로토콜)는 다시 띄우지 않는다
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now dodok-runner
+loginctl enable-linger "$USER"     # 로그아웃해도·부팅하자마자 돌게(이게 없으면 로그인한 동안만 돈다)
+journalctl --user -u dodok-runner -f
+```
+
+| 하려는 일 | macOS | Linux |
+| --- | --- | --- |
+| 상태·로그 | `launchctl print gui/$(id -u)/chat.dodok.runner` · `tail -f ~/.dodok-runner/logs/runner.log` | `systemctl --user status dodok-runner` · `journalctl --user -u dodok-runner -f` |
+| 다시 시작(업데이트·설정·토큰을 바꾼 뒤) | `launchctl kickstart -k gui/$(id -u)/chat.dodok.runner` | `systemctl --user restart dodok-runner` |
+| 멈춤(다음 로그인에 다시 뜬다) | `launchctl kill TERM gui/$(id -u)/chat.dodok.runner` | `systemctl --user stop dodok-runner` |
+| 서비스 해제 | `launchctl bootout gui/$(id -u)/chat.dodok.runner` 뒤 plist 삭제 | `systemctl --user disable --now dodok-runner` 뒤 파일 삭제 |
+
+- **스스로 끝났으면 로그의 마지막 줄을 본다** — 사유가 한 줄로 찍혀 있다(토큰이면 `dodok-runner token` 으로 새 토큰을 넣고 다시 시작, 판본이면 러너를 올리고 다시 시작). 서비스 관리자는 이 경우 다시 띄우지 않는다.
+- **토큰을 다시 발급할 때** — 서비스를 먼저 멈추고(위 표) `dodok-runner token` 을 터미널에서 돌린 뒤 다시 시작한다(아래 「토큰 다시 발급」의 ⚠ 와 같다).
+- **`kill -9` 를 쓰지 않는다** — 위 「끊김·끄기」. 끄기는 표의 명령으로만.
+- macOS 로그는 저절로 잘리지 않는다 — 커지면 서비스를 멈추고 파일을 비운다. 전경에서 잠깐 띄우는 것으로 충분하면 서비스 대신 `tmux`·`screen` 세션 안에서 `dodok-runner` 를 띄우고 세션에서 빠져나와도 된다. `nohup dodok-runner &` 는 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받으므로(위 「끊김·끄기」) 터미널을 닫으면 같이 끝난다.
 
 **토큰 다시 발급** — 러너 상세의 「러너 토큰」 줄의 「다시 발급」(그 러너의 주인·admin 이상): 같은 러너의 원문만 바뀐다 — 옛 원문은 곧바로 안 통하고 그 토큰으로 붙은 러너는 끊겨 끝나며(위), 그 러너에서 돌던 런은 「다시 실행」 카드로 닫힌다. **프로젝트·에이전트·세션은 그대로 그 러너에 남는다.** 새 원문은 한 번만 보이고, 그 대화상자의 「AI 에게 맡기기」 줄은 설치가 아니라 「토큰만 바꾸고 다시 띄우기」다. 대화상자의 「실행」 칸은 `dodok-runner token` 이다 — 설정은 그대로 두고 새 원문만 `tokenFile` 자리에 넣는다(4번). ⚠ 다시 발급하면 **먼저 러너 서비스를 멈추고** `dodok-runner token` 으로 새 토큰을 넣거나 `tokenFile`(기본 `~/.dodok-runner/token`)에 직접 덮어쓴 뒤 띄운다 — 옛 토큰으로 되풀이해 붙으면 그 주소가 잠시 막힌다(실패 카운터). 폐기한 토큰은 다시 발급할 수 없다(새 토큰을 발급한다).
 
