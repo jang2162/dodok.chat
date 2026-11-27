@@ -79,6 +79,30 @@ describe("Handle", () => {
     expect(Handle.safeParse("Bob").success).toBe(false);
     expect(Handle.safeParse("x".repeat(33)).success).toBe(false);
   });
+
+  it("한글 완성형 음절(가~힣)도 받는다 — 길이는 글자(코드 포인트) 2~32", () => {
+    expect(Handle.safeParse("개발봇").success).toBe(true);
+    expect(Handle.safeParse("dev_봇-2").success).toBe(true);
+    expect(Handle.safeParse("가").success).toBe(false);
+    expect(Handle.safeParse("가".repeat(32)).success).toBe(true);
+    expect(Handle.safeParse("가".repeat(33)).success).toBe(false);
+  });
+
+  it("자모 단독·다른 문자는 받지 않는다", () => {
+    expect(Handle.safeParse("ㄱㄴ").success).toBe(false);
+    expect(Handle.safeParse("개발ㅋ").success).toBe(false);
+    expect(Handle.safeParse("日本").success).toBe(false);
+    expect(Handle.safeParse("개 발").success).toBe(false);
+  });
+
+  it("NFC 로 맞춘다 — NFD(macOS 조합형)로 온 핸들도 같은 완성형 핸들이 된다", () => {
+    const nfd = "개발봇".normalize("NFD");
+    expect(nfd).not.toBe("개발봇");
+    expect(Handle.parse(nfd)).toBe("개발봇");
+    // 별칭도 같은 규칙
+    expect(ChannelMember.shape.aliases.parse([nfd, "봇봇"])).toEqual(["개발봇", "봇봇"]);
+    expect(ChannelMember.shape.aliases.safeParse(["ㄱㄴ"]).success).toBe(false);
+  });
 });
 
 describe("RelayPolicy", () => {
