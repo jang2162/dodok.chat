@@ -53,7 +53,10 @@ export function ProgramsCard({ runner }: { runner: RunnerSummary }) {
   );
 }
 
-/** 판·로그인·권한 상한 요약 — 「2.1.283 (설치본) · 로그인됨 (평소 로그인) · 권한 상한 acceptEdits · 허용 도구 상한 …」 */
+/**
+ * 판·로그인·권한 상한 요약 — 「2.1.283 (설치본) · 로그인됨 (평소 로그인) · 권한 상한 acceptEdits · 허용 도구 상한 … · 작업 디렉터리 밖 접근
+ * 허용」(마지막은 그 상한을 연 러너만)
+ */
 function summaryOf(status: RunnerProgramStatus): ReactNode {
   const tools = status.ceiling.allowedToolsCeiling;
   return (
@@ -64,6 +67,7 @@ function summaryOf(status: RunnerProgramStatus): ReactNode {
       {status.login && <> ({LOGIN_LABEL[status.login]})</>} · 권한 상한{" "}
       <code className="font-mono text-xs">{status.ceiling.maxPermissionMode}</code>
       {tools !== null && <> · 허용 도구 상한 {tools.length === 0 ? "없음" : tools.join(", ")}</>}
+      {status.ceiling.allowOutsideWorkdir === true && <> · 작업 디렉터리 밖 접근 허용</>}
     </>
   );
 }

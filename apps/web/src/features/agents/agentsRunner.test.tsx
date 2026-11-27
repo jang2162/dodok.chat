@@ -28,6 +28,7 @@ import {
   runnerPath,
   runnersRoutes,
 } from "../../../test/runnersServer";
+import { OUTSIDE_WORKDIR_BLOCKED, OUTSIDE_WORKDIR_OUTDATED } from "./AgentRow";
 import { ABOVE_CEILING, CEILING_REFUSED } from "./RunnerAgentForm";
 
 /** 시험마다 첫 에이전트의 상세를 띄운다 — 러너 에이전트 줄은 「연결」 탭의 에이전트 상세가 그린다 */
@@ -263,6 +264,91 @@ describe("새 세션 시작값 고치기", () => {
         CEILING_REFUSED,
       ),
     );
+  });
+});
+
+describe("작업 디렉터리 밖 접근 허용", () => {
+  /** 맥북 — 상한 allowOutsideWorkdir 을 바꿔 가며(undefined 는 상한을 알리지 않는 옛 러너) */
+  const outsideRoutes = (allow: boolean | undefined, connected = true) =>
+    runnersRoutes({
+      runners: [
+        runnerOf(1, {
+          label: "맥북",
+          connected,
+          ...(connected
+            ? {
+                programs: [
+                  programOf({
+                    ceiling: {
+                      maxPermissionMode: "acceptEdits",
+                      allowedToolsCeiling: null,
+                      ...(allow === undefined ? {} : { allowOutsideWorkdir: allow }),
+                    },
+                  }),
+                ],
+              }
+            : {}),
+        }),
+      ],
+      projects: [projectOf(1, { label: "dodok", relPath: "dodok" })],
+    }).handle;
+  const outsideSwitch = (row: HTMLElement) =>
+    within(row).getByRole("switch", { name: "작업 디렉터리 밖 접근 허용" });
+
+  it("상한이 연 러너 — 꺼진 스위치를 켜면 PATCH { allowOutsideWorkdir: true }", async () => {
+    const server = stubServer({
+      agents: [coder({ allowOutsideWorkdir: false })],
+      runners: outsideRoutes(true),
+    });
+    renderPage();
+    const row = await agentDetail();
+    await waitFor(() => expect(outsideSwitch(row)).toBeEnabled());
+    expect(outsideSwitch(row)).not.toBeChecked();
+    expect(row).toHaveTextContent("권한 모드·금지 도구는 그대로");
+    await userEvent.click(outsideSwitch(row));
+    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ allowOutsideWorkdir: true }]));
+  });
+
+  it.each([
+    [false, OUTSIDE_WORKDIR_BLOCKED],
+    [undefined, OUTSIDE_WORKDIR_OUTDATED],
+  ] as const)("상한 %s — 꺼진 스위치는 잠기고 사유 한 줄", async (allow, reason) => {
+    stubServer({ agents: [coder()], runners: outsideRoutes(allow) });
+    renderPage();
+    const row = await agentDetail();
+    await waitFor(() => expect(outsideSwitch(row)).toHaveAccessibleDescription(reason));
+    expect(outsideSwitch(row)).toBeDisabled();
+  });
+
+  it("상한이 막았어도 이미 켠 스위치는 끌 수 있다 — PATCH { allowOutsideWorkdir: false }", async () => {
+    const server = stubServer({
+      agents: [coder({ allowOutsideWorkdir: true })],
+      runners: outsideRoutes(false),
+    });
+    renderPage();
+    const row = await agentDetail();
+    await waitFor(() => expect(outsideSwitch(row)).toHaveAccessibleDescription(OUTSIDE_WORKDIR_BLOCKED));
+    expect(outsideSwitch(row)).toBeChecked();
+    expect(outsideSwitch(row)).toBeEnabled();
+    await userEvent.click(outsideSwitch(row));
+    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ allowOutsideWorkdir: false }]));
+  });
+
+  it("러너가 끊겨 있으면 상한을 모른다 — 켤 수 있다(서버도 대조를 건너뛴다)", async () => {
+    stubServer({ agents: [coder()], runners: outsideRoutes(false, false) });
+    renderPage();
+    const row = await agentDetail();
+    await waitFor(() => expect(outsideSwitch(row)).toBeEnabled());
+  });
+
+  it("고칠 수 없는 사람(member)에게는 스위치가 없다", async () => {
+    stubServer({ agents: [coder({}, false)] });
+    renderPage(
+      createQueryClient(() => {}),
+      "member",
+    );
+    const row = await agentDetail();
+    expect(within(row).queryByRole("switch", { name: "작업 디렉터리 밖 접근 허용" })).toBeNull();
   });
 });
 
