@@ -341,15 +341,27 @@ describe("작업 디렉터리 밖 접근 허용", () => {
     await waitFor(() => expect(outsideSwitch(row)).toBeEnabled());
   });
 
-  it("고칠 수 없는 사람(member)에게는 스위치가 없다", async () => {
-    stubServer({ agents: [coder({}, false)] });
-    renderPage(
-      createQueryClient(() => {}),
-      "member",
-    );
-    const row = await agentDetail();
-    expect(within(row).queryByRole("switch", { name: "작업 디렉터리 밖 접근 허용" })).toBeNull();
-  });
+  it.each([
+    [true, "작업 디렉터리 밖 접근: 허용 — 프로젝트 폴더 밖의 파일에도 닿습니다"],
+    [false, "작업 디렉터리 밖 접근: 막음"],
+  ] as const)(
+    "고칠 수 없는 사람(member)에게는 스위치 대신 값만 — runner.outsideWorkdir %s",
+    async (on, text) => {
+      const agent = coder({}, false);
+      stubServer({
+        agents: [
+          { ...agent, runner: { ...agent.runner!, ...(on ? { outsideWorkdir: true as const } : {}) } },
+        ],
+      });
+      renderPage(
+        createQueryClient(() => {}),
+        "member",
+      );
+      const row = await agentDetail();
+      expect(within(row).queryByRole("switch", { name: "작업 디렉터리 밖 접근 허용" })).toBeNull();
+      expect(row).toHaveTextContent(text);
+    },
+  );
 });
 
 describe("보관한 러너 에이전트", () => {

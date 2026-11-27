@@ -315,9 +315,23 @@ export const OUTSIDE_WORKDIR_OUTDATED =
 /**
  * 「작업 디렉터리 밖 접근 허용」 — 켜면 프로젝트(봇은 봇 폴더) 밖 경로를 밖이라는 이유로 묻거나 막지 않는다. 권한 모드·금지 도구는 그대로.
  * 붙은 러너의 상한이 막았으면(옛 러너 포함) 켜기를 잠그고 사유 한 줄, 이미 켠 것은 끌 수 있다. 끊겨 있으면 상한을 몰라 잠그지 않는다
- * (서버도 대조를 건너뛰고 런에서 러너가 거절한다). 바꾸는 즉시 저장한다
+ * (서버도 대조를 건너뛰고 런에서 러너가 거절한다). 바꾸는 즉시 저장한다. `readOnly`(그 연결의 주인도 admin 이상도 아님)면 값만 보인다 —
+ * 정의(runnerAgent)를 못 받으므로 모두에게 실리는 `runner.outsideWorkdir` 로 읽는다
  */
-export function OutsideWorkdirSwitch({ agent }: { agent: Agent }) {
+export function OutsideWorkdirSwitch({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  if (readOnly)
+    return (
+      <p className="text-sm text-muted-foreground">
+        작업 디렉터리 밖 접근:{" "}
+        <span className="text-foreground">
+          {agent.runner?.outsideWorkdir === true ? "허용 — 프로젝트 폴더 밖의 파일에도 닿습니다" : "막음"}
+        </span>
+      </p>
+    );
+  return <OutsideWorkdirToggle agent={agent} />;
+}
+
+function OutsideWorkdirToggle({ agent }: { agent: Agent }) {
   const save = usePatchAgent();
   const runners = useRunners();
   const id = useId();

@@ -145,7 +145,7 @@ export function AgentDetail() {
                   projectId={agent.runnerAgent?.projectId ?? null}
                 />
               )}
-              {!readOnly && agent.runnerAgent && <OutsideWorkdirSwitch agent={agent} />}
+              {(readOnly || agent.runnerAgent) && <OutsideWorkdirSwitch agent={agent} readOnly={readOnly} />}
               {/* 봇은 기본 지시 대신 봇 정의(러너 봇 스펙 B3) — 정의는 주인·admin 이상만 받는다 */}
               {agent.runner?.bot ? (
                 <BotDefinitionEditor agent={agent} readOnly={readOnly} />

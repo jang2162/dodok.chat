@@ -505,7 +505,8 @@ describe("RUNNER_CONTROL_TOOLS — 「이 러너 설정 제어」(러너 봇 2�
       ],
       [
         "register_agent",
-        () => control("register_agent", { providerAgentId: "ops", handle: "ops", name: "Ops", gatewayId: ID }),
+        () =>
+          control("register_agent", { providerAgentId: "ops", handle: "ops", name: "Ops", gatewayId: ID }),
         () =>
           control("register_agent", {
             providerAgentId: "ops",
