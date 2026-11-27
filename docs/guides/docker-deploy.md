@@ -393,6 +393,10 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
   - **옮기기** — 그 에이전트 상세의 「Gateway 옮기기」(admin 이상 — member 는 원래 Gateway 와 옮길 Gateway 가 둘 다 자기 것일 때만)에서 옮길 Gateway 를 고른다. 그 Gateway 의 OpenClaw 에 같은 id 의 에이전트가 있어야 답하고, 그 Gateway 로 이미 등록된 같은 id 가 있으면 옮길 수 없다(「옮길 Gateway 에 같은 id 의 에이전트가 이미 있습니다」). 옮긴 뒤 그 에이전트의 run_error 카드 「다시 실행」은 새 Gateway 로 간다. 「Gateway 옮기기」는 연결된 에이전트 상세에도 있다 — 잘못 고른 Gateway 를 바로잡는 길도 같다.
   - 지운 Gateway 의 [B] 플러그인은 계속 다시 붙으려다 `token mismatch` 로 거절된다(카운터에는 세지 않는다) — [B] 에서 플러그인을 내리거나 계정 설정을 지운다.
 
+### 오래 도는 런 — Gateway 쪽 에이전트 상한
+
+dodok 서버는 런에 기본 상한을 두지 않는다 — 에이전트 상세의 「런 상한」(분, 1~1440)을 준 에이전트만 그 시간에 닫는다(`docs/guides/plan.md` 10장 #30). OpenClaw Gateway 는 따로 에이전트 런 상한을 가진다: `agents.defaults.timeoutSeconds`(기본 172800초 = 48시간, `0` 이면 없음). 플러그인·서버는 이 값을 쓰지 않는다 — 48시간보다 긴 런이 필요하거나 Gateway 쪽에서 더 짧게 끊고 싶으면 [B] 의 OpenClaw 설정에서 운영자가 바꾼다. Gateway 가 이 상한으로 끊은 런이 dodok 에 어떻게 닫히는지는 실연으로 재지 않았다(`docs/guides/plan.md` 8장 「이월」).
+
 ## 러너 설치
 
 러너(`@dodok/runner`, 명령 `dodok-runner`)는 **사람의 머신에서** 에이전트를 돌려 dodok 채널에 붙인다 — 그 머신의 저장소를 작업 디렉터리로 쓰는 에이전트를 팀 채널에서 부르는 길이다. 지금 돌릴 수 있는 프로그램은 Claude Code 하나(Claude Agent SDK)다. OpenClaw Gateway 는 거치지 않는다. 러너는 **나가는 연결만** 쓴다 — Socket.IO `/runner` 네임스페이스(`/socket.io/`)와 첨부 HTTP `/runner/attachments` 둘 다 [A] 의 공개 도메인 443 으로 간다(둘 다 서버 라우트 — 프록시가 모든 경로를 앱에 넘기면 된다). 머신 쪽 포트는 열지 않는다.
@@ -441,7 +445,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
    }
    ```
    - `serverUrl` — 공개 주소(`https://<도메인>`). 웹의 「서버 주소」 값은 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN`)의 오리진이다.
-   - `maxConcurrentRuns` — 동시 CLI 수(1~16, 기본 3). 런 중 CLI 하나가 약 300 MiB 다. 넘치면 서버 쪽에 대기(`RUN_QUEUED`)로 보이고 자리가 날 때까지 기다린다 — 기다림도 런 상한(10분) 안이다.
+   - `maxConcurrentRuns` — 동시 CLI 수(1~16, 기본 3). 런 중 CLI 하나가 약 300 MiB 다. 넘치면 서버 쪽에 대기(`RUN_QUEUED`)로 보이고 자리가 날 때까지 기다린다 — 기다림도 그 에이전트의 런 상한(기본 없음, 에이전트 상세 「런 상한」) 안이다.
    - `roots` — 에이전트가 돌 수 있는 디렉터리(1~16개). **루트가 경계다** — 앱의 프로젝트는 루트 안의 디렉터리이고(숨김 디렉터리도 경로를 적으면 프로젝트로 만들 수 있다), 루트 밖(`..`·밖을 가리키는 링크)은 러너가 거절한다. `path` 는 있는 디렉터리여야 하고 러너는 링크를 푼 자리로 쥔다. `id` 는 영문 소문자·숫자·`-`(1~32자), 러너 안에서 유일하다 — ⚠ **바꾸거나 지우면 그 루트의 프로젝트가 모두 「루트 없음」이 되고** 그 에이전트를 부르면 「러너 설정이 이 에이전트를 허용하지 않습니다(root)」 카드다(되돌리면 「다시 실행」이 돈다). ⚠ **`label` 을 꼭 적는다** — 서버로 가는 루트 정보는 `id`·`label` 뿐인데, 안 적으면 디렉터리 이름(홈이면 계정 이름)이 라벨로 간다. 경로는 서버에 가지 않는다.
    - `browse` — `false` 면 앱의 디렉터리 둘러보기를 거절한다(경로를 직접 적어 프로젝트를 더하는 것은 된다).
    - `programs` — 적지 않은 프로그램은 꺼진 것이다. 지금은 `claude` 하나다. `configDir` 은 선택이다 — 적지 않으면 평소 Claude Code 로그인(`~/.claude`, 러너를 띄운 셸에 `CLAUDE_CONFIG_DIR` 이 있으면 그 자리), 적으면 그 디렉터리의 전용 로그인(3번 「러너 전용 로그인을 따로 쓰려면」). 빈 문자열은 거절한다 — 평소 로그인을 쓰려면 줄을 지운다. 러너 상세의 프로그램 줄에 로그인 상태 뒤 「(평소 로그인)」·「(전용 로그인)」으로 보인다. `executable` 도 선택이다(`~` 를 푼다) — 적지 않으면 러너를 띄운 셸의 `PATH` 에서 처음 찾은 `claude`, 그것도 없으면 SDK 에 든 번들 CLI 로 돈다. 적으면 그 실행 파일로 돌고, 그 경로가 없거나 실행할 수 없으면 번들로 돌아가지 않는다 — 프로그램 줄이 「쓸 수 없음 · 설정의 executable 이 없거나 실행할 수 없습니다 …」이고 그 에이전트를 부르면 `program` 카드다. 빈 문자열은 거절한다. 판본은 러너가 붙을 때마다 그 실행 파일의 `claude --version` 으로 읽어(5초 제한) 프로그램 줄에 「2.1.322 (설치본)」처럼, 번들이면 SDK 에 든 판 「(내장)」으로 보인다 — `claude` 를 업데이트하면 러너를 다시 띄우거나 다시 붙은 뒤에 바뀐다(도는 러너는 붙은 때 고른 실행 파일을 계속 쓴다). 판을 못 읽으면 판 없이 「(설치본)」만 보이고 실행은 그대로 한다.
@@ -714,7 +718,7 @@ docker compose logs app | grep '"event":"ops.'
 | wire `reaction.set` | `wire.chatter`(위 셋과 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 그 칩을 서버가 아는 상태로 되돌리고 「반응을 저장하지 못했습니다」 |
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
-| 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
+| 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 런 상한(에이전트별, 기본 없음)까지 매달리지 않게 |
 | `POST /mcp` 의 틀린·폐기된 개인 토큰 | `bridgeFail` 과 같은 숫자의 **`/mcp` 전용** 카운터(브리지·러너·첨부·설치 파일과 나누지 않는다) | 막힌 동안은 맞는 토큰도 429 `RATE_LIMITED`(토큰을 보지 않는다), 사건 「브리지 인증 실패가 반복돼 주소를 막음」(detail `path: mcp`). 맞는 토큰이어도 비활성 멤버면 401 이되 세지 않는다 |
 | 제어 도구 호출(`/mcp`·러너 `control.call`·플러그인 `control.call`) | `controlPerMin`·쓰기는 그 안에서 한 번 더 `controlWritePerMin`(주체마다 — 개인 토큰이면 그 사람, 채널 안 에이전트면 (그 에이전트, 그 런을 시킨 사람). 같은 사람의 개인 토큰과 에이전트마다 버킷이 따로다) | 도구 결과 `isError` `RATE_LIMITED`, 사건 「요청 제한 발동」(key `control:<pat\|agent>`) |
 | 러너가 보내는 `control.call` | `runner.control`(위 `hello`·`outbound.post` 와 같은 버킷) | ack `RATE_LIMITED`(에이전트의 도구가 오류로 받는다). 플러그인의 `control.call` 에는 프레임 버킷이 없다 — `/bridge` 는 원래 프레임을 세지 않는다 |
