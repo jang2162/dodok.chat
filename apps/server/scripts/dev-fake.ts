@@ -374,6 +374,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
       // 원격 업데이트(원격 업데이트 스펙 U8) — 제한 러너는 그 머신에서 끈 흉내(remoteUpdateOff)
       // 봇 도구(러너 봇 2부 스펙 T5·T7) — dev-fake 는 appMcp "http"(stdio 서버는 「이 러너는 stdio 서버를 받지 않음」), 제한 러너는
       // 능력도 천장도 "off"(봇이 없어 MCP 표시는 「앱 MCP 꺼짐」을 세 번째 Gateway 없이는 보지 않는다)
+      // 헤더 시간대·OUT_OF_SCOPE — 제한 러너는 옛 러너처럼 모른다(본문·턴 사실이 UTC, 시킨 사람의 다른 DM 은 NOT_FOUND)
       capabilities: [
         ...fakeRunnerHello().capabilities,
         "worktrees",
@@ -383,6 +384,8 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
         "runnerControl",
         "remoteUpdate",
         "backgroundTasks",
+        "headerTimeZone",
+        "outOfScope",
       ],
       roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
       browse: true,
@@ -444,10 +447,12 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
 ];
 /** runner 훅이 어댑터의 붙은 러너 수가 바뀌기를 기다리는 상한 */
 const RUNNER_HOOK_TIMEOUT_MS = 5_000;
-/** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝나고 스레드 소식도 받지 않는다 */
+/** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝나고 스레드 소식도 받지 않는다. 그보다 뒤의 outOfScope 도 모른다 */
 const OLD_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   ...FAKE_PLUGIN_HELLO,
-  capabilities: FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "threads" && cap !== "threadUpdates"),
+  capabilities: FAKE_PLUGIN_HELLO.capabilities.filter(
+    (cap) => cap !== "threads" && cap !== "threadUpdates" && cap !== "outOfScope",
+  ),
 });
 /** dev:fake 의 가짜 플러그인 hello — 명령(에이전트 명령 C7)을 안다. 옛 플러그인 흉내(OLD_PLUGIN_HELLO)는 명령도 모른다 */
 export const DEV_FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({

@@ -129,6 +129,7 @@ describe("/runner 상수(P1)", () => {
       "remoteUpdateOff",
       "backgroundTasks",
       "headerTimeZone",
+      "outOfScope",
     ]);
   });
 });

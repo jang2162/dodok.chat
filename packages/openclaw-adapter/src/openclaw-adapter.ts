@@ -75,9 +75,14 @@ export type OpenClawAdapterOptions = {
   onCanonical: (message: OutboundMessage, connectionId: string) => Promise<{ messageId?: string }>;
   /**
    * 플러그인의 제어 도구 호출을 서버가 처리한다 — connectionId 는 그 플러그인의 브리지 토큰이 묶인 Gateway(계획 판정 PC3). 확인 카드를
-   * 기다리는 동안 늦게 끝나고, 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE
+   * 기다리는 동안 늦게 끝나고, 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE. peer.outOfScope 는 그 플러그인이 hello
+   * 능력 outOfScope 를 알렸는가 — 없으면 서버가 OUT_OF_SCOPE 대신 NOT_FOUND 를 낸다(옛 플러그인의 ErrorCode 에 없다)
    */
-  onControlCall?: (connectionId: string, call: BridgeControlCall) => Promise<ControlResult>;
+  onControlCall?: (
+    connectionId: string,
+    call: BridgeControlCall,
+    peer: { outOfScope: boolean },
+  ) => Promise<ControlResult>;
   /** 그 연결의 재접속 복구 대상(서버 agent_sessions). */
   sessionKeysToRecover?: (connectionId: string) => RecoverTarget[];
   /** 기본 `connectGateway` (테스트 주입) */
@@ -168,7 +173,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       if (!opts.onControlCall) return unavailable("control tools are not served");
       if (session.gatewayId === null || !connectionOf(session.gatewayId))
         return unavailable("gateway connection is gone");
-      return opts.onControlCall(session.gatewayId, call);
+      return opts.onControlCall(session.gatewayId, call, {
+        outOfScope: session.hello?.capabilities.includes("outOfScope") ?? false,
+      });
     },
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });

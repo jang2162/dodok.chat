@@ -84,6 +84,8 @@ type Harness = {
   definitionConversations: Array<string | undefined>;
   /** onControlCall 이 받은 것 — [연결 id, 호출] */
   controlCalls: Array<[string, RunnerControlCall]>;
+  /** onControlCall 이 받은 peer — controlCalls 와 같은 순서 */
+  controlPeers: Array<{ outOfScope: boolean }>;
   /** onTasks 가 받은 것 — [연결 id, 갱신] */
   tasks: Array<[string, RunnerTasksUpdate | { disconnected: true }]>;
   runner(token: string): Promise<FakeRunner>;
@@ -144,6 +146,7 @@ async function setup(
   const definitionCalls: Array<[string, string]> = [];
   const definitionConversations: Array<string | undefined> = [];
   const controlCalls: Array<[string, RunnerControlCall]> = [];
+  const controlPeers: Array<{ outOfScope: boolean }> = [];
   const tasks: Harness["tasks"] = [];
   const control =
     opts.control === null
@@ -176,9 +179,10 @@ async function setup(
     ...(control === undefined
       ? {}
       : {
-          onControlCall: (connectionId: string, call: RunnerControlCall) => {
+          onControlCall: (connectionId: string, call: RunnerControlCall, peer: { outOfScope: boolean }) => {
             controlCalls.push([connectionId, call]);
-            return control(connectionId, call);
+            controlPeers.push(peer);
+            return control(connectionId, call, peer);
           },
         }),
     ...(opts.noTasks
@@ -236,6 +240,7 @@ async function setup(
       });
     },
     controlCalls,
+    controlPeers,
     tasks,
     async runner(token) {
       const r = await connectRunner(url, token);
@@ -2759,6 +2764,21 @@ describe("control.call", () => {
     const payload = call(input.runId);
     expect(await emit(r, payload)).toEqual({ ok: true, data: payload });
     expect(h.controlCalls).toEqual([[RUNNER_A_CONNECTION, payload]]);
+  });
+
+  // 옛 러너의 ErrorCode 에는 OUT_OF_SCOPE 가 없다 — 능력을 알린 러너만 서버가 그 코드를 낸다(Principal.outOfScope)
+  it("hello 능력 outOfScope 가 있는 러너면 peer.outOfScope 가 true, 없으면 false", async () => {
+    const h = await setup();
+    const old = await readyRunner(h, TOKEN_A, { capabilities: ["threads"] });
+    await emit(old, call((await startRun(h, old)).runId));
+    const fresh = await readyRunner(h, TOKEN_B, { capabilities: ["threads", "outOfScope"] });
+    await emit(
+      fresh,
+      call(
+        (await startRun(h, fresh, { agentId: "writer", sessionKey: dodokSessionKey("writer", CH) })).runId,
+      ),
+    );
+    expect(h.controlPeers).toEqual([{ outOfScope: false }, { outOfScope: true }]);
   });
 
   it("콜백이 늦게 끝나면(확인 카드 대기) ack 도 그때까지 미룬다", async () => {

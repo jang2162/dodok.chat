@@ -89,13 +89,24 @@ export type FakePlugin = {
   close(): void;
 };
 
-/** 실제 플러그인 hello 와 같은 필드(`channel.ts` startAccount). 가짜는 agents.list·typing 도 답하므로 capabilities 를 모두 선언한다. */
+/**
+ * 실제 플러그인 hello 와 같은 필드(`channel.ts` startAccount). 가짜는 agents.list·typing 도 답하므로 capabilities 를 모두 선언한다.
+ * outOfScope — 가짜는 제어 도구 결과를 파싱하지 않고 그대로 돌려주므로 새 오류 코드를 안다고 알린다
+ */
 export const FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   pluginId: "dodok",
   version: "0.0.0-fake",
   sdkVersion: OPENCLAW_PINNED_VERSION,
   gatewayVersion: OPENCLAW_PINNED_VERSION,
-  capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound", "threads", "threadUpdates"],
+  capabilities: [
+    "agents.list",
+    "config.set",
+    "typing",
+    "run_id_in_outbound",
+    "threads",
+    "threadUpdates",
+    "outOfScope",
+  ],
 });
 
 export const FAKE_PLUGIN_AGENTS = [{ agentId: "dev", name: "dev" }, { agentId: "fin" }];

@@ -62,6 +62,8 @@ describe("principalForRunner·principalForBridge", () => {
       // 「이 러너 설정 제어」의 대상 러너(러너 봇 2부 스펙 T8)
       runnerTokenId: "rt-1",
     });
+    // hello 능력 outOfScope 를 알린 러너만 표지가 붙는다 — 없으면 범위 밖도 NOT_FOUND(옛 러너의 ErrorCode 에 OUT_OF_SCOPE 가 없다)
+    expect(principalForRunner(db, "rt-1", open.id, true)?.outOfScope).toBe(true);
     expect(principalForRunner(db, "rt-2", open.id)).toBeUndefined();
     expect(principalForRunner(db, "rt-1", uuid())).toBeUndefined();
     expect(principalForRunner(db, "rt-1", run("rt-1", "done").id)).toBeUndefined();
@@ -80,6 +82,8 @@ describe("principalForRunner·principalForBridge", () => {
       runId: open.id,
       via: "agent",
     });
+    expect(principalForBridge(db, GATEWAY, sessionKey(), open.id)).not.toHaveProperty("outOfScope");
+    expect(principalForBridge(db, GATEWAY, sessionKey(), open.id, true)?.outOfScope).toBe(true);
     expect(principalForBridge(db, "gw-other", sessionKey(), open.id)).toBeUndefined();
     expect(principalForBridge(db, GATEWAY, `${sessionKey()}:thread:${uuid()}`, open.id)).toBeUndefined();
     // 끝난 런의 늦은 호출 — 같은 세션에 다음 런이 열려 있어도 옛 runId 면 받지 않는다

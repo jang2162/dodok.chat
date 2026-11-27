@@ -2163,12 +2163,12 @@ describe("역할 매트릭스(스펙 2장)", () => {
     const hitChannels = (res: ControlResult) => (expectOk(res) as SearchResult).hits.map((h) => h.channelId);
 
     it.each(CONTROL_CASES.map((c) => [c.tool, c] as const))(
-      "제어 %s — 일반 채널 런의 에이전트는 시킨 사람 mia 의 DM 도 NOT_FOUND",
+      "제어 %s — 일반 채널 런의 에이전트는 시킨 사람 mia 의 DM 이 OUT_OF_SCOPE(없는 것과 가른다)",
       async (_tool, c) => {
         // 도구마다 새 런·새 에이전트 — 쓰기 버킷은 주체(에이전트)마다 센다
         const { principal } = openControlRun(app, mia.id);
         const res = await app.control.call(principal, c.tool, c.args(dmFixture()));
-        expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+        expect(res).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
       },
     );
 
@@ -2183,7 +2183,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     });
 
     it.each(CONTROL_CASES.map((c) => [c.tool, c] as const))(
-      "제어 %s — DM 런의 에이전트는 mia 의 다른 DM 이 NOT_FOUND",
+      "제어 %s — DM 런의 에이전트는 mia 의 다른 DM 이 OUT_OF_SCOPE",
       async (_tool, c) => {
         const own = dmFixture();
         const principal: Principal = {
@@ -2191,9 +2191,10 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         const res = await app.control.call(principal, c.tool, c.args(dmFixture()));
-        expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+        expect(res).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
       },
     );
 
@@ -2221,6 +2222,71 @@ describe("역할 매트릭스(스펙 2장)", () => {
       expect(hitChannels(await as("search_messages", { q: otherWord }))).toEqual([]);
     });
 
+    // OUT_OF_SCOPE 는 「시킨 사람은 읽는데 이 런의 범위 밖」일 때만 — 없는 것·시킨 사람도 못 읽는 것은 NOT_FOUND 그대로라 존재가 새지 않는다
+    it("제어 — 범위 밖 DM 의 OUT_OF_SCOPE 는 원인을 말하고, 없는 id·남의 DM 은 NOT_FOUND 그대로", async () => {
+      const { principal } = openControlRun(app, mia.id);
+      const as = (tool: string, args: object) => app.control.call(principal, tool, args);
+      const out = await as("read_messages", { conversationId: dmFixture().conversationId });
+      expect(out).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
+      expect(out.ok ? "" : out.error.message).toContain("시킨 사람의 다른 DM");
+      // 옛 어댑터(hello 능력 outOfScope 없음 — ErrorCode 에 없어 ControlResult 파싱이 깨진다)는 원래 NOT_FOUND 문구 그대로
+      const { outOfScope: _known, ...old } = principal;
+      const oldFx = dmFixture();
+      for (const [tool, args, message] of [
+        ["get_channel", { channelId: oldFx.channelId }, "channel not found"],
+        ["read_messages", { conversationId: oldFx.conversationId }, "conversation not found"],
+        ["get_run", { runId: oldFx.runId }, "run not found"],
+      ] as const) {
+        expect(await app.control.call(old, tool, args), tool).toEqual({
+          ok: false,
+          error: { code: "NOT_FOUND", message },
+        });
+      }
+      const missing = uuid();
+      for (const [tool, args] of [
+        ["get_channel", { channelId: missing }],
+        ["list_conversations", { channelId: missing }],
+        ["read_messages", { conversationId: missing }],
+        ["get_run", { runId: missing }],
+        ["update_channel", { channelId: missing, name: "없음" }],
+      ] as const) {
+        expect(await as(tool, args), tool).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      }
+      // 남의 DM — admin 이 시킨 런에서 mia 의 DM 은 시킨 사람도 못 읽는다
+      const fx = dmFixture();
+      const { principal: adminRun } = openControlRun(app, ids.admin);
+      for (const [tool, args] of [
+        ["get_channel", { channelId: fx.channelId }],
+        ["read_messages", { conversationId: fx.conversationId }],
+        ["get_run", { runId: fx.runId }],
+      ] as const) {
+        expect(await app.control.call(adminRun, tool, args), tool).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+      }
+    });
+
+    // 런 도중 시킨 사람이 비활성화되면 그 사람의 DM 도 없는 것과 같다 — OUT_OF_SCOPE 는 시킨 사람이 지금 읽는 DM 에만
+    it("제어 — 시킨 사람 mia 가 런 도중 비활성화되면 mia 의 다른 DM 은 NOT_FOUND 원문구", async () => {
+      const { principal } = openControlRun(app, mia.id);
+      const fx = dmFixture();
+      expect(await app.control.call(principal, "get_channel", { channelId: fx.channelId })).toMatchObject({
+        ok: false,
+        error: { code: "OUT_OF_SCOPE" },
+      });
+      const miaMembership = and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, mia.id));
+      app.db.update(memberships).set({ deactivatedAt: new Date() }).where(miaMembership).run();
+      try {
+        expect(await app.control.call(principal, "get_channel", { channelId: fx.channelId })).toEqual({
+          ok: false,
+          error: { code: "NOT_FOUND", message: "channel not found" },
+        });
+      } finally {
+        app.db.update(memberships).set({ deactivatedAt: null }).where(miaMembership).run();
+      }
+    });
+
     // 런의 채널이 DM 이어도 시킨 사람이 그 주인이 아니면 열리지 않는다 — readableChannelSqlFor 의 「dm_owner_id = 시킨 사람」(태스크 1
     // 재리뷰 N1). 지금은 DM 런의 시킨 사람이 늘 주인이라 닿는 길이 없다 — 행을 DB 로 바꿔 심층 방어를 고정한다
     it.each([
@@ -2233,7 +2299,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
         const word = secretIn(own);
         const userId = who();
         app.db.update(runs).set({ requestedBy: userId }).where(eq(runs.id, own.runId)).run();
-        const principal: Principal = { userId, via: "agent", agentId: own.agent.id, runId: own.runId };
+        const principal: Principal = {
+          userId,
+          via: "agent",
+          agentId: own.agent.id,
+          runId: own.runId,
+          outOfScope: true,
+        };
         const as = (tool: string, args: object) => app.control.call(principal, tool, args);
         expect(await as("read_messages", { conversationId: own.conversationId })).toMatchObject({
           ok: false,
@@ -2385,7 +2457,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
         },
       );
 
-      it("제어 — direct 런의 에이전트는 그 direct 를 읽고(시킨 사람이 참여자) mia 의 다른 direct 는 NOT_FOUND·목록 밖", async () => {
+      it("제어 — direct 런의 에이전트는 그 direct 를 읽고(시킨 사람이 참여자) mia 의 다른 direct 는 OUT_OF_SCOPE·목록 밖", async () => {
         const own = directFixture("group");
         const other = directFixture("group");
         const principal: Principal = {
@@ -2393,12 +2465,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         const as = (tool: string, args: object) => app.control.call(principal, tool, args);
         expectOk(await as("get_channel", { channelId: own.channelId }));
         expect(await as("get_channel", { channelId: other.channelId })).toMatchObject({
           ok: false,
-          error: { code: "NOT_FOUND" },
+          error: { code: "OUT_OF_SCOPE" },
         });
         const listed = channelIds(await as("list_channels", {}));
         expect(listed).toContain(own.channelId);
@@ -2410,6 +2483,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         expect(await app.control.call(outsider, "get_channel", { channelId: own.channelId })).toMatchObject({
           ok: false,

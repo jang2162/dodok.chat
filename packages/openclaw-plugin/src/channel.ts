@@ -91,6 +91,7 @@ export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
   "commands",
   "remoteUpdate",
   "threadUpdates",
+  "outOfScope",
 ];
 
 /**

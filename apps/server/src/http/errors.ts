@@ -33,6 +33,7 @@ const STATUS: Record<ErrorCode, number> = {
   DM_READ_ONLY: 409, // 읽기 전용 DM 에 쓰기 — 에이전트·허용 범위가 돌아오면 되는 일(CHANNEL_ARCHIVED 와 같은 상태)
   RUNNER_CEILING: 502, // 러너가 천장을 넘는 에이전트 정의를 거절했다 — 서버 앞의 러너가 거절한 것(PROVIDER_AUTH 와 같은 상태)
   PUSH_UNAVAILABLE: 503, // 그 플랫폼 푸시 통로가 꺼져 있다 — 서버 설정이 바뀌면 되는 일(ADAPTER_UNAVAILABLE 과 같은 상태)
+  OUT_OF_SCOPE: 403, // 시킨 사람은 읽지만 이 런(채널 안 에이전트)의 범위 밖 — 권한이 모자란 것(FORBIDDEN 과 같은 상태)
   INTERNAL: 500,
 };
 

@@ -318,6 +318,7 @@ describe("startRunnerConnection", () => {
         "botMcp",
         "runnerControl",
         "headerTimeZone",
+        "outOfScope",
       ],
       roots: [{ id: "src", label: "내 저장소들" }],
       browse: true,

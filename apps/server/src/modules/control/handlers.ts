@@ -13,7 +13,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
-import { readableChannelSqlFor } from "../../auth/channel-access";
+import { readableChannelSqlFor, unreadableError } from "../../auth/channel-access";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
@@ -33,7 +33,7 @@ import {
 import { roleOf } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { agents, runnerTokens } from "../../db/schema.sqlite";
-import { apiError } from "../../http/errors";
+import { apiError, HttpError } from "../../http/errors";
 import { josa } from "../../util/josa";
 import {
   type AgentActionContext,
@@ -87,7 +87,7 @@ import { getConversation, getReadableConversation } from "../conversations/store
 import { listPeople } from "../members/people";
 import { getThreadRoot, listMessages, withThreadSummaries } from "../messages/service";
 import { assertNotDm } from "../dms/service";
-import { getRunInWorkspace } from "../runs/store";
+import { getRun, getRunInWorkspace } from "../runs/store";
 import { type HandleOf, readableMentions } from "../search/readable";
 import { mentionHandleOf, searchMessages } from "../search/service";
 import type { Principal } from "./principal";
@@ -142,7 +142,8 @@ export type Wording = { want: string; done: string };
 
 export type ControlHandler<N extends ControlToolName> = {
   /**
-   * 접근 판정 — 이 도구가 닿는 채널·대화·런을 주체가 읽을 수 있는가(auth/channel-access.ts). 없거나 못 읽으면 NOT_FOUND. 서비스가
+   * 접근 판정 — 이 도구가 닿는 채널·대화·런을 주체가 읽을 수 있는가(auth/channel-access.ts). 없거나 못 읽으면 NOT_FOUND(시킨 사람은
+   * 읽는데 채널 안 에이전트 런의 범위 밖이면 OUT_OF_SCOPE — unreadableError). 서비스가
    * 역할 판정(authorize)보다 먼저 부른다 — 남의 DM 에 역할 정책이 403 을 내면 있다는 것이 드러난다. 채널·대화·런을 받는 도구는 모두 둔다
    */
   access?(ctx: HandlerContext, input: InputOf<N>, principal: Principal): void;
@@ -188,9 +189,23 @@ function channelOf(ctx: HandlerContext, channelId: string): ChannelRecord {
  */
 const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
 
+/**
+ * 주체가 읽는 채널 한 행 — 못 읽으면 NOT_FOUND, 시킨 사람은 읽는데 이 런의 범위 밖이면 OUT_OF_SCOPE(auth/channel-access.ts
+ * unreadableError). 목록·검색은 SQL 로 걸러 빠진 행에 코드를 줄 자리가 없다 — 한 행 조회만 이 길을 지난다
+ */
+function loadForPrincipal(ctx: HandlerContext, channelId: string, p: Principal) {
+  try {
+    return loadReadableChannel(ctx.db, channelId, ctx.workspaceId, readerOf(p));
+  } catch (err) {
+    if (err instanceof HttpError && err.body.code === "NOT_FOUND")
+      throw unreadableError(ctx.db, p, ctx.workspaceId, channelId, err);
+    throw err;
+  }
+}
+
 /** 채널을 받는 도구의 접근 판정 */
 function readableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
-  loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, readerOf(p));
+  loadForPrincipal(ctx, input.channelId, p);
 }
 
 /**
@@ -198,7 +213,7 @@ function readableChannel(ctx: HandlerContext, input: { channelId: string }, p: P
  * DM 을 바꾸지 않는다). 역할 판정보다 먼저라 member 주인도 FORBIDDEN 이 아니라 VALIDATION 을 받는다
  */
 function manageableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
-  assertNotDm(loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, readerOf(p)));
+  assertNotDm(loadForPrincipal(ctx, input.channelId, p));
 }
 
 function agentHandle(ctx: HandlerContext, agentId: string): string {
@@ -349,7 +364,13 @@ export const HANDLERS: Handlers = {
   read_messages: {
     access: (ctx, input, principal) => {
       if (!getReadableConversation(ctx.db, input.conversationId, ctx.workspaceId, readerOf(principal)))
-        throw apiError("NOT_FOUND", "conversation not found");
+        throw unreadableError(
+          ctx.db,
+          principal,
+          ctx.workspaceId,
+          getConversation(ctx.db, input.conversationId, ctx.workspaceId)?.channelId,
+          apiError("NOT_FOUND", "conversation not found"),
+        );
     },
     authorize: (role) => authorizeRead(role),
     // 한 세션 안만 읽는다 — 채널 경로로 읽으면 세션이 섞인다(웹 REST /conversations/:id/messages 와 같은 규칙).
@@ -385,7 +406,14 @@ export const HANDLERS: Handlers = {
     // 접근 판정은 조회가 한다 — 남의 DM 의 런은 없는 런과 같다
     run: (ctx, input, principal) => {
       const run = getRunInWorkspace(ctx.db, input.runId, ctx.workspaceId, readerOf(principal));
-      if (!run) throw apiError("NOT_FOUND", "run not found");
+      if (!run)
+        throw unreadableError(
+          ctx.db,
+          principal,
+          ctx.workspaceId,
+          getRun(ctx.db, input.runId)?.channelId,
+          apiError("NOT_FOUND", "run not found"),
+        );
       return { run };
     },
   },
