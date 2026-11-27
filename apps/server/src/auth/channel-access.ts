@@ -93,17 +93,18 @@ export const OUT_OF_SCOPE_MESSAGE =
 /**
  * 주체가 못 읽은 채널의 오류 — 채널 안 에이전트(런 있음)이고 시킨 사람 본인은 그 채널을 읽을 수 있을 때만 OUT_OF_SCOPE(범위를 좁힌 것은
  * readableChannelSqlFor — 시킨 사람이 원래 보는 DM 이라 존재가 새지 않는다). 그 밖(없음, 시킨 사람도 못 읽음, 바깥 MCP, 런 없는 주체,
- * 시킨 사람 없음)은 notFound 그대로. channelId 는 없는 행이면 undefined 로 넘긴다
+ * 시킨 사람 없음, 그 어댑터가 OUT_OF_SCOPE 를 모름 — Principal.outOfScope)은 notFound 그대로. channelId 는 없는 행이면 undefined 로 넘긴다
  */
 export function unreadableError(
   db: DbOrTx,
-  principal: { userId: string | null; via: "pat" | "agent"; runId?: string },
+  principal: { userId: string | null; via: "pat" | "agent"; runId?: string; outOfScope?: true },
   workspaceId: string,
   channelId: string | undefined,
   notFound: HttpError,
 ): HttpError {
   if (principal.via !== "agent" || principal.runId === undefined || principal.userId === null)
     return notFound;
+  if (principal.outOfScope !== true) return notFound;
   if (channelId === undefined) return notFound;
   const row = db
     .select({ id: channels.id })

@@ -58,6 +58,8 @@ export const RunnerCapability = z.enum([
   // 헤더 시간대 — InboundContext.timeZone 으로 본문 시각을 그리고 `시각 기준:` 줄을 싣는다. 없는 러너에는 서버가 턴 사실(buildTurnFacts)도
   // UTC 로 찍는다(옛 러너 본문은 UTC 라 한 턴 안에서 시간대가 섞이지 않게)
   "headerTimeZone",
+  // 제어 도구 오류 코드 OUT_OF_SCOPE 를 안다 — 없는 러너(옛 ErrorCode 라 ControlResult 파싱이 깨진다)에는 서버가 NOT_FOUND 로 낸다
+  "outOfScope",
 ]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
 

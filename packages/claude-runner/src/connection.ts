@@ -59,6 +59,8 @@ const CAPABILITIES: RunnerCapability[] = [
   "runnerControl",
   // 본문 시각을 InboundContext.timeZone 으로 그린다 — 서버는 이 능력이 있어야 턴 사실도 같은 시간대로 찍는다
   "headerTimeZone",
+  // 제어 도구 오류 코드 OUT_OF_SCOPE 를 안다 — 없는 러너에는 서버가 NOT_FOUND 로 낸다
+  "outOfScope",
 ];
 /** commands.list 를 끊는 시간 — 서버 ack 상한(RUNNER_COMMANDS_LIST_TIMEOUT_MS 30초)보다 앞서 failed 로 답한다 */
 export const COMMANDS_LIST_TIMEOUT_MS = 25_000;

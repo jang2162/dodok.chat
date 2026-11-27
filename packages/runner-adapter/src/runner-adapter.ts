@@ -154,9 +154,14 @@ export type RunnerAdapterOptions = {
   tokenCount: () => number;
   /**
    * 제어 도구 호출(control.call)을 서버가 처리한다 — connectionId 는 보낸 러너의 토큰 id. 확인 카드를 기다리는 동안 늦게 끝나고
-   * (최대 CONTROL_CONFIRM_TTL_MS), 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE
+   * (최대 CONTROL_CONFIRM_TTL_MS), 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE. peer.outOfScope 는 그 러너가 hello
+   * 능력 outOfScope 를 알렸는가 — 없으면 서버가 OUT_OF_SCOPE 대신 NOT_FOUND 를 낸다(옛 러너의 ErrorCode 에 없다)
    */
-  onControlCall?: (connectionId: string, call: RunnerControlCall) => Promise<ControlResult>;
+  onControlCall?: (
+    connectionId: string,
+    call: RunnerControlCall,
+    peer: { outOfScope: boolean },
+  ) => Promise<ControlResult>;
   /**
    * 백그라운드 작업이 끝나 러너의 CLI 가 스스로 연 턴(run.followup — 백그라운드 작업 스펙 5.5) — 서버가 추가 응답 런을 만들어 돌려준다.
    * 받아 준 런은 이 어댑터가 「도는 중」인 러너의 런으로 쫓는다. 없으면 늘 unknown 으로 거절한다
@@ -906,7 +911,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (!run || run.runner !== runner || run.aborted) return fail("NOT_FOUND", "no open run of this runner");
     if (!opts.onControlCall) return fail("ADAPTER_UNAVAILABLE", "control tools are not served");
     try {
-      reply(await opts.onControlCall(runner.tokenId, call));
+      reply(
+        await opts.onControlCall(runner.tokenId, call, {
+          outOfScope: runner.capabilities.includes("outOfScope"),
+        }),
+      );
     } catch (error) {
       logger.warn({ err: error, tokenId: runner.tokenId, runId: call.runId }, "runner control.call failed");
       fail("INTERNAL", "control call failed");

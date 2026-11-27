@@ -7,6 +7,7 @@ import {
   type Agent,
   type Approval,
   BRIDGE_PROTOCOL,
+  type BridgeCapability,
   type Channel,
   type ControlResult,
   dodokSessionKey,
@@ -20,7 +21,7 @@ import { type FakeRunner, type FakeRunnerRun, startFakeRunner } from "../fakes/f
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { openChannelWire, resolveApproval, rest, sendMessage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
-import { channelConversation, createRunnerAgentForTest } from "../helpers/seed";
+import { channelConversation, createDmChannelForTest, createRunnerAgentForTest } from "../helpers/seed";
 
 describe("제어 도구 통로", () => {
   let live: LiveApp;
@@ -196,5 +197,51 @@ describe("제어 도구 통로", () => {
       live.plugin.control({ sessionKey, runId, tool: "get_channel", args: { channelId: channel.id } });
     expect(await late(first.id)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
     expect(await late(second.id)).toMatchObject({ ok: true });
+  });
+
+  // 옛 플러그인의 ErrorCode 에는 OUT_OF_SCOPE 가 없어 ControlResult 파싱이 깨진다 — hello 능력 outOfScope 를 알린 플러그인에만 그 코드를 낸다
+  it.each([
+    ["outOfScope 를 알린 플러그인", "OUT_OF_SCOPE", true, { code: "OUT_OF_SCOPE" }],
+    ["옛 플러그인(outOfScope 없음)", "NOT_FOUND", false, { code: "NOT_FOUND", message: "channel not found" }],
+  ] as const)("플러그인 — 시킨 사람의 다른 DM 을 읽으면 %s 은 %s", async (_what, _code, announces, error) => {
+    const control: BridgeCapability[] = [...FAKE_PLUGIN_HELLO.capabilities, "control"];
+    live = await bootLiveApp({
+      pluginHello: { ...FAKE_PLUGIN_HELLO, capabilities: announces ? [...control, "outOfScope"] : control },
+    });
+    createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: { dev: () => ({ reply: "작업 중", holdFinal: true }) },
+    });
+    const { agent: dev } = ok(
+      "POST /agents dev",
+      await rest<{ agent: Agent }>(live, "POST", "/agents", {
+        providerAgentId: "dev",
+        handle: "dev",
+        name: "Dev",
+        gatewayId: live.gatewayId,
+      }),
+    );
+    // 시킨 사람(owner)의 DM — owner 는 읽지만 일반 채널 런의 범위 밖이다
+    const dm = createDmChannelForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      ownerId: live.app.ownerUserId,
+      agentId: dev.id,
+    });
+    const channel = await channelWith(dev);
+    const sessionKey = dodokSessionKey("dev", channelConversation(live.app.db, channel.id));
+    const log = await openChannelWire(live, channel.id, sockets);
+
+    await sendMessage(log.socket, channel.id, "@dev DM 읽어 줘");
+    const run = await runOf(log, dev.id);
+    await log.until(() => live.plugin.received.some((d) => d.runId === run.id), "인바운드");
+    expect(
+      await live.plugin.control({
+        sessionKey,
+        runId: run.id,
+        tool: "get_channel",
+        args: { channelId: dm.id },
+      }),
+    ).toEqual({ ok: false, error: expect.objectContaining(error) });
   });
 });

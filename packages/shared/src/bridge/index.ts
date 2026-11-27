@@ -18,6 +18,7 @@ export const BridgeCapability = z.enum([
   "commands", // InboundDeliver.command 를 Gateway 명령으로 넘긴다 — 없는 플러그인에는 서버가 명령을 보내지 않는다(에이전트 명령 C7)
   "remoteUpdate", // plugin.update 에 답한다 — 없는 플러그인에는 단추 대신 설치 한 줄(원격 업데이트 스펙 U8)
   "threadUpdates", // InboundContext.threadUpdates 를 헤더에 그린다 — 없는 플러그인에는 싣지도 커서를 올리지도 않는다(스레드 소식 T5)
+  "outOfScope", // 제어 도구 오류 코드 OUT_OF_SCOPE 를 안다 — 없는 플러그인(옛 ErrorCode 라 ControlResult 파싱이 깨진다)에는 서버가 NOT_FOUND 로 낸다
 ]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 

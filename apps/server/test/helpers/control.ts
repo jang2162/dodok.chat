@@ -34,7 +34,10 @@ export function newChannel(app: App, opts: { name?: string; members?: string[] }
   return channel;
 }
 
-/** 채널 + 그 채널의 에이전트 + 그 에이전트의 열린 런(tool 상태 — 도구를 부르는 중). requestedBy 가 그 런을 시킨 사람 */
+/**
+ * 채널 + 그 채널의 에이전트 + 그 에이전트의 열린 런(tool 상태 — 도구를 부르는 중). requestedBy 가 그 런을 시킨 사람. 주체는 지금 어댑터처럼
+ * outOfScope 를 안다(옛 어댑터 흉내는 그 칸을 빼서 만든다)
+ */
 export function openRun(
   app: App,
   requestedBy: string | null,
@@ -62,7 +65,7 @@ export function openRun(
     channel,
     agent,
     run,
-    principal: { userId: requestedBy, via: "agent", agentId: agent.id, runId: run.id },
+    principal: { userId: requestedBy, via: "agent", agentId: agent.id, runId: run.id, outOfScope: true },
   };
 }
 

@@ -2191,6 +2191,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         const res = await app.control.call(principal, c.tool, c.args(dmFixture()));
         expect(res).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
@@ -2228,6 +2229,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
       const out = await as("read_messages", { conversationId: dmFixture().conversationId });
       expect(out).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
       expect(out.ok ? "" : out.error.message).toContain("시킨 사람의 다른 DM");
+      // 옛 어댑터(hello 능력 outOfScope 없음 — ErrorCode 에 없어 ControlResult 파싱이 깨진다)는 원래 NOT_FOUND 문구 그대로
+      const { outOfScope: _known, ...old } = principal;
+      const oldFx = dmFixture();
+      for (const [tool, args, message] of [
+        ["get_channel", { channelId: oldFx.channelId }, "channel not found"],
+        ["read_messages", { conversationId: oldFx.conversationId }, "conversation not found"],
+        ["get_run", { runId: oldFx.runId }, "run not found"],
+      ] as const) {
+        expect(await app.control.call(old, tool, args), tool).toEqual({
+          ok: false,
+          error: { code: "NOT_FOUND", message },
+        });
+      }
       const missing = uuid();
       for (const [tool, args] of [
         ["get_channel", { channelId: missing }],
@@ -2265,7 +2279,13 @@ describe("역할 매트릭스(스펙 2장)", () => {
         const word = secretIn(own);
         const userId = who();
         app.db.update(runs).set({ requestedBy: userId }).where(eq(runs.id, own.runId)).run();
-        const principal: Principal = { userId, via: "agent", agentId: own.agent.id, runId: own.runId };
+        const principal: Principal = {
+          userId,
+          via: "agent",
+          agentId: own.agent.id,
+          runId: own.runId,
+          outOfScope: true,
+        };
         const as = (tool: string, args: object) => app.control.call(principal, tool, args);
         expect(await as("read_messages", { conversationId: own.conversationId })).toMatchObject({
           ok: false,
@@ -2425,6 +2445,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         const as = (tool: string, args: object) => app.control.call(principal, tool, args);
         expectOk(await as("get_channel", { channelId: own.channelId }));
@@ -2442,6 +2463,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
           via: "agent",
           agentId: own.agent.id,
           runId: own.runId,
+          outOfScope: true,
         };
         expect(await app.control.call(outsider, "get_channel", { channelId: own.channelId })).toMatchObject({
           ok: false,

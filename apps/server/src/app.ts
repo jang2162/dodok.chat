@@ -381,8 +381,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
             logger: logger.child({ mod: "adapter" }),
             onCanonical: (message, connectionId) =>
               orchestrator.onCanonical(message, "openclaw", connectionId),
-            onControlCall: (connectionId, call) =>
-              controlCall(principalForBridge(db, connectionId, call.sessionKey, call.runId), call),
+            onControlCall: (connectionId, call, peer) =>
+              controlCall(
+                principalForBridge(db, connectionId, call.sessionKey, call.runId, peer.outOfScope),
+                call,
+              ),
             sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
             ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
               ? {}
@@ -414,8 +417,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           return { messageId };
         },
         tokenCount: () => activeRunnerTokenCount(db, workspaceId),
-        onControlCall: (connectionId, call) =>
-          controlCall(principalForRunner(db, connectionId, call.runId), call),
+        onControlCall: (connectionId, call, peer) =>
+          controlCall(principalForRunner(db, connectionId, call.runId, peer.outOfScope), call),
         // 백그라운드 작업(백그라운드 작업 스펙 5.5) — 둘 다 있어야 어댑터가 hello 결과에 backgroundTasks 를 알린다
         onFollowup: (connectionId, req) => background.onFollowup(connectionId, req),
         onTasks: (connectionId, update) => background.onTasks(connectionId, update),
