@@ -53,7 +53,7 @@ import {
 } from "./config";
 import { writeChannelConfig } from "./config-writer";
 import { channelPromptContext } from "./context";
-import { type DodokChatKind, toDeliverResult, toInboundFacts } from "./inbound";
+import { type DodokChatKind, type DodokInboundFacts, toDeliverResult, toInboundFacts } from "./inbound";
 import { appendNotes, inboundSaveArgs, prepareInboundMedia } from "./inbound-media";
 import { bridgeHttpOrigin, downloadAttachment, uploadAttachment } from "./media-http";
 import {
@@ -126,6 +126,17 @@ export function dodokIngressConversation(conversation: { kind: DodokChatKind; id
     conversation: { kind: conversation.kind, id: conversation.id },
     ...(conversation.kind === "direct" ? { allowFrom: ["*"] } : {}),
   };
+}
+
+/**
+ * 인바운드 facts 의 대화를 OpenClaw 에 넘기는 두 자리를 한곳에 — ingress 인자(위)를 내고, 아웃바운드 경로가 같은 ChatType 을 내도록
+ * 대화 id → kind 를 적는다(툴 전송마다 세션 항목의 경로 chatType 이 왔다 갔다 하지 않게). dispatchInbound 는 이것 하나로 둘을 받는다
+ */
+export function routeInboundConversation(
+  facts: Pick<DodokInboundFacts, "conversation" | "conversationId">,
+): ReturnType<typeof dodokIngressConversation> {
+  setConversationChatType(facts.conversationId, facts.conversation.kind);
+  return dodokIngressConversation({ kind: facts.conversation.kind, id: facts.conversationId });
 }
 
 export type InboundTurnParts = {
@@ -211,7 +222,7 @@ async function dispatchInbound(params: {
     cfg,
     identity: { key: "sender", entryIdPrefix: "dodok-entry" },
     subject: { stableId: facts.sender.id },
-    ...dodokIngressConversation({ kind: facts.conversation.kind, id: facts.conversationId }),
+    ...routeInboundConversation(facts),
     contextBinding: {
       agentId: facts.agentId,
       sessionKey: facts.sessionKey,
@@ -294,8 +305,6 @@ async function dispatchInbound(params: {
     replyToInboundId: facts.correlation.replyToInboundId,
   };
   setCorrelation(facts.sessionKey, correlation);
-  // 아웃바운드 경로가 같은 ChatType 을 내게 — 툴 전송마다 세션 항목의 경로 chatType 이 왔다 갔다 하지 않게
-  setConversationChatType(facts.conversationId, facts.conversation.kind);
 
   // ack 는 먼저 오는 쪽으로 한 번만 정해진다 — 런 시작(onAgentRunStart) 또는 런 없이 끝난 디스패치 결과
   let resolveAck: (result: InboundDeliverResult) => void = () => {};

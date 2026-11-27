@@ -2,7 +2,13 @@
 import { CONVERSATION_ONLY_REASON, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
-import { registerBridge, releaseBridge, setConversationChatType } from "../src/bridge-registry";
+import {
+  CHAT_KINDS_LIMIT,
+  getConversationChatType,
+  registerBridge,
+  releaseBridge,
+  setConversationChatType,
+} from "../src/bridge-registry";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import {
   DODOK_BRIDGE_CAPABILITIES,
@@ -10,6 +16,7 @@ import {
   dodokChannelPlugin,
   dodokIngressConversation,
   inboundTurnParts,
+  routeInboundConversation,
 } from "../src/channel";
 import { THREAD_ONLY_REASON } from "../src/outbound";
 
@@ -108,6 +115,44 @@ describe("resolveOutboundSessionRoute — 스레드 인식(ADR 0006 「아웃바
     setConversationChatType(DM, "channel");
     expect(route({ target: `channel:${DM}` })).toMatchObject({ chatType: "channel" });
     expect(route({})).toMatchObject({ chatType: "channel" });
+  });
+
+  it("상한으로 맵에서 밀려난 direct 대화는 channel 로 떨어진다 — 세션 키·peer 는 그대로", () => {
+    const DM = "01a09fc9-d204-7551-89d6-38544d07a1ee";
+    const key = `agent:main:dodok:channel:${DM}`;
+    setConversationChatType(DM, "direct");
+    expect(route({ target: `channel:${DM}`, currentSessionKey: key })).toMatchObject({ chatType: "direct" });
+    for (let n = 0; n < CHAT_KINDS_LIMIT; n++) setConversationChatType(`filler-${n}`, "channel");
+    expect(route({ target: `channel:${DM}`, currentSessionKey: key })).toMatchObject({
+      chatType: "channel",
+      peer: { kind: "channel", id: DM },
+      sessionKey: key,
+    });
+  });
+});
+
+describe("routeInboundConversation — dispatchInbound 가 ingress 에 넘기는 대화와 아웃바운드가 쓸 kind", () => {
+  const facts = (kind: "channel" | "direct", conversationId: string) => ({
+    conversationId,
+    conversation: { kind, id: conversationId, label: conversationId },
+  });
+
+  it("direct facts 면 ingress 가 direct·allowFrom 을 받고, 그 대화의 kind 가 direct 로 적힌다", () => {
+    const DM = "01a09fc9-d204-7551-89d6-38544d07a1f1";
+    expect(routeInboundConversation(facts("direct", DM))).toEqual({
+      conversation: { kind: "direct", id: DM },
+      allowFrom: ["*"],
+    });
+    expect(getConversationChatType(DM)).toBe("direct");
+  });
+
+  it("channel facts 면 ingress 는 channel, 적힌 kind 도 channel 로 되돌린다", () => {
+    const DM = "01a09fc9-d204-7551-89d6-38544d07a1f2";
+    setConversationChatType(DM, "direct");
+    expect(routeInboundConversation(facts("channel", DM))).toEqual({
+      conversation: { kind: "channel", id: DM },
+    });
+    expect(getConversationChatType(DM)).toBe("channel");
   });
 });
 

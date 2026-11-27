@@ -16,10 +16,11 @@ function fakeBridge(name: string): BridgeClient {
 }
 
 afterEach(async () => {
-  const { BRIDGES_KEY, CORRELATIONS_KEY } = await import("../src/bridge-registry");
+  const { BRIDGES_KEY, CORRELATIONS_KEY, CHAT_KINDS_KEY } = await import("../src/bridge-registry");
   const g = globalThis as Record<symbol, unknown>;
   delete g[BRIDGES_KEY];
   delete g[CORRELATIONS_KEY];
+  delete g[CHAT_KINDS_KEY];
   vi.resetModules();
 });
 
@@ -110,5 +111,27 @@ describe("bridge-registry — 삭제 가드", () => {
     reg.registerBridge("b", b);
     expect(reg.releaseBridge("a", a)).toBe(true);
     expect(reg.getBridge("b")).toBe(b);
+  });
+});
+
+describe("bridge-registry — 대화 ChatType 맵의 상한(LRU)", () => {
+  const id = (n: number) => `conv-${n}`;
+
+  it("CHAT_KINDS_LIMIT 개를 넘기면 가장 오래 안 쓴 대화부터 빠진다 — 읽으면 맨 뒤로 간다", async () => {
+    const reg = await loadGeneration();
+    for (let n = 0; n < reg.CHAT_KINDS_LIMIT; n++) reg.setConversationChatType(id(n), "direct");
+    expect(reg.getConversationChatType(id(0))).toBe("direct"); // 0 을 읽어 맨 뒤로
+
+    reg.setConversationChatType("new-a", "direct"); // 넘침 — 0 이 아니라 1 이 빠진다
+    expect(reg.getConversationChatType(id(1))).toBeUndefined();
+    expect(reg.getConversationChatType(id(0))).toBe("direct");
+
+    reg.setConversationChatType(id(2), "channel"); // 다시 쓰면 맨 뒤로(값도 바뀐다)
+    reg.setConversationChatType("new-b", "direct"); // 3 이 빠진다
+    expect(reg.getConversationChatType(id(3))).toBeUndefined();
+    expect(reg.getConversationChatType(id(2))).toBe("channel");
+
+    const map = (globalThis as Record<symbol, unknown>)[reg.CHAT_KINDS_KEY] as Map<string, unknown>;
+    expect(map.size).toBe(reg.CHAT_KINDS_LIMIT);
   });
 });
