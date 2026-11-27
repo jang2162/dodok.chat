@@ -56,7 +56,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| OpenClaw CLI | **스크래치 디렉터리에 설치한 `openclaw@2026.9.5`** 를 저장소 mise Node 24.21 로 돌린다(설치·`oc` 정의는 「절차」 절 머리). `OpenClaw.app` 번들에는 CLI 가 없다 — 앱 2026.9.6(2026-09-24 자동 업데이트)의 `Resources/node-worker/*/lib/node_modules/openclaw` 는 맥 노드 워커 전용이라 `bin/openclaw`·`openclaw.mjs` 가 없고 `package.json` 의 `bin` 이 비었다. 저장소 devDependency(`2026.9.4`)는 dev 설정을 `Config was last written by OpenClaw 2026.9.5, but you are running 2026.9.4` 로 거부하므로 쓰지 않는다 — 그 메시지가 권하는 `doctor --fix` 는 dev 설정을 옛 판으로 고쳐 쓰니 하지 않는다. `gateway install`·글로벌 설치·시스템 Node 교체 금지, 설치본은 스크래치에만 두고 끝나면 지운다. ⚠ npm 의 `2026.9.5` 는 빌드 `ec9c1a1`(`gatewayBuildId` `2026.9.5-release-ec9c1a13db89-2026-09-18T18-51-37.323Z`)로, 앱 번들 9.5 의 `f396007` 과 버전 문자열은 같고 빌드가 다르다. 저장소 핀은 `2026.9.4` 그대로라 **실연 전에 `oc --version` 을 적는다**. 서버 로그로도 보인다: `"gateway connected"`·`"bridge plugin hello"` 의 `gatewayVersion`. ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 이름 `sdkVersion`)는 **빌드 때 박힌 devDependency 상수**라 9.5 위에서도 `2026.9.4` 다 — Gateway 버전으로 읽지 않는다. 9.5 dist 를 코드로 읽어야 하는 리뷰가 남아 있으면 그 설치본을 지우기 전에 끝내거나, 다시 설치해 읽는다 — 저장소 핀 9.4 의 `node_modules/openclaw/dist` 만 읽었으면 리뷰 보고에 「9.4 dist 로만 확인」 이라고 적는다 |
+| OpenClaw CLI | **스크래치 디렉터리에 설치한 `openclaw@2026.11.10`**(저장소 핀과 같다, 빌드 `6ea542f`) 를 돌린다(설치·`oc` 정의는 「절차」 절 머리). ⚠ 11.10 CLI 는 `PATH` 에서 더 새 Node 를 찾으면 그것으로 다시 뜬다(`openclaw: Retrying with "…/node" (PATH; recommended security patch)` — 이 머신에서는 Homebrew Node 26) — 판단에 Node 판이 걸리면 그 줄을 본다. ⚠ **사람의 dev 상태(`~/.openclaw-dev`)는 9.5 가 마지막으로 썼다.** OpenClaw 는 더 새 판이 쓴 설정을 옛 판이 거부하므로(`Config was last written by OpenClaw <새 판>, but you are running <옛 판>` — 그 메시지가 권하는 `doctor --fix` 는 하지 않는다) `--dev` 로 11.10 을 한 번 돌리면 그 상태를 9.5 로 되돌리지 못할 수 있다. 사람이 dev 를 올리기로 하기 전에는 `--dev` 대신 「Gateway 를 여럿 띄울 때」 절의 `OPENCLAW_HOME=<스크래치>` 로 띄운다. `OpenClaw.app` 번들에는 CLI 가 없다 — 앱 2026.9.6(2026-09-24 자동 업데이트)의 `Resources/node-worker/*/lib/node_modules/openclaw` 는 맥 노드 워커 전용이라 `bin/openclaw`·`openclaw.mjs` 가 없고 `package.json` 의 `bin` 이 비었다. `gateway install`·글로벌 설치·시스템 Node 교체 금지, 설치본은 스크래치에만 두고 끝나면 지운다. **실연 전에 `oc --version` 을 적는다**. 서버 로그로도 보인다: `"gateway connected"`·`"bridge plugin hello"` 의 `gatewayVersion`(·`gatewayBuildId`). ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 이름 `sdkVersion`)는 **빌드 때 박힌 devDependency 상수**라 Gateway 버전이 아니다(9.5 Gateway 위에서도 그때 핀 `2026.9.4` 로 찍혔다). 다른 판의 dist 를 코드로 읽어야 하는 리뷰가 남아 있으면 그 설치본을 지우기 전에 끝내거나, 다시 설치해 읽는다 — 저장소 핀의 `node_modules/openclaw/dist` 만 읽었으면 리뷰 보고에 「<핀> dist 로만 확인」 이라고 적는다 |
 | 프로필 | **dev 만**: 모든 CLI 호출에 `--dev`(상태 `~/.openclaw-dev`). 원격 프로필 `~/.openclaw` 는 건드리지 않는다. Gateway 를 여럿 띄우거나 사람의 dev 상태를 건드리지 않으려면 `--dev` 대신 `OPENCLAW_HOME=<스크래치 디렉터리>`(상태가 `<그 디렉터리>/.openclaw` 로 간다)로 가른다 — 「Gateway 를 여럿 띄울 때」 절 |
 | 에이전트 | `dev`·`fin`, 모델 `anthropic/claude-opus-5` + `agentRuntime claude-cli`(ADR 0002 2절) |
 | 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <브리지 토큰> }` — 토큰은 설정 → 연결의 그 Gateway 상세에서 발급한 것(「절차」 절 (e)) |
@@ -83,10 +83,10 @@
 
 ```bash
 OCDIR=<스크래치 디렉터리>/oc     # 레포·홈 밖. 끝나면 rm -rf "$OCDIR"
-npm install --prefix "$OCDIR" --ignore-scripts --no-audit --no-fund openclaw@2026.9.5
+npm install --prefix "$OCDIR" --ignore-scripts --no-audit --no-fund openclaw@2026.11.10
 OCBIN=$OCDIR/node_modules/.bin   # openclaw → openclaw.mjs(#!/usr/bin/env node — PATH 의 mise Node 24.21 로 돈다)
 oc() { env PATH="$OCBIN:$PATH" openclaw "$@"; }
-oc --version                     # OpenClaw 2026.9.5 (ec9c1a1)
+oc --version                     # OpenClaw 2026.11.10 (6ea542f)
 ```
 
 zsh 에서 Gateway id 를 셸 변수에 담을 때는 `GID`·`UID`·`EUID` 대신 `GWID` 같은 이름을 쓴다 — 셋은 읽기 전용 특수 변수라 `bad math expression` 으로 명령이 깨진다.
@@ -170,7 +170,7 @@ curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways \
   | jq -e --arg id "$GW" '.[] | select(.id == $id) | {id, name, url}' || echo "Gateway '$GW' 가 목록에 없다 — 위 POST 응답을 다시 본다"
 ( umask 077; curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"label":"live-smoke"}' \
     http://127.0.0.1:$PORT/api/v1/gateways/$GW/bridge-tokens | jq .pluginConfig > data/bridge-token.patch.json )
-oc --dev config patch --file data/bridge-token.patch.json && rm data/bridge-token.patch.json   # 9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드)
+OPENCLAW_GATEWAY_TOKEN="$(cat data/dev-gateway.token)" oc --dev config patch --file data/bridge-token.patch.json && rm data/bridge-token.patch.json   # 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드). 11.10 은 떠 있는 Gateway 에 RPC 로 보내므로 토큰이 있어야 한다
 curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/status
 # {"statuses":[{"provider":"openclaw","gateways":[{"id":"…","name":"dev","enabled":true,"gateway":"connected","bridge":"connected"}]},{"provider":"runner","runners":{…}}],…}
 ```
@@ -809,7 +809,7 @@ sqlite3 "$A" "select w.session_key, count(*), sum(instr(e.event_json,'ALPHA')>0)
 **`OPENCLAW_HOME=<디렉터리>` 하나로 상태가 `<디렉터리>/.openclaw/` 로 옮겨 간다** — `openclaw config file` 이 `<디렉터리>/.openclaw/openclaw.json` 을 낸다. 홈의 두 상태 디렉터리가 그대로인지는 설치·기동 전후 `ls -la` 해시로 본다.
 ⚠ Gateway 의 날짜 로그 `/tmp/openclaw/openclaw-<날짜>.log` 는 `OPENCLAW_HOME` 과 상관없이 하나를 함께 쓴다 — 시크릿 개수 확인 범위에 넣는다.
 
-**새 상태의 Gateway 설정** — 새 상태에는 기본 에이전트 `main` 하나가 있다. `config patch` 한 번(`$SP/base.patch.json5`)으로 dev 설정과 같은 꼴로 만든다(ADR 0002 2절): `gateway.mode "local"`·`agents.defaults.model "anthropic/claude-opus-5"`·`agents.defaults.models["anthropic/claude-opus-5"].agentRuntime.id "claude-cli"`·`heartbeat.every "0m"`·`tools.agentToAgent.enabled false`·`tools.sessions.visibility "tree"`·`plugins.entries.bonjour.enabled false`·`plugins.entries.memory-core.config.dreaming.enabled false`.
+**새 상태의 Gateway 설정** — 새 상태에는 기본 에이전트 `main` 하나가 있다. `config patch` 한 번(`$SP/base.patch.json5`)으로 dev 설정과 같은 꼴로 만든다(ADR 0002 2절): `gateway.mode "local"`·`agents.defaults.model "anthropic/claude-opus-5"`·`agents.defaults.models["anthropic/claude-opus-5"].agentRuntime.id "claude-cli"`·`tools.agentToAgent.enabled false`·`tools.sessions.visibility "tree"`·`plugins.entries.bonjour.enabled false`·`plugins.entries.memory-core.config.dreaming.enabled false`·`cron.enabled false`(내장 주간 cron 이 모델을 부르지 않게). 9.x 의 `agents.defaults.heartbeat.every "0m"` 은 11.10 이 `Unrecognized key: "heartbeat"` 로 패치 전체를 거부한다(하트비트가 Automations 작업으로 옮겨 갔다 — 빼면 된다). ⚠ 11.10 Gateway 는 기동 때와 그 뒤에 모델 목록을 얻으려고 `claude --print --input-format stream-json … --tools ""` 를 스스로 띄운다(`cli-model-discovery` — `initialize` 제어 요청만 보내고 닫는다, 모델 턴이 아니다). 런 0회를 장담해야 하면 Gateway 의 `PATH` 맨 앞에 실패하는 가짜 `claude` 를 두고 그 호출 기록을 본다.
 ```bash
 G=A; P=19011                                           # 「집」은 G=B P=19021
 gw() { env -u OPENCLAW_GATEWAY_URL -u OPENCLAW_GATEWAY_TOKEN -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH -u OPENCLAW_PROFILE \
@@ -1127,7 +1127,7 @@ dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.o
 
 1. 설정 → 연결의 그 Gateway 상세 「브리지 토큰」 → 「새 토큰 발급」 → 라벨. 대화상자의 「설정 복사」로 `pluginConfig` 조각을 복사한다(원문은 이때 한 번만 보인다).
 2. Gateway 호스트에서 조각을 **파일로** 저장한다 — `umask 077` 인 셸에서 편집기로 붙여 넣는다. 셸 인자·`echo` 로 넘기지 않는다(`ps`·셸 기록에 남는다).
-3. `openclaw config patch --file <파일> && rm <파일>`. 조각에는 `bridgeUrl` 도 들어 있다 — 서버의 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN` 에서 만든 값)이 그 Gateway 가 서버에 닿는 주소와 다르면 조각 그대로 넣으면 안 된다. 2026.9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(`Change will apply without restarting the gateway.`) — 브리지가 한 번 끊겼다가 새 토큰으로 곧 붙는다. 출력이 재기동 없이 적용된다고 말하지 않으면 Gateway 를 재기동한다.
+3. `openclaw config patch --file <파일> && rm <파일>`. 조각에는 `bridgeUrl` 도 들어 있다 — 서버의 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN` 에서 만든 값)이 그 Gateway 가 서버에 닿는 주소와 다르면 조각 그대로 넣으면 안 된다. 9.5·11.10 은 Gateway 재기동 없이 dodok 채널만 다시 띄운다(`Change will apply without restarting the gateway.`) — 11.10 은 Gateway 가 떠 있으면 그 Gateway 에 RPC 로 보내므로 `OPENCLAW_GATEWAY_TOKEN`(또는 `--token`)이 없으면 `could not complete config.get … requires credentials` 로 아무것도 바꾸지 않는다 — 브리지가 한 번 끊겼다가 새 토큰으로 곧 붙는다. 출력이 재기동 없이 적용된다고 말하지 않으면 Gateway 를 재기동한다.
 4. 그 Gateway 상세에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그 `"bridge plugin hello"` 의 `tokenId` 가 새 토큰 id 인지 본다(화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로도 본다).
 5. 옛 토큰 줄 「폐기」. 지금 연결은 끊기지 않는다. 옛 토큰으로 붙는 것은 그 뒤로 `UNAUTHORIZED` 다.
 
