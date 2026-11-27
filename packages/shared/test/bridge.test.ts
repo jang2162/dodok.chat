@@ -241,6 +241,17 @@ describe("InboundDeliver.dm — 선택 필드", () => {
     expect(InboundDeliver.safeParse({ ...base, dm: {} }).success).toBe(false);
   });
 
+  it("dm.direct 는 선택 필드 — 없어도 받고(옛 서버), 있으면 true 만(Gateway 주인의 1:1 DM)", () => {
+    expect(InboundDeliver.parse({ ...base, dm: { ownerHandle: "mia" } }).dm?.direct).toBeUndefined();
+    expect(InboundDeliver.parse({ ...base, dm: { ownerHandle: "mia", direct: true } }).dm).toEqual({
+      ownerHandle: "mia",
+      direct: true,
+    });
+    expect(InboundDeliver.safeParse({ ...base, dm: { ownerHandle: "mia", direct: false } }).success).toBe(
+      false,
+    );
+  });
+
   it("groupDm 도 선택 필드 — 없어도 받고, 있으면 true 만", () => {
     expect(InboundDeliver.parse(base).groupDm).toBeUndefined();
     expect(InboundDeliver.parse({ ...base, groupDm: true }).groupDm).toBe(true);

@@ -2522,6 +2522,8 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
       threadUpdates: 0,
     });
     expect([...(line?.participants ?? [])].sort()).toEqual(["dev", "mia"]);
+    // mia 는 사무실 Gateway 의 주인이 아니다 — direct 가 아니다(MEMORY.md 가 실리지 않는다)
+    expect(line).not.toHaveProperty("chatType");
     socket.close();
     socket = undefined;
 
@@ -2561,6 +2563,40 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
         c[1] === "dev:fake inbound reactions" && (c[0] as { connection?: string }).connection === "runner",
     )?.[0] as { dm?: string } | undefined;
     expect(runnerLine?.dm).toMatch(/^다이렉트 메시지: @\S+ 님과 1:1$/);
+    expect(runnerLine).not.toHaveProperty("chatType"); // 러너 에이전트는 Gateway 가 없다
+
+    // owner ↔ 사무실 dev — owner 가 그 Gateway 의 주인이라 direct
+    const officeDevId = await agentIdByHandle(dev.url, owner.cookie, "dev");
+    const { channel: ownerDm } = await restAs<{ channel: { id: string } }>(
+      dev.url,
+      owner.cookie,
+      "POST",
+      "/dms",
+      {
+        agentId: officeDevId,
+      },
+    );
+    expect((await socket.emitWithAck("channel.subscribe", { channelId: ownerDm.id })).ok).toBe(true);
+    const ownerReplied = new Promise<void>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.channelId === ownerDm.id && message.authorType === "agent") resolve();
+      });
+    });
+    const toDev = await socket.emitWithAck("message.send", {
+      channelId: ownerDm.id,
+      newConversation: {},
+      bodyMd: "주인 DM",
+      clientMsgId: "019a0000-0000-7000-8000-0000000dd003",
+    });
+    expect(toDev.ok).toBe(true);
+    await ownerReplied;
+    const ownerLine = info.mock.calls.find(
+      (c) =>
+        c[1] === "dev:fake inbound reactions" &&
+        (c[0] as { sender?: string }).sender === "user:owner" &&
+        (c[0] as { connection?: string }).connection !== "runner",
+    )?.[0] as { dm?: string; chatType?: string } | undefined;
+    expect(ownerLine).toMatchObject({ dm: "다이렉트 메시지: @owner 님과 1:1", chatType: "direct" });
     info.mockRestore();
     socket.close();
     socket = undefined;

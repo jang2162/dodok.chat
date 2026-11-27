@@ -576,7 +576,8 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       .where(eq(users.id, dm.dmOwnerId ?? ""))
       .get();
     expect(delivered).toEqual([
-      { conversationId: inDm.id, dm: { ownerHandle: owner?.handle } },
+      // 이 앱의 Gateway 주인이 DM 주인이다 — 주인 DM 이라 OpenClaw 에 direct 로 넘긴다
+      { conversationId: inDm.id, dm: { ownerHandle: owner?.handle, direct: true } },
       { conversationId: inChannel.id },
     ]);
 

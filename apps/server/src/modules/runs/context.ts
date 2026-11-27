@@ -22,6 +22,7 @@ import {
   automations,
   channelMembers,
   componentInteractions,
+  gateways,
   messages,
   users,
 } from "../../db/schema.sqlite";
@@ -117,12 +118,17 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
   const conversation = getConversation(db, run.conversationId);
   if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
   const agent = db
-    .select({ providerAgentId: agents.providerAgentId })
+    .select({ providerAgentId: agents.providerAgentId, gatewayOwnerId: gateways.ownerUserId })
     .from(agents)
+    .leftJoin(gateways, eq(gateways.id, agents.gatewayId))
     .where(eq(agents.id, run.agentId))
     .get();
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
   const dmOwner = channel.kind === "dm" ? dmOwnerOf(db, channel.dmOwnerId) : undefined;
+  // 주인 DM 만 OpenClaw 에 `direct` 로 — direct 런에는 에이전트 워크스페이스의 MEMORY.md 가 실리므로 DM 의 사람이 그 Gateway 의 주인일 때만
+  // (2026-11-27 결정). 주인이 없는 옛 Gateway·러너 에이전트(Gateway 없음)는 늘 channel
+  const dmDirect =
+    dmOwner !== undefined && agent.gatewayOwnerId != null && agent.gatewayOwnerId === dmOwner.id;
   // DM 의 참여자는 주인과 이 에이전트뿐이다(계획 PD8). DM 멤버 행은 그 둘만 만들지만(dms/service.ts findOrCreateDm) 헤더가 그 불변에
   // 기대지 않게 여기서도 거른다 — 다른 사람이 실리면 에이전트가 DM 을 여럿이 보는 자리로 읽는다
   // 일반 채널은 그 세션(대화)에 초대한 에이전트도 참여자다(세션 에이전트 초대 스펙 5.2) — 다른 세션의 초대는 실리지 않는다
@@ -219,7 +225,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     channelId: run.channelId,
     conversationId: run.conversationId,
     conversationTitle: conversation.title,
-    ...(dmOwner ? { dm: { ownerHandle: dmOwner.handle } } : {}),
+    ...(dmOwner ? { dm: { ownerHandle: dmOwner.handle, ...(dmDirect ? { direct: true } : {}) } } : {}),
     // 그룹 DM 은 헤더에 그 표시를 싣는다 — 채널처럼 보이는 자리가 참여자만 보는 대화임을 에이전트가 알게(사람 간 DM 계획 PH12). 참여자는
     // sessionParticipants(비활성·보관 제외 — direct 에는 초대가 없어 channelParticipants 와 같다) 그대로, 채널 프롬프트는 늘 없다(direct 의 prompt 는 null)
     ...(channel.kind === "direct" ? { groupDm: true } : {}),

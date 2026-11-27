@@ -44,7 +44,7 @@
  * 씨앗 첨부(파일함 계획 태스크 5) — 씨앗 채널 새 세션의 owner 글에 PNG 둘과 PDF 하나(`DEV_FAKE_CHANNEL_FILES`), mia ↔ dev DM 의 mia 글에
  * PNG 하나(`DEV_FAKE_DM_FILE` — owner 의 파일함에 없어야 하는 것). 사람 업로드와 같은 `uploadAttachment` 로 올려 그 글에 묶는다.
  * 인바운드 로그 줄(`dev:fake inbound reactions`)은 스레드 소식 수(`threadUpdates` — 대화 세션 런만, 그 밖은 0)와 DM 런이면 헤더의 DM 줄(`dm`)을, 그룹 DM 런이면 그룹 DM 줄(`groupDm`)을, 늘 세션 줄
- * (`session`)을 싣는다.
+ * (`session`)을 싣는다. DM 주인이 그 에이전트 Gateway 의 주인인 DM 런(owner ↔ 사무실·집 에이전트)이면 `chatType: "direct"` 도.
  */
 import {
   type AdapterStatus,
@@ -1254,6 +1254,8 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       // 헤더에 실릴 줄 — 가짜 플러그인·러너는 헤더를 만들지 않으므로 같은 shared 함수로 그 줄을 찍는다(DM 런만 dm, 그룹 DM 런만 groupDm)
       ...(d.dm ? { dm: formatDmLine(d.dm.ownerHandle) } : {}),
       ...(d.groupDm ? { groupDm: formatGroupDmLine() } : {}),
+      // Gateway 주인의 1:1 DM 만 — 실제 플러그인은 이 런을 OpenClaw 에 `direct` 로 넘긴다(그 밖은 channel)
+      ...(d.dm?.direct ? { chatType: "direct" } : {}),
       session: formatSessionLine(d.conversationTitle),
       participants: d.context.participants.map((p) => p.handle),
       // 그 세션에만 초대한 에이전트(세션 에이전트 초대 스펙 5.2) — 초대한 세션의 런에만 있다. 받는 쪽이 초대받았으면 세션 초대 줄도

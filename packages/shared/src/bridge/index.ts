@@ -180,7 +180,16 @@ export const InboundDeliver = z.object({
   conversationId: Id, // OpenClaw 피어 id(`channel:<id>`)·세션 키의 대화
   conversationTitle: ConversationTitle, // 헤더 `세션:` 줄 — formatSessionLine 으로만 싣는다(사람이 쓴 글이다)
   /** DM 런만 — 헤더 `다이렉트 메시지:` 줄(formatDmLine). 선택 필드라 옛 플러그인도 받는다(DM 줄이 없을 뿐) */
-  dm: z.object({ ownerHandle: z.string() }).optional(),
+  dm: z
+    .object({
+      ownerHandle: z.string(),
+      /**
+       * DM 주인이 그 에이전트가 붙은 Gateway 의 주인일 때만 — 플러그인이 OpenClaw 에 `direct` 로 넘긴다(그러면 에이전트 워크스페이스의
+       * MEMORY.md 가 실린다). 없으면 `channel`. 러너는 쓰지 않는다. 선택 필드라 옛 플러그인은 버리고 받는다(지금처럼 `channel`)
+       */
+      direct: z.literal(true).optional(),
+    })
+    .optional(),
   /** 그룹 DM(direct) 런만 — 헤더 `그룹 DM:` 줄(formatGroupDmLine). 선택 필드라 옛 플러그인은 버리고 받는다(그 줄이 없을 뿐) */
   groupDm: z.literal(true).optional(),
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
