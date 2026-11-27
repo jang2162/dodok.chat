@@ -672,6 +672,13 @@ cmd_spawn probe2 implement --base main >/dev/null 2>&1
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus')" "1" \
   "implement 는 opus 로 에이전트를 띄운다"
 
+: > "$STUB_ORCA_LOG"
+cmd_spawn probe2 implement --agent opencode --base main >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent opencode --model anthropic/claude-opus-5-5')" "1" \
+  "--agent opencode 는 opus 별칭을 provider 모델 id 로 바꿔 띄운다"
+assert_eq "$(cmd_spawn probe2 implement --agent codex --base main 2>&1 >/dev/null | grep -c '허용되지 않은 에이전트')" "1" \
+  "모르는 에이전트는 거절한다"
+
 # 빈 핸들로 read/send 를 부르면 Orca 가 코디네이터 자신의 터미널로 해석한다.
 # 영수증에 핸들이 없으면 워크트리로 되짚고, 그래도 없으면 멈춘다.
 : > "$STUB_ORCA_LOG"

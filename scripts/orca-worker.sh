@@ -1,8 +1,9 @@
 #!/bin/bash
 # Orca 워커 수명주기 관리.
-#   spawn <슬러그> <역할> [--model opus|sonnet] [--brief <파일>] [--base <브랜치>]
+#   spawn <슬러그> <역할> [--model opus|sonnet] [--agent claude|opencode] [--brief <파일>] [--base <브랜치>]
 #     모델: --model 이 있으면 그 값, 없으면 역할 기본값이다.
-#   attach <슬러그> <역할> [--model ...] [--brief <파일>] [--terminal <핸들>] [--force]
+#     에이전트: --agent 가 없으면 claude. opencode 는 같은 별칭을 anthropic/<판> 모델 id 로 바꿔 띄운다.
+#   attach <슬러그> <역할> [--model ...] [--agent ...] [--brief <파일>] [--terminal <핸들>] [--force]
 #     --terminal 이 없으면 살아 있는 에이전트 터미널을 재사용하되, review 는 늘 새로 띄운다
 #     (리뷰어는 구현자와 다른 세션이어야 한다).
 #   status [--porcelain]
@@ -82,9 +83,31 @@ select_worker_model() {
   fi
 }
 
+# 워커 에이전트를 고르고 그 에이전트가 받는 모델 id 를 WM_AGENT·WM_AGENT_MODEL 에 둔다.
+# claude 는 별칭(opus|sonnet)을 그대로, opencode 는 provider/model id 로 바꾼다 — opencode 는 별칭을 모른다.
+# 사용: select_worker_agent <에이전트> <모델별칭>
+select_worker_agent() {
+  local agent="${1:-claude}" model="$2"
+  case "$agent" in
+    claude)   WM_AGENT=claude; WM_AGENT_MODEL="$model" ;;
+    opencode)
+      WM_AGENT=opencode
+      case "$model" in
+        opus)   WM_AGENT_MODEL="${ORCA_OPENCODE_OPUS_MODEL:-anthropic/claude-opus-5-5}" ;;
+        sonnet) WM_AGENT_MODEL="${ORCA_OPENCODE_SONNET_MODEL:-anthropic/claude-sonnet-5-5}" ;;
+        *)      WM_AGENT_MODEL="$model" ;;
+      esac
+      ;;
+    *)
+      printf '허용되지 않은 에이전트: %s (claude|opencode)\n' "$agent" >&2
+      return 1
+      ;;
+  esac
+}
+
 # 요약에 쓰는 모델 표기. 사용: model_label  (WM_* 를 읽는다)
 model_label() {
-  printf '%s (%s)' "$WM_MODEL" "$WM_SOURCE"
+  printf '%s (%s)' "${WM_AGENT_MODEL:-$WM_MODEL}" "$WM_SOURCE"
 }
 
 # 워커가 아직 도는 중인지.
@@ -2114,10 +2137,11 @@ print_unsupervised() {
 }
 
 cmd_spawn() {
-  local slug="" role="" model_override="" brief="" base=""
+  local slug="" role="" model_override="" brief="" base="" agent=claude
   while [ $# -gt 0 ]; do
     case "$1" in
       --model) model_override="${2:-}"; shift 2 ;;
+      --agent) agent="${2:-}"; shift 2 ;;
       --brief) brief="${2:-}"; shift 2 ;;
       --base)  base="${2:-}"; shift 2 ;;
       -*)      printf 'spawn: 알 수 없는 인자 %s\n' "$1" >&2; return 2 ;;
@@ -2132,6 +2156,7 @@ cmd_spawn() {
 
   local model root wt_id path task_id handle
   model="$(resolve_model "$role" "$model_override")" || return 1
+  select_worker_agent "$agent" "$model" || return 1
   require_orca || return 1
   ensure_run "$role:$slug" || return 1
 
@@ -2182,7 +2207,7 @@ cmd_spawn() {
   resp="$(mktemp)"
   attach_worker "$resp" \
     --task "$task_id" --worktree "id:$wt_id" \
-    --agent claude --model "$WM_MODEL" \
+    --agent "$WM_AGENT" --model "$WM_AGENT_MODEL" \
     --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   rc=$?
 
@@ -2226,10 +2251,11 @@ cmd_spawn() {
 #
 # 사용: attach <슬러그> <역할> [--model ...] [--brief <파일>] [--terminal <핸들>] [--force]
 cmd_attach() {
-  local slug="" role="" model_override="" brief="" handle="" force=no
+  local slug="" role="" model_override="" brief="" handle="" force=no agent=claude
   while [ $# -gt 0 ]; do
     case "$1" in
       --model)    model_override="${2:-}"; shift 2 ;;
+      --agent)    agent="${2:-}"; shift 2 ;;
       --brief)    brief="${2:-}"; shift 2 ;;
       --terminal) handle="${2:-}"; shift 2 ;;
       --force)    force=yes; shift ;;
@@ -2245,6 +2271,7 @@ cmd_attach() {
 
   local model path wt_id spec task_id tc_out live resp rc
   model="$(resolve_model "$role" "$model_override")" || return 1
+  select_worker_agent "$agent" "$model" || return 1
   require_orca || return 1
 
   # 자리는 Orca 가 정하므로 경로를 조립하지 않고 Orca 목록(collect_worktrees)에서 슬러그로 찾는다.
@@ -2438,7 +2465,7 @@ cmd_attach() {
     select_worker_model "$role" "$model" "$model_override"
     attach_worker "$resp" \
       --task "$task_id" --worktree "id:$wt_id" \
-      --agent claude --model "$WM_MODEL" \
+      --agent "$WM_AGENT" --model "$WM_AGENT_MODEL" \
       --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   fi
   rc=$?
