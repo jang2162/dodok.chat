@@ -493,6 +493,72 @@ describe("RUNNER_CONTROL_TOOLS — 「이 러너 설정 제어」(러너 봇 2�
       ).toBe(false);
   });
 
+  it("작업 디렉터리 밖 허용(allowOutsideWorkdir)은 어느 제어 도구로도 켜지 못한다 — 사람이 화면에서만", () => {
+    const bot = { purpose: "p", watches: "", does: "", reports: "" };
+    const base = { handle: "rb", name: "rb", program: "claude" };
+    const control = (name: ControlToolName, args: unknown) => findControlTool(name).input.safeParse(args);
+    const cases: Array<[string, () => { success: boolean }, () => { success: boolean }]> = [
+      [
+        "update_agent",
+        () => control("update_agent", { agentId: ID, name: "x" }),
+        () => control("update_agent", { agentId: ID, name: "x", allowOutsideWorkdir: true }),
+      ],
+      [
+        "register_agent",
+        () => control("register_agent", { providerAgentId: "ops", handle: "ops", name: "Ops", gatewayId: ID }),
+        () =>
+          control("register_agent", {
+            providerAgentId: "ops",
+            handle: "ops",
+            name: "Ops",
+            gatewayId: ID,
+            allowOutsideWorkdir: true,
+          }),
+      ],
+      [
+        "create_runner_agent(프로젝트)",
+        () => parse("create_runner_agent", { ...base, runnerProjectId: ID3 }),
+        () => parse("create_runner_agent", { ...base, runnerProjectId: ID3, allowOutsideWorkdir: true }),
+      ],
+      [
+        "create_runner_agent(봇)",
+        () => parse("create_runner_agent", { ...base, bot }),
+        () => parse("create_runner_agent", { ...base, bot, allowOutsideWorkdir: true }),
+      ],
+      [
+        "create_runner_agent(봇 정의 안)",
+        () => parse("create_runner_agent", { ...base, bot }),
+        () => parse("create_runner_agent", { ...base, bot: { ...bot, allowOutsideWorkdir: true } }),
+      ],
+      [
+        "set_agent_session_defaults",
+        () => parse("set_agent_session_defaults", { agentId: ID, sessionDefaults: { model: "opus" } }),
+        () =>
+          parse("set_agent_session_defaults", {
+            agentId: ID,
+            sessionDefaults: { model: "opus" },
+            allowOutsideWorkdir: true,
+          }),
+      ],
+      [
+        "set_agent_session_defaults(시작값 안)",
+        () => parse("set_agent_session_defaults", { agentId: ID, sessionDefaults: { model: "opus" } }),
+        () =>
+          parse("set_agent_session_defaults", {
+            agentId: ID,
+            sessionDefaults: { model: "opus", allowOutsideWorkdir: true },
+          }),
+      ],
+    ];
+    for (const [label, ok, withFlag] of cases) {
+      expect.soft(ok().success, label).toBe(true);
+      expect.soft(withFlag().success, label).toBe(false);
+    }
+    // 어느 도구의 입력 스키마에도 그 칸이 없다 — 새 도구가 칸을 열면 여기서 깨진다
+    for (const t of [...CONTROL_TOOLS, ...RUNNER_CONTROL_TOOLS])
+      expect(JSON.stringify(controlToolJsonSchema(t)), t.name).not.toContain("allowOutsideWorkdir");
+  });
+
   it("create_runner_agent 는 프로젝트·봇 중 정확히 하나, 봇은 basePrompt 를 받지 않는다", () => {
     const base = { handle: "rb", name: "rb", program: "claude" };
     const bot = { purpose: "", watches: "", does: "", reports: "" };
