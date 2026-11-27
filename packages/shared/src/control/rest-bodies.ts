@@ -154,8 +154,15 @@ export const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: t
   disallowedTools: RunnerAgentFields.disallowedTools.optional(),
   /** 봇 정의 — 봇 에이전트만(아니면 VALIDATION), 네 칸을 통째로 바꾼다(러너 봇 스펙 B3·B10) */
   bot: RunnerBotDefinition.optional(),
+  /** 작업 디렉터리 밖 접근 허용 — 러너 에이전트만, REST 에만(붙은 러너의 천장이 막으면 VALIDATION outsideWorkdir) */
+  allowOutsideWorkdir: z.boolean().optional(),
 });
 export type UpdateAgentBody = z.infer<typeof UpdateAgentBody>;
 
 /** 러너 에이전트 정의 필드의 이름 — 제어 도구가 받지 않는 키를 가를 때 쓴다 */
-export const RUNNER_AGENT_FIELDS = ["sessionDefaults", "disallowedTools", "bot"] as const;
+export const RUNNER_AGENT_FIELDS = [
+  "sessionDefaults",
+  "disallowedTools",
+  "bot",
+  "allowOutsideWorkdir",
+] as const;

@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `allow_outside_workdir` integer DEFAULT false NOT NULL;

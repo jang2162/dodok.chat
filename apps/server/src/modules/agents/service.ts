@@ -100,6 +100,8 @@ export type AgentPatch = {
   disallowedTools?: string[];
   /** 봇 정의 — 봇 에이전트만(아니면 VALIDATION). 네 칸 중 하나라도 바뀌면 지시 리비전 +1(러너 봇 스펙 B10) */
   bot?: RunnerBotDefinition;
+  /** 작업 디렉터리 밖 접근 허용 — 러너 에이전트만. 러너 천장과의 대조는 REST 라우트 몫 */
+  allowOutsideWorkdir?: boolean;
 };
 
 /** 계약에 안 맞는 아바타 주소를 이미 알린 에이전트 — 읽을 때마다 같은 경고를 되풀이하지 않게 */
@@ -189,6 +191,7 @@ function toApiAgent(
             revoked: token.revokedAt !== null,
             ...(projectLabel === undefined ? {} : { projectLabel }),
             ...(row.runnerBot === null ? {} : { bot: true as const }),
+            ...(row.allowOutsideWorkdir ? { outsideWorkdir: true as const } : {}),
           },
         }
       : {}),
@@ -200,6 +203,7 @@ function toApiAgent(
           runnerAgent: {
             projectId: row.runnerProjectId,
             disallowedTools: row.disallowedToolsJson,
+            allowOutsideWorkdir: row.allowOutsideWorkdir,
             // MCP 헤더·env 값은 쓰기 전용(러너 봇 2부 스펙 T4) — 응답에는 키 이름과 가림 글자만
             ...(row.runnerBot === null ? {} : { bot: maskedBot(row.runnerBot) }),
           },
@@ -396,6 +400,7 @@ const RunnerAgentFields = z.object({
   sessionDefaults: SessionDefaults.partial(),
   disallowedTools: RunnerRunAgent.shape.disallowedTools,
   bot: RunnerBotDefinition,
+  allowOutsideWorkdir: z.boolean(),
 });
 
 /** 봇인가(러너 봇 스펙 B11) — runner_bot 이 있으면. runner_project_id null 만으로는 「옛 것」이다 */
@@ -642,6 +647,8 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
       if (defaults?.effort !== undefined) set.sessionDefaultEffort = defaults.effort;
       if (defaults?.permissionMode !== undefined) set.sessionDefaultPermissionMode = defaults.permissionMode;
       if (fields.data.disallowedTools !== undefined) set.disallowedToolsJson = fields.data.disallowedTools;
+      if (fields.data.allowOutsideWorkdir !== undefined)
+        set.allowOutsideWorkdir = fields.data.allowOutsideWorkdir;
       const bot = fields.data.bot;
       if (bot !== undefined) {
         if (!isBotRow(current))

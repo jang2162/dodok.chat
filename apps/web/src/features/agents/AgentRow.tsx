@@ -15,7 +15,8 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
-import { formError } from "@/api/formErrors";
+import { detailField, formError } from "@/api/formErrors";
+import { ApiRequestError } from "@/api/http";
 import { useRole } from "@/api/queries";
 import { canOpenDm } from "@/features/dms/queries";
 import { FieldError } from "@/ui/field-error";
@@ -23,15 +24,18 @@ import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { EFFORT_LABEL } from "@/features/conversations/agentSettings";
 import { josa } from "@/lib/josa";
 import { AvatarPicker } from "@/features/account/AvatarPicker";
+import { ReasonHint } from "@/features/components/DisabledHint";
+import { useRunners } from "@/features/runners/queries";
 import { useAgentAvatar, useArchiveAgent, usePatchAgent } from "./mutations";
-import { DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
+import { CEILING_REFUSED, DEFAULT_LABEL, SessionDefaultsForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
 
 /**
  * 에이전트 상세(「연결」 탭 — 연결 재설계 스펙 목표 3)가 카드에 나눠 담는 칸들. 머리의 켜기 스위치(`AgentEnabledSwitch`)·「DM 보내기」
- * (`AgentDmLink`), 「실행」 카드의 새 세션 시작값(`RunnerSessionDefaults`)·지시(`BasePromptEditor` — OpenClaw 에서는 「프로필」 카드의 메모),
- * 「프로필」 카드의 사진(`AgentAvatarField`), 「DM 허용」 카드(`DmAccessField`), 「런 상한」 카드(`RunTimeoutField`), 「관리」 카드의 삭제(`ArchiveAgentButton`).
+ * (`AgentDmLink`), 「실행」 카드의 새 세션 시작값(`RunnerSessionDefaults`)·작업 디렉터리 밖 허용(`OutsideWorkdirSwitch`)·지시
+ * (`BasePromptEditor` — OpenClaw 에서는 「프로필」 카드의 메모), 「프로필」 카드의 사진(`AgentAvatarField`), 「DM 허용」 카드(`DmAccessField`),
+ * 「런 상한」 카드(`RunTimeoutField`), 「관리」 카드의 삭제(`ArchiveAgentButton`).
  * 토글·저장은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트). `readOnly`(그 연결의 주인도 admin 이상도 아님)면 값만 보인다
  */
 
@@ -298,6 +302,94 @@ export function RunnerWarning({ agent }: { agent: Agent }) {
       </Link>
       에서 프로젝트를 다른 러너로 옮기세요
     </p>
+  );
+}
+
+/** 러너 상한(programs.<program>.allowOutsideWorkdir)이 막았다 — 켜기를 잠근다(이미 켠 것은 끌 수 있다) */
+export const OUTSIDE_WORKDIR_BLOCKED =
+  "러너 설정이 막고 있습니다 — 러너 머신의 설정에서 allowOutsideWorkdir 을 true 로 적어야 켤 수 있습니다";
+/** 상한을 알리지 않는 옛 러너 — 켜도 그 러너는 밖을 계속 묻는다(서버가 런을 보내지 않고 닫는다) */
+export const OUTSIDE_WORKDIR_OUTDATED =
+  "러너를 업데이트하세요 — 이 러너 판본은 작업 디렉터리 밖 허용을 모릅니다";
+
+/**
+ * 「작업 디렉터리 밖 접근 허용」 — 켜면 프로젝트(봇은 봇 폴더) 밖 경로를 밖이라는 이유로 묻거나 막지 않는다. 권한 모드·금지 도구는 그대로.
+ * 붙은 러너의 상한이 막았으면(옛 러너 포함) 켜기를 잠그고 사유 한 줄, 이미 켠 것은 끌 수 있다. 끊겨 있으면 상한을 몰라 잠그지 않는다
+ * (서버도 대조를 건너뛰고 런에서 러너가 거절한다). 바꾸는 즉시 저장한다. `readOnly`(그 연결의 주인도 admin 이상도 아님)면 값만 보인다 —
+ * 정의(runnerAgent)를 못 받으므로 모두에게 실리는 `runner.outsideWorkdir` 로 읽는다
+ */
+export function OutsideWorkdirSwitch({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  if (readOnly)
+    return (
+      <p className="text-sm text-muted-foreground">
+        작업 디렉터리 밖 접근:{" "}
+        <span className="text-foreground">
+          {agent.runner?.outsideWorkdir === true ? "허용 — 프로젝트 폴더 밖의 파일에도 닿습니다" : "막음"}
+        </span>
+      </p>
+    );
+  return <OutsideWorkdirToggle agent={agent} />;
+}
+
+function OutsideWorkdirToggle({ agent }: { agent: Agent }) {
+  const save = usePatchAgent();
+  const runners = useRunners();
+  const id = useId();
+  const [error, setError] = useState<string>();
+  const on = agent.runnerAgent?.allowOutsideWorkdir === true;
+  const runner = runners.data?.find((r) => r.id === agent.runner?.tokenId);
+  const ceiling = runner?.connected
+    ? runner.programs.find((p) => p.program === (agent.program ?? "claude"))?.ceiling
+    : undefined;
+  const reason =
+    ceiling === undefined || ceiling.allowOutsideWorkdir === true
+      ? undefined
+      : ceiling.allowOutsideWorkdir === false
+        ? OUTSIDE_WORKDIR_BLOCKED
+        : OUTSIDE_WORKDIR_OUTDATED;
+  const locked = !on && (reason !== undefined || runners.isPending);
+
+  function toggle(next: boolean) {
+    setError(undefined);
+    save.mutate(
+      { id: agent.id, patch: { allowOutsideWorkdir: next } },
+      {
+        onError: (err) =>
+          setError(
+            err instanceof ApiRequestError &&
+              err.code === "VALIDATION" &&
+              detailField(err, ["outsideWorkdir"]) === "outsideWorkdir"
+              ? CEILING_REFUSED
+              : formError(err),
+          ),
+      },
+    );
+  }
+
+  const describedBy = [error ? `${id}-error` : undefined, reason ? `${id}-reason` : `${id}-hint`]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Switch
+          id={id}
+          checked={on}
+          disabled={save.isPending || locked}
+          aria-describedby={describedBy}
+          onCheckedChange={toggle}
+        />
+        <Label htmlFor={id}>작업 디렉터리 밖 접근 허용</Label>
+      </div>
+      {reason ? (
+        <ReasonHint id={`${id}-reason`} text={reason} />
+      ) : (
+        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+          켜면 프로젝트 폴더 밖의 파일도 밖이라는 이유로 묻지 않습니다 — 권한 모드·금지 도구는 그대로입니다
+        </p>
+      )}
+      <FieldError id={`${id}-error`}>{error}</FieldError>
+    </div>
   );
 }
 

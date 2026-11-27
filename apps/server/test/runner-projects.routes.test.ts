@@ -402,6 +402,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect((plain.json().agent as Agent).runnerAgent).toEqual({
         projectId: project.id,
         disallowedTools: [],
+        allowOutsideWorkdir: false,
       });
     });
 
@@ -547,6 +548,76 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(ocPatch.statusCode).toBe(400);
       expect(ocPatch.json()).toMatchObject({ code: "VALIDATION", details: { field: "sessionDefaults" } });
       expect((oc.json().agent as Agent).runnerAgent).toBeUndefined();
+    });
+
+    it("PATCH 작업 디렉터리 밖 허용 — 붙은 러너의 상한이 열려 있으면 저장, 막았거나 알리지 않으면(옛 러너) 400(outsideWorkdir), 끄기는 늘 된다, 끊겨 있으면 건너뛴다, OpenClaw 에이전트면 400", async () => {
+      const ceiling = { maxPermissionMode: "default" as const, allowedToolsCeiling: null };
+      const open = await runnerWith("outside-open", {
+        programs: [{ ...FAKE_CLAUDE_PROGRAM, ceiling: { ...ceiling, allowOutsideWorkdir: true } }],
+      });
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "outside-ok",
+        runnerTokenId: open.id,
+      });
+      expect(agent.runnerAgent?.allowOutsideWorkdir).toBe(false);
+      const on = await call(admin, "PATCH", `/agents/${agent.id}`, { allowOutsideWorkdir: true });
+      expect(on.statusCode, on.body).toBe(200);
+      expect((on.json().agent as Agent).runnerAgent?.allowOutsideWorkdir).toBe(true);
+      // run.start 의 정의에는 켰을 때만 싣는다(옛 러너는 이 키를 모른다)
+      const def = () => runnerAgentDefinition(app.db, app.workspaceId, agent.providerAgentId, open.id)?.agent;
+      expect(def()?.allowOutsideWorkdir).toBe(true);
+      await call(admin, "PATCH", `/agents/${agent.id}`, { allowOutsideWorkdir: false });
+      expect(def()).not.toHaveProperty("allowOutsideWorkdir");
+
+      for (const [label, allow] of [
+        ["closed", false],
+        ["legacy", undefined],
+      ] as const) {
+        const closed = await runnerWith(`outside-${label}`, {
+          programs: [
+            {
+              ...FAKE_CLAUDE_PROGRAM,
+              ceiling: allow === undefined ? ceiling : { ...ceiling, allowOutsideWorkdir: allow },
+            },
+          ],
+        });
+        const { agent: blocked } = createRunnerAgentForTest(app.db, {
+          workspaceId: app.workspaceId,
+          handle: `outside-${label}`,
+          runnerTokenId: closed.id,
+        });
+        const refused = await call(admin, "PATCH", `/agents/${blocked.id}`, { allowOutsideWorkdir: true });
+        expect(refused.statusCode, label).toBe(400);
+        expect(refused.json()).toMatchObject({ code: "VALIDATION", details: { field: "outsideWorkdir" } });
+        expect(app.db.select().from(agents).where(eq(agents.id, blocked.id)).get()?.allowOutsideWorkdir).toBe(
+          false,
+        );
+        // 끄기는 상한과 상관없다
+        expect(
+          (await call(admin, "PATCH", `/agents/${blocked.id}`, { allowOutsideWorkdir: false })).statusCode,
+        ).toBe(200);
+        if (label === "closed") {
+          closed.runner.disconnect();
+          await vi.waitFor(async () =>
+            expect((await summaries()).find((r) => r.id === closed.id)?.connected).toBe(false),
+          );
+          const offline = await call(admin, "PATCH", `/agents/${blocked.id}`, { allowOutsideWorkdir: true });
+          expect(offline.statusCode, offline.body).toBe(200);
+        }
+      }
+
+      const oc = await call(admin, "POST", "/agents", {
+        providerAgentId: "oc-outside",
+        handle: "oc-outside",
+        name: "oc",
+        gatewayId: FAKE_GATEWAY_ID,
+      });
+      const ocPatch = await call(admin, "PATCH", `/agents/${(oc.json().agent as Agent).id}`, {
+        allowOutsideWorkdir: true,
+      });
+      expect(ocPatch.statusCode).toBe(400);
+      expect(ocPatch.json()).toMatchObject({ code: "VALIDATION", details: { field: "allowOutsideWorkdir" } });
     });
 
     it("PATCH 는 프로그램·프로젝트를 받지 않는다 — 러너 에이전트면 400(field), 아무것도 바꾸지 않는다 [태스크 4 리뷰 L4]", async () => {
@@ -823,6 +894,37 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(moved.statusCode, moved.body).toBe(200);
       for (const agent of [ok, high, tools, codex, archived])
         expect(app.db.select().from(agents).where(eq(agents.id, agent.id)).get()?.runnerTokenId).toBe(to.id);
+    });
+
+    it("작업 디렉터리 밖 허용을 켠 에이전트는 그 상한을 열지 않은 러너로 옮기지 않는다 — 400(item outsideWorkdir), 끄면 옮겨진다", async () => {
+      const from = await runnerWith("move-from-out", {
+        programs: [
+          {
+            ...FAKE_CLAUDE_PROGRAM,
+            ceiling: { ...FAKE_CLAUDE_PROGRAM.ceiling, allowOutsideWorkdir: true },
+          },
+        ],
+      });
+      const to = await runnerWith("move-to-out");
+      const project = await projectOf(from.id, "repo-out");
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "outsider",
+        runnerTokenId: from.id,
+        relPath: "repo-out",
+      });
+      expect(
+        (await call(admin, "PATCH", `/agents/${agent.id}`, { allowOutsideWorkdir: true })).statusCode,
+      ).toBe(200);
+      const move = () => call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: to.id });
+      const refused = await move();
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({
+        details: { field: "runnerId", agentIds: [agent.id], item: "outsideWorkdir" },
+      });
+      await call(admin, "PATCH", `/agents/${agent.id}`, { allowOutsideWorkdir: false });
+      const moved = await move();
+      expect(moved.statusCode, moved.body).toBe(200);
     });
 
     it("보관한 에이전트도 함께 옮긴다 — 보관 → 옮기기 → 되살리기 뒤 새 러너로 정의가 선다 [태스크 4 리뷰 T1]", async () => {

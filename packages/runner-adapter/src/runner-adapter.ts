@@ -1367,6 +1367,23 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         emitSignal(runner.tokenId, input.runId, { kind: "gateway_error", code, message });
         return { admission: "dispatch", providerRunId: input.runId, connectionId: runner.tokenId };
       }
+      // 작업 디렉터리 밖 허용은 그 상한을 연 러너에만 보낸다. 옛 러너(상한을 알리지 않음)는 이 키를 버리고 밖을 계속 묻는다 — 켠 값이
+      // 조용히 안 먹지 않게 러너의 천장 거절과 같은 RUNNER_CEILING 으로 닫는다. 그 프로그램을 알리지 않은 러너는 program 으로 러너가 닫는다
+      if (
+        agent.allowOutsideWorkdir === true &&
+        ceiling !== undefined &&
+        ceiling.allowOutsideWorkdir !== true
+      ) {
+        const code = "RUNNER_CEILING";
+        const message: RunnerCeilingItem = "outsideWorkdir";
+        logger.info(
+          { runId: input.runId, tokenId: runner.tokenId },
+          "runner run refused: outside-workdir access is not allowed by the announced ceiling",
+        );
+        emitEvent(runner.tokenId, input.runId, { type: "RUN_ERROR", runId: input.runId, code, message });
+        emitSignal(runner.tokenId, input.runId, { kind: "gateway_error", code, message });
+        return { admission: "dispatch", providerRunId: input.runId, connectionId: runner.tokenId };
+      }
       const serverSessionIds = capabilitiesFor(input.agentId, runner.tokenId).serverSessionIds;
       if (serverSessionIds && sendOpts.providerSessionId === undefined) {
         throw new AdapterError("INTERNAL", "this runner program needs a server-chosen providerSessionId");

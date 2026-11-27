@@ -177,6 +177,19 @@ describe("loadRunnerConfig", () => {
     expect(e.message).toContain("programs.claude.maxPermissionMode");
   });
 
+  it("작업 디렉터리 밖 허용 상한 — 적지 않으면 없음(막힘), 불리언만 받는다", () => {
+    expect(load(baseConfig).config.programs.claude?.allowOutsideWorkdir).toBeUndefined();
+    const opened = load({
+      ...baseConfig,
+      programs: { claude: { configDir: "~/c", allowOutsideWorkdir: true } },
+    });
+    expect(opened.config.programs.claude?.allowOutsideWorkdir).toBe(true);
+    const e = errorOf(() =>
+      load({ ...baseConfig, programs: { claude: { configDir: "~/c", allowOutsideWorkdir: "yes" } } }),
+    );
+    expect(e.message).toContain("programs.claude.allowOutsideWorkdir");
+  });
+
   it("programs 에 적지 않은 프로그램은 꺼진 것이다 — 모르는 프로그램 키는 거절", () => {
     const { config } = load({ ...baseConfig, programs: {} });
     expect(config.programs).toEqual({});

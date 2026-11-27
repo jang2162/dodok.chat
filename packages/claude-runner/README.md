@@ -59,7 +59,7 @@ dodok-runner service logs -f        # `연결됨` 을 본다
 
 ### 천장
 
-러너의 로컬 설정은 **천장**만 쥔다 — 에이전트가 돌 수 있는 디렉터리(`roots`)·켜 둘 프로그램(`programs`)·권한 상한(`maxPermissionMode`·`allowedToolsCeiling`·`disallowedTools`). 그 루트 안의 **프로젝트와 에이전트는 dodok 앱**(설정 → 연결의 러너·프로젝트 상세, admin 이상)에서 만든다. 서버가 런마다 에이전트 정의를 보내면 러너가 천장 안인지 보고 돌린다 — 서버나 토큰이 털려도 이 파일의 범위를 넘지 못한다.
+러너의 로컬 설정은 **천장**만 쥔다 — 에이전트가 돌 수 있는 디렉터리(`roots`)·켜 둘 프로그램(`programs`)·권한 상한(`maxPermissionMode`·`allowedToolsCeiling`·`disallowedTools`)·작업 디렉터리 밖 허용 상한(`allowOutsideWorkdir`, 기본 꺼짐 — `true` 여야 앱에서 에이전트의 「작업 디렉터리 밖 접근 허용」을 켤 수 있다. 켠 에이전트는 루트 밖 파일에도 「밖이라서」 묻지 않고 닿으니 루트가 더는 경계가 아니다). 그 루트 안의 **프로젝트와 에이전트는 dodok 앱**(설정 → 연결의 러너·프로젝트 상세, admin 이상)에서 만든다. 서버가 런마다 에이전트 정의를 보내면 러너가 천장 안인지 보고 돌린다 — 서버나 토큰이 털려도 이 파일의 범위를 넘지 못한다.
 
 ### 봇의 도구(앱에서 적는 MCP)
 

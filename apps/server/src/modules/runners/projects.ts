@@ -312,12 +312,15 @@ export function activeProjectAgents(
   program: RunnerProgram | null;
   /** 새 세션 시작값의 권한 — null 이면 「기본」(그 러너 상한 안으로 계산된다 — 대조할 것이 없다) */
   permissionMode: RunnerPermissionMode | null;
+  /** 작업 디렉터리 밖 허용 — 켰으면 옮길 러너의 상한도 열려 있어야 한다 */
+  allowOutsideWorkdir: boolean;
 }[] {
   return db
     .select({
       id: agents.id,
       program: agents.program,
       permissionMode: agents.sessionDefaultPermissionMode,
+      allowOutsideWorkdir: agents.allowOutsideWorkdir,
     })
     .from(agents)
     .where(and(eq(agents.runnerProjectId, projectId), isNull(agents.archivedAt)))

@@ -269,7 +269,9 @@ export function fakeWorktreeRemove(
   return { ok: true };
 }
 
-/** 실제 러너 `checkCeiling` 의 순서 root → path(봇이면 bot) → program → permissionMode → allowedTools. 통과면 null */
+/**
+ * 실제 러너 `checkCeiling` 의 순서 root → path(봇이면 bot) → program → permissionMode → allowedTools → outsideWorkdir. 통과면 null
+ */
 export function fakeCeilingItem(
   hello: RunnerHello,
   tree: FakeTree,
@@ -289,6 +291,8 @@ export function fakeCeilingItem(
     return "permissionMode";
   const allowed = program.ceiling.allowedToolsCeiling;
   if (allowed !== null && agent.allowedTools?.some((t) => !allowed.includes(t))) return "allowedTools";
+  if (agent.allowOutsideWorkdir === true && program.ceiling.allowOutsideWorkdir !== true)
+    return "outsideWorkdir";
   return null;
 }
 

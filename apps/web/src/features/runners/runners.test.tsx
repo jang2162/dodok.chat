@@ -118,9 +118,30 @@ describe("러너 카드", () => {
     expect(codex).toHaveTextContent("설치되지 않음");
     expect(within(codex).getByText("설치 방법")).toBeInTheDocument();
     expect(codex).not.toHaveTextContent("권한 상한");
+    // 작업 디렉터리 밖 허용 상한을 알리지 않은 러너(옛 러너·막음)는 그 말이 없다
+    expect(mac).not.toHaveTextContent("작업 디렉터리 밖");
     const opencode = within(programs).getByRole("listitem", { name: "OpenCode" });
     expect(within(opencode).getByText("지원 예정")).toHaveAttribute("data-tone", "muted");
     expect(opencode).toHaveTextContent("이 러너 판은 아직 모릅니다");
+  });
+
+  it("작업 디렉터리 밖 허용 상한을 연 러너는 프로그램 줄 끝에 「작업 디렉터리 밖 접근 허용」", async () => {
+    stub({
+      runners: [
+        runnerOf(1, {
+          label: "맥북",
+          programs: [
+            programOf({
+              ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null, allowOutsideWorkdir: true },
+            }),
+          ],
+        }),
+      ],
+    });
+    renderRunnersPage();
+    expect(within(await card("맥북")).getByRole("listitem", { name: "Claude Code" })).toHaveTextContent(
+      "Claude Code 2.1.283 · 로그인됨 · 권한 상한 default · 작업 디렉터리 밖 접근 허용",
+    );
   });
 
   it("프로그램 줄 — hello 에 드라이버 없음 사유로 실린 프로그램은 「지원 예정」과 사유만(「이 러너 판은 아직 모릅니다」·설치 방법 없음)", async () => {

@@ -348,6 +348,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         // 앱 MCP 천장(T3) — strict 가 아닌 이 자리에 싣는다(hello 최상위에 키를 두면 옛 서버가 거절한다)
         appMcp: config.appMcp,
         appMcpCommands: config.appMcpCommands ?? null,
+        allowOutsideWorkdir: ceiling.allowOutsideWorkdir === true,
       },
     };
     const driver = drivers.get(program);
@@ -616,6 +617,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       permissionMode: agent.permissionMode,
       allowedTools: agent.allowedTools,
       disallowedTools: [...new Set([...programCeiling.disallowedTools, ...agent.disallowedTools])],
+      // 천장 검사가 상한이 열려 있음을 확인했다
+      ...(agent.allowOutsideWorkdir === true ? { allowOutsideWorkdir: true } : {}),
       // 봇 MCP 는 드라이버가 이 천장으로 다시 판정한다(서버를 믿지 않는다 — T3)
       appMcp: {
         appMcp: config.appMcp,

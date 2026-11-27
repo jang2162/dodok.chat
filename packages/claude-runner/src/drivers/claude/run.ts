@@ -17,7 +17,7 @@ import {
 } from "@dodok/shared";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import {
   CONTROL_TOOL_FULL_NAMES,
   createControlTools,
@@ -302,6 +302,9 @@ export function buildQueryOptions(
   const { start } = spec;
   return {
     cwd: spec.workdir,
+    // 작업 디렉터리 밖 허용 — 파일 시스템 루트를 작업 디렉터리로 더해 CLI 가 「작업 디렉터리 밖」이라서 묻거나 막는 것을 없앤다. 권한
+    // 모드의 묻기(default 의 편집)·민감 파일 묻기·도구 목록은 그대로다(실측: live-smoke 「작업 디렉터리 밖 허용」)
+    ...(spec.allowOutsideWorkdir === true ? { additionalDirectories: [parse(spec.workdir).root] } : {}),
     // null 이면 CLI 기본 모델
     ...(spec.model === null ? {} : { model: spec.model }),
     // null·없음이면 CLI 기본 effort(세션 설정 스펙 5.6)
@@ -641,7 +644,8 @@ async function runOnceReserved(
  * 이 런을 넣을 붙든 프로세스 — 없으면 undefined(새로 연다). 붙든 프로세스에 도는 턴(추가 응답)이 있으면 그 턴이 끝날 때까지 기다리고
  * (한 번에 한 턴), 풀리면 그 자리를 쥔 채 돌려준다 — 곧바로 턴을 열거나 unreserve 한다. 기다리다 중지되면 "aborted".
  * 끝나 가는 프로세스는 끝날 때까지 기다린다 — 같은 세션 파일을 두 CLI 가 함께 쓰지 않게(ADR 0007 4.3). 세션이 리셋됐거나(다른 세션
- * id) 작업 디렉터리·로그인 자리·CLI 가 바뀌었으면 옛 프로세스의 작업은 이어 갈 수 없다 — 놓고(작업이 꺼진다) 새로 연다
+ * id) 작업 디렉터리·로그인 자리·CLI 가 바뀌었거나 작업 디렉터리 밖 허용을 껐으면 옛 프로세스의 작업은 이어 갈 수 없다 — 놓고(작업이
+ * 꺼진다) 새로 연다
  */
 async function heldProcessFor(
   spec: ClaudeRunSpec,
@@ -657,7 +661,9 @@ async function heldProcessFor(
     opened !== undefined &&
     opened.workdir === spec.workdir &&
     opened.configDir === spec.configDir &&
-    opened.executable === ctx.executable;
+    opened.executable === ctx.executable &&
+    // 밖 허용을 끈 런은 밖을 연 프로세스에 넣지 않는다 — 연 디렉터리는 도는 중에 거둘 수 없다. 켠 쪽은 이어 넣고 held 로 알린다
+    !(opened.allowOutsideWorkdir && spec.allowOutsideWorkdir !== true);
   if (sp.reusable() && compatible) {
     if (!(await sp.whenIdle(ctx.signal))) return "aborted";
     if (sp.reusable()) return sp;
@@ -675,6 +681,7 @@ const NO_IMAGES = { blocks: [], failed: 0 };
 /** 프로세스를 연 설정 — 붙든 프로세스에 이어 넣는 런과 견준다(D6) */
 type OpenedSettings = {
   workdir: string;
+  allowOutsideWorkdir: boolean;
   configDir: string | undefined;
   executable: string | undefined;
   model: string | null;
@@ -878,6 +885,7 @@ async function attempt(
   }
   openedOf.set(sp, {
     workdir: spec.workdir,
+    allowOutsideWorkdir: spec.allowOutsideWorkdir === true,
     configDir: spec.configDir,
     executable: ctx.executable,
     model: spec.model,
@@ -1030,6 +1038,8 @@ async function applyRunSettings(
   if (spec.start.channelRulesAppend !== opened.append) held.push("channelRulesAppend");
   if (sortedKey(would.allowedTools) !== opened.allowedTools) held.push("allowedTools");
   if (sortedKey(would.disallowedTools) !== opened.disallowedTools) held.push("disallowedTools");
+  // 끈 쪽은 heldProcessFor 가 이 프로세스를 놓는다 — 여기 오는 것은 켠 쪽(옛 프로세스는 밖을 계속 묻는다)
+  if (spec.allowOutsideWorkdir === true && !opened.allowOutsideWorkdir) held.push("allowOutsideWorkdir");
   return held;
 }
 

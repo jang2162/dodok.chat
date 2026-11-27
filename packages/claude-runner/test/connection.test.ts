@@ -337,6 +337,7 @@ describe("startRunnerConnection", () => {
             allowedToolsCeiling: null,
             appMcp: "http",
             appMcpCommands: null,
+            allowOutsideWorkdir: false,
           },
           models: toModelOptions(FAKE_MODELS),
         },
@@ -379,6 +380,7 @@ describe("startRunnerConnection", () => {
           allowedToolsCeiling: ["Read"],
           appMcp: "http",
           appMcpCommands: null,
+          allowOutsideWorkdir: false,
         },
         models: toModelOptions(FAKE_MODELS),
       },
@@ -393,6 +395,7 @@ describe("startRunnerConnection", () => {
           allowedToolsCeiling: null,
           appMcp: "http",
           appMcpCommands: null,
+          allowOutsideWorkdir: false,
         },
       },
     ]);
@@ -707,6 +710,7 @@ describe("startRunnerConnection", () => {
       [{ program: "codex" }, "program"],
       [{ permissionMode: "acceptEdits" }, "permissionMode"],
       [{ allowedTools: ["Read", "Write"] }, "allowedTools"],
+      [{ allowOutsideWorkdir: true }, "outsideWorkdir"],
     ];
     for (const [i, [agent, item]] of cases.entries()) {
       const runId = `0192f000-0000-7000-8000-00000000b${String(i).padStart(3, "0")}`;
@@ -742,6 +746,28 @@ describe("startRunnerConnection", () => {
     // 설정 몫(Bash·WebFetch) 뒤에 에이전트 몫(Grep) — 앱에서 정한 막는 도구가 조용히 빠지지 않는다(태스크 2 리뷰 M1)
     expect(options.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "Bash", "WebFetch", "Grep"]);
     expect(options.env?.CLAUDE_CONFIG_DIR).toBe(AGENT.configDir);
+  });
+
+  it("작업 디렉터리 밖 허용 — 상한이 열려 있으면 hello 에 알리고, 켠 에이전트의 런은 CLI 옵션 additionalDirectories 에 파일 시스템 루트", async () => {
+    const { server, fake, dirs } = await setup({
+      programs: { claude: { ...CLAUDE_CEILING, allowOutsideWorkdir: true } },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs[0]!.ceiling.allowOutsideWorkdir).toBe(true);
+    fake.script(...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart({ agent: { allowOutsideWorkdir: true } }));
+    await waitFor(() => server.finals.length === 1);
+    const options = fake.calls[0]!.options;
+    expect(options.cwd).toBe(dirs.workdir);
+    expect(options.additionalDirectories).toEqual(["/"]);
+    // 권한 모드·막는 도구는 그대로다 — 밖이라서 묻는 것만 없어진다
+    expect(options.permissionMode).toBe("default");
+    expect(options.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
+    // 꺼진 에이전트(옛 서버는 키를 싣지 않는다)는 옵션이 없다
+    fake.script(...script.textTurn("msg_2", ["y"]));
+    await sendStart(server.sockets[0]!, runStart({ runId: "0192f000-0000-7000-8000-0000000000e3" }));
+    await waitFor(() => server.finals.length === 2);
+    expect(fake.calls[1]!.options).not.toHaveProperty("additionalDirectories");
   });
 
   it("run.start.agent.effort 가 CLI 옵션 effort 로 — 없으면(옛 서버) 키가 없다 [세션 설정 스펙 5.6]", async () => {
@@ -851,6 +877,7 @@ describe("startRunnerConnection", () => {
           allowedToolsCeiling: null,
           appMcp: "http",
           appMcpCommands: null,
+          allowOutsideWorkdir: false,
         },
       },
     ]);

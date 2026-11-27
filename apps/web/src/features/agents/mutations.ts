@@ -47,6 +47,8 @@ export type AgentPatch = {
   sessionDefaults?: Partial<SessionDefaults>;
   /** 봇 정의 — 네 칸 통째로(봇만, 그 연결의 주인·admin 이상). 바꾸면 그 봇의 세션이 새로 열린다(러너 봇 스펙 B10) */
   bot?: RunnerBotDefinition;
+  /** 작업 디렉터리 밖 접근 허용(러너 에이전트만, REST 로만) — 붙은 러너의 상한이 막으면 400 VALIDATION(field outsideWorkdir) */
+  allowOutsideWorkdir?: boolean;
 };
 /** archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다) */
 export type DiscoveredAgent = {

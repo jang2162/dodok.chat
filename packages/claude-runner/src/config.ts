@@ -29,6 +29,9 @@ const ProgramCeiling = z.strictObject({
   maxPermissionMode: RunnerPermissionMode.default("default"),
   disallowedTools: ToolNames.default([]),
   allowedToolsCeiling: ToolNames.nullable().default(null),
+  // 앱에서 에이전트의 「작업 디렉터리 밖 접근 허용」을 켤 수 있는가 — 없거나 false 면 막는다(그 에이전트의 런은 RUNNER_CEILING
+  // outsideWorkdir). 권한 모드 상한처럼 이 머신의 사람이 적어야만 열린다. 열어도 권한 모드·도구 목록은 그대로다
+  allowOutsideWorkdir: z.boolean().optional(),
 });
 export type ProgramCeiling = z.infer<typeof ProgramCeiling>;
 

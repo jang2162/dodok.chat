@@ -230,6 +230,22 @@ describe("checkCeiling", () => {
     expect(checkCeiling(cfg(), agent({ allowedTools: ["Write", "Bash"] }), always).ok).toBe(true);
   });
 
+  it("outsideWorkdir — 작업 디렉터리 밖 허용은 상한 allowOutsideWorkdir 이 true 일 때만, 꺼진 에이전트는 어느 상한에도 든다", () => {
+    const on = agent({ allowOutsideWorkdir: true });
+    // 적지 않으면 막는다(fail-safe) — 이 머신의 사람이 적어야만 열린다
+    expect(checkCeiling(cfg(), on, always)).toEqual({ ok: false, item: "outsideWorkdir" });
+    expect(checkCeiling(cfg({ allowOutsideWorkdir: false }), on, always)).toEqual({
+      ok: false,
+      item: "outsideWorkdir",
+    });
+    expect(checkCeiling(cfg({ allowOutsideWorkdir: true }), on, always)).toEqual({
+      ok: true,
+      workdir: join(root, "repo"),
+    });
+    expect(checkCeiling(cfg(), agent({ allowOutsideWorkdir: false }), always).ok).toBe(true);
+    expect(checkCeiling(cfg(), agent(), always).ok).toBe(true);
+  });
+
   it("먼저 걸린 항목 하나만 — root 가 없으면 나머지는 보지 않는다", () => {
     const bad = agent({
       project: { rootId: "gone", relPath: "repo" },

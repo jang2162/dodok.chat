@@ -82,6 +82,8 @@ export function runnerAgentDefinition(
       // 허용 도구는 고르지 않는다(S4) — 옛 러너가 이 키를 요구해 늘 null 로 싣는다
       allowedTools: null,
       disallowedTools: row.agent.disallowedToolsJson,
+      // 켰을 때만 — 옛 러너는 이 키를 모른다(어댑터가 상한을 알리지 않은 러너에는 보내지 않고 닫는다)
+      ...(row.agent.allowOutsideWorkdir ? { allowOutsideWorkdir: true } : {}),
     },
   };
 }

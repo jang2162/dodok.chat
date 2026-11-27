@@ -577,7 +577,10 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
           : ceilingMiss(
               target,
               agent.program,
-              agent.permissionMode === null ? {} : { permissionMode: agent.permissionMode },
+              {
+                ...(agent.permissionMode === null ? {} : { permissionMode: agent.permissionMode }),
+                ...(agent.allowOutsideWorkdir ? { allowOutsideWorkdir: true } : {}),
+              },
               { requireAvailable: true },
             );
       return item ? [{ agentId: agent.id, item }] : [];

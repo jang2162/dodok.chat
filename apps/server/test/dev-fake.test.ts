@@ -2764,11 +2764,16 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
           allowedToolsCeiling: ["Read", "Grep", "Glob"],
           appMcp: "off",
           appMcpCommands: null,
+          allowOutsideWorkdir: false,
         },
       }),
     ]);
-    // 봇 도구 천장(러너 봇 2부 스펙 T3) — 러너 상세 응답에 hello 의 appMcp 가 그대로
-    expect(main?.programs[0]?.ceiling).toMatchObject({ appMcp: "http", appMcpCommands: null });
+    // 봇 도구 천장(러너 봇 2부 스펙 T3) — 러너 상세 응답에 hello 의 appMcp 가 그대로. 작업 디렉터리 밖 허용 상한은 dev-fake 만 연다
+    expect(main?.programs[0]?.ceiling).toMatchObject({
+      appMcp: "http",
+      appMcpCommands: null,
+      allowOutsideWorkdir: true,
+    });
   });
 
   it("main fake runner advertises worktrees, limited does not [워크트리 스펙 5.2]", async () => {
