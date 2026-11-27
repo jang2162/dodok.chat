@@ -1,32 +1,24 @@
 import {
   formatDmLine,
   formatGroupDmLine,
+  formatHeaderTime,
   formatLinkedMessages,
   formatParticipantLabel,
   formatReactionFacts,
   formatSessionInviteLine,
   formatSessionLine,
   formatThreadUpdates,
+  formatTimeZoneLine,
   type InboundDeliver,
 } from "@dodok/shared";
 
-export type ContextFormatOptions = {
-  /** 최근 대화 시각 표기 시간대 (IANA). 기본 UTC */
-  timeZone?: string;
-};
-
-function hhmm(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone,
-  }).format(new Date(iso));
-}
-
-/** 스펙 8.3: 인바운드 앞에 붙는 컨텍스트 헤더. 채널 프롬프트·오버라이드는 여기가 아니라 `channelPromptContext` 로 */
-export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptions = {}): string {
-  const tz = opts.timeZone ?? "UTC";
+/**
+ * 스펙 8.3: 인바운드 앞에 붙는 컨텍스트 헤더. 채널 프롬프트·오버라이드는 여기가 아니라 `channelPromptContext` 로.
+ * 시각은 서버가 실은 워크스페이스 시간대(`context.timeZone`, 없으면 UTC)로 찍고, 릴레이 규칙 줄 다음에 그 시간대를 밝힌다
+ */
+export function formatInboundContext(d: InboundDeliver): string {
+  const tz = d.context.timeZone;
+  const hhmm = (iso: string) => formatHeaderTime(iso, tz);
   const self = d.context.participants.find((p) => p.isSelf);
   const lines: string[] = [];
   const thread = d.context.thread;
@@ -39,8 +31,9 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   if (sessionInvite !== null) lines.push(sessionInvite);
   lines.push(`참여자: ${d.context.participants.map(formatParticipantLabel).join(", ")}`);
   lines.push(`릴레이 규칙: ${d.context.relayRules}`);
+  lines.push(formatTimeZoneLine(tz, d.message.ts));
   const line = (m: { author: { handle: string }; text: string; ts: string }) =>
-    `[${hhmm(m.ts, tz)}] @${m.author.handle}: ${m.text}`;
+    `[${hhmm(m.ts)}] @${m.author.handle}: ${m.text}`;
   if (thread) {
     // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스펙 2.3) — 서버가 비워 보내도 여기서 한 번 더 막는다
     lines.push(`스레드 루트: ${line(thread.root)}`);
@@ -57,12 +50,12 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
     const threadUpdates = formatThreadUpdates(
       d.context.threadUpdates ?? [],
       d.context.threadUpdatesOmitted,
-      (iso) => hhmm(iso, tz),
+      hhmm,
     );
     if (threadUpdates) lines.push(threadUpdates);
   }
   // 트리거 글이 링크한 메시지(메시지 링크 스펙) — 대화·스레드 블록 다음, 반응 앞. 본문은 들여써 `---` 줄로 읽히지 않는다
-  const linked = formatLinkedMessages(d.context.linkedMessages ?? [], (iso) => hhmm(iso, tz));
+  const linked = formatLinkedMessages(d.context.linkedMessages ?? [], hhmm);
   if (linked !== null) lines.push(linked);
   const reactionFacts = formatReactionFacts(d.context.reactions ?? [], d.context.reactionsOmitted);
   if (reactionFacts) lines.push(reactionFacts);
@@ -82,6 +75,6 @@ export function channelPromptContext(d: InboundDeliver): string[] | undefined {
 }
 
 /** 컨텍스트 헤더 + 인바운드 본문. 플러그인이 Gateway 인바운드로 넣는 최종 텍스트 */
-export function buildInboundText(d: InboundDeliver, opts: ContextFormatOptions = {}): string {
-  return `${formatInboundContext(d, opts)}\n${d.message.text}`;
+export function buildInboundText(d: InboundDeliver): string {
+  return `${formatInboundContext(d)}\n${d.message.text}`;
 }

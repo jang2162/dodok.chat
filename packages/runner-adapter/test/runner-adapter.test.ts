@@ -780,6 +780,14 @@ describe("send", () => {
     const block = formatThreadUpdates(threadUpdates, 1, (iso) => iso.slice(11, 16));
     expect(start?.turnFacts).toBe(`${base}\n${block}\n${formatReactionFacts(reactions)}`);
     expect(start?.turnFacts).toContain("  [00:02] @mia: 이미 제출됐어요");
+
+    // 서버가 실은 워크스페이스 시간대(context.timeZone)로 스레드 소식 시각을 찍는다
+    const base3 = deliver();
+    const seoul = { ...base3, context: { ...base3.context, threadUpdates, timeZone: "Asia/Seoul" } };
+    await h.adapter.send(seoul, { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === seoul.runId), "run.start 3");
+    const seoulStart = r.runStarts.find((s) => s.deliver.runId === seoul.runId);
+    expect(seoulStart?.turnFacts).toContain("  [09:02] @mia: 이미 제출됐어요");
   });
 
   it("그 에이전트의 러너가 붙어 있지 않으면 ADAPTER_UNAVAILABLE", async () => {

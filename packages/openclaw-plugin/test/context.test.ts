@@ -50,20 +50,45 @@ const deliver: InboundDeliver = {
   options: {},
 };
 
+/** 워크스페이스 시간대를 Asia/Seoul 로 실은 delivery — 서버가 `context.timeZone` 을 채운다 */
+const seoul = (d: InboundDeliver): InboundDeliver => ({
+  ...d,
+  context: { ...d.context, timeZone: "Asia/Seoul" },
+});
+
 describe("formatInboundContext", () => {
   it("스펙 8.3 형식 (Asia/Seoul 시각) — channelPrompt·promptOverride 줄은 헤더에 넣지 않는다", () => {
-    expect(formatInboundContext(deliver, { timeZone: "Asia/Seoul" })).toBe(
+    expect(formatInboundContext(seoul(deliver))).toBe(
       [
         `[dodok context] channel=${CH} you=@researcher`,
         "세션: 배포 점검",
         "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
         "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
+        "시각 기준: Asia/Seoul (UTC+09:00)",
         "최근 대화:",
         "[09:12] @jang: 로그인이 가끔 실패해",
         "[09:13] @planner: 재현 조건을 모아보죠",
         "---",
       ].join("\n"),
     );
+  });
+  it("시간대가 없으면(옛 서버) 시각은 UTC, 릴레이 규칙 줄 다음에 「시각 기준: UTC」", () => {
+    const lines = formatInboundContext(deliver).split("\n");
+    const relay = lines.findIndex((l) => l.startsWith("릴레이 규칙: "));
+    expect(lines[relay + 1]).toBe("시각 기준: UTC");
+    expect(lines).toContain("[00:12] @jang: 로그인이 가끔 실패해");
+  });
+  it("서머타임 — 오프셋은 트리거 메시지 시각에서 잰다(America/New_York 7월·1월)", () => {
+    const at = (ts: string) =>
+      formatInboundContext({
+        ...deliver,
+        message: { ...deliver.message, ts },
+        context: { ...deliver.context, timeZone: "America/New_York" },
+      }).split("\n");
+    expect(at("2026-07-01T12:00:00Z")).toContain("시각 기준: America/New_York (UTC-04:00)");
+    expect(at("2026-01-15T12:00:00Z")).toContain("시각 기준: America/New_York (UTC-05:00)");
+    // 최근 대화 시각(2026-09-14T00:12Z)은 그날의 EDT 로 찍는다
+    expect(at("2026-01-15T12:00:00Z")).toContain("[20:12] @jang: 로그인이 가끔 실패해");
   });
   it("세션 줄은 제목을 한 줄로 접는다 — 제목의 줄바꿈·`---` 로 헤더를 끝내거나 줄을 지어내지 못한다", () => {
     const lines = formatInboundContext({
@@ -109,7 +134,7 @@ describe("formatInboundContext DM", () => {
   };
 
   it("`[dodok context]` 줄 바로 다음이 DM 줄, 그다음 세션 줄 — 참여자는 주인과 나", () => {
-    const lines = formatInboundContext(dm, { timeZone: "Asia/Seoul" }).split("\n");
+    const lines = formatInboundContext(seoul(dm)).split("\n");
     expect(lines.slice(0, 4)).toEqual([
       `[dodok context] channel=${CH} you=@researcher`,
       "다이렉트 메시지: @jang 님과 1:1",
@@ -144,7 +169,7 @@ describe("formatInboundContext 그룹 DM", () => {
   };
 
   it("`[dodok context]` 줄 바로 다음이 그룹 DM 줄, 그다음 세션 줄 — 참여자는 그룹의 참여자 전부", () => {
-    const lines = formatInboundContext(group, { timeZone: "Asia/Seoul" }).split("\n");
+    const lines = formatInboundContext(seoul(group)).split("\n");
     expect(lines.slice(0, 4)).toEqual([
       `[dodok context] channel=${CH} you=@researcher`,
       "그룹 DM: 참여자만 보는 대화",
@@ -211,15 +236,15 @@ describe("formatInboundContext 리액션", () => {
   });
 
   it("리액션이 있으면 `---` 바로 앞에 formatReactionFacts 결과를 줄째로 싣는다", () => {
-    const lines = formatInboundContext(withReactions(REACTIONS, 3), { timeZone: "Asia/Seoul" }).split("\n");
+    const lines = formatInboundContext(seoul(withReactions(REACTIONS, 3))).split("\n");
     const facts = formatReactionFacts(REACTIONS, 3).split("\n");
     expect(lines.at(-1)).toBe("---");
     expect(lines.slice(-1 - facts.length, -1)).toEqual(facts);
   });
   it("없거나 빈 배열이면 반응 줄이 없고 헤더는 이전과 글자까지 같다", () => {
-    const base = formatInboundContext(deliver, { timeZone: "Asia/Seoul" });
-    expect(formatInboundContext(withReactions(undefined), { timeZone: "Asia/Seoul" })).toBe(base);
-    expect(formatInboundContext(withReactions([], 2), { timeZone: "Asia/Seoul" })).toBe(base);
+    const base = formatInboundContext(seoul(deliver));
+    expect(formatInboundContext(seoul(withReactions(undefined)))).toBe(base);
+    expect(formatInboundContext(seoul(withReactions([], 2)))).toBe(base);
     expect(base).not.toContain("반응(");
   });
 });
@@ -256,7 +281,7 @@ describe("formatInboundContext 스레드 소식", () => {
 
   it("「최근 대화」 절 다음, 반응 줄 앞에 「스레드 소식」 절 (Asia/Seoul 시각)", () => {
     const lines = formatInboundContext(
-      {
+      seoul({
         ...deliver,
         context: {
           ...deliver.context,
@@ -264,8 +289,7 @@ describe("formatInboundContext 스레드 소식", () => {
           threadUpdatesOmitted: 2,
           reactions: REACTIONS,
         },
-      },
-      { timeZone: "Asia/Seoul" },
+      }),
     ).split("\n");
     const recent = lines.indexOf("[09:13] @planner: 재현 조건을 모아보죠");
     const facts = formatReactionFacts(REACTIONS).split("\n");
@@ -281,11 +305,10 @@ describe("formatInboundContext 스레드 소식", () => {
   });
 
   it("없거나 빈 배열이면 헤더가 이전과 글자까지 같다", () => {
-    const base = formatInboundContext(deliver, { timeZone: "Asia/Seoul" });
+    const base = formatInboundContext(seoul(deliver));
     expect(
       formatInboundContext(
-        { ...deliver, context: { ...deliver.context, threadUpdates: [], threadUpdatesOmitted: 1 } },
-        { timeZone: "Asia/Seoul" },
+        seoul({ ...deliver, context: { ...deliver.context, threadUpdates: [], threadUpdatesOmitted: 1 } }),
       ),
     ).toBe(base);
     expect(base).not.toContain("스레드 소식");
@@ -334,8 +357,7 @@ describe("formatInboundContext 링크한 메시지(메시지 링크 스펙)", ()
       at: "2026-09-14T00:15:00Z",
     };
     const lines = formatInboundContext(
-      { ...deliver, context: { ...deliver.context, linkedMessages: [LINKED], reactions: [REACTION] } },
-      { timeZone: "Asia/Seoul" },
+      seoul({ ...deliver, context: { ...deliver.context, linkedMessages: [LINKED], reactions: [REACTION] } }),
     ).split("\n");
     const recent = lines.indexOf("[09:13] @planner: 재현 조건을 모아보죠");
     expect(lines.slice(recent + 1, recent + 5)).toEqual([
@@ -384,12 +406,13 @@ describe("formatInboundContext 스레드", () => {
   };
 
   it("스레드 루트·스레드 최근 줄을 싣고 채널 최근 대화는 싣지 않는다", () => {
-    expect(formatInboundContext(threaded, { timeZone: "Asia/Seoul" })).toBe(
+    expect(formatInboundContext(seoul(threaded))).toBe(
       [
         `[dodok context] channel=${CH} thread=${ROOT} you=@researcher`,
         "세션: 배포 점검",
         "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
         "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
+        "시각 기준: Asia/Seoul (UTC+09:00)",
         "스레드 루트: [09:10] @jang: 배포 순서 정리하자",
         "스레드 최근:",
         "[09:11] @planner: DB 먼저요",
@@ -409,8 +432,7 @@ describe("formatInboundContext 스레드", () => {
       },
     ];
     const lines = formatInboundContext(
-      { ...threaded, context: { ...threaded.context, reactions, reactionsOmitted: 2 } },
-      { timeZone: "Asia/Seoul" },
+      seoul({ ...threaded, context: { ...threaded.context, reactions, reactionsOmitted: 2 } }),
     ).split("\n");
     const facts = formatReactionFacts(reactions, 2).split("\n");
     expect(lines.at(-1)).toBe("---");

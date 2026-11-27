@@ -1412,6 +1412,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           thread: input.threadId !== undefined,
           threadUpdates: input.context.threadUpdates,
           threadUpdatesOmitted: input.context.threadUpdatesOmitted,
+          ...(input.context.timeZone === undefined ? {} : { timeZone: input.context.timeZone }),
           reactions: input.context.reactions,
           reactionsOmitted: input.context.reactionsOmitted,
         }),

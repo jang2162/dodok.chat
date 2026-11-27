@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Ack } from "../common";
-import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
+import { BRIDGE_PROTOCOL, Id, IsoDateTime, TimeZoneName } from "../common";
 import { ComponentsV1 } from "../components";
 import type { BridgeControlCall, ControlResult } from "../control";
 import { DeliverCommand } from "../commands";
@@ -163,6 +163,11 @@ export const InboundContext = z.object({
    * 없다. 선택 필드라 옛 플러그인은 버리고 받는다(링크 글만 본다)
    */
   linkedMessages: z.array(LinkedMessage).max(LINKED_MESSAGES_MAX).optional(),
+  /**
+   * 헤더 시각의 시간대 — 워크스페이스 시간대(운영 설정, IANA 정규형). 플러그인 헤더·러너 프롬프트가 formatHeaderTime·formatTimeZoneLine
+   * 으로 쓴다. 없으면 UTC. 선택 필드라 옛 플러그인·러너는 버리고 받는다(지금처럼 UTC 로 찍는다)
+   */
+  timeZone: TimeZoneName.optional(),
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 
@@ -247,6 +252,46 @@ export function threadMatchesSessionKey(sessionKey: string, threadId: string | u
 export function formatSessionLine(title: string): string {
   const line = foldHeaderText(title);
   return `세션: ${line === "" ? "새 세션" : line}`;
+}
+
+/** 헤더 시각을 찍을 시간대 — 이름이 없거나 Intl 이 모르면 UTC. 바깥에서 온 이름이라 헤더 전체를 던지게 두지 않는다 */
+function headerTimeZone(timeZone: string | undefined): string {
+  if (timeZone === undefined) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone });
+    return timeZone;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * 헤더 시각 `HH:MM`(24시간) — 플러그인 헤더와 러너 프롬프트·턴 사실의 최근 대화·스레드·스레드 소식·링크한 메시지가 같이 쓴다.
+ * 시간대는 `InboundContext.timeZone`. 어느 시간대인지는 formatTimeZoneLine 줄이 밝힌다
+ */
+export function formatHeaderTime(iso: string, timeZone: string | undefined): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: headerTimeZone(timeZone),
+  }).format(new Date(iso));
+}
+
+/**
+ * 헤더의 `시각 기준:` 줄 — 헤더 시각(formatHeaderTime)이 어느 시간대인지 밝힌다. 오프셋은 `atIso`(트리거 메시지 시각)에서 잰다 —
+ * 서머타임이 있는 시간대는 날짜에 따라 다르다. UTC 면 오프셋을 붙이지 않는다
+ */
+export function formatTimeZoneLine(timeZone: string | undefined, atIso: string): string {
+  const tz = headerTimeZone(timeZone);
+  if (tz === "UTC") return "시각 기준: UTC";
+  const name =
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
+      .formatToParts(new Date(atIso))
+      .find((p) => p.type === "timeZoneName")?.value ?? "GMT";
+  // longOffset 은 `GMT+09:00`·`GMT-04:00`, 오프셋 0 이면 `GMT` 다. 빼기는 U+2212 로 올 수도 있어 ASCII 로 맞춘다
+  const offset = name.replace(/^GMT/, "").replace("\u2212", "-");
+  return `시각 기준: ${tz} (UTC${offset === "" ? "+00:00" : offset})`;
 }
 
 /**

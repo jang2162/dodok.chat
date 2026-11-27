@@ -182,10 +182,11 @@ describe("toInboundFacts", () => {
     }
   });
 
-  it("컨텍스트 포맷 옵션을 buildInboundText 로 넘긴다", () => {
+  it("서버가 실은 시간대(context.timeZone)로 본문 헤더 시각을 찍는다", () => {
     const d = deliver({
       context: {
         ...deliver().context,
+        timeZone: "Asia/Seoul",
         recentMessages: [
           {
             author: { type: "user", handle: "jang", displayName: "장병현" },
@@ -195,8 +196,9 @@ describe("toInboundFacts", () => {
         ],
       },
     });
-    const res = toInboundFacts(d, { accountId: "default", context: { timeZone: "Asia/Seoul" } });
+    const res = toInboundFacts(d, { accountId: "default" });
     expect(res.ok && res.facts.body).toContain("[09:13] @jang: 안녕");
+    expect(res.ok && res.facts.body).toContain("시각 기준: Asia/Seoul (UTC+09:00)");
   });
 });
 
