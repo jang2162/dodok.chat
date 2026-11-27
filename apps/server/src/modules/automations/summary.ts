@@ -50,8 +50,7 @@ export function automationWarnings(
 ): AutomationWarning[] {
   const warnings: AutomationWarning[] = [];
   if (isChannelArchived(db, row.channelId)) warnings.push({ kind: "channel_archived" });
-  const handles = plainMentionHandles(row.bodyMd);
-  if (handles.length === 0) return warnings;
+  if (plainMentionHandles(row.bodyMd).length === 0) return warnings;
 
   // tokenize 와 같은 규칙 — 뒤에 온 참가자가 같은 핸들을 덮는다(채널 쪽 에이전트가 이긴다)
   const resolved = new Map<string, Participant>();
@@ -69,6 +68,22 @@ export function automationWarnings(
   const agentById = new Map(workspaceAgents.map((a) => [a.id, a]));
   const agentByHandle = new Map(workspaceAgents.map((a) => [a.handle.toLowerCase(), a]));
   let peopleHandles: Set<string> | undefined;
+  const isPerson = (handle: string) => {
+    peopleHandles ??= new Set(
+      db
+        .select({ handle: users.handle })
+        .from(users)
+        .where(eq(users.workspaceId, row.workspaceId))
+        .all()
+        .map((u) => u.handle.toLowerCase()),
+    );
+    return peopleHandles.has(handle);
+  };
+  // 붙여 쓴 조사(「@개발봇에게」)는 워크스페이스가 아는 핸들로 뗀다 — 채널 밖 에이전트도 그 핸들로 경고한다
+  const handles = plainMentionHandles(
+    row.bodyMd,
+    (h) => resolved.has(h) || agentByHandle.has(h) || isPerson(h),
+  );
 
   for (const handle of handles) {
     const participant = resolved.get(handle);
@@ -83,15 +98,7 @@ export function automationWarnings(
       warnings.push({ kind: active(agent) ? "agent_not_in_channel" : "agent_disabled", handle });
       continue;
     }
-    peopleHandles ??= new Set(
-      db
-        .select({ handle: users.handle })
-        .from(users)
-        .where(eq(users.workspaceId, row.workspaceId))
-        .all()
-        .map((u) => u.handle.toLowerCase()),
-    );
-    if (!peopleHandles.has(handle)) warnings.push({ kind: "unknown_handle", handle });
+    if (!isPerson(handle)) warnings.push({ kind: "unknown_handle", handle });
   }
   return warnings;
 }

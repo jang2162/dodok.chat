@@ -5,9 +5,10 @@
  * 문구를 다듬는 규칙이고, 웹은 브라우저 번들·서버는 노드라 쓰임새가 갈리기 때문이다(계획서 태스크 0).
  *
  * 받침을 보는 대상은 세 가지다.
- * - 한글 음절(가~힣): 코드포인트로 종성을 바로 계산한다.
+ * - 한글 음절(가~힣): 코드포인트로 종성을 바로 계산한다. 한글 핸들(shared `Handle` 은 가~힣 도 받는다)도 이것으로 본다.
+ *   NFD(조합형)로 온 글자는 NFC 로 맞춘 뒤 본다.
  * - 숫자: 읽는 소리(영·일·이·삼…)의 받침.
- * - 로마자: 핸들은 `[a-z0-9_-]` 라(shared `Handle`) 한글 음절이 올 수 없다. 흔히 읽는 소리로 어림한다 —
+ * - 로마자: 흔히 읽는 소리로 어림한다 —
  *   `l`·`m`·`n` 으로 끝나면 받침(핀·팀·툴), 그 밖의 자음은 「브·드·트」처럼 모음을 붙여 읽어 받침이 없다(데브).
  *   끝의 묵음 `e` 는 앞 글자로 판단한다(google→글, name→임). 어림이라 영어 낱말에 따라 틀릴 수 있다.
  *
@@ -36,7 +37,7 @@ const LATIN_FINAL = new Set(["l", "m", "n"]);
 
 /** 마지막 글자에 받침이 있는지. 한글·숫자·로마자가 아니면 없는 것으로 본다 */
 export function hasFinalConsonant(word: string): boolean {
-  const letters = [...word.trim()];
+  const letters = [...word.normalize("NFC").trim()];
   let last = letters.at(-1)?.toLowerCase() ?? "";
   // 끝의 묵음 e 는 앞 글자가 소리를 낸다(google → 구글, name → 네임)
   if (last === "e" && letters.length > 1) last = letters.at(-2)?.toLowerCase() ?? "";

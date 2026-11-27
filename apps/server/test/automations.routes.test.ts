@@ -608,6 +608,20 @@ describe("자동화 관리 API", () => {
       expect((await listed(automation.id))?.warnings).toEqual(expected);
     });
 
+    it("한글 핸들 뒤 붙여 쓴 조사는 떼고 본다 — 채널의 에이전트는 경고 없음, 채널 밖은 그 핸들로, 모르면 이어진 글자 전부", async () => {
+      const channel = newChannel();
+      const k = ++n;
+      const inside = newAgent(`개발${k}봇`);
+      newAgent(`외부${k}봇`); // 워크스페이스에는 있지만 채널 밖
+      addMember(app.db, channel.id, { memberType: "agent", memberId: inside.id }, app.logger);
+      const bodyMd = `@개발${k}봇에게 @외부${k}봇한테 @모름${k}이 점검`;
+      const { automation } = await schedule(channel.id, { bodyMd });
+      expect(automation.warnings).toEqual([
+        { kind: "agent_not_in_channel", handle: `외부${k}봇` },
+        { kind: "unknown_handle", handle: `모름${k}이` },
+      ]);
+    });
+
     it("핸들이 바뀌면 옛 핸들은 모르는 핸들, 에이전트가 채널에서 빠지면 채널에 없음 — 게시는 된다", async () => {
       const channel = newChannel();
       const agent = newAgent(`mover${++n}`);

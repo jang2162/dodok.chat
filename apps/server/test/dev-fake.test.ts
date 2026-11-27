@@ -239,6 +239,14 @@ describe("fakeAgentScript", () => {
     ).toContain("@dev");
   });
 
+  it("한글 핸들 멘션도 릴레이한다 — 붙여 쓴 조사는 뗀다", () => {
+    const reply = fakeAgentScript(
+      "dev",
+      delivery("@dev @개발봇에게 전해줘", owner, "dev", ["dev", "개발봇"]),
+    ).reply;
+    expect(reply).toContain("@개발봇 이어서 부탁해요");
+  });
+
   it("채널 참여 에이전트만 부른다 — 자기·채널 밖 핸들은 싣지 않고, 핸들이 providerAgentId 와 달라도 된다", () => {
     const reply = fakeAgentScript(
       "dev",

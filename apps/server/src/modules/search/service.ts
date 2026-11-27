@@ -1,5 +1,6 @@
 import {
   PLAIN_MENTION_RE,
+  resolveMentionRun,
   SEARCH_SNIPPET_CLOSE,
   SEARCH_SNIPPET_OPEN,
   SearchHit,
@@ -198,9 +199,12 @@ function expandHandles(q: string, mentions: MentionDirectory): string[] {
   let alts = [""];
   let last = 0;
   for (const m of q.matchAll(PLAIN_MENTION_RE)) {
+    // q 는 이미 NFC 라 붙여 쓴 조사(rest)의 길이가 원문 꼬리와 같다
+    const found = resolveMentionRun(m[2] as string, (h) => mentions.tokensOf(h).length > 0);
+    if (!found) continue;
     const at = (m.index as number) + (m[1] as string).length;
-    const end = (m.index as number) + m[0].length;
-    const tokens = mentions.tokensOf(m[2] as string);
+    const end = (m.index as number) + m[0].length - found.rest.length;
+    const tokens = mentions.tokensOf(found.handle);
     const choices =
       tokens.length > 0 && alts.length * tokens.length <= MAX_NEEDLES - 1 ? tokens : [q.slice(at, end)];
     const between = q.slice(last, at);

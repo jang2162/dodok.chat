@@ -657,6 +657,22 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
     expect(ids(t.search("@writer 초안"))).toEqual([hit.id]);
   });
 
+  it("한글 핸들 — 「@개발봇에게」처럼 조사를 붙여 찾아도 그 멘션으로 찾는다", () => {
+    const t = setup();
+    const bot = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "devbot",
+      handle: "개발봇",
+      name: "개발봇",
+    });
+    addMember(t.db, t.channelId, { memberType: "agent", memberId: bot.id }, { warn: () => {} });
+    const hit = t.say("@개발봇에게 보고서 부탁");
+    t.say("개발봇 이야기");
+    expect(ids(t.search("@개발봇"))).toEqual([hit.id]);
+    expect(ids(t.search("@개발봇에게 보고서"))).toEqual([hit.id]);
+    expect(t.search("@개발봇에게 보고서").hits[0]?.snippet).toBe(`${O}@개발봇에게 보고서${C} 부탁`);
+  });
+
   it("모르는 핸들은 글자 그대로 찾는다", () => {
     const t = setup();
     const hit = t.say("`@nobody` 는 없는 사람");
