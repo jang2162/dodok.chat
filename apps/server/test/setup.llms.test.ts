@@ -422,6 +422,16 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     );
   });
 
+  it("러너 5번 — 사람이 원할 때만 dodok-runner service install 로 서비스 등록(러너 CLI 에 있는 하위 명령)", () => {
+    const step5 = runner.slice(runner.indexOf("\n5. "));
+    expect(step5).toContain("사람이 원하면");
+    expect(step5).toContain("`dodok-runner service install`");
+    expect(step5).toContain("`dodok-runner service uninstall`");
+    expect(readFileSync(join(ROOT, "packages/claude-runner/src/service.ts"), "utf8")).toMatch(
+      /SERVICE_ACTIONS = \[\s*"install",\s*"uninstall",/,
+    );
+  });
+
   describe("설치 파일 받기·설치 명령을 bash 로 그대로 돌린다 — mktemp 자리에 받고 설치한 뒤 지운다", () => {
     let root: string;
     let tmp: string;

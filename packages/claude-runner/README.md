@@ -31,7 +31,14 @@ npm 판은 서버와 다른 빌드일 수 있다 — 설정 → 연결의 러너
 
 ### 백그라운드로 띄우기
 
-러너는 전경에 머문다. 터미널을 닫아도·재부팅 뒤에도 돌게 하려면 위처럼 한 번 띄워 설정·로그인을 끝낸 뒤 macOS launchd(LaunchAgent)·Linux systemd(사용자 서비스)로 띄운다. 서비스로 띄우면 설정에 `"remoteUpdate": false` 를 넣고, `PATH` 와 `dodok-runner` 의 절대 경로를 서비스에 넘긴다. 종료 코드 2(토큰·판본 문제)는 다시 띄우지 않는다. plist·unit 파일과 명령은 [러너 설치 — 백그라운드로 띄우기](https://github.com/jang2162/dodok.chat/blob/main/docs/guides/docker-deploy.md#러너-설치). `nohup` 은 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받는다.
+러너는 전경에 머문다. 터미널을 닫아도·재부팅 뒤에도 돌게 하려면 위처럼 한 번 띄워 설정·로그인을 끝내고 `Ctrl+C` 로 끈 뒤, 같은 터미널에서:
+
+```bash
+dodok-runner service install        # macOS launchd(LaunchAgent) · Linux systemd(사용자 서비스)에 등록하고 띄운다
+dodok-runner service logs -f        # `연결됨` 을 본다
+```
+
+`install` 은 설정을 먼저 검사하고(토큰은 `tokenFile` 이어야 한다 — env `DODOK_RUNNER_TOKEN` 은 서비스에 넘기지 않는다), 지금 node·러너의 절대 경로와 지금 셸의 `PATH` 로 서비스를 짓는다. 다른 설정이면 `--config <경로>` 를 붙인다. node 판이나 러너 자리가 바뀌면 `install` 을 다시 부른다(같은 자리에 `npm i -g` 로 올렸으면 `restart`). 나머지는 `service start`·`stop`·`restart`·`status`·`logs [-f]`·`uninstall`(설정·토큰·로그는 남긴다). 종료 코드 2(토큰·판본 문제)는 다시 띄우지 않는다 — `status` 가 알린다. 웹의 「업데이트」는 서비스로 띄운 러너도 서비스 관리자로 다시 시작한다. 생성하는 plist·unit 과 손으로 쓰는 길은 [러너 설치 — 백그라운드로 띄우기](https://github.com/jang2162/dodok.chat/blob/main/docs/guides/docker-deploy.md#러너-설치). `nohup` 은 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받는다.
 
 ### 고급 — 직접 쓰기
 

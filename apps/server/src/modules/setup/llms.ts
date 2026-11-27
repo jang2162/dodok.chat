@@ -151,6 +151,8 @@ function runnerSection(input: LlmsInput): string {
    \`\`\`bash
    dodok-runner
    \`\`\`
+
+   사람이 원하면(묻지 않고 하지 않는다) 터미널을 닫아도·재부팅 뒤에도 돌게 OS 서비스로 등록한다 — \`연결됨\` 을 본 러너를 Ctrl+C 로 끄고 같은 셸에서 \`dodok-runner service install\` 을 돌린 뒤, \`dodok-runner service logs\` 에 \`연결됨\` 이 보이는지 본다(macOS launchd · Linux systemd, 해제는 \`dodok-runner service uninstall\`).
 `;
 }
 

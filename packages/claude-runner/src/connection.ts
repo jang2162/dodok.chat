@@ -763,7 +763,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         },
         (error: unknown) => {
           updating = false;
-          // 연결을 닫은 뒤 다시 띄우기(spawn)가 던졌다 — 새 판은 뜨지 않았고 이 프로세스는 산 채다. 그대로 두면 영영 붙지 않는다(리뷰 M1)
+          // 연결을 닫은 뒤 다시 띄우기(spawn)가 던졌거나 서비스 다시 시작이 실패·시간 초과했다 — 새 판은 뜨지 않았고 이 프로세스는 산
+          // 채다. 그대로 두면 영영 붙지 않는다(리뷰 M1)
           if (stopped) {
             stopped = false;
             logger.warn("dodok-runner: 새 판을 띄우지 못했습니다 — 지금 판으로 다시 붙습니다");

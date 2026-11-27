@@ -13,6 +13,7 @@ import {
   type IsExecutable,
   type ReadVersion,
 } from "./drivers/claude/executable";
+import { SERVICE_ACTIONS, type ServiceAction } from "./service";
 
 // 첫 실행 마법사 — 설정 파일이 없을 때(또는 `dodok-runner setup`) 터미널에서 서버 주소·토큰·루트·권한 상한을 묻고 설정을 쓴다.
 // 묻지 않는 키는 스키마 기본값을 그대로 적는다 — 나중에 손으로 고칠 자리가 파일에 보이게. 토큰은 설정 본문이 아니라 tokenFile 에만 둔다
@@ -205,9 +206,12 @@ export type CliPlan =
   | { kind: "wizard"; confirmOverwrite: boolean }
   | { kind: "token" }
   | { kind: "load" }
+  | { kind: "service"; action: ServiceAction; follow: boolean }
   | { kind: "error"; message: string };
 
 const COMMANDS = new Set(["setup", "token"]);
+const isServiceAction = (a: string | undefined): a is ServiceAction =>
+  (SERVICE_ACTIONS as readonly string[]).includes(a ?? "");
 
 /**
  * 시작할 길(main.ts) — 마법사는 설정 파일이 없을 때(또는 setup)와 터미널일 때만. 설정이 있는데 깨졌으면 덮지 않고 로더가 오류로 끝낸다.
@@ -217,10 +221,21 @@ export function planCli(opts: {
   positionals: readonly string[];
   help?: boolean;
   version?: boolean;
+  /** -f — service logs 에만 */
+  follow?: boolean;
   configExists: boolean;
   interactive: boolean;
 }): CliPlan {
   const [command, ...rest] = opts.positionals;
+  // service 는 터미널이 아니어도 된다(설정은 install 이 따로 검사한다) — 설정 파일 유무와 무관하다
+  if (command === "service") {
+    const action = rest[0];
+    if (rest.length !== 1 || !isServiceAction(action) || (opts.follow && action !== "logs"))
+      return { kind: "usage" };
+    if (opts.help) return { kind: "help" };
+    return { kind: "service", action, follow: opts.follow === true };
+  }
+  if (opts.follow) return { kind: "usage" };
   if (rest.length > 0 || (command !== undefined && !COMMANDS.has(command))) return { kind: "usage" };
   if (opts.help) return { kind: "help" };
   if (opts.version) return { kind: "version" };

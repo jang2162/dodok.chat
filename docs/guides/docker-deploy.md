@@ -473,12 +473,28 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 - **토큰 폐기·다시 발급·같은 토큰으로 다른 러너가 붙음** — 서버가 끊은 것이라 러너는 도는 런을 멈추고(아래 「끄기」와 같이 최대 5초 기다린다 — CLI 가 남아 턴을 이어 가지 않게) 사유를 한 줄 찍고 **끝난다**(종료 코드 2 — 같은 토큰의 두 러너가 서로를 밀어내지 않게). 다시 띄워야 한다. 서버가 러너를 거절하면(핸드셰이크의 토큰 거절 `UNAUTHORIZED`, hello 의 판본 불일치 `PROTOCOL_MISMATCH`) 역시 같은 방식으로 끝난다 — 토큰을 확인하거나 러너를 다시 받는다. 인증 실패가 반복돼 주소가 막힌 것(`RATE_LIMITED`)은 끝나지 않고 풀릴 때까지 다시 시도한다(아래 「운영 화면」 레이트리밋 표의 `bridgeFail`).
 - **끄기** — `Ctrl+C`(SIGINT) 또는 SIGTERM. 러너가 도는 런을 멈추고(최대 5초) 끝난다 — 그 런은 채널에 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 카드로 닫히고, 러너를 다시 띄운 뒤 「다시 실행」으로 같은 세션을 이어 간다. 대기열에 서 있던 런도 같다. 한 번 더 누르면 기다리지 않고 끝난다. ⚠ `kill -9` 는 쓰지 않는다 — 러너만 죽고 CLI 가 남아 그 턴을 끝까지 돈다(모델 비용이 들고, 채널에 없던 답이 세션 이력에 남는다 — `docs/superpowers/reports/2026-09-29-claude-runner-harness-live-smoke-report.md` 「19.4 새로 찾은 것 (코드는 고치지 않았다)」).
 
-**백그라운드로 띄우기** — 러너에는 스스로 데몬이 되는 옵션이 없다. 터미널을 닫아도, 재부팅·로그인 뒤에도 돌게 하려면 OS 의 서비스 관리자(macOS launchd · Linux systemd)로 띄운다. Windows 는 이 문서가 다루지 않는다.
+**백그라운드로 띄우기** — 터미널을 닫아도, 재부팅·로그인 뒤에도 돌게 하려면 `dodok-runner service` 로 OS 의 서비스 관리자(macOS launchd 사용자 LaunchAgent · Linux systemd 사용자 서비스)에 등록한다. 러너가 스스로 데몬이 되는 옵션은 없다. Windows 는 이 문서가 다루지 않는다(`service` 는 한 줄로 알리고 1 로 끝난다). 설계는 `docs/superpowers/specs/2026-11-27-runner-service-command-design.md`.
 
-- **먼저 터미널에서 한 번 띄운다** — 서비스로 띄운 러너는 터미널이 아니라 설정을 묻지 않고 끝난다. 위 3~5번으로 Claude 로그인·설정 파일(`~/.dodok-runner/config.json`)·토큰 파일을 만들고 `연결됨` 을 본 뒤 `Ctrl+C` 로 끈다. `dodok-runner --check-config` 가 「설정 확인 — 이상 없음」을 찍고 0 으로 끝나면 설정은 됐다.
-- **원격 업데이트를 끈다** — 설정 파일에 `"remoteUpdate": false` 를 넣는다. 웹의 「업데이트」는 러너가 자기를 서비스 관리자 **밖에** 다시 띄우고 끝나는 방식이라(위 「업데이트」), 서비스로 띄운 러너에서는 그 뒤 동작을 재지 않았다. 올릴 때는 `npm i -g @dodok/runner` 뒤 서비스를 다시 시작한다(아래 표).
-- **두 값을 적어 둔다** — 러너가 잘 도는 그 터미널에서 `command -v dodok-runner`(실행 파일 경로)와 `echo "$PATH"`. 서비스 관리자는 로그인 셸의 `PATH` 를 읽지 않는다 — `PATH` 를 넘기지 않으면 `dodok-runner` 의 `#!/usr/bin/env node` 가 `node` 를 못 찾고(mise·nvm·Homebrew 의 node), 러너가 설치본 `claude` 대신 번들 CLI 로 돈다. 아래 `<RUNNER>`·`<PATH>` 자리에 그대로 넣는다(`~` 는 쓰지 않고 절대 경로로).
-- **다시 띄우는 조건** — 러너는 네트워크·서버가 끊겨도 스스로 다시 붙으므로(위 「끊김·끄기」) 서비스 관리자가 다시 띄울 일은 거의 없다. 러너가 **스스로 끝나는** 것은 사람이 손봐야 하는 경우다: 종료 코드 1(설정 오류)·2(토큰 폐기·다시 발급·같은 토큰의 다른 러너·`UNAUTHORIZED`·`PROTOCOL_MISMATCH`). 코드 2 를 다시 띄우면 옛 토큰으로 되풀이해 붙다가 그 주소가 잠시 막히므로 아래 설정은 2 를 다시 띄우지 않는다. 끌 때 서비스 관리자가 보내는 SIGTERM 은 `Ctrl+C` 와 같다(도는 런을 멈추고 최대 약 11초 뒤 끝난다) — 아래 설정은 30초를 기다린다.
+- **먼저 터미널에서 한 번 띄운다** — 서비스로 띄운 러너는 터미널이 아니라 설정을 묻지 않고 끝난다. 위 3~5번으로 Claude 로그인·설정 파일(`~/.dodok-runner/config.json`)·토큰 파일을 만들고 `연결됨` 을 본 뒤 `Ctrl+C` 로 끈다.
+- **등록** — 러너가 잘 돌던 **그 터미널에서** `dodok-runner service install`(다른 설정이면 `--config <경로>`). install 은 `--check-config` 와 같은 검사를 먼저 하고, 실패하면 사유를 찍고 아무것도 쓰지 않는다. 토큰은 `tokenFile` 이어야 한다 — env `DODOK_RUNNER_TOKEN` 으로만 토큰을 주는 설정은 거절한다(서비스에는 env 를 넘기지 않는다). 실행 줄은 지금 프로세스의 절대 경로(node `process.execPath` + 러너 진입 파일의 실제 경로 + 기본 자리가 아니면 `--config <절대 경로>`)로 짓고, env 는 **지금 셸의 `PATH`**(설치본 `claude`·npm 을 찾는 데 쓴다)와 `DODOK_RUNNER_SERVICE` 둘만 싣는다 — 셸의 `CLAUDE_CONFIG_DIR` 같은 다른 env 는 가지 않으니 전용 로그인은 설정의 `configDir` 로 적는다. 이미 등록돼 있으면 파일을 새로 쓰고 다시 띄운다(그 파일이 install 이 만든 것이 아니면 — 생성 파일 첫머리의 「dodok-runner service install 이 만든 파일」 주석이 없으면 — 「손으로 쓴 서비스 파일을 덮습니다 — 옛 파일은 <경로>.bak」 을 찍고 옛 파일을 `.bak` 으로 남긴다) — node 판을 바꾸거나 러너를 다른 자리에 깔았으면 `install` 을 다시 부른다(같은 자리에 `npm i -g` 로 올렸으면 `restart` 로 된다). 그 뒤 `dodok-runner service logs -f` 로 `연결됨` 을 본다. 같은 토큰으로 터미널에 러너가 남아 있으면 서비스 쪽이 붙고 터미널 쪽은 코드 2 로 끝난다. Linux 는 `loginctl enable-linger` 도 시도한다 — 실패하면(권한) `sudo loginctl enable-linger <사용자>` 를 한 번 돌리라고 알린다(없으면 로그인한 동안만 돈다).
+- **원격 업데이트** — 서비스로 띄운 러너도 웹의 「업데이트」를 받는다. 설치·`--check-config`·되돌리기는 터미널과 같고, 마지막에 분리된 러너를 띄우는 대신 서비스 관리자에게 다시 시작을 맡긴다(macOS `launchctl kickstart -k gui/<uid>/chat.dodok.runner`, Linux `systemctl --user --no-block restart dodok-runner`) — 새 판도 같은 서비스로 뜬다. `remoteUpdate: false` 는 필요 없다. 그 명령이 곧바로 실패하거나 60초 안에 러너를 끝내지 않으면(손으로 쓴 서비스 파일의 라벨·유닛 이름이 다름, SSH 세션이라 launchd 도메인이 다름 등) 러너는 로그에 사유와 「다음 다시 시작 때 새 판으로 뜹니다 — 지금 바꾸려면 dodok-runner service restart」를 남기고 지금 판으로 다시 붙는다(새 판은 이미 깔려 있다).
+- **다시 띄우는 조건** — 러너는 네트워크·서버가 끊겨도 스스로 다시 붙으므로(위 「끊김·끄기」) 서비스 관리자가 다시 띄울 일은 거의 없다. 러너가 **스스로 끝나는** 것은 사람이 손봐야 하는 경우다: 종료 코드 1(설정 오류)·2(토큰 폐기·다시 발급·같은 토큰의 다른 러너·`UNAUTHORIZED`·`PROTOCOL_MISMATCH`). 코드 2 를 다시 띄우면 옛 토큰으로 되풀이해 붙다가 그 주소가 잠시 막히므로 생성하는 설정은 2 를 다시 띄우지 않는다. 끌 때 서비스 관리자가 보내는 SIGTERM 은 `Ctrl+C` 와 같다(도는 런을 멈추고 최대 약 11초 뒤 끝난다) — 생성하는 설정은 30초를 기다린다.
+
+| 하려는 일 | 명령 |
+| --- | --- |
+| 등록·다시 등록(node·러너 자리나 설정 자리를 바꾼 뒤) | `dodok-runner service install [--config <경로>]` |
+| 상태(등록·실행 중·pid·마지막 종료 코드·로그 자리) | `dodok-runner service status` |
+| 로그(끝 200줄, `-f` 면 따라간다) | `dodok-runner service logs [-f]` |
+| 다시 시작(설정·토큰을 바꾼 뒤, 손으로 `npm i -g` 로 올린 뒤) | `dodok-runner service restart` |
+| 멈춤(SIGTERM — 다음 로그인에 다시 뜬다)·시작 | `dodok-runner service stop` · `dodok-runner service start` |
+| 서비스 해제(설정·토큰·로그는 남긴다) | `dodok-runner service uninstall` |
+
+- **스스로 끝났으면 로그의 마지막 줄을 본다** — `status` 가 코드 2 면 「토큰이나 판본 문제 — 로그 마지막 줄을 보세요」를 붙인다(토큰이면 `dodok-runner token` 으로 새 토큰을 넣고 `restart`, 판본이면 러너를 올리고 `restart`). 서비스 관리자는 이 경우 다시 띄우지 않는다.
+- **토큰을 다시 발급할 때** — `service stop` 뒤 `dodok-runner token` 을 터미널에서 돌리고 `service start`(아래 「토큰 다시 발급」의 ⚠ 와 같다).
+- **`kill -9` 를 쓰지 않는다** — 위 「끊김·끄기」. 끄기는 `service stop` 으로.
+- macOS 로그(설정 디렉터리 옆 `logs/runner.log`, 기본 `~/.dodok-runner/logs/runner.log`)는 저절로 잘리지 않는다 — 커지면 서비스를 멈추고 파일을 비운다. Linux 로그는 journal(`journalctl --user -u dodok-runner`)이다. 전경에서 잠깐 띄우는 것으로 충분하면 서비스 대신 `tmux`·`screen` 세션 안에서 `dodok-runner` 를 띄우고 세션에서 빠져나와도 된다. `nohup dodok-runner &` 는 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받으므로(위 「끊김·끄기」) 터미널을 닫으면 같이 끝난다.
+
+**직접 쓰려면** — `service install` 이 짓는 파일과 값이 같다(정본 `packages/claude-runner/src/service.ts` — 실행 줄만 다르다: install 은 node 와 러너 진입 파일의 절대 경로를 따로 적고 `PATH` 를 따옴표로 감싼다). 손으로 쓸 때는 러너가 잘 도는 터미널에서 `command -v dodok-runner`(실행 파일 경로)와 `echo "$PATH"` 를 적어 아래 `<RUNNER>`·`<PATH>` 자리에 넣는다(`~` 는 쓰지 않고 절대 경로로). 서비스 관리자는 로그인 셸의 `PATH` 를 읽지 않는다 — `PATH` 를 넘기지 않으면 `dodok-runner` 의 `#!/usr/bin/env node` 가 `node` 를 못 찾고(mise·nvm·Homebrew 의 node), 러너가 설치본 `claude` 대신 번들 CLI 로 돈다. `DODOK_RUNNER_SERVICE` 를 빼면 원격 업데이트가 새 판을 서비스 **밖에** 분리된 프로세스로 띄운다 — 그때는 `"remoteUpdate": false` 로 끄고 손으로 올린 뒤 서비스를 다시 시작한다.
 
 macOS — 사용자 LaunchAgent(로그인하면 뜬다. 로그인 키체인의 Claude 로그인을 그대로 쓴다). `~/Library/LaunchAgents/chat.dodok.runner.plist`:
 
@@ -491,7 +507,10 @@ macOS — 사용자 LaunchAgent(로그인하면 뜬다. 로그인 키체인의 C
   <key>ProgramArguments</key>
   <array><string><RUNNER></string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string><PATH></string></dict>
+  <dict>
+    <key>PATH</key><string><PATH></string>
+    <key>DODOK_RUNNER_SERVICE</key><string>launchd</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <!-- 비정상 종료(신호로 죽음)만 다시 띄운다 — 코드 1·2 는 사람이 본다 -->
   <key>KeepAlive</key><dict><key>Crashed</key><true/></dict>
@@ -521,6 +540,7 @@ StartLimitBurst=5
 [Service]
 ExecStart=<RUNNER>
 Environment=PATH=<PATH>
+Environment=DODOK_RUNNER_SERVICE=systemd
 # 코드 1·비정상 종료는 다시 띄우고, 2(토큰·프로토콜)는 다시 띄우지 않는다
 Restart=on-failure
 RestartPreventExitStatus=2
@@ -538,6 +558,8 @@ loginctl enable-linger "$USER"     # 로그아웃해도·부팅하자마자 돌�
 journalctl --user -u dodok-runner -f
 ```
 
+손으로 등록한 서비스의 명령(`dodok-runner service …` 가 부르는 것과 같다):
+
 | 하려는 일 | macOS | Linux |
 | --- | --- | --- |
 | 상태·로그 | `launchctl print gui/$(id -u)/chat.dodok.runner` · `tail -f ~/.dodok-runner/logs/runner.log` | `systemctl --user status dodok-runner` · `journalctl --user -u dodok-runner -f` |
@@ -545,16 +567,11 @@ journalctl --user -u dodok-runner -f
 | 멈춤(다음 로그인에 다시 뜬다) | `launchctl kill TERM gui/$(id -u)/chat.dodok.runner` | `systemctl --user stop dodok-runner` |
 | 서비스 해제 | `launchctl bootout gui/$(id -u)/chat.dodok.runner` 뒤 plist 삭제 | `systemctl --user disable --now dodok-runner` 뒤 파일 삭제 |
 
-- **스스로 끝났으면 로그의 마지막 줄을 본다** — 사유가 한 줄로 찍혀 있다(토큰이면 `dodok-runner token` 으로 새 토큰을 넣고 다시 시작, 판본이면 러너를 올리고 다시 시작). 서비스 관리자는 이 경우 다시 띄우지 않는다.
-- **토큰을 다시 발급할 때** — 서비스를 먼저 멈추고(위 표) `dodok-runner token` 을 터미널에서 돌린 뒤 다시 시작한다(아래 「토큰 다시 발급」의 ⚠ 와 같다).
-- **`kill -9` 를 쓰지 않는다** — 위 「끊김·끄기」. 끄기는 표의 명령으로만.
-- macOS 로그는 저절로 잘리지 않는다 — 커지면 서비스를 멈추고 파일을 비운다. 전경에서 잠깐 띄우는 것으로 충분하면 서비스 대신 `tmux`·`screen` 세션 안에서 `dodok-runner` 를 띄우고 세션에서 빠져나와도 된다. `nohup dodok-runner &` 는 쓰지 않는다 — 러너가 SIGHUP 을 끄기 신호로 받으므로(위 「끊김·끄기」) 터미널을 닫으면 같이 끝난다.
-
 **토큰 다시 발급** — 러너 상세의 「러너 토큰」 줄의 「다시 발급」(그 러너의 주인·admin 이상): 같은 러너의 원문만 바뀐다 — 옛 원문은 곧바로 안 통하고 그 토큰으로 붙은 러너는 끊겨 끝나며(위), 그 러너에서 돌던 런은 「다시 실행」 카드로 닫힌다. **프로젝트·에이전트·세션은 그대로 그 러너에 남는다.** 새 원문은 한 번만 보이고, 그 대화상자의 「AI 에게 맡기기」 줄은 설치가 아니라 「토큰만 바꾸고 다시 띄우기」다. 대화상자의 「실행」 칸은 `dodok-runner token` 이다 — 설정은 그대로 두고 새 원문만 `tokenFile` 자리에 넣는다(4번). ⚠ 다시 발급하면 **먼저 러너 서비스를 멈추고** `dodok-runner token` 으로 새 토큰을 넣거나 `tokenFile`(기본 `~/.dodok-runner/token`)에 직접 덮어쓴 뒤 띄운다 — 옛 토큰으로 되풀이해 붙으면 그 주소가 잠시 막힌다(실패 카운터). 폐기한 토큰은 다시 발급할 수 없다(새 토큰을 발급한다).
 
 **러너 폐기·옮기기** — 토큰 「폐기」는 그 러너를 닫는다 — 프로젝트·에이전트는 남지만 런은 `ADAPTER_UNAVAILABLE` 이다. 다른 머신으로 옮기려면 새 토큰으로 그 머신에 러너를 붙이고, 그 프로젝트 상세의 「옮기기」(admin 이상)로 옮길 러너를 고른다 — 옮길 러너가 붙어 있고 **같은 루트 id·같은 상대 경로**에 디렉터리가 있어야 하며, 옮길 러너의 천장(프로그램·권한 상한·도구 상한) 밖인 에이전트가 하나라도 있으면 아무것도 옮기지 않는다. 그 프로젝트의 에이전트가 함께 옮겨 가고 다음 런은 새 세션이다(세션 전사는 옛 머신에 남는다).
 
-**업데이트** — 웹에서: 「설정 → 연결」의 러너 상세가 「판 X · 최신 Y」를 보이고, 최신(npm `@dodok/runner` 의 `latest`, 서버가 1시간 쥔다 — 서버가 `registry.npmjs.org` 에 나가야 한다)이 더 높으면 「업데이트」로 그 머신의 러너가 자기 npm 전역 자리(`<prefix>/lib/node_modules/@dodok/runner`)에 `npm install --global --prefix <prefix> @dodok/runner@<판>` 을 돌리고 같은 인자·env 로 스스로 다시 뜬다(도는 런이 있으면 거절). 다시 뜨기 전에 새 판을 지금 설정으로 `dodok-runner --check-config`(설정만 읽고 끝남, 상한 20초)로 돌려 보고, 0 이 아니면 옛 판으로 `npm install --global --prefix <prefix> @dodok/runner@<옛 판>` 되돌린 뒤 지금 러너가 그대로 붙어 있는다(웹에는 사유 한 줄). npm 레지스트리는 그 머신의 npm 설정 그대로다. 원격 업데이트를 받지 않으려면 그 머신의 러너 설정에 `"remoteUpdate": false` 를 넣고 러너를 다시 띄운다(기본은 받는다). 원격 업데이트는 터미널에서 띄운 러너를 기준으로 만들었다 — 서비스 관리자(launchd·systemd)로 띄운 러너는 그 뒤 동작을 재지 않았다(다시 뜬 러너는 서비스 관리자 밖의 분리된 프로세스다. systemd 는 주 프로세스가 끝나면 같은 cgroup 의 그 자식까지 거둘 수 있고, 끝나면 다시 띄우는 설정이면 두 러너가 같은 토큰으로 잠깐 서로를 밀어낸다). 서비스로 띄웠으면 `remoteUpdate: false` 로 끄고 손으로 올리거나, 업데이트 뒤 서비스를 한 번 다시 시작한다. 손으로: npm 으로 깐 러너는 2번의 설치 줄을 다시 돌려 새 판으로 올리고 러너를 다시 띄운다(`npm i -g` 가 같은 이름을 덮는다). 서버를 올리면(아래 「업데이트」) 새 이미지가 그 커밋의 러너 tgz 를 품는다 — 「설정 → 연결」의 토큰 줄은 번들 sha256 으로 견주어 「서버와 같은 빌드입니다」나 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」를 보인다. 다른 빌드는 경고가 아니다: npm 판은 서버와 커밋이 달라도 서버의 러너 프로토콜과 맞으면 그대로 붙는다(안 맞으면 러너가 `PROTOCOL_MISMATCH` 로 끝난다 — 아래 「문제 해결」). 서버와 같은 빌드가 필요하면 2번의 「서버와 같은 빌드가 필요할 때」로 다시 설치한다. 토큰·설정 파일·로그인은 그대로다. SDK 판본은 러너가 정확 핀으로 들고 오므로 [R] 에서 따로 올리지 않는다.
+**업데이트** — 웹에서: 「설정 → 연결」의 러너 상세가 「판 X · 최신 Y」를 보이고, 최신(npm `@dodok/runner` 의 `latest`, 서버가 1시간 쥔다 — 서버가 `registry.npmjs.org` 에 나가야 한다)이 더 높으면 「업데이트」로 그 머신의 러너가 자기 npm 전역 자리(`<prefix>/lib/node_modules/@dodok/runner`)에 `npm install --global --prefix <prefix> @dodok/runner@<판>` 을 돌리고 같은 인자·env 로 스스로 다시 뜬다(도는 런이 있으면 거절). 다시 뜨기 전에 새 판을 지금 설정으로 `dodok-runner --check-config`(설정만 읽고 끝남, 상한 20초)로 돌려 보고, 0 이 아니면 옛 판으로 `npm install --global --prefix <prefix> @dodok/runner@<옛 판>` 되돌린 뒤 지금 러너가 그대로 붙어 있는다(웹에는 사유 한 줄). npm 레지스트리는 그 머신의 npm 설정 그대로다. 원격 업데이트를 받지 않으려면 그 머신의 러너 설정에 `"remoteUpdate": false` 를 넣고 러너를 다시 띄운다(기본은 받는다). `dodok-runner service install` 로 띄운 러너는 마지막 단계만 다르다 — 분리된 러너를 띄우는 대신 서비스 관리자에게 다시 시작을 맡겨(`launchctl kickstart -k` · `systemctl --user --no-block restart`) 새 판도 같은 서비스로 뜬다(위 「백그라운드로 띄우기」 — 그 명령이 실패하거나 60초 안에 러너를 끝내지 않으면 지금 판으로 다시 붙고, 새 판은 `dodok-runner service restart` 때 뜬다). 서비스 파일을 손으로 쓰면서 `DODOK_RUNNER_SERVICE` 를 빼면 새 판이 서비스 밖의 분리된 프로세스로 뜬다(systemd 는 주 프로세스가 끝나면 같은 cgroup 의 그 자식까지 거둘 수 있고, 끝나면 다시 띄우는 설정이면 두 러너가 같은 토큰으로 잠깐 서로를 밀어낸다) — 그때는 `remoteUpdate: false` 로 끄고 손으로 올린다. 손으로: npm 으로 깐 러너는 2번의 설치 줄을 다시 돌려 새 판으로 올리고 러너를 다시 띄운다(`npm i -g` 가 같은 이름을 덮는다 — 서비스로 띄웠으면 `dodok-runner service restart`). 서버를 올리면(아래 「업데이트」) 새 이미지가 그 커밋의 러너 tgz 를 품는다 — 「설정 → 연결」의 토큰 줄은 번들 sha256 으로 견주어 「서버와 같은 빌드입니다」나 「서버와 다른 빌드입니다 — npm 판이면 정상입니다. …」를 보인다. 다른 빌드는 경고가 아니다: npm 판은 서버와 커밋이 달라도 서버의 러너 프로토콜과 맞으면 그대로 붙는다(안 맞으면 러너가 `PROTOCOL_MISMATCH` 로 끝난다 — 아래 「문제 해결」). 서버와 같은 빌드가 필요하면 2번의 「서버와 같은 빌드가 필요할 때」로 다시 설치한다. 토큰·설정 파일·로그인은 그대로다. SDK 판본은 러너가 정확 핀으로 들고 오므로 [R] 에서 따로 올리지 않는다.
 
 **봇의 도구(앱에서 적는 MCP)** — 봇 상세의 「도구」에 적은 MCP 서버를 이 머신이 어디까지 받을지는 러너 설정의 `"appMcp"` 가 정한다: `"http"`(기본 — 원격 http·sse 만, 로컬·사설 주소 제외)·`"off"`(모두 막음)·`"all"`(stdio 명령 서버도 — 앱의 이 러너 주인·admin 을 이 머신에서 코드를 돌려도 되는 사람으로 믿는다는 뜻이다). `"all"` 이면 `"appMcpCommands": ["npx", "uvx"]` 로 실행 파일 이름(basename)을 좁힐 수 있다 — 그래도 `args`·`env` 로 임의 코드가 돈다. 바꾸면 러너를 다시 띄운다. 러너는 런마다 이 설정으로 다시 판정하고 막은 서버는 로그 `bot mcp blocked <이름> <사유>` 한 줄로 남긴다. 자세한 것은 `packages/claude-runner/README.md` 「봇의 도구」. 봇의 업데이트 요청(「이 러너 설정 제어」)은 바로 보내지 않고 그 러너의 런이 모두 끝나면 보낸다(「업데이트 대기」 — `docs/manual/user-guide.md`).
 

@@ -19,6 +19,7 @@ import {
 import { applyClaudeConfigDirEnv } from "./drivers/claude/config-dir";
 import { realSdk } from "./drivers/claude/sdk";
 import { selfUpdate } from "./self-update";
+import { nodeServiceDeps, runServiceCommand } from "./service";
 import {
   createTerminalPrompter,
   detectClaudeForSetup,
@@ -43,6 +44,8 @@ const USAGE = [
   "        dodok-runner --check-config [--config <경로>]  설정만 읽고 끝난다(이상 없으면 0)",
   "        dodok-runner setup [--config <경로>]  설정을 터미널에서 다시 만든다(지금 값이 기본값)",
   "        dodok-runner token [--config <경로>]  토큰만 바꾼다(다시 발급했을 때)",
+  "        dodok-runner service <install|uninstall|start|stop|restart|status|logs [-f]> [--config <경로>]",
+  "                     OS 서비스(macOS launchd · Linux systemd)로 띄운다 — 터미널을 닫아도·재부팅 뒤에도 돈다",
   "설정 파일이 없으면 터미널에서 실행할 때 설정을 묻는다.",
 ].join("\n");
 
@@ -63,6 +66,8 @@ async function main(): Promise<void> {
         config: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
+        // service logs -f — 로그를 따라간다
+        follow: { type: "boolean", short: "f" },
         // 원격 업데이트의 새 판 검사(self-update.ts CHECK_CONFIG_FLAG) — 설정만 읽고 0/1 로 끝난다
         "check-config": { type: "boolean" },
       },
@@ -89,6 +94,7 @@ async function main(): Promise<void> {
     positionals,
     help: args.help,
     version: args.version,
+    follow: args.follow,
     configExists: existsSync(configPath),
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
   });
@@ -109,6 +115,15 @@ async function main(): Promise<void> {
   if (plan.kind === "error") {
     console.error(`dodok-runner: ${plan.message}`);
     process.exit(1);
+  }
+  if (plan.kind === "service") {
+    process.exit(
+      await runServiceCommand(
+        plan.action,
+        { configPath, follow: plan.follow },
+        nodeServiceDeps({ home, env: process.env, argv: process.argv }),
+      ),
+    );
   }
   if (plan.kind === "token") {
     let result;
