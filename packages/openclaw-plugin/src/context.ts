@@ -23,7 +23,10 @@ export function formatInboundContext(d: InboundDeliver): string {
   const lines: string[] = [];
   const thread = d.context.thread;
   const threadPart = d.threadId ? ` thread=${d.threadId}` : "";
-  lines.push(`[dodok context] channel=${d.channelId}${threadPart} you=@${self?.handle ?? d.agentId}`);
+  // session= 은 대화 id — OpenClaw chat_id(`channel:<id>`)·세션 키의 그 id 다. 채널 id 만 실으면 에이전트가 둘을 다른 방으로 읽는다
+  lines.push(
+    `[dodok context] channel=${d.channelId} session=${d.conversationId}${threadPart} you=@${self?.handle ?? d.agentId}`,
+  );
   if (d.dm) lines.push(formatDmLine(d.dm.ownerHandle));
   if (d.groupDm) lines.push(formatGroupDmLine());
   lines.push(formatSessionLine(d.conversationTitle));

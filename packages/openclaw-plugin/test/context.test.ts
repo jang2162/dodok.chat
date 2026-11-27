@@ -57,10 +57,17 @@ const seoul = (d: InboundDeliver): InboundDeliver => ({
 });
 
 describe("formatInboundContext", () => {
+  it("첫 줄의 session= 은 대화 id 다 — 채널 id 와 다른 세션이면 둘 다 싣는다(OpenClaw chat_id·세션 키의 그 id)", () => {
+    const CONV = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+    expect(formatInboundContext({ ...deliver, conversationId: CONV }).split("\n")[0]).toBe(
+      `[dodok context] channel=${CH} session=${CONV} you=@researcher`,
+    );
+  });
+
   it("스펙 8.3 형식 (Asia/Seoul 시각) — channelPrompt·promptOverride 줄은 헤더에 넣지 않는다", () => {
     expect(formatInboundContext(seoul(deliver))).toBe(
       [
-        `[dodok context] channel=${CH} you=@researcher`,
+        `[dodok context] channel=${CH} session=${CH} you=@researcher`,
         "세션: 배포 점검",
         "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
         "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
@@ -136,7 +143,7 @@ describe("formatInboundContext DM", () => {
   it("`[dodok context]` 줄 바로 다음이 DM 줄, 그다음 세션 줄 — 참여자는 주인과 나", () => {
     const lines = formatInboundContext(seoul(dm)).split("\n");
     expect(lines.slice(0, 4)).toEqual([
-      `[dodok context] channel=${CH} you=@researcher`,
+      `[dodok context] channel=${CH} session=${CH} you=@researcher`,
       "다이렉트 메시지: @jang 님과 1:1",
       "세션: 배포 점검",
       "참여자: @jang(사람), @researcher(에이전트, 나)",
@@ -171,7 +178,7 @@ describe("formatInboundContext 그룹 DM", () => {
   it("`[dodok context]` 줄 바로 다음이 그룹 DM 줄, 그다음 세션 줄 — 참여자는 그룹의 참여자 전부", () => {
     const lines = formatInboundContext(seoul(group)).split("\n");
     expect(lines.slice(0, 4)).toEqual([
-      `[dodok context] channel=${CH} you=@researcher`,
+      `[dodok context] channel=${CH} session=${CH} you=@researcher`,
       "그룹 DM: 참여자만 보는 대화",
       "세션: 배포 점검",
       "참여자: @jang(사람), @mia(사람), @researcher(에이전트, 나), @planner(에이전트)",
@@ -205,7 +212,7 @@ describe("formatInboundContext — 세션에 초대한 에이전트 [세션 에�
       context: { ...deliver.context, participants: asGuest },
     }).split("\n");
     expect(lines.slice(0, 4)).toEqual([
-      `[dodok context] channel=${CH} you=@guest`,
+      `[dodok context] channel=${CH} session=${CH} you=@guest`,
       "세션: 배포 점검",
       "세션 초대: 이 세션에만 초대됐습니다 — 이 채널의 다른 세션에서는 불리지 않습니다.",
       "참여자: @jang(사람), @researcher(에이전트), @planner(에이전트), @guest(에이전트, 나, 초대됨)",
@@ -408,7 +415,7 @@ describe("formatInboundContext 스레드", () => {
   it("스레드 루트·스레드 최근 줄을 싣고 채널 최근 대화는 싣지 않는다", () => {
     expect(formatInboundContext(seoul(threaded))).toBe(
       [
-        `[dodok context] channel=${CH} thread=${ROOT} you=@researcher`,
+        `[dodok context] channel=${CH} session=${CH} thread=${ROOT} you=@researcher`,
         "세션: 배포 점검",
         "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
         "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",

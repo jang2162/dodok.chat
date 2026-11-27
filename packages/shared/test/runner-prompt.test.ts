@@ -651,7 +651,7 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(text).toContain("[09:00] @mia: 안녕");
     expect(text.endsWith("\n---\n@coder README 요약해 줘")).toBe(true);
     expect(text).toMatchInlineSnapshot(`
-      "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 you=@coder
+      "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 session=01a09fc9-d204-7551-89d6-38544d07a102 you=@coder
       보낸 사람: @mia(사람)
       시각 기준: UTC
       최근 대화:
@@ -736,7 +736,7 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
     expect(text).toContain("스레드 루트: [08:00] @fin: 배포 계획");
     expect(text).not.toContain("최근 대화:");
     expect(text).toMatchInlineSnapshot(`
-      "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 thread=01a09fc9-d204-7551-89d6-38544d07a1ff you=@coder
+      "[dodok context] channel=01a09fc9-d204-7551-89d6-38544d07a102 session=01a09fc9-d204-7551-89d6-38544d07a102 thread=01a09fc9-d204-7551-89d6-38544d07a1ff you=@coder
       보낸 사람: @mia(사람)
       시각 기준: UTC
       스레드 루트: [08:00] @fin: 배포 계획
@@ -806,7 +806,15 @@ describe("renderRunnerPrompt — 러너가 사용자 메시지로 보낼 본문"
   it("자기 참여자가 없으면 에이전트 id 로 나를 적는다", () => {
     const base = deliver();
     const text = renderRunnerPrompt({ ...base, context: { ...base.context, participants: [] } });
-    expect(text.split("\n")[0]).toBe(`[dodok context] channel=${CH} you=@coder`);
+    expect(text.split("\n")[0]).toBe(`[dodok context] channel=${CH} session=${CH} you=@coder`);
+  });
+
+  it("첫 줄의 session= 은 대화 id 다 — 채널 id 와 다른 세션이면 둘 다 싣는다", () => {
+    const CONV = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+    const text = renderRunnerPrompt(deliver({ conversationId: CONV, threadId: ROOT }));
+    expect(text.split("\n")[0]).toBe(
+      `[dodok context] channel=${CH} session=${CONV} thread=${ROOT} you=@coder`,
+    );
   });
 });
 

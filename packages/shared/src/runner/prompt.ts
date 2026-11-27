@@ -269,7 +269,8 @@ export function renderRunnerPrompt(deliver: InboundDeliver): string {
   const hhmm = (iso: string) => formatHeaderTime(iso, timeZone);
   // 시각 기준 줄은 시각을 찍는 이 본문에 둔다 — 턴 사실(buildTurnFacts)은 서버가 만들어 러너 판과 어긋날 수 있다
   const lines = [
-    `[dodok context] channel=${deliver.channelId}${threadPart} you=@${self?.handle ?? deliver.agentId}`,
+    // session= 은 대화 id(세션 키의 그 id) — 플러그인 헤더와 같은 꼴
+    `[dodok context] channel=${deliver.channelId} session=${deliver.conversationId}${threadPart} you=@${self?.handle ?? deliver.agentId}`,
     `보낸 사람: @${author.handle}(${AUTHOR_KIND[author.type]})`,
     formatTimeZoneLine(timeZone, deliver.message.ts),
   ];
