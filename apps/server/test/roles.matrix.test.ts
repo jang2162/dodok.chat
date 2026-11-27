@@ -2267,6 +2267,26 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }
     });
 
+    // 런 도중 시킨 사람이 비활성화되면 그 사람의 DM 도 없는 것과 같다 — OUT_OF_SCOPE 는 시킨 사람이 지금 읽는 DM 에만
+    it("제어 — 시킨 사람 mia 가 런 도중 비활성화되면 mia 의 다른 DM 은 NOT_FOUND 원문구", async () => {
+      const { principal } = openControlRun(app, mia.id);
+      const fx = dmFixture();
+      expect(await app.control.call(principal, "get_channel", { channelId: fx.channelId })).toMatchObject({
+        ok: false,
+        error: { code: "OUT_OF_SCOPE" },
+      });
+      const miaMembership = and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, mia.id));
+      app.db.update(memberships).set({ deactivatedAt: new Date() }).where(miaMembership).run();
+      try {
+        expect(await app.control.call(principal, "get_channel", { channelId: fx.channelId })).toEqual({
+          ok: false,
+          error: { code: "NOT_FOUND", message: "channel not found" },
+        });
+      } finally {
+        app.db.update(memberships).set({ deactivatedAt: null }).where(miaMembership).run();
+      }
+    });
+
     // 런의 채널이 DM 이어도 시킨 사람이 그 주인이 아니면 열리지 않는다 — readableChannelSqlFor 의 「dm_owner_id = 시킨 사람」(태스크 1
     // 재리뷰 N1). 지금은 DM 런의 시킨 사람이 늘 주인이라 닿는 길이 없다 — 행을 DB 로 바꿔 심층 방어를 고정한다
     it.each([

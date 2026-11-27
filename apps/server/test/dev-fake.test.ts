@@ -215,6 +215,11 @@ describe("fakeAgentScript", () => {
     // 봇 도구(러너 봇 2부 스펙 T5·T7) — 주 러너는 둘 다, 제한 러너는 없다
     expect(caps("main")).toEqual(expect.arrayContaining(["botMcp", "runnerControl"]));
     expect(caps("limited")).not.toContain("botMcp");
+    // 헤더 시간대·OUT_OF_SCOPE — 주 러너는 알고 제한 러너는 옛 러너처럼 모른다
+    expect(caps("main")).toEqual(expect.arrayContaining(["headerTimeZone", "outOfScope"]));
+    expect(caps("limited")).not.toContain("headerTimeZone");
+    expect(caps("limited")).not.toContain("outOfScope");
+    expect(DEV_FAKE_PLUGIN_HELLO.capabilities).toContain("outOfScope");
   });
 
   const owner: Author = { type: "user", handle: "owner" };

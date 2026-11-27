@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getChannel } from "../../src/modules/channels/service";
 import { createScenario } from "../fakes/scenario";
 import { FAKE_PLUGIN_HELLO } from "../fakes/fake-plugin";
-import { type FakeRunner, type FakeRunnerRun, startFakeRunner } from "../fakes/fake-runner";
+import { type FakeRunner, type FakeRunnerRun, fakeRunnerHello, startFakeRunner } from "../fakes/fake-runner";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { openChannelWire, resolveApproval, rest, sendMessage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
@@ -204,7 +204,10 @@ describe("제어 도구 통로", () => {
     ["outOfScope 를 알린 플러그인", "OUT_OF_SCOPE", true, { code: "OUT_OF_SCOPE" }],
     ["옛 플러그인(outOfScope 없음)", "NOT_FOUND", false, { code: "NOT_FOUND", message: "channel not found" }],
   ] as const)("플러그인 — 시킨 사람의 다른 DM 을 읽으면 %s 은 %s", async (_what, _code, announces, error) => {
-    const control: BridgeCapability[] = [...FAKE_PLUGIN_HELLO.capabilities, "control"];
+    const control: BridgeCapability[] = [
+      ...FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "outOfScope"),
+      "control",
+    ];
     live = await bootLiveApp({
       pluginHello: { ...FAKE_PLUGIN_HELLO, capabilities: announces ? [...control, "outOfScope"] : control },
     });
@@ -243,5 +246,49 @@ describe("제어 도구 통로", () => {
         args: { channelId: dm.id },
       }),
     ).toEqual({ ok: false, error: expect.objectContaining(error) });
+  });
+
+  // 러너 쪽 배선(app.ts 의 principalForRunner(..., peer.outOfScope)) — 옛 러너의 ErrorCode 에도 OUT_OF_SCOPE 가 없다
+  it.each([
+    ["outOfScope 를 알린 러너", "OUT_OF_SCOPE", true, { code: "OUT_OF_SCOPE" }],
+    ["옛 러너(outOfScope 없음)", "NOT_FOUND", false, { code: "NOT_FOUND", message: "channel not found" }],
+  ] as const)("러너 — 시킨 사람의 다른 DM 을 읽으면 %s 은 %s", async (_what, _code, announces, error) => {
+    live = await bootLiveApp();
+    const issued = IssueRunnerTokenResult.parse(
+      ok("POST runner-tokens", await rest(live, "POST", "/setup/runner-tokens", { label: "macbook" })),
+    );
+    const base = fakeRunnerHello().capabilities;
+    const capabilities = announces ? [...base, "outOfScope"] : [...base];
+    const results: ControlResult[] = [];
+    let dmId = "";
+    const runner = await startFakeRunner({
+      url: live.app.url,
+      token: issued.token,
+      hello: { capabilities },
+      script: async (run) => {
+        results.push(await run.control("get_channel", { channelId: dmId }));
+        run.final("봤습니다");
+      },
+    });
+    runners.push(runner);
+    const { agent: coder } = createRunnerAgentForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      handle: "coder",
+      name: "Coder",
+      runnerTokenId: issued.record.id,
+    });
+    // 시킨 사람(owner)의 DM — owner 는 읽지만 일반 채널 런의 범위 밖이다
+    dmId = createDmChannelForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      ownerId: live.app.ownerUserId,
+      agentId: coder.id,
+    }).id;
+    const channel = await channelWith(coder);
+    const log = await openChannelWire(live, channel.id, sockets);
+
+    await sendMessage(log.socket, channel.id, "@coder DM 읽어 줘");
+    const run = await runOf(log, coder.id);
+    expect((await log.terminal(run.id)).status).toBe("done");
+    expect(results).toEqual([{ ok: false, error: expect.objectContaining(error) }]);
   });
 });
