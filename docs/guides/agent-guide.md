@@ -93,7 +93,7 @@
 - **자리** — OpenClaw 는 이 헤더(`---` 앞). 러너는 턴 사실(`UserPromptSubmit` 훅 문맥 — 「대화 상대가 쓴 글이 아닙니다」로 시작한다)이 아니라 **사용자 메시지 본문**의 같은 자리다(아래 「러너 에이전트」 「받는 것 — 세 자리」 3). 문구는 shared `packages/shared/src/messages/links.ts` 의 `formatLinkedMessages` 하나가 만든다. 무엇을 싣는지는 서버 `apps/server/src/modules/runs/context.ts` 의 `linkedMessagesFor`, 설계는 `docs/superpowers/specs/2026-11-25-message-link-context-design.md`.
 - 링크를 모르는 옛 플러그인·옛 러너가 붙어 있으면 이 블록이 없고 링크 글만 본다(서버는 늘 싣고, 받는 쪽이 모르는 필드를 버린다) — 플러그인은 원격 업데이트하거나 다시 설치하고, 러너는 이 기능이 든 판으로 올린다. 러너는 사용자 메시지 본문을 러너 머신에서 그리기 때문이다(턴 사실만 서버가 만드는 스레드 소식과 다르다).
 - 더 앞뒤가 필요하면 제어 도구 `read_messages` 로 그 세션·스레드를 읽는다(읽기 범위는 같다). 링크 주소를 도구 인자로 옮기는 법: `/c/<channelId>/s/<conversationId>/t/<threadRootId>?m=<messageId>` 에서 `<conversationId>` 가 `read_messages` 의 `conversationId`, `/t/` 뒤가 `threadRootId`(스레드 링크일 때만), `?m=` 뒤는 그 메시지 id 다(`read_messages` 결과에서 그 id 를 찾는다). `/c/<channelId>/s/<conversationId>` 만 있는 세션 링크도 같다.
-- **사람이 이 턴의 글에 링크한 DM·그룹 DM 대화는 이 런에서만 읽힌다** — 그 대화 하나만이다(같은 DM 의 다른 세션, 그 DM 의 `get_channel`·`list_conversations`·`get_run`·검색은 그대로 범위 밖). 다음 턴에 링크 없이 부르면 다시 `OUT_OF_SCOPE` 다. **그 내용을 다른 채널의 답에 옮겨 적지 않는다** — 사람이 그 자리에 보여 주려고 붙인 것이 아니면 요약·인용도 하지 않는다.
+- **사람이 이 턴의 글에 링크한 DM·그룹 DM 대화는 이 런에서만 읽힌다** — 그 대화 하나만이다(같은 DM 의 다른 세션, 그 DM 의 `get_channel`·`list_conversations`·`get_run`·검색은 그대로 범위 밖). 다음 턴에 링크 없이 부르면 다시 `OUT_OF_SCOPE` 다. 그렇게 읽은 `read_messages` 결과에는 `scope: "linked"` 와 `notice`(「사람이 이 글에 링크한 DM 대화 — 이 런에서만 읽힙니다. 내용을 다른 대화에 옮기지 마세요」)가 붙는다 — 결과가 DM 이라는 표시다. **그 내용을 다른 채널의 답에 옮겨 적지 않는다** — 사람이 그 자리에 보여 주려고 붙인 것이 아니면 요약·인용도 하지 않는다.
 
 ### 자동화가 게시한 글 — 보낸 사람 `system:automation`
 

@@ -95,7 +95,7 @@ const LINK_GRANT_RUNS: ReadonlySet<RunTriggerKind> = new Set<RunTriggerKind>(["m
 /**
  * 그 런에서 더 읽을 수 있는 대화 — 런의 트리거 글이 사람(authorType user)의 글이고 그 글쓴이가 시킨 사람 본인일 때만, 그 글 본문의
  * 같은 오리진 대화 주소(세션·스레드·메시지 링크, shared findConversationLinks)가 가리키는 대화 id. 다음 런은 트리거 글이 달라 다시
- * 막힌다. 시킨 사람이 그 대화를 읽을 수 있는지는 여기서 보지 않는다 — readableConversationSqlFor 가 readableChannelSql 로 함께 건다.
+ * 막힌다. 런이 시작된 뒤 고친 트리거 글(editedAt > runs.createdAt)과 활성 멤버가 아닌 시킨 사람(roleOf)은 넓히지 않는다. 시킨 사람이 그 대화를 읽을 수 있는지는 여기서 보지 않는다 — readableConversationSqlFor 가 readableChannelSql 로 함께 건다.
  * 사람이 고른 「링크를 공유했을 때만 일시 허용」(에이전트 DM 스펙 「구현과 맞춘 것」 — PD3 을 좁힌 판정)
  */
 export function linkedConversationIds(db: DbOrTx, runId: string, origin: string | undefined): string[] {
@@ -107,14 +107,22 @@ export function linkedConversationIds(db: DbOrTx, runId: string, origin: string 
       authorType: messages.authorType,
       authorId: messages.authorId,
       bodyMd: messages.bodyMd,
+      editedAt: messages.editedAt,
+      runCreatedAt: runs.createdAt,
+      workspaceId: channels.workspaceId,
     })
     .from(runs)
     .innerJoin(messages, eq(messages.id, runs.triggerMessageId))
+    .innerJoin(channels, eq(channels.id, runs.channelId))
     .where(eq(runs.id, runId))
     .get();
   if (!row || row.requestedBy === null) return [];
   if (!LINK_GRANT_RUNS.has(row.triggerKind as RunTriggerKind)) return [];
   if (row.authorType !== "user" || row.authorId !== row.requestedBy) return [];
+  // 런이 시작된 뒤 고친 트리거 글은 넓히지 않는다 — 런 도중 링크를 더해 범위를 늘리는 길을 닫는다
+  if (row.editedAt !== null && row.editedAt > row.runCreatedAt) return [];
+  // 비활성 시킨 사람 — DM 이 있다는 것도 알리지 않는다(unreadableError 와 같은 판정)
+  if (roleOf(db, row.workspaceId, row.requestedBy) === undefined) return [];
   return findConversationLinks(row.bodyMd, origin);
 }
 

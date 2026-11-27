@@ -19,6 +19,8 @@ import {
   RUNNER_CONTROL_TOOLS,
   RUNNER_UPDATE_SCHEDULED_MESSAGE,
   findRunnerControlTool,
+  READ_MESSAGES_LINKED_NOTICE,
+  ReadMessagesScopeFields,
   UpdateChannelBody,
   UpdateChannelMemberBody,
 } from "../src/control";
@@ -365,6 +367,15 @@ describe("controlResultText — /mcp·러너·플러그인이 모델에게 보�
       isError: false,
     });
     expect(controlResultText({ ok: true, data: undefined })).toEqual({ text: "null", isError: false });
+  });
+
+  it("read_messages 의 범위 표시(scope·notice)는 선택 필드라 ControlResult 를 지나 모델 글에 그대로 실린다 — 옛 어댑터도 깨지지 않는다", () => {
+    const data = { messages: [], hasMore: false, scope: "linked", notice: READ_MESSAGES_LINKED_NOTICE };
+    const parsed = ControlResult.parse({ ok: true, data });
+    expect(JSON.parse(controlResultText(parsed).text)).toEqual(data);
+    expect(ReadMessagesScopeFields.parse({})).toEqual({});
+    expect(ReadMessagesScopeFields.safeParse({ scope: "other" }).success).toBe(false);
+    expect(READ_MESSAGES_LINKED_NOTICE).toContain("이 런에서만");
   });
 
   it("서버가 거절한 것은 { code, message } 의 JSON 이고 오류다", () => {

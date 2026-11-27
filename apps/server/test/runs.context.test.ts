@@ -11,7 +11,14 @@ import { eq } from "drizzle-orm";
 import { v7 as uuid, version } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { DbOrTx } from "../src/db/client";
-import { agents, attachments, channelMembers, componentInteractions, users } from "../src/db/schema.sqlite";
+import {
+  agents,
+  attachments,
+  channelMembers,
+  componentInteractions,
+  memberships,
+  users,
+} from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, updateAgentMember, updateChannel } from "../src/modules/channels/service";
@@ -880,6 +887,8 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
     const { workspaceId, userId, agentId, channelId } = seedChannelWithAgent(db, {
       channelName: "dodok-dev",
     });
+    // DM 링크 판정은 시킨 사람이 활성 멤버인지 본다(linkedConversationIds 의 roleOf) — 시드에는 membership 이 없다
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId, role: "owner" }).run();
     const general = channelConversation(db, channelId);
     const dm = createDmChannelForTest(db, { workspaceId, ownerId: userId, agentId });
     const dmConv = seedConversation(db, dm.id, { title: "DM 세션" });
@@ -1010,6 +1019,7 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
         createdAt: new Date(),
       })
       .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: otherId, role: "member" }).run();
     const direct = createDirectChannelForTest(db, { workspaceId, createdBy: userId, userIds: [otherId] });
     const secret = post(channelConversation(db, direct.id), "그룹 DM 글");
     const trigger = post(general, `@dev ${url(secret)}`);

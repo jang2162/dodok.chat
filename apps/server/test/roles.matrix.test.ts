@@ -7,6 +7,7 @@ import {
   type Channel,
   type ControlResult,
   type Message,
+  READ_MESSAGES_LINKED_NOTICE,
   type SearchResult,
   type TeamRole,
   type UnreadSnapshot,
@@ -2347,8 +2348,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
       it("① 시킨 사람 mia 가 자기 DM 대화 링크를 붙인 런은 그 대화를 읽는다(메시지 링크·세션 링크)", async () => {
         const fx = dmFixture();
         const bySession = linkRun(mia.id, `@dev 이 대화 봐 ${sessionLink(fx.channelId, fx.conversationId)}`);
-        const got = expectOk(await read(bySession.principal, fx.conversationId)) as { messages: Message[] };
+        const got = expectOk(await read(bySession.principal, fx.conversationId)) as {
+          messages: Message[];
+          scope?: string;
+          notice?: string;
+        };
         expect(got.messages.map((m) => m.id)).toContain(fx.rootId);
+        // 링크로 넓힌 결과에는 DM 이라는 표시가 실린다 — 원래 범위(일반 채널)의 결과에는 없다
+        expect(got).toMatchObject({ scope: "linked", notice: READ_MESSAGES_LINKED_NOTICE });
+        const plain = expectOk(await read(bySession.principal, bySession.trigger.conversationId)) as object;
+        expect(plain).not.toHaveProperty("scope");
+        expect(plain).not.toHaveProperty("notice");
         const byMessage = linkRun(
           mia.id,
           `[이 글](${ORIGIN}/c/${fx.channelId}/s/${fx.conversationId}?m=${fx.rootId}) 봐`,
@@ -2424,6 +2434,79 @@ describe("역할 매트릭스(스펙 2장)", () => {
         expect(
           await app.control.call(pat(ids.admin), "read_messages", { conversationId: fx.conversationId }),
         ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      });
+
+      it("⑦ 런이 시작된 뒤 고친 트리거 글은 넓히지 않는다 — 런 시작 때 글에 링크가 없었으면 그대로 OUT_OF_SCOPE", async () => {
+        const fx = dmFixture();
+        const run = linkRun(mia.id, "@dev 이따 링크 줄게");
+        expect(await read(run.principal, fx.conversationId)).toMatchObject({
+          ok: false,
+          error: { code: "OUT_OF_SCOPE" },
+        });
+        const createdAt = app.db
+          .select({ createdAt: runs.createdAt })
+          .from(runs)
+          .where(eq(runs.id, run.run.id))
+          .get()!.createdAt;
+        app.db
+          .update(messages)
+          .set({
+            bodyMd: `@dev 이 대화 봐 ${sessionLink(fx.channelId, fx.conversationId)}`,
+            editedAt: new Date(createdAt.getTime() + 1000),
+          })
+          .where(eq(messages.id, run.trigger.id))
+          .run();
+        expect(await read(run.principal, fx.conversationId)).toMatchObject({
+          ok: false,
+          error: { code: "OUT_OF_SCOPE" },
+        });
+        // 런 전에 고친 글(editedAt ≤ 런 시작)은 런이 본 그 글이라 넓힌다
+        app.db
+          .update(messages)
+          .set({ editedAt: new Date(createdAt.getTime() - 1000) })
+          .where(eq(messages.id, run.trigger.id))
+          .run();
+        expectOk(await read(run.principal, fx.conversationId));
+      });
+
+      it("⑧ 같은 링크 글이어도 런 종류가 멘션·자동 응답이 아니면 넓히지 않는다", async () => {
+        const fx = dmFixture();
+        const link = sessionLink(fx.channelId, fx.conversationId);
+        const cases = [
+          ["mention", true],
+          ["auto_respond", true],
+          ["command", false],
+          ["background", false],
+          ["continue", false],
+          ["relay", false],
+          ["interaction", false],
+        ] as const;
+        for (const [triggerKind, widens] of cases) {
+          const run = linkRun(mia.id, link);
+          app.db.update(runs).set({ triggerKind }).where(eq(runs.id, run.run.id)).run();
+          const got = await read(run.principal, fx.conversationId);
+          if (widens) expect(got.ok, triggerKind).toBe(true);
+          else expect(got, triggerKind).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
+        }
+      });
+
+      it("⑨ 시킨 사람이 런 도중 비활성화되면 링크 런도 NOT_FOUND — FORBIDDEN 으로 DM 이 있다는 것을 알리지 않는다", async () => {
+        const fx = dmFixture();
+        const { principal } = linkRun(mia.id, sessionLink(fx.channelId, fx.conversationId));
+        expectOk(await read(principal, fx.conversationId));
+        const miaMembership = and(
+          eq(memberships.workspaceId, app.workspaceId),
+          eq(memberships.userId, mia.id),
+        );
+        app.db.update(memberships).set({ deactivatedAt: new Date() }).where(miaMembership).run();
+        try {
+          expect(await read(principal, fx.conversationId)).toMatchObject({
+            ok: false,
+            error: { code: "NOT_FOUND" },
+          });
+        } finally {
+          app.db.update(memberships).set({ deactivatedAt: null }).where(miaMembership).run();
+        }
       });
     });
 

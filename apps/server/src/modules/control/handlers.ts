@@ -6,6 +6,8 @@ import {
   CreateRunnerProjectAgentBody,
   type Message,
   type OpsStatus,
+  READ_MESSAGES_LINKED_NOTICE,
+  type ReadMessagesScopeFields,
   RUNNER_UPDATE_SCHEDULED_MESSAGE,
   type RunnerControlToolName,
   type TeamRole,
@@ -400,9 +402,16 @@ export const HANDLERS: Handlers = {
     // 한 세션 안만 읽는다 — 채널 경로로 읽으면 세션이 섞인다(웹 REST /conversations/:id/messages 와 같은 규칙).
     // 읽기 범위는 채널 단위 그대로다: 채널 안 에이전트도 같은 채널의 다른 세션을 읽을 수 있다(채널 세션 스펙 「wire·REST」 장 —
     // 막는 것은 세션 밖으로 보내기뿐이다)
-    run: (ctx, input) => {
+    run: (ctx, input, principal) => {
       const conversation = getConversation(ctx.db, input.conversationId, ctx.workspaceId);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
+      // access 는 링크로 넓힌 범위로 통과했다 — 넓히지 않은 범위로 못 읽으면 그 링크 덕이라 결과에 DM 이라고 적는다
+      const linked =
+        principal.via === "agent" &&
+        !getReadableConversation(ctx.db, conversation.id, ctx.workspaceId, readerOf(principal));
+      const scopeFields: ReadMessagesScopeFields = linked
+        ? { scope: "linked", notice: READ_MESSAGES_LINKED_NOTICE }
+        : {};
       if (input.threadRootId !== undefined) {
         const root = getThreadRoot(ctx.db, conversation.channelId, input.threadRootId);
         if (!root || root.conversationId !== conversation.id) throw apiError("NOT_FOUND", "thread not found");
@@ -422,6 +431,7 @@ export const HANDLERS: Handlers = {
         messages: messages.map((m) => readable(handleOf, m)),
         hasMore: page.hasMore,
         ...(page.hasMoreAfter === undefined ? {} : { hasMoreAfter: page.hasMoreAfter }),
+        ...scopeFields,
       };
     },
   },
