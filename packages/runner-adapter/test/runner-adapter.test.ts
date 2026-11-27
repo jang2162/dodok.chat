@@ -901,6 +901,58 @@ describe("send", () => {
       },
     );
 
+    const helloOutside = (allowOutsideWorkdir: boolean | undefined) => {
+      const hello = helloWithCeiling("default");
+      const ceiling = hello.programs[0]!.ceiling;
+      return {
+        programs: [
+          {
+            ...hello.programs[0]!,
+            ceiling: allowOutsideWorkdir === undefined ? ceiling : { ...ceiling, allowOutsideWorkdir },
+          },
+        ],
+      };
+    };
+
+    it("작업 디렉터리 밖 허용 — 상한이 연 러너에는 정의 그대로 싣는다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, helloOutside(true));
+      h.defineAgent("coder", { allowOutsideWorkdir: true });
+      await startRun(h, r);
+      expect(r.runStarts[0]?.agent.allowOutsideWorkdir).toBe(true);
+    });
+
+    it.each([
+      ["상한이 막은 러너", false],
+      ["상한을 알리지 않은 옛 러너(그 키를 몰라 버리고 밖을 계속 묻는다)", undefined],
+    ] as const)(
+      "작업 디렉터리 밖 허용 — %s에는 run.start 를 보내지 않고 RUNNER_CEILING(outsideWorkdir)으로 닫는다",
+      async (_label, allow) => {
+        const h = await setup();
+        const r = await readyRunner(h, TOKEN_A, helloOutside(allow));
+        h.defineAgent("coder", { allowOutsideWorkdir: true });
+        const input = deliver();
+        const result = await h.adapter.send(input, {
+          connectionId: RUNNER_A_CONNECTION,
+          providerSessionId: SESSION_ID,
+        });
+        expect(result).toMatchObject({ admission: "dispatch", connectionId: RUNNER_A_CONNECTION });
+        await until(() => signals(h, input.runId).includes("gateway_error"), "ceiling error");
+        expect(runEvents(h, input.runId)).toEqual([
+          { type: "RUN_ERROR", runId: input.runId, code: "RUNNER_CEILING", message: "outsideWorkdir" },
+        ]);
+        expect(r.runStarts).toHaveLength(0);
+      },
+    );
+
+    it("작업 디렉터리 밖 허용을 끈 에이전트는 상한과 상관없이 키 없이 보낸다", async () => {
+      const h = await setup();
+      const r = await readyRunner(h, TOKEN_A, helloOutside(undefined));
+      h.defineAgent("coder", {});
+      await startRun(h, r);
+      expect(r.runStarts[0]?.agent).not.toHaveProperty("allowOutsideWorkdir");
+    });
+
     it("effort 를 싣고, 허용 도구는 늘 null — 정의를 그 대화 id 로 묻는다", async () => {
       const h = await setup();
       const r = await readyRunner(h);
