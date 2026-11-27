@@ -124,6 +124,41 @@ describe("tokenize", () => {
       ]);
       expect(plainMentionHandles("@개발봇에게")).toEqual(["개발봇에게"]);
     });
+
+    describe("워크스페이스가 아는 핸들(knownHandles)로 가른다 — 가장 긴 핸들이 이 대화의 대상이 아니면 글자로 남는다", () => {
+      // 이 대화에는 「개발」만 있고, 「개발봇」은 워크스페이스에만 있다(채널 밖·보관·비활성)
+      const only: Participant[] = [{ type: "agent", id: A3, handle: "개발", displayName: "개발" }];
+      const workspace = new Set(["개발", "개발봇", "지은"]);
+      const known = (h: string) => workspace.has(h);
+
+      it("「@개발봇에게」·「@개발봇」은 「개발」로 내려가지 않는다", () => {
+        expect(tokenize("@개발봇에게 물어봐", only, known).bodyMd).toBe("@개발봇에게 물어봐");
+        expect(tokenize("@개발봇 봐줘", only, known).bodyMd).toBe("@개발봇 봐줘");
+        expect(tokenize("@개발봇에게", only, known).mentions).toEqual({ agents: [], users: [] });
+      });
+
+      it("가장 긴 핸들이 대상이면 그대로 — 「@개발에게」는 「개발」", () => {
+        expect(tokenize("@개발에게 물어봐", only, known).bodyMd).toBe(`<@a:${A3}>에게 물어봐`);
+      });
+
+      it("워크스페이스에 없는 꼬리는 전처럼 뗀다 — 「@개발자에게」는 「개발」(「개발자」를 아무도 안 쓴다)", () => {
+        expect(tokenize("@개발자에게", only, known).bodyMd).toBe(`<@a:${A3}>자에게`);
+      });
+
+      it("plainMentionHandles 도 같은 판정 — 워크스페이스의 가장 긴 핸들을 낸다", () => {
+        expect(plainMentionHandles("@개발봇에게 @개발에게", known)).toEqual(["개발봇", "개발"]);
+      });
+    });
+  });
+
+  it("대소문자는 ASCII 만 무시한다 — 켈빈 기호(U+212A)·긴 s(U+017F)는 k·s 가 아니다", () => {
+    const people: Participant[] = [
+      { type: "user", id: U1, handle: "kim", displayName: "kim" },
+      { type: "agent", id: A1, handle: "sam", displayName: "sam" },
+    ];
+    expect(tokenize("@KIM @Sam", people).bodyMd).toBe(`<@u:${U1}> <@a:${A1}>`);
+    expect(tokenize("@\u212Aim 과 @\u017Fam", people).bodyMd).toBe("@\u212Aim 과 @\u017Fam");
+    expect(plainMentionHandles("@\u212Aim @\u017Fam")).toEqual([]);
   });
 
   it("renderForAgent와 왕복한다", () => {

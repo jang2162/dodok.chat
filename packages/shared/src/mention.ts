@@ -11,13 +11,16 @@ const HANDLE_RE = new RegExp(`^[${HANDLE_CHAR_CLASS}]{2,32}$`, "u");
 const HANGUL_TAIL_RE = /^[가-힣]+$/u;
 
 /**
- * 평문 멘션 후보. 그룹1: 앞 문맥(문장 시작/공백/구두점·한글), 그룹2: `@` 뒤에 이어진 핸들 글자 전부(대소문자 무시, NFD 로 온
- * 한글 자모 포함). 이어진 글자가 곧 핸들은 아니다 — 「@개발봇에게」처럼 조사가 붙을 수 있어 `resolveMentionRun` 으로 핸들을 가른다
+ * 평문 멘션 후보. 그룹1: 앞 문맥(문장 시작/공백/구두점·한글), 그룹2: `@` 뒤에 이어진 핸들 글자 전부(ASCII 대문자 포함, NFD 로 온
+ * 한글 자모 포함). 이어진 글자가 곧 핸들은 아니다 — 「@개발봇에게」처럼 조사가 붙을 수 있어 `resolveMentionRun` 으로 핸들을 가른다.
+ * `i` 플래그를 쓰지 않는다 — `iu` 는 유니코드 대소문자 접기라 켈빈 기호(U+212A)를 k 로 잡는다. 대문자는 A-Z 만 받는다
  */
-export const PLAIN_MENTION_RE = new RegExp(`(^|[^\\w@])@([${HANDLE_CHAR_CLASS}\\u1100-\\u11ff]+)`, "giu");
+export const PLAIN_MENTION_RE = new RegExp(`(^|[^\\w@])@([${HANDLE_CHAR_CLASS}A-Z\\u1100-\\u11ff]+)`, "gu");
 
 /**
  * `PLAIN_MENTION_RE` 그룹2 → 멘션할 핸들(소문자·NFC)과 그 뒤에 남는 꼬리(NFC). 핸들이 아니면 undefined.
+ * `isKnown` 은 워크스페이스가 아는 핸들 전부(사람·에이전트, 보관·비활성·채널 밖·별칭 포함)여야 한다 — 이 대화의 참가자만 주면
+ * 채널 밖 「개발봇」 대신 채널 안 「개발」이 「@개발봇에게」를 가로챈다. 고른 핸들이 이 대화의 대상인지는 부르는 쪽이 따로 본다.
  * - 이어진 글자 전부가 핸들 꼴이고 `isKnown` 이 없거나 그것을 알면 전부가 핸들이다.
  * - 아니면 `isKnown` 이 아는 가장 긴 앞부분을 핸들로 — 남는 꼬리가 한글 음절만일 때만(붙여 쓴 조사: 「@개발봇에게」·「@dev님」).
  *   꼬리에 영문·숫자가 섞이면(「@개발봇x」) 자르지 않는다 — 영문 핸들이 `@devs` 를 dev 로 읽지 않던 것과 같다.
@@ -96,9 +99,15 @@ export function renderForAgent(bodyMd: string, participants: Participant[]): str
   });
 }
 
+/**
+ * 평문 `@핸들` 을 참가자 토큰으로. `knownHandles` 는 워크스페이스가 아는 핸들 전부(`resolveMentionRun`) — 그것으로 가장 긴 핸들을
+ * 고르고, 그 핸들이 참가자가 아니면 짧은 참가자 핸들로 내려가지 않고 글자로 남긴다(「@개발봇에게」는 채널 밖 개발봇이지 채널의 개발이
+ * 아니다). 안 주면 참가자만으로 가른다
+ */
 export function tokenize(
   text: string,
   participants: Participant[],
+  knownHandles?: (handle: string) => boolean,
 ): { bodyMd: string; mentions: MentionSet } {
   const byHandle = new Map<string, Participant>();
   for (const p of participants) {
@@ -110,7 +119,7 @@ export function tokenize(
       part.code
         ? part.text
         : part.text.replace(PLAIN_MENTION_RE, (whole: string, pre: string, run: string) => {
-            const found = resolveMentionRun(run, (h) => byHandle.has(h));
+            const found = resolveMentionRun(run, (h) => byHandle.has(h) || knownHandles?.(h) === true);
             const p = found && byHandle.get(found.handle);
             if (!p) return whole;
             return `${pre}<@${p.type === "agent" ? "a" : "u"}:${p.id}>${found.rest}`;
