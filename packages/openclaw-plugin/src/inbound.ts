@@ -11,6 +11,9 @@ import {
 import { buildInboundText } from "./context";
 import { formatDodokTarget } from "./outbound";
 
+/** 우리가 OpenClaw 에 넘기는 ChatType — `group` 은 쓰지 않는다(그룹 DM 은 channel 그대로) */
+export type DodokChatKind = "channel" | "direct";
+
 export type DodokInboundFacts = {
   accountId: string;
   /** OpenClaw 피어 id(`channel:<id>`) — 대화 id(채널 세션 계획 판정 PS2) */
@@ -29,8 +32,12 @@ export type DodokInboundFacts = {
   correlation: { deliveryId: string; runId: string; replyToInboundId: string };
   /** 스레드 런만. 소문자 루트 id — 세션 키의 스레드 접미사와 같다 */
   threadId?: string;
-  /** 코어 `ConversationFacts`·`RouteFacts`·`ReplyPlanFacts` 중 우리가 채우는 것 */
-  conversation: { kind: "channel"; id: string; label: string; threadId?: string };
+  /**
+   * 코어 `ConversationFacts`·`RouteFacts`·`ReplyPlanFacts` 중 우리가 채우는 것. kind 는 서버가 `dm.direct` 를 준 1:1 DM(Gateway 주인의
+   * DM)만 `direct` — 그 런에는 에이전트 워크스페이스의 MEMORY.md 가 실린다. 나머지(다른 사람의 DM·그룹 DM·채널)는 `channel`.
+   * 세션 키는 kind 와 무관하다(코어는 명시 키를 그대로 쓴다)
+   */
+  conversation: { kind: DodokChatKind; id: string; label: string; threadId?: string };
   /**
    * `parentSessionKey` 는 두지 않는다 — 주면 스레드 세션이 채널 전사를 복사해 오고(포크) 통제 못 하는 재주입이
    * 따라온다(ADR 0006 「포크(`route.parentSessionKey`) — 곁가지」 절). 문맥은 우리가 헤더로 싣는다
@@ -85,7 +92,7 @@ export function toInboundFacts(d: InboundDeliver, opts: { accountId: string }): 
     rawBody: d.message.text,
     correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
     conversation: {
-      kind: "channel",
+      kind: d.dm?.direct ? "direct" : "channel",
       id: d.conversationId,
       label: d.conversationId,
       ...(threadId ? { threadId } : {}),

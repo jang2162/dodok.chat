@@ -16,6 +16,7 @@ import {
   attachments,
   channelMembers,
   componentInteractions,
+  gateways,
   memberships,
   users,
 } from "../src/db/schema.sqlite";
@@ -829,6 +830,43 @@ describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
 
     const general = deliver(generalId, channelConversation(db, generalId), "@dev 안녕");
     expect(general).not.toHaveProperty("dm");
+  });
+
+  it("DM 주인이 그 에이전트 Gateway 의 주인일 때만 dm.direct — 주인이 없거나(옛 Gateway) 다른 사람이면 싣지 않는다", () => {
+    const { db, workspaceId, userId, agentId, dm, conversationId, generalId, deliver } = dmSetup();
+    const gatewayId = db
+      .select({ gatewayId: agents.gatewayId })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .get()?.gatewayId as string;
+    const setOwner = (ownerUserId: string | null) =>
+      db.update(gateways).set({ ownerUserId }).where(eq(gateways.id, gatewayId)).run();
+
+    expect(deliver(dm.id, conversationId, "주인 없음").dm).toEqual({ ownerHandle: "mia" });
+
+    setOwner(userId);
+    expect(deliver(dm.id, conversationId, "주인 같음").dm).toEqual({ ownerHandle: "mia", direct: true });
+    // 일반 채널은 Gateway 주인이 같아도 dm 자체가 없다
+    expect(deliver(generalId, channelConversation(db, generalId), "@dev 안녕")).not.toHaveProperty("dm");
+
+    const other = uuid();
+    db.insert(users)
+      .values({
+        id: other,
+        workspaceId,
+        handle: "kai",
+        displayName: "Kai",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    setOwner(other);
+    expect(deliver(dm.id, conversationId, "다른 주인").dm).toEqual({ ownerHandle: "mia" });
+
+    // Gateway 가 없는 에이전트(러너 — gatewayId null)는 direct 가 없다
+    setOwner(userId);
+    db.update(agents).set({ gatewayId: null }).where(eq(agents.id, agentId)).run();
+    expect(deliver(dm.id, conversationId, "러너").dm).toEqual({ ownerHandle: "mia" });
   });
 
   it("DM 멤버 행에 다른 사람·에이전트가 섞여 있어도 헤더 참여자에는 싣지 않는다", () => {
