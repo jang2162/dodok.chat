@@ -234,9 +234,11 @@ export function directHasAgents(db: DbOrTx, channelId: string): boolean {
 export function directMentions(
   text: string,
   participants: Participant[],
+  /** 워크스페이스가 아는 핸들(channels/service workspaceHandles) — 참여자가 아닌 더 긴 핸들을 짧은 참여자 핸들로 읽지 않게 */
+  knownHandles: (handle: string) => boolean,
 ): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
   const allowed = new Set(participants.map((p) => `${p.type === "agent" ? "a" : "u"}:${p.id}`));
-  const tokenized = tokenize(text, participants).bodyMd;
+  const tokenized = tokenize(text, participants, knownHandles).bodyMd;
   const bodyMd = tokenized.replace(MENTION_TOKEN_RE, (token: string, kind: string, id: string) =>
     allowed.has(`${kind}:${id}`) ? token : neutralizeMentionTokens(token),
   );

@@ -14,6 +14,7 @@ import { agents, channelMembers, channels, users } from "../../db/schema.sqlite"
 import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
+import { workspaceHandles } from "../channels/service";
 import {
   type Glyph,
   glyphRange,
@@ -88,7 +89,7 @@ export function searchMessages(
   if (q.q.includes("\u0000")) throw apiError("VALIDATION", "검색어에 NUL 문자를 쓸 수 없다");
   const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, reader), ...filters(q)];
   const mentions = mentionDirectory(db, workspaceId, reader, q.channelId);
-  const needles = expandHandles(q.q, mentions);
+  const needles = expandHandles(q.q, mentions, workspaceHandles(db, { workspaceId }));
   const hit = (r: HitRow) => toHit(r, needles, mentions.handleOf);
   if ([...q.q].length === 2) {
     const since = now.getTime() - SHORT_QUERY_LIMITS.maxAgeDays * DAY_MS;
@@ -192,15 +193,24 @@ function mentionDirectory(
  * 원래 검색어와, 그 안의 `@핸들` 을 멘션 토큰으로 바꾼 대체 검색어들 — 색인(원문)에는 토큰이 들어 있어서다. 핸들 하나가 여럿으로
  * 풀리면(사람과 에이전트가 같은 핸들 등) 경우마다 하나씩 만들어 OR 로 찾는다. 모르는 핸들은 글자 그대로. 핸들을 찾는 꼴은 shared
  * tokenize 와 같은 PLAIN_MENTION_RE 다 — 본문을 토큰으로 바꾼 규칙과 같아야 같은 자리가 찾힌다.
+ * 붙여 쓴 조사를 떼는 집합은 게시와 같은 워크스페이스의 알려진 핸들(workspaceHandles — 읽을 수 없는 채널의 별칭 포함)이다. 그 가장 긴
+ * 핸들이 이 검색에서 토큰을 모르면(다른 채널의 별칭) 글자 그대로 찾는다 — 게시도 그런 `@핸들` 을 글자로 남겼다.
  * 원래 검색어를 늘 함께 찾는 까닭: tokenize 는 그 채널 참가자만 토큰으로 바꾸고 코드 안은 건드리지 않아, 화면에 `@dev` 로 보이는
  * 글자 그대로의 본문이 흔하다(dev 가 없는 채널, 코드 안)
  */
-function expandHandles(q: string, mentions: MentionDirectory): string[] {
+function expandHandles(
+  q: string,
+  mentions: MentionDirectory,
+  knownHandles: (handle: string) => boolean,
+): string[] {
   let alts = [""];
   let last = 0;
   for (const m of q.matchAll(PLAIN_MENTION_RE)) {
     // q 는 이미 NFC 라 붙여 쓴 조사(rest)의 길이가 원문 꼬리와 같다
-    const found = resolveMentionRun(m[2] as string, (h) => mentions.tokensOf(h).length > 0);
+    const found = resolveMentionRun(
+      m[2] as string,
+      (h) => knownHandles(h) || mentions.tokensOf(h).length > 0,
+    );
     if (!found) continue;
     const at = (m.index as number) + (m[1] as string).length;
     const end = (m.index as number) + m[0].length - found.rest.length;

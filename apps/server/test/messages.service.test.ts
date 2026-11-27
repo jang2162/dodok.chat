@@ -4,6 +4,7 @@ import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import {
+  agents,
   attachments,
   automations,
   channelMembers,
@@ -187,6 +188,53 @@ describe("messages service", () => {
     ).toThrow(expect.objectContaining({ status: 400 }));
     expect(created).toHaveLength(0);
     expect(listMessages(db, channelId, { limit: 10 }).messages).toEqual([]);
+  });
+
+  it("평문 멘션은 워크스페이스의 가장 긴 핸들로 가른다 — 그것이 채널 밖·보관·다른 채널 별칭이면 채널의 짧은 핸들로 내려가지 않고 글자로 남는다(사람·에이전트·자동화 글)", () => {
+    const { db, bus, userId, workspaceId, channelId } = setup();
+    const short = createAgent(db, { workspaceId, providerAgentId: "kdev", handle: "개발", name: "개발" });
+    addMember(db, channelId, { memberType: "agent", memberId: short.id }, { warn: vi.fn() });
+    createAgent(db, { workspaceId, providerAgentId: "kbot", handle: "개발봇", name: "개발봇" });
+    const archived = createAgent(db, {
+      workspaceId,
+      providerAgentId: "kold",
+      handle: "개발팀",
+      name: "개발팀",
+    });
+    addMember(db, channelId, { memberType: "agent", memberId: archived.id }, { warn: vi.fn() });
+    db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, archived.id)).run();
+    const other = createChannel(db, { workspaceId, createdBy: userId, name: "other" });
+    const elsewhere = createAgent(db, { workspaceId, providerAgentId: "kx", handle: "elsewhere", name: "x" });
+    addMember(
+      db,
+      other.id,
+      { memberType: "agent", memberId: elsewhere.id, aliases: ["개발반"] },
+      { warn: vi.fn() },
+    );
+
+    const text = "@개발봇에게 @개발팀이 @개발반이 그리고 @개발에게";
+    const expected = `@개발봇에게 @개발팀이 @개발반이 그리고 <@a:${short.id}>에게`;
+    const human = createUserMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      authorId: userId,
+      bodyMd: text,
+      clientMsgId: "ko1",
+    });
+    expect(human.bodyMd).toBe(expected);
+    expect(human.mentions).toEqual({ agents: [short.id], users: [] });
+    const bot = createAgentMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      agentId: short.id,
+      externalId: "ko-agent",
+      bodyMd: text,
+    });
+    expect(bot.bodyMd).toBe(expected);
+    const auto = createAutomationMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      automationId: uuid(),
+      bodyMd: text,
+    });
+    expect(auto.bodyMd).toBe(expected);
   });
 
   it("에이전트 글의 리터럴 사람 토큰은 채널 참여자만 멘션이 된다 — 채널 밖 사람은 본문에만 남고 mentions·푸시 대상이 아니다", () => {
@@ -958,6 +1006,27 @@ describe("direct 의 멘션(사람 간 DM 계획 판정 PH6)", () => {
     expect(message.bodyMd.endsWith(`<@u:${t.jun}>`)).toBe(true);
     expect(t.members()).toEqual(before);
     expect(changes).toEqual([]);
+  });
+
+  it("참여자가 아닌 더 긴 핸들이 있으면 짧은 참여자 핸들로 내려가지 않는다 — 「@지은이에게」는 지은이(비참여)라 글자로", () => {
+    const t = setup();
+    const short = person(t.db, t.workspaceId, "지은");
+    person(t.db, t.workspaceId, "지은이");
+    const direct = createDirectChannelForTest(t.db, {
+      workspaceId: t.workspaceId,
+      createdBy: t.userId,
+      userIds: [short],
+      agentIds: [],
+    });
+    const conversationId = seedConversation(t.db, direct.id, { createdBy: t.userId });
+    const message = createUserMessage(t.db, t.bus, {
+      conversationId,
+      authorId: t.userId,
+      bodyMd: "@지은이에게 @지은에게",
+      clientMsgId: "d-ko",
+    });
+    expect(message.bodyMd).toBe(`@지은이에게 <@u:${short}>에게`);
+    expect(message.mentions).toEqual({ users: [short], agents: [] });
   });
 
   it("에이전트 정본도 같다 — 비참여 사람·에이전트의 토큰은 중화", () => {
