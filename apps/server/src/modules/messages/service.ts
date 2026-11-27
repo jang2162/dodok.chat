@@ -43,6 +43,7 @@ import {
   joinChannelIfAbsent,
   listMembers,
   userMessageParticipants,
+  workspaceHandles,
 } from "../channels/service";
 import { sessionParticipants, userSessionParticipants } from "../conversations/invited-agents";
 import { assertConversationWritable, getConversation, touchConversation } from "../conversations/store";
@@ -58,8 +59,9 @@ import { allocateSeq } from "./seq";
 function agentMentions(
   text: string,
   participants: Participant[],
+  knownHandles: (handle: string) => boolean,
 ): { bodyMd: string; mentions: { users: string[]; agents: string[] } } {
-  const { bodyMd, mentions } = tokenize(text, participants);
+  const { bodyMd, mentions } = tokenize(text, participants, knownHandles);
   const people = new Set(participants.filter((p) => p.type === "user").map((p) => p.id));
   return { bodyMd, mentions: { ...mentions, users: mentions.users.filter((id) => people.has(id)) } };
 }
@@ -586,9 +588,14 @@ export function sendUserMessage(
           ? tokenize(
               input.bodyMd,
               userSessionParticipants(tx, { channelId, conversationId: conversation.id }),
+              workspaceHandles(tx, { channelId }),
             )
           : kind === "direct"
-            ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
+            ? directMentions(
+                input.bodyMd,
+                channelParticipants(tx, channelId),
+                workspaceHandles(tx, { channelId }),
+              )
             : plainInDm(input.bodyMd);
       const alsoInChannel = resolveAlsoInChannel({
         requested: input.alsoInChannel,
@@ -668,9 +675,14 @@ export function createAgentMessage(
           ? agentMentions(
               input.bodyMd,
               sessionParticipants(tx, { channelId, conversationId: conversation.id }),
+              workspaceHandles(tx, { channelId }),
             )
           : kind === "direct"
-            ? directMentions(input.bodyMd, channelParticipants(tx, channelId))
+            ? directMentions(
+                input.bodyMd,
+                channelParticipants(tx, channelId),
+                workspaceHandles(tx, { channelId }),
+              )
             : plainInDm(input.bodyMd);
       return {
         kind: "normal",
@@ -718,7 +730,11 @@ export function createAutomationMessage(
     const conversation = assertConversationWritable(tx, picked.conversationId);
     const { channelId } = conversation;
     const message = storeMessage(tx, conversation, undefined, () => {
-      const text = tokenize(input.bodyMd, userMessageParticipants(tx, channelId)).bodyMd;
+      const text = tokenize(
+        input.bodyMd,
+        userMessageParticipants(tx, channelId),
+        workspaceHandles(tx, { channelId }),
+      ).bodyMd;
       const bodyMd =
         input.extraMd === undefined ? text : `${text}\n\n${neutralizeMentionTokens(input.extraMd)}`;
       return {

@@ -73,6 +73,94 @@ describe("tokenize", () => {
       `\`\`\`\n@planner\n\`\`\`\n그리고 \`@jang\` 그러나 <@u:${U1}>`,
     );
   });
+  describe("한글 핸들", () => {
+    const A3 = "01a09fc9-d204-7551-89d6-38544d07a13d";
+    const A4 = "01a09fc9-d204-7551-89d6-38544d07a13e";
+    const U2 = "01a09fc9-d204-7551-89d6-38544d07a13f";
+    const ko: Participant[] = [
+      ...participants,
+      { type: "agent", id: A3, handle: "개발봇", aliases: ["개발"], displayName: "개발봇" },
+      { type: "agent", id: A4, handle: "개발봇2", displayName: "개발봇 둘" },
+      { type: "user", id: U2, handle: "지은", displayName: "지은" },
+    ];
+
+    it("한글 핸들·별칭을 토큰으로 바꾼다", () => {
+      expect(tokenize("@개발봇 확인해줘, @지은 도", ko).bodyMd).toBe(`<@a:${A3}> 확인해줘, <@u:${U2}> 도`);
+      expect(tokenize("@개발 봐줘", ko).bodyMd).toBe(`<@a:${A3}> 봐줘`);
+    });
+
+    it("붙여 쓴 조사는 떼고 가장 긴 아는 핸들을 멘션한다 — 조사는 본문에 남는다", () => {
+      expect(tokenize("@개발봇에게 물어봐", ko).bodyMd).toBe(`<@a:${A3}>에게 물어봐`);
+      expect(tokenize("@지은님 안녕", ko).bodyMd).toBe(`<@u:${U2}>님 안녕`);
+      // 「개발」(별칭)보다 긴 「개발봇」이 이긴다
+      expect(tokenize("@개발봇이 했어", ko).bodyMd).toBe(`<@a:${A3}>이 했어`);
+      // 영문 핸들 뒤 조사도 그대로(전에도 그랬다)
+      expect(tokenize("@planner에게", ko).bodyMd).toBe(`<@a:${A2}>에게`);
+    });
+
+    it("떼어 낸 꼬리가 한글 음절만일 때만 자른다 — 영문·숫자가 섞이면 멘션이 아니다", () => {
+      // 「개발봇2」는 따로 있는 핸들이다 — 숫자를 떼어 「개발봇」으로 읽지 않는다
+      expect(tokenize("@개발봇2 와", ko).bodyMd).toBe(`<@a:${A4}> 와`);
+      expect(tokenize("@개발봇x 와", ko).bodyMd).toBe("@개발봇x 와");
+      expect(tokenize("@plannerx 와", ko).bodyMd).toBe("@plannerx 와");
+    });
+
+    it("모르는 한글 핸들은 평문으로 남는다", () => {
+      expect(tokenize("@없는사람에게", ko).bodyMd).toBe("@없는사람에게");
+    });
+
+    it("NFD(조합형)로 쓴 멘션도 NFC 핸들로 풀린다", () => {
+      const text = "@개발봇에게 물어봐".normalize("NFD");
+      // 멘션 자리(조사 포함)만 NFC 로 바뀌고 나머지 본문은 보낸 그대로다
+      expect(tokenize(text, ko).bodyMd).toBe(`<@a:${A3}>에게 ${"물어봐".normalize("NFD")}`);
+    });
+
+    it("plainMentionHandles 도 아는 핸들 판정을 받으면 조사를 뗀다, 없으면 이어진 글자 전부", () => {
+      const known = new Set(["개발봇", "지은"]);
+      expect(plainMentionHandles("@개발봇에게 @지은님 @없는이", (h) => known.has(h))).toEqual([
+        "개발봇",
+        "지은",
+        "없는이",
+      ]);
+      expect(plainMentionHandles("@개발봇에게")).toEqual(["개발봇에게"]);
+    });
+
+    describe("워크스페이스가 아는 핸들(knownHandles)로 가른다 — 가장 긴 핸들이 이 대화의 대상이 아니면 글자로 남는다", () => {
+      // 이 대화에는 「개발」만 있고, 「개발봇」은 워크스페이스에만 있다(채널 밖·보관·비활성)
+      const only: Participant[] = [{ type: "agent", id: A3, handle: "개발", displayName: "개발" }];
+      const workspace = new Set(["개발", "개발봇", "지은"]);
+      const known = (h: string) => workspace.has(h);
+
+      it("「@개발봇에게」·「@개발봇」은 「개발」로 내려가지 않는다", () => {
+        expect(tokenize("@개발봇에게 물어봐", only, known).bodyMd).toBe("@개발봇에게 물어봐");
+        expect(tokenize("@개발봇 봐줘", only, known).bodyMd).toBe("@개발봇 봐줘");
+        expect(tokenize("@개발봇에게", only, known).mentions).toEqual({ agents: [], users: [] });
+      });
+
+      it("가장 긴 핸들이 대상이면 그대로 — 「@개발에게」는 「개발」", () => {
+        expect(tokenize("@개발에게 물어봐", only, known).bodyMd).toBe(`<@a:${A3}>에게 물어봐`);
+      });
+
+      it("워크스페이스에 없는 꼬리는 전처럼 뗀다 — 「@개발자에게」는 「개발」(「개발자」를 아무도 안 쓴다)", () => {
+        expect(tokenize("@개발자에게", only, known).bodyMd).toBe(`<@a:${A3}>자에게`);
+      });
+
+      it("plainMentionHandles 도 같은 판정 — 워크스페이스의 가장 긴 핸들을 낸다", () => {
+        expect(plainMentionHandles("@개발봇에게 @개발에게", known)).toEqual(["개발봇", "개발"]);
+      });
+    });
+  });
+
+  it("대소문자는 ASCII 만 무시한다 — 켈빈 기호(U+212A)·긴 s(U+017F)는 k·s 가 아니다", () => {
+    const people: Participant[] = [
+      { type: "user", id: U1, handle: "kim", displayName: "kim" },
+      { type: "agent", id: A1, handle: "sam", displayName: "sam" },
+    ];
+    expect(tokenize("@KIM @Sam", people).bodyMd).toBe(`<@u:${U1}> <@a:${A1}>`);
+    expect(tokenize("@\u212Aim 과 @\u017Fam", people).bodyMd).toBe("@\u212Aim 과 @\u017Fam");
+    expect(plainMentionHandles("@\u212Aim @\u017Fam")).toEqual([]);
+  });
+
   it("renderForAgent와 왕복한다", () => {
     const body = `<@a:${A1}> 다음 <@u:${U1}> 끝`;
     expect(tokenize(renderForAgent(body, participants), participants).bodyMd).toBe(body);

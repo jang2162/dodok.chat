@@ -657,6 +657,49 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
     expect(ids(t.search("@writer 초안"))).toEqual([hit.id]);
   });
 
+  it("한글 핸들 — 「@개발봇에게」처럼 조사를 붙여 찾아도 그 멘션으로 찾는다", () => {
+    const t = setup();
+    const bot = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "devbot",
+      handle: "개발봇",
+      name: "개발봇",
+    });
+    addMember(t.db, t.channelId, { memberType: "agent", memberId: bot.id }, { warn: () => {} });
+    const hit = t.say("@개발봇에게 보고서 부탁");
+    t.say("개발봇 이야기");
+    expect(ids(t.search("@개발봇"))).toEqual([hit.id]);
+    expect(ids(t.search("@개발봇에게 보고서"))).toEqual([hit.id]);
+    expect(t.search("@개발봇에게 보고서").hits[0]?.snippet).toBe(`${O}@개발봇에게 보고서${C} 부탁`);
+  });
+
+  it("한글 핸들 — 워크스페이스의 가장 긴 핸들로 가른다: 다른 채널의 별칭 「개발반」을 이 채널의 「개발」로 읽지 않는다(게시와 같은 판정)", () => {
+    const t = setup();
+    const short = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "kdev",
+      handle: "개발",
+      name: "개발",
+    });
+    addMember(t.db, t.channelId, { memberType: "agent", memberId: short.id }, { warn: () => {} });
+    const far = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "far",
+      handle: "far",
+      name: "F",
+    });
+    addMember(
+      t.db,
+      t.otherId,
+      { memberType: "agent", memberId: far.id, aliases: ["개발반"] },
+      { warn: () => {} },
+    );
+    const literal = t.say("@개발반이 와");
+    expect(literal.bodyMd).toBe("@개발반이 와");
+    t.say(`<@a:${short.id}>반이 와`);
+    expect(ids(t.search("@개발반이", { channelId: t.channelId }))).toEqual([literal.id]);
+  });
+
   it("모르는 핸들은 글자 그대로 찾는다", () => {
     const t = setup();
     const hit = t.say("`@nobody` 는 없는 사람");

@@ -378,7 +378,7 @@ describe("직접 입력", () => {
     expect(live).toBeEmptyDOMElement();
     await userEvent.clear(handle);
     await userEvent.type(handle, "Bad Handle");
-    expect(handle).toHaveAccessibleDescription("영문 소문자·숫자·_·- 로 2~32자");
+    expect(handle).toHaveAccessibleDescription("영문 소문자·한글·숫자·_·- 로 2~32자");
     expect(document.getElementById(`${handle.id}-error`)).toBe(live);
     expect(submit).toBeDisabled();
     await userEvent.click(submit);

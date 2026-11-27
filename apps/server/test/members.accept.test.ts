@@ -173,6 +173,38 @@ describe("POST /api/v1/invites/lookup·accept", () => {
     expect(fixed.statusCode).toBe(200);
   });
 
+  it("한글 핸들로 가입한다 — NFD(조합형)로 와도 NFC 로 저장하고, 같은 NFC 핸들의 에이전트와는 409 로 겹친다", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    app.db
+      .insert(agents)
+      .values({
+        id: uuidv7(),
+        workspaceId: app.workspaceId,
+        provider: "openclaw",
+        providerAgentId: "devbot",
+        handle: "개발봇",
+        name: "개발봇",
+        createdAt: new Date(),
+      })
+      .run();
+    const issued = await issue(app, owner.headers);
+    const clash = await accept(app, joinBody(issued.token, { handle: "개발봇".normalize("NFD") }));
+    expect(clash.statusCode).toBe(409);
+    expect(clash.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
+
+    const nfd = "지은".normalize("NFD");
+    expect(nfd).not.toBe("지은");
+    const ok = await accept(app, joinBody(issued.token, { handle: nfd }));
+    expect(ok.statusCode, ok.body).toBe(200);
+    const stored = app.db
+      .select({ handle: users.handle })
+      .from(users)
+      .where(eq(users.email, "bee@example.com"))
+      .get();
+    expect(stored?.handle).toBe("지은");
+  });
+
   it("이메일은 소문자로 넣는다 — 대문자만 다른 이메일로 둘째 가입은 409 field:email, owner 이메일도 409", async () => {
     app = await bootTestApp({}, roomy);
     const owner = await login(app);

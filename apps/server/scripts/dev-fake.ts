@@ -64,6 +64,7 @@ import {
   OpsEvent,
   OpsEventKind,
   OpsSeverity,
+  plainMentionHandles,
   type PluginUpdateResult,
   type RunnerHello,
   type RunnerUpdateResult,
@@ -945,9 +946,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   const others = new Set(
     d.context.participants.filter((p) => p.type === "agent" && !p.isSelf).map((p) => p.handle),
   );
-  const calls = new Set(
-    [...text.matchAll(/@([a-z0-9_-]{2,32})/g)].map((m) => m[1] ?? "").filter((h) => others.has(h)),
-  );
+  const calls = new Set(plainMentionHandles(text, (h) => others.has(h)).filter((h) => others.has(h)));
   if (author.type === "agent" && others.has(author.handle)) calls.add(author.handle);
   const quote = [...text.replaceAll("@", "").replace(/\s+/g, " ").trim()].slice(0, QUOTE_MAX).join("");
   const tail = calls.size > 0 ? ` ${[...calls].map((h) => `@${h}`).join(" ")} 이어서 부탁해요.` : "";

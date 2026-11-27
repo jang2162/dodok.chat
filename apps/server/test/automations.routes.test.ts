@@ -608,6 +608,41 @@ describe("자동화 관리 API", () => {
       expect((await listed(automation.id))?.warnings).toEqual(expected);
     });
 
+    it("한글 핸들 뒤 붙여 쓴 조사는 떼고 본다 — 채널의 에이전트는 경고 없음, 채널 밖은 그 핸들로, 모르면 이어진 글자 전부", async () => {
+      const channel = newChannel();
+      const k = ++n;
+      const inside = newAgent(`개발${k}봇`);
+      newAgent(`외부${k}봇`); // 워크스페이스에는 있지만 채널 밖
+      addMember(app.db, channel.id, { memberType: "agent", memberId: inside.id }, app.logger);
+      const bodyMd = `@개발${k}봇에게 @외부${k}봇한테 @모름${k}이 점검`;
+      const { automation } = await schedule(channel.id, { bodyMd });
+      expect(automation.warnings).toEqual([
+        { kind: "agent_not_in_channel", handle: `외부${k}봇` },
+        { kind: "unknown_handle", handle: `모름${k}이` },
+      ]);
+    });
+
+    it("워크스페이스의 가장 긴 핸들로 가른다 — 채널의 짧은 핸들로 내려가지 않는다(게시와 같은 판정). 다른 채널의 별칭은 그 에이전트로", async () => {
+      const channel = newChannel();
+      const k = ++n;
+      const short = newAgent(`개발${k}`);
+      newAgent(`개발${k}봇`); // 채널 밖
+      const far = newAgent(`far${k}`);
+      addMember(app.db, channel.id, { memberType: "agent", memberId: short.id }, app.logger);
+      addMember(
+        app.db,
+        newChannel().id,
+        { memberType: "agent", memberId: far.id, aliases: [`개발${k}반`] },
+        app.logger,
+      );
+      const bodyMd = `@개발${k}봇에게 @개발${k}반이 @개발${k}에게 점검`;
+      const { automation } = await schedule(channel.id, { bodyMd });
+      expect(automation.warnings).toEqual([
+        { kind: "agent_not_in_channel", handle: `개발${k}봇` },
+        { kind: "agent_not_in_channel", handle: `개발${k}반` },
+      ]);
+    });
+
     it("핸들이 바뀌면 옛 핸들은 모르는 핸들, 에이전트가 채널에서 빠지면 채널에 없음 — 게시는 된다", async () => {
       const channel = newChannel();
       const agent = newAgent(`mover${++n}`);

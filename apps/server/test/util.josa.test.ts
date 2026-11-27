@@ -28,3 +28,10 @@ it("여러 핸들을 늘어놓으면 마지막 핸들이 조사를 정한다", (
   expect(josa("@dev, @fin", "을", "를")).toBe("을");
   expect(josa("@fin, @dev", "을", "를")).toBe("를");
 });
+
+it("한글 핸들도 마지막 음절의 받침으로 고른다 — NFD(조합형)로 와도 같다", () => {
+  expect(josa("@개발봇", "이", "가")).toBe("이"); // 봇
+  expect(josa("@지아", "이", "가")).toBe("가"); // 아
+  expect(josa("@개발봇".normalize("NFD"), "이", "가")).toBe("이");
+  expect(josa("@지아".normalize("NFD"), "이", "가")).toBe("가");
+});

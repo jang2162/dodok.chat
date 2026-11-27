@@ -683,6 +683,52 @@ export function userMessageParticipants(db: DbOrTx, channelId: string): Particip
   return [...others, ...inChannel];
 }
 
+/**
+ * 워크스페이스가 아는 핸들(소문자·NFC) — 사람·에이전트 핸들(비활성 멤버·보관한 에이전트 포함)과 모든 채널의 별칭. tokenize·
+ * plainMentionHandles·검색이 평문 `@…` 에서 가장 긴 핸들을 고르는 집합이다(shared `resolveMentionRun`) — 참가자만으로 고르면 채널 밖
+ * 「개발봇」 대신 채널의 「개발」이 「@개발봇에게」를 가로챈다. 처음 물을 때 한 번 읽는다(멘션이 없는 글은 질의하지 않는다)
+ */
+export function workspaceHandles(
+  db: DbOrTx,
+  scope: { workspaceId: string } | { channelId: string },
+): (handle: string) => boolean {
+  let known: Set<string> | undefined;
+  const load = (): Set<string> => {
+    const workspaceId =
+      "workspaceId" in scope
+        ? scope.workspaceId
+        : db
+            .select({ workspaceId: channels.workspaceId })
+            .from(channels)
+            .where(eq(channels.id, scope.channelId))
+            .get()?.workspaceId;
+    const out = new Set<string>();
+    if (workspaceId === undefined) return out;
+    const add = (handle: string) => out.add(handle.normalize("NFC").toLowerCase());
+    for (const u of db
+      .select({ handle: users.handle })
+      .from(users)
+      .where(eq(users.workspaceId, workspaceId))
+      .all())
+      add(u.handle);
+    for (const a of db
+      .select({ handle: agents.handle })
+      .from(agents)
+      .where(eq(agents.workspaceId, workspaceId))
+      .all())
+      add(a.handle);
+    for (const m of db
+      .select({ aliases: channelMembers.aliases })
+      .from(channelMembers)
+      .innerJoin(channels, eq(channels.id, channelMembers.channelId))
+      .where(and(eq(channels.workspaceId, workspaceId), eq(channelMembers.memberType, "agent")))
+      .all())
+      for (const alias of m.aliases) add(alias);
+    return out;
+  };
+  return (handle) => (known ??= load()).has(handle);
+}
+
 function warnIfManyAutoRespond(db: DbOrTx, channelId: string, logger: WarnLogger): void {
   const agentIds = db
     .select({ id: channelMembers.memberId })

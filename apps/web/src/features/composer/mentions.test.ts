@@ -88,6 +88,15 @@ it("검색: 핸들·이름·별칭 앞부분(대소문자 무시), 빈 검색어
   expect(labels("ev")).toEqual([]);
 });
 
+it("한글 핸들도 앞부분으로 찾는다 — NFD(조합형) 검색어도 NFC 핸들과 맞는다", () => {
+  const bot = agent(40, "개발봇", { name: "Builder" });
+  const all = mentionCandidates([member("agent", bot.id, ["빌더"])], [bot], undefined);
+  const labels = (q: string) => matchMentions(all, q).map((c) => c.label);
+  expect(labels("개발")).toEqual(["개발봇"]);
+  expect(labels("빌")).toEqual(["개발봇"]);
+  expect(labels("개발".normalize("NFD"))).toEqual(["개발봇"]);
+});
+
 it("비활성 멤버는 사람 후보에서 빠진다 — 역할이 남아 있어도(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절)", () => {
   const people: Person[] = [
     {

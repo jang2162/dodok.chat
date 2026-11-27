@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 import { StoredComponentState, StoredComponentsV1, StoredItemId } from "../components";
-import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
+import { HANDLE_CHAR_CLASS, MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
 import { AvatarUrl } from "../profile";
 import { McpAutoAllowMap, McpServers, RunnerBotBuiltinTools } from "../runner/mcp";
 
-export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
+/** @멘션 이름 — 영문 소문자·숫자·_·- 와 한글 완성형 음절로 2~32글자. NFC 로 맞춘 뒤 잰다(macOS 의 NFD 입력도 같은 핸들) */
+export const Handle = z
+  .string()
+  .normalize("NFC")
+  .regex(new RegExp(`^[${HANDLE_CHAR_CLASS}]{2,32}$`, "u"));
 export type Handle = z.infer<typeof Handle>;
 
 export const Workspace = z.object({ id: Id, name: z.string().min(1).max(80), createdAt: IsoDateTime });
