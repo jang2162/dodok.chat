@@ -263,6 +263,30 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
   });
 }
 
+/**
+ * 세션 행의 전달 커서(agent_sessions.delivered_up_to)를 인바운드에 싣는다 — null 이면 필드를 빼 「처음」으로 읽힌다. 디스패치가
+ * renewSessionOnPromptChange 판정 뒤의 행을 다시 읽어 부른다(리액션 커서와 같은 까닭 — 새 세션으로 열었으면 비어 있다)
+ */
+export function withDeliveredUpTo(inbound: InboundDeliver, at: Date | null): InboundDeliver {
+  if (at === null) return inbound;
+  return { ...inbound, context: { ...inbound.context, deliveredUpTo: at.toISOString() } };
+}
+
+/** 받는 쪽 프롬프트에 대화 블록이 실리지 않는 런 — 명령 런은 `/<name>` 만, 추가 응답 런은 CLI 가 스스로 여는 턴이다 */
+const NO_CONTEXT_RUNS: ReadonlySet<RunTriggerKind> = new Set<RunTriggerKind>(["command", "background"]);
+
+/**
+ * 이 런이 받아들여지면 전달 커서를 올릴 시각 — 실은 마지막 글의 시각. 메시지 트리거는 그 글(최근 대화는 모두 그 앞), 상호작용·이어가기는
+ * 카드가 달린 글(대화 블록의 마지막 줄 — 트리거 시각은 누른 시각이라 그 사이 글을 건너뛰게 된다). 실을 것이 없으면 undefined(그대로 둔다)
+ */
+export function deliveredCursorOf(run: Run, inbound: InboundDeliver): Date | undefined {
+  if (NO_CONTEXT_RUNS.has(run.triggerKind)) return undefined;
+  if (inbound.kind === "message") return new Date(inbound.message.ts);
+  const block = inbound.context.thread?.recentMessages ?? inbound.context.recentMessages;
+  const last = block.at(-1);
+  return last === undefined ? undefined : new Date(last.ts);
+}
+
 function linkedField(
   db: DbOrTx,
   run: Run,

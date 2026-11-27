@@ -489,3 +489,69 @@ describe("channelPromptContext", () => {
     ).toBeUndefined();
   });
 });
+
+describe("formatInboundContext — 이어 가는 세션(지난 턴 뒤 새 글만)", () => {
+  const withSelf: InboundDeliver = {
+    ...deliver,
+    context: {
+      ...deliver.context,
+      recentMessages: [
+        ...deliver.context.recentMessages,
+        {
+          author: { type: "agent", handle: "researcher", displayName: "Researcher" },
+          text: "제 앞 답",
+          ts: "2026-09-14T00:13:30Z",
+        },
+      ],
+      deliveredUpTo: "2026-09-14T00:12:00Z",
+    },
+  };
+
+  it("continuing + deliveredUpTo — 커서까지의 글과 자기 글을 빼고 「최근 대화(지난 턴 뒤)」", () => {
+    const lines = formatInboundContext(withSelf, { continuing: true }).split("\n");
+    expect(lines.slice(lines.indexOf("최근 대화(지난 턴 뒤):"))).toEqual([
+      "최근 대화(지난 턴 뒤):",
+      "[00:13] @planner: 재현 조건을 모아보죠",
+      "---",
+    ]);
+    expect(lines.join("\n")).not.toContain("로그인이 가끔 실패해");
+    expect(lines.join("\n")).not.toContain("제 앞 답");
+  });
+
+  it("남는 글이 없으면 「최근 대화: (지난 턴 뒤 새 글 없음)」", () => {
+    const out = formatInboundContext(
+      { ...withSelf, context: { ...withSelf.context, deliveredUpTo: "2026-09-14T00:13:00Z" } },
+      { continuing: true },
+    );
+    expect(out).toContain("\n최근 대화: (지난 턴 뒤 새 글 없음)\n---");
+  });
+
+  it("이어 가지 않으면(기본) 커서가 있어도 지금처럼 전부", () => {
+    const out = formatInboundContext(withSelf);
+    expect(out).toContain(
+      "최근 대화:\n[00:12] @jang: 로그인이 가끔 실패해\n[00:13] @planner: 재현 조건을 모아보죠\n[00:13] @researcher: 제 앞 답",
+    );
+  });
+
+  it("스레드 세션을 이어 가면 스레드 루트를 뺀다", () => {
+    const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+    const out = buildInboundText(
+      {
+        ...deliver,
+        sessionKey: `agent:researcher:dodok:channel:${CH}:thread:${ROOT}`,
+        threadId: ROOT,
+        context: {
+          ...deliver.context,
+          deliveredUpTo: "2026-09-14T00:12:00Z",
+          thread: {
+            root: { author: deliver.message.author, text: "배포 순서 정리하자", ts: "2026-09-14T00:10:00Z" },
+            recentMessages: [],
+          },
+        },
+      },
+      { continuing: true },
+    );
+    expect(out).not.toContain("스레드 루트:");
+    expect(out).toContain("\n스레드 최근: (지난 턴 뒤 새 글 없음)\n---\n");
+  });
+});

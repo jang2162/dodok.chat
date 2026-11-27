@@ -60,6 +60,7 @@ import type { UploadedBy } from "../attachments/service";
 import { blockedCommandReason, commandOfMessage, type RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
 import {
+  advanceDeliveredCursor,
   ensureProviderSessionId,
   ensureSession,
   findSessionRow,
@@ -68,7 +69,7 @@ import {
   renewSessionOnPromptChange,
   storeProgramSessionId,
 } from "../sessions/service";
-import { buildInboundDeliver, requesterOf } from "./context";
+import { buildInboundDeliver, deliveredCursorOf, requesterOf, withDeliveredUpTo } from "./context";
 import {
   createMediaLineFilter,
   endMediaLineFilter,
@@ -1071,8 +1072,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
               conversationId: run.conversationId,
               since: threadUpdatesSince.since,
             });
+      // 전달 커서도 갱신 판정 뒤에 다시 읽는다 — 새 세션으로 열었으면 비어 있어 받는 쪽이 최근 대화를 전부 싣는다
+      const delivered = withDeliveredUpTo(built, getSessionRow(db, session.id)?.deliveredUpTo ?? null);
       const withReactions = withReactionFacts(
-        threadUpdates === undefined ? built : withThreadUpdates(built, threadUpdates),
+        threadUpdates === undefined ? delivered : withThreadUpdates(delivered, threadUpdates),
         reactions,
       );
       // 명령 런은 명령을 싣는다 — 받는 쪽이 머리말 없이 `/<name>[ <args>]` 만 넘긴다(에이전트 명령 스펙 5.3·5.4)
@@ -1146,6 +1149,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           threadUpdates.latestAt ?? (threadUpdatesSince.since === null ? now() : undefined);
         if (threadCursor !== undefined) advanceThreadRepliesCursor(db, session.id, threadCursor);
       }
+      // 전달 커서도 받아들여진 경로에서만 — 실은 마지막 글의 시각. 다음 런의 받는 쪽이 세션을 이어 가면 그 시각까지의 글과 자기 글을 뺀다
+      const deliveredCursor = deliveredCursorOf(run, inbound);
+      if (deliveredCursor !== undefined) advanceDeliveredCursor(db, session.id, deliveredCursor);
       // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다.
       // 보낸 연결(저장값 ?? 에이전트의 지금 연결)이 아니라 저장값과 견준다 — 기다리는 사이 에이전트가 묶이면 둘이 같아도 저장값은 비어 있다
       const patch: store.RunRowPatch = {};

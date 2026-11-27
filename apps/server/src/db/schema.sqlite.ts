@@ -270,6 +270,9 @@ export const agentSessions = sqliteTable(
     // 대화 세션만 — 이 시각 뒤에 그 대화의 스레드에 달린 답글을 다음 런의 「스레드 소식」에 싣는다(리액션 커서와 범위가 달라 따로 둔다).
     // null 이면 싣지 않고 지금으로 채운다. 스레드 세션 행에도 열은 있지만 쓰지 않는다
     threadRepliesSeenAt: ts("thread_replies_seen_at"),
+    // 이 세션에 지난번 받아들여진 런이 실은 마지막 글(트리거 글·상호작용이면 카드가 달린 글)의 시각 — 다음 런의 context.deliveredUpTo.
+    // 받는 쪽이 세션을 이어 간다고 확신할 때만 그 시각까지의 글과 자기 글을 빼고 싣는다. null 이면 싣지 않는다(새 세션·리셋 뒤 — 전부)
+    deliveredUpTo: ts("delivered_up_to"),
   },
   (t) => [
     uniqueIndex("agent_sessions_conversation_agent_thread").on(t.conversationId, t.agentId, t.threadRootId),

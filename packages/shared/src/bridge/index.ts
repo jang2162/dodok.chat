@@ -169,6 +169,12 @@ export const InboundContext = z.object({
    * 으로 쓴다. 없으면 UTC. 선택 필드라 옛 플러그인·러너는 버리고 받는다(지금처럼 UTC 로 찍는다)
    */
   timeZone: TimeZoneName.optional(),
+  /**
+   * 이 세션에 지난번 받아들여진 런이 실은 마지막 글의 시각(서버 agent_sessions.delivered_up_to). 받는 쪽은 세션을 이어 간다고 확신할 때만
+   * 이 시각까지의 글과 자기 글을 빼고 「최근 대화(지난 턴 뒤)」로 싣고 스레드 루트를 뺀다(formatConversationBlock) — 앞 턴의 헤더와 자기
+   * 답은 이미 그 세션 전사에 있다. 없으면 처음(새 세션·리셋 뒤). 선택 필드라 옛 받는 쪽은 버리고 받는다(지금처럼 전부)
+   */
+  deliveredUpTo: IsoDateTime.optional(),
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 
@@ -303,6 +309,49 @@ export function formatTimeZoneLine(timeZone: string | undefined, atIso: string):
   // (이 Node(24) 의 longOffset 은 ASCII 를 낸다 — 다른 엔진 대비라 시험이 덮지 않는다)
   const offset = name.replace(/^GMT/, "").replace("\u2212", "-");
   return `시각 기준: ${tz} (UTC${offset === "" ? "+00:00" : offset})`;
+}
+
+type ContextLineMessage = InboundContext["recentMessages"][number];
+
+/** 이어 간 세션에서 앞 턴 뒤 새 글이 없을 때의 문구 — 블록을 빼지 않는다(모델이 「빠졌다」와 「없다」를 가르게) */
+export const NO_NEW_MESSAGES_NOTE = "(지난 턴 뒤 새 글 없음)";
+
+/**
+ * 헤더의 대화 블록 — 대화 세션은 「최근 대화」, 스레드 세션은 「스레드 루트」·「스레드 최근」(채널 최근 대화는 싣지 않는다 — 스레드 스펙
+ * 2.3). 플러그인 헤더와 러너 프롬프트가 같이 쓴다. `continuing` 은 받는 쪽이 「그 세션 전사를 이어 간다」고 확신할 때만 true —
+ * 그때 서버가 `deliveredUpTo` 를 실었으면 그 시각까지의 글과 자기(isSelf 에이전트) 글을 빼고 스레드 루트도 뺀다(앞 턴의 헤더·자기 답이
+ * 이미 전사에 있다). 둘 중 하나라도 없으면 전부 싣는다(첫 턴·리셋 뒤·옛 서버)
+ */
+export function formatConversationBlock(
+  context: Pick<InboundContext, "recentMessages" | "thread" | "participants" | "deliveredUpTo">,
+  opts: { continuing: boolean; line: (m: ContextLineMessage) => string },
+): string[] {
+  const since =
+    opts.continuing && context.deliveredUpTo !== undefined ? Date.parse(context.deliveredUpTo) : undefined;
+  const self = context.participants.find((p) => p.isSelf);
+  const fresh = (msgs: readonly ContextLineMessage[]) =>
+    since === undefined
+      ? msgs
+      : msgs.filter(
+          (m) =>
+            Date.parse(m.ts) > since &&
+            !(self !== undefined && m.author.type === "agent" && m.author.handle === self.handle),
+        );
+  const block = (title: string, msgs: readonly ContextLineMessage[]): string[] => {
+    const kept = fresh(msgs);
+    if (since === undefined) return kept.length > 0 ? [`${title}:`, ...kept.map(opts.line)] : [];
+    return kept.length > 0
+      ? [`${title}(지난 턴 뒤):`, ...kept.map(opts.line)]
+      : [`${title}: ${NO_NEW_MESSAGES_NOTE}`];
+  };
+  const thread = context.thread;
+  if (thread) {
+    return [
+      ...(since === undefined ? [`스레드 루트: ${opts.line(thread.root)}`] : []),
+      ...block("스레드 최근", thread.recentMessages),
+    ];
+  }
+  return block("최근 대화", context.recentMessages);
 }
 
 /**

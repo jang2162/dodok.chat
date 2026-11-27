@@ -77,6 +77,7 @@ import {
 } from "./outbound-media";
 import { computeBundleSha256 } from "./bundle-hash";
 import { getDodokRuntime } from "./runtime";
+import { generationOf, isContinuing, sessionGenerations } from "./session-continuity";
 import { readLastUpdate, startPluginUpdate } from "./self-update";
 
 export const DODOK_CHANNEL_ID = "dodok";
@@ -198,6 +199,60 @@ function pluginLogger(
   };
 }
 
+type ReadSessionEntry = (
+  agentId: string,
+  sessionKey: string,
+) => Promise<Parameters<typeof isContinuing>[0]["entry"]>;
+
+/** 세션 항목 읽기 — `runtime.agent.session.getSessionEntryAsync`(설치본 `dist/config-contracts-*.d.ts` PluginRuntime.agent.session) */
+const readSessionEntry: ReadSessionEntry = (agentId, sessionKey) =>
+  getDodokRuntime().agent.session.getSessionEntryAsync({ agentId, sessionKey });
+
+/**
+ * 이 전달이 앞 턴의 세션을 이어 가는지(session-continuity.ts) — 판정 전에 기억을 지운다(이번 턴의 런이 시작돼야 다시 적힌다). 서버가
+ * 커서(deliveredUpTo)를 싣지 않았으면 판정할 것이 없다. 세션 항목을 못 읽으면 false(전부 싣는다)
+ */
+export async function continuingSession(
+  delivery: InboundDeliver,
+  cfg: OpenClawConfig,
+  logger: Pick<BridgeLogger, "warn">,
+  read: ReadSessionEntry = readSessionEntry,
+): Promise<boolean> {
+  const remembered = sessionGenerations.get(delivery.sessionKey);
+  sessionGenerations.forget(delivery.sessionKey);
+  if (delivery.context.deliveredUpTo === undefined || remembered === undefined) return false;
+  try {
+    const entry = await read(delivery.agentId, delivery.sessionKey);
+    return isContinuing({
+      remembered,
+      entry,
+      cfg,
+      sessionKey: delivery.sessionKey,
+      chatKind: delivery.dm?.direct ? "direct" : "channel",
+      threadId: delivery.threadId,
+      now: Date.now(),
+    });
+  } catch (error) {
+    logger.warn(logLine("session-read-error", { deliveryId: delivery.deliveryId, error: String(error) }));
+    return false;
+  }
+}
+
+/** 런이 시작됐을 때 — 코어가 고른 세션의 세대를 적는다. 못 읽으면 적지 않는다(다음 턴은 전부 싣는다) */
+export async function rememberSessionGeneration(
+  agentId: string,
+  sessionKey: string,
+  logger: Pick<BridgeLogger, "warn">,
+  read: ReadSessionEntry = readSessionEntry,
+): Promise<void> {
+  try {
+    const entry = await read(agentId, sessionKey);
+    if (entry?.sessionId) sessionGenerations.remember(sessionKey, generationOf(entry));
+  } catch (error) {
+    logger.warn(logLine("session-read-error", { sessionKey, error: String(error) }));
+  }
+}
+
 async function dispatchInbound(params: {
   delivery: InboundDeliver;
   account: ResolvedDodokAccount;
@@ -210,7 +265,8 @@ async function dispatchInbound(params: {
   const cfg = getDodokRuntime().config.current() as OpenClawConfig;
   const entry = resolveDodokChannelEntry(sectionOf(cfg), delivery.channelId);
   const promptContext = channelPromptContext(delivery);
-  const factsResult = toInboundFacts(delivery, { accountId: account.accountId });
+  const continuing = await continuingSession(delivery, cfg, logger);
+  const factsResult = toInboundFacts(delivery, { accountId: account.accountId, continuing });
   if (!factsResult.ok) throw new Error(factsResult.error);
   const facts = factsResult.facts;
   // 막는 명령은 여기서 던진다 — ack 오류(런 없음). 본문은 첨부 알림 줄을 붙인 뒤 다시 만든다(아래)
@@ -242,6 +298,8 @@ async function dispatchInbound(params: {
       decision: ingress.ingress.decision,
       sessionKey: facts.sessionKey,
       chatType: facts.conversation.kind,
+      // 앞 턴 세션을 이어 가 최근 대화를 지난 턴 뒤 새 글만 실었는지(session-continuity.ts)
+      continuing,
       groupSystemPromptChars: entry.systemPrompt?.length ?? 0,
       channelPromptContextItems: promptContext?.length ?? 0,
     }),
@@ -327,6 +385,8 @@ async function dispatchInbound(params: {
         runId: facts.correlation.runId,
         onAgentRunStart: (runId: string) => {
           correlation.providerRunId = runId;
+          // 코어가 이 턴의 세션을 골랐다 — 그 세대를 적어 다음 턴의 「이어 감」 판정에 쓴다(session-continuity.ts)
+          void rememberSessionGeneration(facts.agentId, facts.sessionKey, logger);
           logger.info(logLine("run-start", { deliveryId: facts.correlation.deliveryId, runId }));
           resolveAck(toDeliverResult({ kind: "dispatch" }, runId));
         },

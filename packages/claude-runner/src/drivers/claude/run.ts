@@ -788,12 +788,14 @@ export function isSkillAlias(name: string, list: readonly SdkSlashCommand[]): bo
 function promptContent(
   start: ClaudeRunSpec["start"],
   images: { blocks: SdkImageBlock[]; failed: number },
-  stopped?: readonly string[],
+  stopped: readonly string[] | undefined,
+  continuing: boolean,
 ): SdkUserMessage["message"]["content"] {
   // 명령 런은 머리말 없이 `/<name>[ <args>]` 그대로 — CLI 가 명령으로 처리한다(에이전트 명령 C1). 턴 사실은 훅 문맥으로 그대로 붙는다
   if (start.deliver.command !== undefined) return formatCommandText(start.deliver.command);
   const text =
-    renderRunnerPrompt(start.deliver) +
+    // 앞 턴의 Claude 세션에 이어 넣는 턴만 지난 턴 뒤 새 글을 싣는다 — 앞 턴의 프롬프트·자기 답이 그 전사에 있다
+    renderRunnerPrompt(start.deliver, { continuing }) +
     (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "") +
     (stopped !== undefined ? `\n${stoppedByPersonNote(stopped)}` : "");
   return images.blocks.length > 0 ? [...images.blocks, { type: "text", text }] : text;
@@ -909,7 +911,11 @@ async function attempt(
     });
   }
   sp.attach(q);
-  const result = await runTurn(spec, ctx, sp, binding, images, { costDiff: resume, retryable });
+  const result = await runTurn(spec, ctx, sp, binding, images, {
+    costDiff: resume,
+    continuing: resume,
+    retryable,
+  });
   return { result, process: sp };
 }
 
@@ -944,7 +950,7 @@ async function runHeldTurn(
   if (opened) opened.last = { spec, ctx };
   if (fields.length > 0)
     ctx.sink.event({ type: "CUSTOM", runId: binding.runId, name: HELD_SETTINGS_EVENT, value: { fields } });
-  await runTurn(spec, ctx, sp, binding, images, { costDiff: true, retryable: () => false });
+  await runTurn(spec, ctx, sp, binding, images, { costDiff: true, continuing: true, retryable: () => false });
   return "done";
 }
 
@@ -974,6 +980,7 @@ async function runFollowupTurn(
     const binding = bindingFor(spec, ctx, new Set());
     await runTurn(spec, ctx, sp, binding, NO_IMAGES, {
       costDiff: true,
+      continuing: true,
       retryable: () => false,
       prompt: false,
     });
@@ -1073,6 +1080,11 @@ async function runTurn(
     retryable: (error: unknown) => boolean;
     /** false — CLI 가 스스로 연 턴(추가 응답)이라 넣을 프롬프트가 없다 */
     prompt?: boolean;
+    /**
+     * 이 턴이 앞 턴의 Claude 세션 전사를 이어 가는가 — resume 으로 연 프로세스·붙든 프로세스. 그때만 프롬프트가 최근 대화를 지난 턴 뒤
+     * 새 글만 싣는다(서버 deliveredUpTo — renderRunnerPrompt). 새로 연 세션이면 전부
+     */
+    continuing: boolean;
   },
 ): Promise<TurnResult> {
   const { start } = spec;
@@ -1150,7 +1162,7 @@ async function runTurn(
       if (command === undefined) stoppedTaken = takeStoppedByPerson(ctx.background, start.deliver.sessionKey);
       sp.send({
         type: "user",
-        message: { role: "user", content: promptContent(start, images, stoppedTaken) },
+        message: { role: "user", content: promptContent(start, images, stoppedTaken, o.continuing) },
         parent_tool_use_id: null,
       });
     }

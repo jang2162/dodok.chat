@@ -1,0 +1,1 @@
+ALTER TABLE `agent_sessions` ADD `delivered_up_to` integer;

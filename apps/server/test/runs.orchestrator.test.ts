@@ -3034,3 +3034,72 @@ describe("에이전트 명령 런(에이전트 명령 스펙 5.1·C13)", () => {
     t.orch.stop();
   });
 });
+
+describe("전달 커서 — 다음 런의 context.deliveredUpTo(이어 가는 세션은 지난 턴 뒤 새 글만)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-27T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const finish = async (t: ReturnType<typeof setup>, runId: string) => {
+    await t.orch.signal(runId, { kind: "gateway_final" });
+    await t.orch.signal(runId, { kind: "canonical_received" });
+  };
+  const sessionRow = (t: ReturnType<typeof setup>, threadRootId: string | null = null) =>
+    t.db
+      .select()
+      .from(agentSessions)
+      .all()
+      .find((r) => r.threadRootId === threadRootId);
+
+  it("첫 런은 필드가 없고, 둘째 런은 첫 런의 트리거 글 시각을 싣는다", async () => {
+    const t = setup();
+    const m1 = t.say("@dev 첫째");
+    const first = await t.enqueue(m1);
+    await t.flush();
+    expect(t.adapter.calls.send[0]?.context.deliveredUpTo).toBeUndefined();
+    expect(sessionRow(t)?.deliveredUpTo?.toISOString()).toBe(m1.createdAt);
+    await finish(t, first.id);
+    vi.setSystemTime(new Date("2026-11-27T00:01:00.000Z"));
+    const second = await t.enqueue(t.say("@dev 둘째"));
+    await t.flush();
+    expect(t.adapter.calls.send[1]?.context.deliveredUpTo).toBe(m1.createdAt);
+    await finish(t, second.id);
+    t.orch.stop();
+  });
+
+  it("drop 이면 커서를 올리지 않는다", async () => {
+    const t = setup();
+    t.adapter.script(() => ({ admission: "drop", reason: "bot-loop-protection" }));
+    await t.enqueue(t.say("@dev 첫째"));
+    await t.flush();
+    expect(sessionRow(t)?.deliveredUpTo).toBeNull();
+    t.orch.stop();
+  });
+
+  it("명령 런은 대화 블록을 싣지 않으니 커서를 올리지 않는다", async () => {
+    const t = setup();
+    await t.enqueue(t.say("@dev /status"), { triggerKind: "command", command: { name: "status", args: "" } });
+    await t.flush();
+    expect(t.adapter.calls.send).toHaveLength(1);
+    expect(sessionRow(t)?.deliveredUpTo).toBeNull();
+    t.orch.stop();
+  });
+
+  it("스레드 세션은 대화 세션과 따로 — 첫 스레드 런은 필드가 없다", async () => {
+    const t = setup();
+    const root = t.say("루트 글");
+    const first = await t.enqueue(t.say("@dev 대화"));
+    await t.flush();
+    await finish(t, first.id);
+    const reply = t.say("@dev 스레드", undefined, root.id);
+    await t.enqueue(reply, { threadRootId: root.id, rootMessageId: root.id });
+    await t.flush();
+    expect(t.adapter.calls.send[1]?.threadId).toBe(root.id);
+    expect(t.adapter.calls.send[1]?.context.deliveredUpTo).toBeUndefined();
+    expect(sessionRow(t, root.id)?.deliveredUpTo?.toISOString()).toBe(reply.createdAt);
+    t.orch.stop();
+  });
+});

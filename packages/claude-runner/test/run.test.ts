@@ -445,6 +445,47 @@ describe("runOnce", () => {
     ]);
   });
 
+  it("resume 한 세션만 최근 대화를 지난 턴 뒤 새 글로 — 새로 연 세션은 전부(서버 deliveredUpTo)", async () => {
+    const base = runStart();
+    const msg = (handle: string, type: "user" | "agent", text: string, ts: string) => ({
+      author: { type, handle, displayName: handle },
+      text,
+      ts,
+    });
+    const start = {
+      ...base,
+      deliver: {
+        ...base.deliver,
+        context: {
+          ...base.deliver.context,
+          recentMessages: [
+            msg("mia", "user", "앞 질문", "2026-09-27T01:00:00.000Z"),
+            msg("coder", "agent", "앞 답", "2026-09-27T01:00:30.000Z"),
+            msg("mia", "user", "새 글", "2026-09-27T01:01:00.000Z"),
+          ],
+          deliveredUpTo: "2026-09-27T01:00:00.000Z",
+        },
+      },
+    };
+    const fresh = harness();
+    fresh.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(specOf(start), fresh.ctx);
+    const freshPrompt = fresh.fake.calls[0]!.prompt?.message.content;
+    expect(freshPrompt).toBe(renderRunnerPrompt(start.deliver));
+    expect(freshPrompt).toContain("@coder: 앞 답");
+
+    const resumed = harness();
+    resumed.fake.sessions.add(SESSION_ID);
+    resumed.fake.script(...script.textTurn("msg_1", ["x"]));
+    await runOnce(specOf(start), resumed.ctx);
+    const resumedPrompt = resumed.fake.calls[0]!.prompt?.message.content;
+    expect(resumedPrompt).toBe(renderRunnerPrompt(start.deliver, { continuing: true }));
+    expect(resumedPrompt).toContain("최근 대화(지난 턴 뒤):");
+    expect(resumedPrompt).toContain("@mia: 새 글");
+    expect(resumedPrompt).not.toContain("앞 질문");
+    expect(resumedPrompt).not.toContain("앞 답");
+  });
+
   it("resume 직후 num_turns 0 result 는 건너뛰고 프롬프트 턴의 result 로 끝낸다", async () => {
     const { fake, ctx, emitted } = harness();
     fake.sessions.add(SESSION_ID);

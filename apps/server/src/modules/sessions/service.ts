@@ -1,5 +1,5 @@
 import { isOpenClawAgentId } from "@dodok/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
@@ -150,7 +150,7 @@ export function ensureProviderSessionId(db: Db, sessionId: string): string {
  * 올랐으면 세션을 새로 연다: 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID, 세션 id 를 스스로 짓는 프로그램은 id 없이
  * 새로 연다) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」).
  * 채널 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
- * 리액션 커서·스레드 답글 커서도 지금으로 올린다 — 새 세션은 옛 메시지를 모른다.
+ * 리액션 커서·스레드 답글 커서도 지금으로 올린다 — 새 세션은 옛 메시지를 모른다. 전달 커서(delivered_up_to)는 비운다 — 다음 런이 최근 대화를 전부 싣는다.
  * 버린 대화가 있었을 때만 true — 세션 id 가 아직 없으면 리비전만 맞춘다. 한 트랜잭션이라 같은 리비전 변화에 두 번 true 가 없다
  */
 export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
@@ -183,11 +183,29 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
         lastSyncedAt: now,
         reactionsSeenAt: now,
         threadRepliesSeenAt: now,
+        // 새 세션은 앞 턴을 모른다 — 다음 런은 최근 대화를 전부 싣는다
+        deliveredUpTo: null,
       })
       .where(eq(agentSessions.id, sessionId))
       .run();
     return row.providerSessionId !== null;
   });
+}
+
+/**
+ * 세션의 전달 커서(delivered_up_to)를 올린다 — 받아들여진 런이 실은 마지막 글의 시각(runs/context.ts deliveredCursorOf). 뒤로 가지 않는다.
+ * null 이던 행은 to 로 채운다. 리셋은 renewSessionOnPromptChange 가 비운다
+ */
+export function advanceDeliveredCursor(db: DbOrTx, sessionRowId: string, to: Date): void {
+  db.update(agentSessions)
+    .set({ deliveredUpTo: to })
+    .where(
+      and(
+        eq(agentSessions.id, sessionRowId),
+        or(isNull(agentSessions.deliveredUpTo), lt(agentSessions.deliveredUpTo, to)),
+      ),
+    )
+    .run();
 }
 
 function sameThread(threadRootId: string | undefined) {
