@@ -17,7 +17,7 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 - 세션 키는 대화(채널의 세션)마다 에이전트별 1개: agent:<agentId>:dodok:channel:<conversationId> — 두 번째 값은 채널 id 가 아니라 대화 id 다(세션 기능 전부터 있던 채널의 「이전 대화」만 id 가 그 채널 id 와 같다). 스레드는 그 아래 하위 세션 …:thread:<rootId 소문자>(스레드마다 1개). 키는 shared dodokSessionKey·parseDodokSessionKey 로만 만들고 푼다(따로 조립·정규식 금지).
 - 응답 정본은 플러그인 경로, Gateway WS는 델타/툴 이벤트/승인. runId로 dedupe.
 - Gateway는 원격이 기본. 플러그인이 서버 /bridge 로 아웃바운드 WSS 접속. Gateway 쪽 포트를 열지 않는다.
-- OpenClaw 패키지 3종은 배포 Gateway와 같은 버전으로 정확 핀(현재 2026.9.4, 프로토콜 v4).
+- OpenClaw 패키지 3종은 배포 Gateway와 같은 버전으로 정확 핀(현재 2026.11.10, 프로토콜 v4 — 플러그인 pluginApi 하한은 >=2026.9.4).
 - Claude Agent SDK(`@anthropic-ai/claude-agent-sdk`)는 claude-runner 의 dependencies 에만 정확 핀, 번들에 넣지 않는다. 러너 CLI env 는 허용 목록(ANTHROPIC_* 를 넘기지 않는다). 모델 런은 실행 직전 사용자 승인 — 하네스는 설치본 또는 내장 CLI + 로컬 가짜 Messages API(docs/guides/live-smoke.md 「Claude 러너 런 0회 하네스」).
 - components v1 제약(액션 로우 버튼≤5 또는 셀렉트 1, 옵션≤25, 모달 필드≤5)은 shared 스키마가 강제.
 - 외부 입력은 경계에서 Zod 파싱. shared는 Node 전용 API 금지.
