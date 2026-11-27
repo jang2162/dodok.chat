@@ -126,9 +126,8 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
   const dmOwner = channel.kind === "dm" ? dmOwnerOf(db, channel.dmOwnerId) : undefined;
   // 주인 DM 만 OpenClaw 에 `direct` 로 — direct 런에는 에이전트 워크스페이스의 MEMORY.md 가 실리므로 DM 의 사람이 그 Gateway 의 주인일 때만
-  // (2026-11-27 결정). 주인이 없는 옛 Gateway·러너 에이전트(Gateway 없음)는 늘 channel
-  const dmDirect =
-    dmOwner !== undefined && agent.gatewayOwnerId != null && agent.gatewayOwnerId === dmOwner.id;
+  // (2026-11-27 결정). 주인이 없는 옛 Gateway·러너 에이전트(Gateway 없음)는 gatewayOwnerId 가 null 이라 dmOwner.id 와 같을 수 없어 늘 channel
+  const dmDirect = dmOwner !== undefined && agent.gatewayOwnerId === dmOwner.id;
   // DM 의 참여자는 주인과 이 에이전트뿐이다(계획 PD8). DM 멤버 행은 그 둘만 만들지만(dms/service.ts findOrCreateDm) 헤더가 그 불변에
   // 기대지 않게 여기서도 거른다 — 다른 사람이 실리면 에이전트가 DM 을 여럿이 보는 자리로 읽는다
   // 일반 채널은 그 세션(대화)에 초대한 에이전트도 참여자다(세션 에이전트 초대 스펙 5.2) — 다른 세션의 초대는 실리지 않는다

@@ -28,7 +28,11 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | A | owner DM, Gateway 행의 `owner_user_id` 를 DB 에서 비움(옛 Gateway·옛 서버와 같은 `channel` 꼴) | `admission dispatch`, `chatType channel` | 47,530 | 0 | `channel` 1 / `direct` 0 | 1 / 0 | 1 / 1 |
 | B | 같은 DM·같은 세션, 주인을 되돌림 | `dispatch`, `chatType direct` | 46,701 | **1** | `channel` 0 / `direct` 1 | 0 / 1 | 0 / 0 |
+| C | owner DM, 가짜 CLI 가 `message` 툴로 보냄(아래 4) | `dispatch`, `chatType direct` | 안 셈 | 안 셈 | 안 셈 | 안 셈 | 안 셈 |
+| D | owner DM 의 명령 `/whoami`·`/status`(아래 5 — 모델 턴 없음) | `dispatch`, `chatType direct` | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 |
 | E | mia ↔ `main` DM(Gateway 주인 아님) | `dispatch`, `chatType channel` | 47,530 | 0 | `channel` 1 / `direct` 0 | 1 / 0 | 1 / — |
+
+C·D 는 ingress 줄만 이 표에 옮겼다 — C 는 툴 전송·mirror 를 재는 턴이라 시스템 글을 세지 않았고(아래 4), D 는 Gateway 가 모델 없이 답해 시스템 글이 없다(아래 5). 「안 셈」·E 의 `—` 는 세지 않은 칸이다(0 이 아니다).
 
 **1. dispatch / drop** — direct 인바운드(B·C·D 의 다섯 턴)가 모두 `admission: "dispatch"`·`decision: "allow"` 였다(ingress 에 `allowFrom: ["*"]`). `allowFrom` 이 없으면 drop 되는 쪽은 실물로 재지 않았다 — 핀 SDK `resolveStableChannelMessageIngress` 를 부르는 시험 `packages/openclaw-plugin/test/channel.test.ts` 「dodokIngressConversation」이 그 자리를 잡는다(`allowFrom` 을 빼면 실패하는 것을 확인했다 — 플러그인 구분력).
 
