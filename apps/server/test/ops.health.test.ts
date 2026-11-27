@@ -1,3 +1,4 @@
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { FAKE_GATEWAY_ID, FakeAdapter, type FakeGatewayState } from "@dodok/openclaw-adapter/fake";
 import type { RunnerConnection, RunState } from "@dodok/shared";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -485,9 +486,9 @@ describe("observeGatewayVersion — Gateway 별 gateways.last_version", () => {
     const deps = { db, workspaceId: ws, ops };
     observeGatewayVersion(GW, null, deps);
     expect(lastVersion()).toBeNull();
-    observeGatewayVersion(GW, "2026.9.4", deps);
+    observeGatewayVersion(GW, OPENCLAW_PINNED_VERSION, deps);
     expect(rows()).toEqual([]);
-    expect(lastVersion()).toBe("2026.9.4");
+    expect(lastVersion()).toBe(OPENCLAW_PINNED_VERSION);
     observeGatewayVersion(GW, "2026.9.5", deps);
     expect(
       rows()

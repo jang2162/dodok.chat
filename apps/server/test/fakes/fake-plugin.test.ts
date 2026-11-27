@@ -1,3 +1,4 @@
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { BRIDGE_PROTOCOL, type BridgeHello, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -84,7 +85,11 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("접속하면 실제 플러그인과 같은 모양의 hello 를 보내고, ack 뒤에 resolve 한다", async () => {
     await start();
     expect(hellos).toEqual([FAKE_PLUGIN_HELLO]);
-    expect(FAKE_PLUGIN_HELLO).toMatchObject({ pluginId: "dodok", sdkVersion: "2026.9.4" });
+    expect(FAKE_PLUGIN_HELLO).toMatchObject({
+      pluginId: "dodok",
+      sdkVersion: OPENCLAW_PINNED_VERSION,
+      gatewayVersion: OPENCLAW_PINNED_VERSION,
+    });
     expect(bridge.forGateway("env").current()?.phase).toBe("ready");
   });
 

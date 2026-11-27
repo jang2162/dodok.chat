@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { GatewayConnection } from "../../../../packages/openclaw-adapter/src/gateway/client";
+import { OPENCLAW_PINNED_VERSION } from "../../../../packages/openclaw-adapter/src/version";
 import * as fixtures from "../../../../packages/openclaw-adapter/test/fixtures/gateway-events";
 
 type HelloOk = GatewayConnection["hello"];
@@ -93,7 +94,7 @@ export type FakeGatewayOptions = {
    * 실제 클라이언트는 프레임 없이 hello 의 `policy.tickIntervalMs`(30s)×2 가 지나면 끊으므로 오래 띄우는 개발 모드에 필요하다
    */
   tickIntervalMs?: number;
-  /** hello-ok 의 server.version(기본은 저장소 핀 2026.9.4) — 서버의 Gateway 버전 사건을 잴 때 바꾼다 */
+  /** hello-ok 의 server.version(기본은 저장소 핀 OPENCLAW_PINNED_VERSION) — 서버의 Gateway 버전 사건을 잴 때 바꾼다 */
   serverVersion?: string;
   /** `agents.list` 가 내는 에이전트(기본 FAKE_GATEWAY_AGENTS) — Gateway 둘에 같은 id 를 일부러 겹칠 때 바꾼다 */
   agents?: FakeGatewayAgent[];
@@ -247,7 +248,7 @@ function isRequestFrame(value: unknown): value is RequestFrame {
  * `HelloOkSchema`(gateway-protocol `frames-*.d.mts` 69-)의 필수 필드 전부. 반환 타입이 그 스키마의 Static 이라 빠지면 typecheck 가 깨진다.
  * `sessionDefaults` 는 선택이지만 넣으면 `defaultAgentId`·`mainKey`·`mainSessionKey` 가 필수다(같은 파일 247-253).
  */
-function helloOk(connectParams: unknown, serverVersion = "2026.9.4"): HelloOk {
+function helloOk(connectParams: unknown, serverVersion = OPENCLAW_PINNED_VERSION): HelloOk {
   const params = record(connectParams);
   const scopes = Array.isArray(params.scopes) ? params.scopes.filter((s) => typeof s === "string") : [];
   return {

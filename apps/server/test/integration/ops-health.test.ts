@@ -1,3 +1,4 @@
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 /**
  * Phase 3 ③ 계획 태스크 4 — 운영 안정성 사건의 배선. 실제 서버 + 가짜 Gateway·플러그인 + wire 클라이언트.
  * 60초 임계 자체(깜빡임 0줄·61초 한 줄)는 가짜 타이머 단위 테스트(ops.health.test.ts)가 잰다 — 여기서는 실제 시계로
@@ -135,7 +136,7 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     const lastVersion = (l: LiveApp) => getGatewayRow(l.app.db, l.app.workspaceId, l.gatewayId)?.lastVersion;
     const pinned = await boot();
     await until(() => lastVersion(pinned), "기억");
-    expect(lastVersion(pinned)).toBe("2026.9.4");
+    expect(lastVersion(pinned)).toBe(OPENCLAW_PINNED_VERSION);
     expect(eventsOf(pinned, "gateway_version_untested")).toEqual([]);
     await pinned.close();
 

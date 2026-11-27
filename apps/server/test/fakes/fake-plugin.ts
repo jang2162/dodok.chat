@@ -24,6 +24,7 @@ import {
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { io, type Socket } from "socket.io-client";
+import { OPENCLAW_PINNED_VERSION } from "../../../../packages/openclaw-adapter/src/version";
 
 export type InboundHandler = (
   delivery: InboundDeliver,
@@ -92,8 +93,8 @@ export type FakePlugin = {
 export const FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   pluginId: "dodok",
   version: "0.0.0-fake",
-  sdkVersion: "2026.9.4",
-  gatewayVersion: "2026.9.4",
+  sdkVersion: OPENCLAW_PINNED_VERSION,
+  gatewayVersion: OPENCLAW_PINNED_VERSION,
   capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound", "threads", "threadUpdates"],
 });
 

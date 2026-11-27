@@ -1,3 +1,4 @@
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,7 +100,7 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     expect(connection.hello.type).toBe("hello-ok");
     expect(connection.hello.protocol).toBe(4);
     expect(connection.hello.auth).toEqual({ method: "token", role: "operator", scopes });
-    expect(connection.hello.server.version).toBe("2026.9.4");
+    expect(connection.hello.server.version).toBe(OPENCLAW_PINNED_VERSION);
     expect(connection.hello.features.methods).toEqual([...FAKE_GATEWAY_METHODS]);
     expect(connection.hello.policy.tickIntervalMs).toBe(30_000);
 

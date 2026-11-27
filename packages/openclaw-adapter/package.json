@@ -20,8 +20,8 @@
   },
   "dependencies": {
     "@dodok/shared": "workspace:*",
-    "@openclaw/gateway-client": "2026.9.4",
-    "@openclaw/gateway-protocol": "2026.9.4",
+    "@openclaw/gateway-client": "2026.11.10",
+    "@openclaw/gateway-protocol": "2026.11.10",
     "fastify": "5.12.4",
     "socket.io": "4.8.3",
     "zod": "4.6.6"
