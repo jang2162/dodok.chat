@@ -142,7 +142,8 @@ export const Agent = z.object({
    * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다.
    * projectLabel 은 그 에이전트 프로젝트의 표시 이름(워크트리면 `<부모 라벨> · <브랜치>`) — member 도 받으므로 경로는 싣지 않는다.
    * 프로젝트가 없는 러너 에이전트(0031 이 보관한 옛 행)·이 필드 전 서버면 없다. bot 은 봇 에이전트(러너 봇 스펙 B11)만 true —
-   * member 도 받는다(정의 내용은 runnerAgent.bot 에만)
+   * member 도 받는다(정의 내용은 runnerAgent.bot 에만). outsideWorkdir 는 「작업 디렉터리 밖 접근 허용」을 켠 에이전트만 true — 그 에이전트가
+   * 파일 시스템 전체에 닿는다는 사실은 부르는 사람도 알아야 해 member 도 받는다(권한 모드·도구는 runnerAgent 에만 — 프로필 스펙 결정 3 의 예외)
    */
   runner: z
     .object({
@@ -151,6 +152,7 @@ export const Agent = z.object({
       revoked: z.boolean(),
       projectLabel: z.string().optional(),
       bot: z.literal(true).optional(),
+      outsideWorkdir: z.literal(true).optional(),
     })
     .optional(),
   /**

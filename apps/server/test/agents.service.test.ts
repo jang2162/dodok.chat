@@ -76,6 +76,22 @@ describe("agents service", () => {
     });
   });
 
+  it("작업 디렉터리 밖 허용은 member 에게도 runner.outsideWorkdir 로 실린다 — 켰을 때만 키가 있다(결정 3 의 예외)", () => {
+    const { db, workspaceId } = setup();
+    const { agent } = createRunnerAgentForTest(db, { workspaceId, handle: "coder" });
+    const shown = () =>
+      agentForRole(
+        listAgents(db, workspaceId).find((a) => a.id === agent.id)!,
+        "member",
+      );
+    expect(shown().runner).toBeDefined();
+    expect(shown().runner).not.toHaveProperty("outsideWorkdir");
+    db.update(agents).set({ allowOutsideWorkdir: true }).where(eq(agents.id, agent.id)).run();
+    expect(shown().runner?.outsideWorkdir).toBe(true);
+    expect(shown().runnerAgent).toBeUndefined();
+    expect(Agent.parse(shown())).toEqual(shown());
+  });
+
   it("기본 프롬프트(basePrompt)는 admin 이상에게만 — member 에게는 OpenClaw·러너 에이전트 모두 키가 없다", () => {
     const { db, workspaceId, gatewayId } = setup();
     const oc = createAgent(db, {

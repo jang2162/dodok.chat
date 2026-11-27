@@ -191,6 +191,7 @@ function toApiAgent(
             revoked: token.revokedAt !== null,
             ...(projectLabel === undefined ? {} : { projectLabel }),
             ...(row.runnerBot === null ? {} : { bot: true as const }),
+            ...(row.allowOutsideWorkdir ? { outsideWorkdir: true as const } : {}),
           },
         }
       : {}),
