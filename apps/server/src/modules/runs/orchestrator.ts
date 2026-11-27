@@ -649,7 +649,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
   /**
    * 승인 대기의 유일한 상한 — 그 런의 미해결 승인 중 가장 이른 만료 시각 + 5초(설계 4.3).
-   * 승인 행을 못 찾으면 시계를 아예 끄지 않는다 — 그러면 런이 영원히 산다.
+   * 승인 행을 못 찾으면 런 시계(`armRunTimer`)로 물러난다 — 에이전트에 상한이 없으면 그 시계도 걸리지 않아
+   * 사람 「중지」까지 열려 있다(plan.md 8장 「이월」 런 상한 ①).
    */
   function armApprovalWatchdog(runId: string): void {
     const expiresAt = deps.approvals?.earliestPendingExpiry(runId);

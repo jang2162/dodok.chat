@@ -1073,7 +1073,7 @@ describe("orchestrator", () => {
       t.orch.stop();
     });
 
-    it("승인에서 돌아온 런도 상한이 없으면 시계를 걸지 않는다", async () => {
+    it("승인 행 없이 awaiting_approval — 상한이 없으면 시계를 걸지 않는다", async () => {
       const t = setup();
       const run = await t.enqueue();
       await t.flush();
@@ -1083,10 +1083,45 @@ describe("orchestrator", () => {
       expect(t.runOf(run.id).status).toBe("awaiting_approval");
       t.orch.stop();
     });
+
+    it("승인에서 돌아온 런도 상한이 없으면 시계를 걸지 않는다", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await t.orch.signal(run.id, { kind: "approval_requested" });
+      await t.orch.signal(run.id, { kind: "approval_resolved", decision: "allow-once" });
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
+      expect(t.runOf(run.id).status).toBe("streaming");
+      t.orch.stop();
+    });
+
+    it("승인에서 돌아오면 그때 읽은 상한으로 처음부터 다시 잰다", async () => {
+      const t = setup();
+      t.db.update(agents).set({ runTimeoutMinutes: 5 }).where(eq(agents.id, t.agentId)).run();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      await t.orch.signal(run.id, { kind: "approval_requested" });
+      // 승인을 기다리는 동안 상한을 바꾼다 — 돌아올 때 새로 거는 시계가 그 값을 읽는다
+      t.db.update(agents).set({ runTimeoutMinutes: 10 }).where(eq(agents.id, t.agentId)).run();
+      await t.orch.signal(run.id, { kind: "approval_resolved", decision: "allow-once" });
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(10 * 60_000 - 1_000);
+      expect(t.runOf(run.id).status).toBe("streaming");
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(t.runOf(run.id)).toMatchObject({
+        status: "error",
+        error: { code: "TIMEOUT", message: "run timeout" },
+      });
+      t.orch.stop();
+    });
   });
 
-  it("승인 서비스 없이 awaiting_approval 에 들어가면 평소 런 상한으로 돌아간다", async () => {
-    // deps.approvals 가 없으면 감시할 승인 행도 없다 — 시계를 아예 끄면 런이 영원히 산다
+  it("승인 서비스 없이 awaiting_approval 에 들어가면 평소 런 시계로 돌아간다", async () => {
+    // deps.approvals 가 없으면 감시할 승인 행도 없다 — 런 시계(상한이 있으면 그 상한)가 맡는다
     const t = setup({ timeouts: { runMs: 50 } });
     const run = await t.enqueue();
     await t.flush();

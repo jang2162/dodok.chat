@@ -153,7 +153,7 @@ const RUN_TIMEOUT_RANGE_ERROR = `${AGENT_RUN_TIMEOUT_MINUTES_MIN}~${AGENT_RUN_TI
 
 /**
  * 런 상한(분) — 이 시간이 지나도 끝나지 않은 런을 서버가 닫는다. 기본은 비어 있음(상한 없음 — 몇 시간 도는 런이 있다), 비워 저장하면
- * null. 새로 시작하는 런부터 적용된다. `readOnly` 면 값만 보인다
+ * null. 서버는 시계를 새로 걸 때마다(런 시작·승인 뒤 재개) 이 값을 읽어 그때부터 잰다. `readOnly` 면 값만 보인다
  */
 export function RunTimeoutField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const save = usePatchAgent();
@@ -191,7 +191,8 @@ export function RunTimeoutField({ agent, readOnly }: { agent: Agent; readOnly: b
     <form onSubmit={submit} noValidate className="flex flex-col gap-2">
       <Label htmlFor={id}>런 상한(분)</Label>
       <p id={`${id}-note`} className="-mt-1 text-xs text-muted-foreground">
-        비우면 상한 없음 — 끝나지 않는 런은 「중지」로 멈춥니다. 새로 시작하는 런부터 적용됩니다
+        비우면 상한 없음 — 끝나지 않는 런은 「중지」로 멈춥니다. 바꾼 값은 다음에 시계를 걸 때(새 런 시작,
+        승인 뒤 재개)부터 적용되고, 승인 뒤에는 그때부터 다시 잽니다
       </p>
       <div className="flex items-center gap-2">
         <Input
