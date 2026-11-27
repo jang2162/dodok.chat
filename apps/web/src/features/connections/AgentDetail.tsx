@@ -12,6 +12,7 @@ import {
   DmAccessField,
   RunnerSessionDefaults,
   RunnerWarning,
+  RunTimeoutField,
 } from "@/features/agents/AgentRow";
 import { useRestoreAgent } from "@/features/agents/mutations";
 import { MoveGatewayDialog } from "@/features/agents/MoveGatewayDialog";
@@ -36,7 +37,7 @@ import { agentOwnerOf, connectionOwnerMaps } from "./useConnectionTree";
  * 에이전트 상세(연결 탭 통합 스펙 3.3, 연결 재설계 스펙 목표 3). 머리: 큰 아바타 · 이름 · 값 줄(핸들·제공자 id) · 칩 줄(프로그램 또는
  * OpenClaw · 러너/Gateway 링크 · 프로젝트 링크), 오른쪽에 「DM 보내기」와 이름표 있는 켜기 스위치. 카드: 「실행」(러너 에이전트만 —
  * 프로그램(읽기 전용 — 만든 뒤 바꾸는 API 가 없다)·새 세션 시작값·지시, 봇이면 지시 자리에 봇 정의) · 「프로필」(사진, OpenClaw 는 메모 —
- * 에이전트에게 전달되지 않음) · 「DM 허용」(세그먼트) · 「관리」(Gateway 옮기기·삭제, 붉은 테두리). 고칠 수 없는 사람(그 에이전트 연결의
+ * 에이전트에게 전달되지 않음) · 「DM 허용」(세그먼트) · 「런 상한」(분, 비우면 없음) · 「관리」(Gateway 옮기기·삭제, 붉은 테두리). 고칠 수 없는 사람(그 에이전트 연결의
  * 주인도 admin 이상도 아니다 — 연결 탭 통합 스펙 5.2)에게는 값만 보인다. 보관(삭제)한 에이전트면 「삭제된 에이전트」 칩과 「되살리기」.
  * 보관하면 트리로 돌아가 「삭제된 에이전트 N」 단추로, 되살리면 이 상세의 제목으로 초점이 간다
  */
@@ -160,6 +161,9 @@ export function AgentDetail() {
           )}
           <DetailCard title="DM 허용">
             <DmAccessField agent={agent} readOnly={readOnly} />
+          </DetailCard>
+          <DetailCard title="런 상한">
+            <RunTimeoutField agent={agent} readOnly={readOnly} />
           </DetailCard>
           {(!readOnly || canMove) && (
             <DetailCard title="관리" tone="danger">

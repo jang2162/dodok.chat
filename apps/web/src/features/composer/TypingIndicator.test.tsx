@@ -31,6 +31,7 @@ const agentOf = (n: number, handle: string): Agent => ({
   dmAccess: "admins",
   program: null,
   createdBy: null,
+  runTimeoutMinutes: null,
 });
 const DEV = agentOf(21, "dev");
 const personOf = (n: number, handle: string): Person => ({

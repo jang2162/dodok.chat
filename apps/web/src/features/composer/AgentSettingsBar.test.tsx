@@ -52,6 +52,7 @@ function runnerAgent(n: number, handle: string, defaults: Partial<Agent["session
     dmAccess: "admins",
     program: "claude",
     createdBy: null,
+    runTimeoutMinutes: null,
     runner: { tokenId: runnerId(1), label: "맥북", revoked: false },
     sessionDefaults: { model: null, effort: null, permissionMode: null, ...defaults },
   };
@@ -69,6 +70,7 @@ const OPENCLAW: Agent = {
   dmAccess: "admins",
   program: null,
   createdBy: null,
+  runTimeoutMinutes: null,
 };
 const CODER = runnerAgent(1, "coder", { model: "sonnet" });
 /**

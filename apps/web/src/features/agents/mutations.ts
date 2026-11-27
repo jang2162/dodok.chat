@@ -38,6 +38,8 @@ export type AgentPatch = {
   handle?: string;
   /** 누가 이 에이전트와 DM 을 여나(admin 이상 — 에이전트 DM 계획 판정 PD13: REST 로만) */
   dmAccess?: DmAccess;
+  /** 런 상한(분) — null 은 지움(상한 없음) */
+  runTimeoutMinutes?: number | null;
   /**
    * 러너 에이전트의 「새 세션 시작값」(그 연결의 주인·admin 이상, REST 로만) — 보낸 필드만 바뀌고 null 은 「기본」. 프로그램·프로젝트는
    * 싣지 않는다 — 서버가 400 으로 거절한다(러너 일반화 계획 판정 PR10)

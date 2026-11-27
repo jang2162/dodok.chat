@@ -33,6 +33,14 @@ export const AgentProvider = z.enum(["openclaw", "runner"]);
 /** 누가 이 에이전트와 DM 을 여나(에이전트 DM 스펙 결정 4) — off 아무도, admins admin 이상, everyone 모든 활성 멤버 */
 export const DmAccess = z.enum(["off", "admins", "everyone"]);
 export type DmAccess = z.infer<typeof DmAccess>;
+
+/** 에이전트별 런 상한의 범위(분) — 1분~24시간. 더 긴 런은 상한을 비운다(없음) */
+export const AGENT_RUN_TIMEOUT_MINUTES_MIN = 1;
+export const AGENT_RUN_TIMEOUT_MINUTES_MAX = 1440;
+export const AgentRunTimeoutMinutes = z
+  .int()
+  .min(AGENT_RUN_TIMEOUT_MINUTES_MIN)
+  .max(AGENT_RUN_TIMEOUT_MINUTES_MAX);
 export type AgentProvider = z.infer<typeof AgentProvider>;
 /** 러너가 돌리는 프로그램 — 드라이버가 있는 것은 claude 뿐이다 */
 export const RunnerProgram = z.enum(["claude", "codex", "opencode"]);
@@ -151,6 +159,8 @@ export const Agent = z.object({
    */
   gateway: z.object({ id: Id, name: z.string() }).nullable().optional(),
   dmAccess: DmAccess.default("admins"),
+  /** 런 상한(분) — null 이면 상한이 없다(기본). 사람 「중지」는 따로다 */
+  runTimeoutMinutes: AgentRunTimeoutMinutes.nullable().default(null),
   /** 러너 에이전트의 프로그램 — 러너면 값, OpenClaw 면 null */
   program: RunnerProgram.nullable().default(null),
   /** 만든 사람(소유자) — 기록 전에 만든 에이전트는 null. 소유자에게 따로 권한은 없다(프로필 스펙 결정 2) */

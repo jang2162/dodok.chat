@@ -1,9 +1,17 @@
-import { type Agent, type DmAccess, type SessionDefaults } from "@dodok/shared";
+import {
+  type Agent,
+  AGENT_RUN_TIMEOUT_MINUTES_MAX,
+  AGENT_RUN_TIMEOUT_MINUTES_MIN,
+  AgentRunTimeoutMinutes,
+  type DmAccess,
+  type SessionDefaults,
+} from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { MessageCircleIcon } from "lucide-react";
 import { type FormEvent, type Ref, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
@@ -23,7 +31,7 @@ const PROMPT_MAX = 20_000;
 /**
  * 에이전트 상세(「연결」 탭 — 연결 재설계 스펙 목표 3)가 카드에 나눠 담는 칸들. 머리의 켜기 스위치(`AgentEnabledSwitch`)·「DM 보내기」
  * (`AgentDmLink`), 「실행」 카드의 새 세션 시작값(`RunnerSessionDefaults`)·지시(`BasePromptEditor` — OpenClaw 에서는 「프로필」 카드의 메모),
- * 「프로필」 카드의 사진(`AgentAvatarField`), 「DM 허용」 카드(`DmAccessField`), 「관리」 카드의 삭제(`ArchiveAgentButton`).
+ * 「프로필」 카드의 사진(`AgentAvatarField`), 「DM 허용」 카드(`DmAccessField`), 「런 상한」 카드(`RunTimeoutField`), 「관리」 카드의 삭제(`ArchiveAgentButton`).
  * 토글·저장은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트). `readOnly`(그 연결의 주인도 admin 이상도 아님)면 값만 보인다
  */
 
@@ -138,6 +146,82 @@ export function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boo
       </div>
       <FieldError id={`${id}-error`}>{error}</FieldError>
     </div>
+  );
+}
+
+const RUN_TIMEOUT_RANGE_ERROR = `${AGENT_RUN_TIMEOUT_MINUTES_MIN}~${AGENT_RUN_TIMEOUT_MINUTES_MAX} 분 사이의 정수로 넣으세요`;
+
+/**
+ * 런 상한(분) — 이 시간이 지나도 끝나지 않은 런을 서버가 닫는다. 기본은 비어 있음(상한 없음 — 몇 시간 도는 런이 있다), 비워 저장하면
+ * null. 서버는 시계를 새로 걸 때마다(런 시작·승인 뒤 재개) 이 값을 읽어 그때부터 잰다. `readOnly` 면 값만 보인다
+ */
+export function RunTimeoutField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  const save = usePatchAgent();
+  const current = agent.runTimeoutMinutes;
+  const [draft, setDraft] = useState(current === null ? "" : String(current));
+  const [error, setError] = useState<string>();
+  const id = useId();
+  const label = current === null ? "없음" : `${current}분`;
+
+  if (readOnly)
+    return (
+      <p className="text-sm text-muted-foreground">
+        런 상한: <span className="text-foreground">{label}</span>
+      </p>
+    );
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (save.isPending) return;
+    const text = draft.trim();
+    let next: number | null = null;
+    if (text !== "") {
+      const parsed = AgentRunTimeoutMinutes.safeParse(Number(text));
+      if (!parsed.success) return setError(RUN_TIMEOUT_RANGE_ERROR);
+      next = parsed.data;
+    }
+    setError(undefined);
+    save.mutate(
+      { id: agent.id, patch: { runTimeoutMinutes: next } },
+      { onError: (err) => setError(formError(err)) },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} noValidate className="flex flex-col gap-2">
+      <Label htmlFor={id}>런 상한(분)</Label>
+      <p id={`${id}-note`} className="-mt-1 text-xs text-muted-foreground">
+        비우면 상한 없음 — 끝나지 않는 런은 「중지」로 멈춥니다. 바꾼 값은 다음에 시계를 걸 때(새 런 시작,
+        승인 뒤 재개)부터 적용되고, 승인 뒤에는 그때부터 다시 잽니다
+      </p>
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          type="number"
+          inputMode="numeric"
+          min={AGENT_RUN_TIMEOUT_MINUTES_MIN}
+          max={AGENT_RUN_TIMEOUT_MINUTES_MAX}
+          step={1}
+          placeholder="없음"
+          className="w-32"
+          aria-describedby={[`${id}-note`, error && `${id}-error`].filter(Boolean).join(" ")}
+          aria-invalid={error !== undefined}
+          value={draft}
+          disabled={save.isPending}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          size="sm"
+          aria-label={`@${agent.handle} 런 상한 저장`}
+          disabled={save.isPending}
+        >
+          {save.isPending ? "저장 중…" : "저장"}
+        </Button>
+      </div>
+      <FieldError id={`${id}-error`}>{error}</FieldError>
+    </form>
   );
 }
 

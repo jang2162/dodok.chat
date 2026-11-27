@@ -148,6 +148,8 @@ export const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: t
   avatarUrl: Agent.shape.avatarUrl.unwrap().nullable().optional(),
   basePrompt: Agent.shape.basePrompt.unwrap().nullable().optional(),
   dmAccess: Agent.shape.dmAccess.unwrap().optional(),
+  /** 런 상한(분) — null 은 지움(상한 없음). OpenClaw·러너 모두, 제어 도구 update_agent 도 받는다 */
+  runTimeoutMinutes: Agent.shape.runTimeoutMinutes.unwrap().optional(),
   sessionDefaults: SessionDefaults.partial().optional(),
   disallowedTools: RunnerAgentFields.disallowedTools.optional(),
   /** 봇 정의 — 봇 에이전트만(아니면 VALIDATION), 네 칸을 통째로 바꾼다(러너 봇 스펙 B3·B10) */

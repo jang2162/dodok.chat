@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `run_timeout_minutes` integer;

@@ -82,7 +82,11 @@ import { createRunTimers } from "./timers";
 
 export type RunTimeouts = {
   queuedMs: number;
-  runMs: number;
+  /**
+   * 런 상한의 기본값 — null 이면 상한이 없다(몇 시간 도는 런이 있다). 에이전트의 runTimeoutMinutes 가 있으면 그것이 앞선다.
+   * 시험은 짧은 값으로 낮춘다
+   */
+  runMs: number | null;
   finalizingMs: number;
   /** 스냅샷의 단독 줄 `MEDIA:` 하나마다 finalizing 상한에 더한다 — 플러그인이 미디어를 올린 뒤에 정본을 보낸다(Ruling 2) */
   finalizingMediaLineMs: number;
@@ -92,10 +96,10 @@ export type RunTimeouts = {
   maxInflight: number;
 };
 
-/** 계획 Global Constraints 의 기본값 */
+/** 계획 Global Constraints 의 기본값 — runMs 만 에이전트별 상한으로 바뀌어 기본이 없음이다(plan.md 10장 #30) */
 export const DEFAULT_RUN_TIMEOUTS: RunTimeouts = {
   queuedMs: 120_000,
-  runMs: 600_000,
+  runMs: null,
   finalizingMs: 10_000,
   finalizingMediaLineMs: 30_000,
   finalizingMaxMs: 120_000,
@@ -625,15 +629,28 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     );
   }
 
+  /** 그 런의 상한 — 에이전트의 분이 있으면 그것, 없으면 기본값(null 이면 상한 없음) */
+  function runLimitMs(runId: string): number | null {
+    const run = store.getRun(db, runId);
+    const minutes = run ? getAgent(db, run.agentId)?.runTimeoutMinutes : undefined;
+    return minutes == null ? timeouts.runMs : minutes * 60_000;
+  }
+
   function armRunTimer(runId: string): void {
-    timers.set(runId, "run", timeouts.runMs, () => {
+    const ms = runLimitMs(runId);
+    if (ms === null) {
+      timers.clear(runId, "run");
+      return;
+    }
+    timers.set(runId, "run", ms, () => {
       void timeOut(runId, { kind: "run_timeout" });
     });
   }
 
   /**
    * 승인 대기의 유일한 상한 — 그 런의 미해결 승인 중 가장 이른 만료 시각 + 5초(설계 4.3).
-   * 승인 행을 못 찾으면 시계를 아예 끄지 않는다 — 그러면 런이 영원히 산다.
+   * 승인 행을 못 찾으면 런 시계(`armRunTimer`)로 물러난다 — 에이전트에 상한이 없으면 그 시계도 걸리지 않아
+   * 사람 「중지」까지 열려 있다(plan.md 8장 「이월」 런 상한 ①).
    */
   function armApprovalWatchdog(runId: string): void {
     const expiresAt = deps.approvals?.earliestPendingExpiry(runId);
