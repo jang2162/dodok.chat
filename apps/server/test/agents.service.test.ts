@@ -233,7 +233,12 @@ describe("러너 봇(러너 봇 스펙 B2·B3·B10·B11)", () => {
     expect(bot.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
     expect(bot.runner).toMatchObject({ tokenId: runnerTokenId, bot: true });
     expect(bot.runner).not.toHaveProperty("projectLabel");
-    expect(bot.runnerAgent).toEqual({ projectId: null, disallowedTools: [], bot: DEF });
+    expect(bot.runnerAgent).toEqual({
+      projectId: null,
+      disallowedTools: [],
+      allowOutsideWorkdir: false,
+      bot: DEF,
+    });
     expect(bot.basePrompt).toBeUndefined();
     // 프로젝트 에이전트에는 bot 표시가 없다
     const plain = createRunnerAgentForTest(db, { workspaceId, handle: "plain", runnerTokenId }).agent;

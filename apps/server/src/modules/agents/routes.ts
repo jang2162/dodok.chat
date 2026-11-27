@@ -70,9 +70,9 @@ export type AgentRouteContext = {
 };
 
 /**
- * 러너 에이전트 PATCH 의 「새 세션 시작값」 권한 모드가 붙은 러너의 천장 안인가(세션 설정 스펙 5.5 — 그 러너 상한까지) — 러너가 끊겨
- * 있으면 건너뛴다(런에서 러너가 거절한다 — 러너 일반화 계획 Task 4). null(「기본」)은 늘 상한 안이다. OpenClaw 에이전트의 러너 필드는
- * 서비스(updateAgent)가 VALIDATION 으로 막는다
+ * 러너 에이전트 PATCH 의 「새 세션 시작값」 권한 모드·작업 디렉터리 밖 허용(켜기만)이 붙은 러너의 천장 안인가(세션 설정 스펙 5.5 — 그
+ * 러너 상한까지) — 러너가 끊겨 있으면 건너뛴다(런에서 러너가 거절한다 — 러너 일반화 계획 Task 4). null(「기본」)·끄기는 늘 상한
+ * 안이다. OpenClaw 에이전트의 러너 필드는 서비스(updateAgent)가 VALIDATION 으로 막는다
  */
 function assertRunnerPatchWithinCeiling(
   ctx: AgentRouteContext,
@@ -80,14 +80,23 @@ function assertRunnerPatchWithinCeiling(
   patch: UpdateAgentBody,
   workspaceId: string,
 ): void {
-  const permissionMode = patch.sessionDefaults?.permissionMode;
-  if (permissionMode === undefined || permissionMode === null) return;
+  const permissionMode = patch.sessionDefaults?.permissionMode ?? undefined;
+  const allowOutsideWorkdir = patch.allowOutsideWorkdir === true ? true : undefined;
+  if (permissionMode === undefined && allowOutsideWorkdir === undefined) return;
   const placement = runnerPlacement(ctx.db, id, workspaceId);
   if (placement?.provider !== "runner" || placement.runnerTokenId === null || placement.program === null)
     return;
   const live = ctx.runners?.runnerInfo(placement.runnerTokenId) ?? null;
   if (!live) return;
-  assertWithinCeiling(live, placement.program, { permissionMode }, { requireAvailable: false });
+  assertWithinCeiling(
+    live,
+    placement.program,
+    {
+      ...(permissionMode === undefined ? {} : { permissionMode }),
+      ...(allowOutsideWorkdir === undefined ? {} : { allowOutsideWorkdir }),
+    },
+    { requireAvailable: false },
+  );
 }
 
 /**

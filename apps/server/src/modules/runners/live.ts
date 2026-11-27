@@ -48,6 +48,12 @@ export function liveRunner(runners: RunnerLiveApi | null, tokenId: string): Runn
   return live;
 }
 
+type CeilingFields = {
+  permissionMode?: RunnerPermissionMode;
+  allowedTools?: string[] | null;
+  allowOutsideWorkdir?: boolean;
+};
+
 const beyond = (item: RunnerCeilingItem) =>
   apiError("VALIDATION", `러너 설정이 이 에이전트를 허용하지 않습니다(${item})`, { field: item });
 
@@ -55,12 +61,13 @@ const beyond = (item: RunnerCeilingItem) =>
  * 러너 에이전트 정의가 붙은 러너의 천장 밖이면 그 항목, 안이면 null(러너 일반화 스펙 2장 — 러너 ceiling.ts checkCeiling 과 같은
  * 규칙). 준 필드만 본다 — 만들기·옮기기는 모두, 고치기(PATCH)는 바꾸는 항목만. 프로그램은 requireAvailable 이면(만들기·옮기기) 그
  * 러너가 알리고 쓸 수 있어야 한다 — 고치기는 그 러너가 프로그램을 알리지 않으면 상한을 모르니 건너뛴다(런에서 러너가 거절한다).
- * allowedTools 는 글자 그대로의 부분집합(null 은 미리 허용한 도구가 없다 — 어느 상한에도 든다)
+ * allowedTools 는 글자 그대로의 부분집합(null 은 미리 허용한 도구가 없다 — 어느 상한에도 든다). allowOutsideWorkdir true 는 그
+ * 프로그램 천장이 열었을 때만(옛 러너는 알리지 않는다 — 막힌 것으로 본다), false 는 어느 천장에도 든다
  */
 export function ceilingMiss(
   live: RunnerLive,
   program: RunnerProgram,
-  fields: { permissionMode?: RunnerPermissionMode; allowedTools?: string[] | null },
+  fields: CeilingFields,
   opts: { requireAvailable: boolean },
 ): RunnerCeilingItem | null {
   const status = live.programs.find((p) => p.program === program);
@@ -74,6 +81,8 @@ export function ceilingMiss(
     return "permissionMode";
   if (allowedToolsCeiling !== null && fields.allowedTools?.some((t) => !allowedToolsCeiling.includes(t)))
     return "allowedTools";
+  if (fields.allowOutsideWorkdir === true && status.ceiling.allowOutsideWorkdir !== true)
+    return "outsideWorkdir";
   return null;
 }
 
@@ -81,7 +90,7 @@ export function ceilingMiss(
 export function assertWithinCeiling(
   live: RunnerLive,
   program: RunnerProgram,
-  fields: { permissionMode?: RunnerPermissionMode; allowedTools?: string[] | null },
+  fields: CeilingFields,
   opts: { requireAvailable: boolean },
 ): void {
   const item = ceilingMiss(live, program, fields, opts);

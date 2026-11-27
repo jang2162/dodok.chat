@@ -393,7 +393,13 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
           login: "default",
           cli: "installed",
           models: DEV_FAKE_MODELS,
-          ceiling: { ...FAKE_CLAUDE_PROGRAM.ceiling, appMcp: "http", appMcpCommands: null },
+          // 작업 디렉터리 밖 허용 상한을 연다 — 에이전트 상세의 토글을 켤 수 있다. 제한 러너는 막는다(토글이 잠긴다)
+          ceiling: {
+            ...FAKE_CLAUDE_PROGRAM.ceiling,
+            appMcp: "http",
+            appMcpCommands: null,
+            allowOutsideWorkdir: true,
+          },
         },
         DEV_FAKE_CODEX_MISSING,
         DEV_FAKE_OPENCODE_NO_DRIVER,
@@ -423,6 +429,7 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
             allowedToolsCeiling: ["Read", "Grep", "Glob"],
             appMcp: "off",
             appMcpCommands: null,
+            allowOutsideWorkdir: false,
           },
         },
       ],

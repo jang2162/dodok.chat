@@ -155,6 +155,8 @@ export const agents = sqliteTable(
     // 에서 돈다. 프로젝트 없는 옛 러너 에이전트(0031)는 이 칸도 null 이다 — 봇에는 「옛 것」 뜻을 쓰지 않는다
     runnerBot: json<RunnerBotDefinition>("runner_bot"),
     disallowedToolsJson: json<string[]>("disallowed_tools_json").notNull().default([]),
+    // 러너 에이전트의 「작업 디렉터리 밖 접근 허용」 — run.start.agent.allowOutsideWorkdir. 러너 천장이 열어야 런에 쓰인다(어댑터·러너가 거절)
+    allowOutsideWorkdir: integer("allow_outside_workdir", { mode: "boolean" }).notNull().default(false),
     // 새 세션 시작값 — 설정 행이 없는 대화가 이 값으로 돈다. 모두 null 이면 프로그램 기본·권한 「기본」(min(default, 러너 상한))
     sessionDefaultModel: text("session_default_model"),
     sessionDefaultEffort: text("session_default_effort").$type<RunnerEffort>(),
