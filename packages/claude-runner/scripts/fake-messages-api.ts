@@ -15,6 +15,9 @@
  * | HX-THINK | thinking 블록(thinking_delta 3 + signature_delta) 뒤 글 한 덩이 — 응답 안의 활동(추론) |
  * | HX-SLOW | 글 40조각을 0.5초 간격(20초) — 중지·러너 죽이기용 |
  * | HX-BASH | 쓰기 Bash(`touch hx-note.txt`) tool_use → 결과를 받으면 `HX-BASH-DONE` |
+ * | HX-OUT-READ | 작업 디렉터리 밖 `Read`(`$HX_OUTSIDE_DIR/hx-read.txt`, 기본 `/tmp/hx-outside`) → `HX-OUT-READ-DONE` |
+ * | HX-OUT-WRITE | 작업 디렉터리 밖 `Write`(`$HX_OUTSIDE_DIR/hx-written.txt`) → `HX-OUT-WRITE-DONE` |
+ * | HX-OUT-BASH | 작업 디렉터리 밖을 읽는 Bash(`ls $HX_OUTSIDE_DIR`) → `HX-OUT-BASH-DONE` |
  * | HX-POST-IN | `mcp__dodok__post` 로 작업 디렉터리 안 파일 `hx-out.txt` → `HX-POST-DONE` |
  * | HX-POST-OUT | `mcp__dodok__post` 로 작업 디렉터리 밖 `../hx-outside.txt` → `HX-POST-DONE` |
  * | HX-BG-BASH | 백그라운드 Bash(`sleep 3; echo hx-bg-done`, `run_in_background`) → 결과를 받으면 `HX-BG-BASH-DONE` |
@@ -46,6 +49,8 @@ type Script = {
   thinking?: string[];
   intervalMs: number;
 };
+
+const OUTSIDE_DIR = process.env.HX_OUTSIDE_DIR || "/tmp/hx-outside";
 
 const SCRIPTS: Script[] = [
   {
@@ -96,6 +101,26 @@ const SCRIPTS: Script[] = [
     tool: {
       name: "Bash",
       input: { command: "touch hx-note.txt", description: "Create the harness note file" },
+    },
+    intervalMs: 20,
+  },
+  // 작업 디렉터리 밖 경로(HX_OUTSIDE_DIR, 기본 /tmp/hx-outside) — 「작업 디렉터리 밖 접근 허용」을 켜고 끈 채 CLI 가 묻는지 잰다.
+  // 키워드가 서로의 앞부분이 되지 않게 이름을 지었다(HX-OUT-READ 가 HX-OUT-READX 를 고르지 않게)
+  {
+    key: "HX-OUT-READ",
+    tool: { name: "Read", input: { file_path: `${OUTSIDE_DIR}/hx-read.txt` } },
+    intervalMs: 20,
+  },
+  {
+    key: "HX-OUT-WRITE",
+    tool: { name: "Write", input: { file_path: `${OUTSIDE_DIR}/hx-written.txt`, content: "hx\n" } },
+    intervalMs: 20,
+  },
+  {
+    key: "HX-OUT-BASH",
+    tool: {
+      name: "Bash",
+      input: { command: `ls ${OUTSIDE_DIR}`, description: "List the harness outside directory" },
     },
     intervalMs: 20,
   },

@@ -76,7 +76,7 @@ export function resolveBot(botsDir: string, id: string): ResolvedBot {
 }
 
 /**
- * 순서는 root → path → program → permissionMode → allowedTools(먼저 걸린 하나만). allowedTools 는 글자 그대로의 부분집합이다 —
+ * 순서는 root → path → program → permissionMode → allowedTools → outsideWorkdir(먼저 걸린 하나만). allowedTools 는 글자 그대로의 부분집합이다 —
  * `Bash(git status)` 는 상한 `Bash` 에 들지 않는다(규칙 문법을 풀어 넓게 보지 않는다). null 은 미리 허용한 도구가 없다는 뜻이라
  * 어느 상한에도 든다. isAvailable 은 그 프로그램의 드라이버가 있고 detect 가 available 이라고 했는가. 봇 런은 root·path 대신 bot
  * (봇 폴더 — resolveBot) — 허용 루트와 상관없이 봇 자리만 본다(러너 봇 스펙 B1)
@@ -107,6 +107,10 @@ export function checkCeiling(
   const allowed = ceiling.allowedToolsCeiling;
   if (allowed !== null && agent.allowedTools?.some((t) => !allowed.includes(t))) {
     return { ok: false, item: "allowedTools" };
+  }
+  // 작업 디렉터리 밖 허용 — 설정에 true 로 적었을 때만(없으면 막는다)
+  if (agent.allowOutsideWorkdir === true && ceiling.allowOutsideWorkdir !== true) {
+    return { ok: false, item: "outsideWorkdir" };
   }
   return { ok: true, workdir };
 }

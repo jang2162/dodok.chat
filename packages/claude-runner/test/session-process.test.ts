@@ -465,6 +465,42 @@ describe("세션 프로세스 — 붙들기·다음 런 이어 넣기(백그라�
     });
   });
 
+  it("turning outside-workdir access on for a held process only marks it held — the old process keeps asking", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake);
+    fake.script(
+      script.init(),
+      ...shellStarted(),
+      ...script.textTurn("msg_1", ["첫째"]),
+      { waitInput: true },
+      script.init(),
+      ...script.textTurn("msg_2", ["둘째"]),
+      { waitInput: true },
+    );
+    await start(runSpec()).done;
+    const second = start({ ...spec2(), allowOutsideWorkdir: true });
+    await second.done;
+    expect(fake.calls).toHaveLength(1);
+    expect(second.emitted.find((e) => e.kind === "event" && e.event.type === "CUSTOM")).toMatchObject({
+      event: { name: HELD_SETTINGS_EVENT, value: { fields: ["allowOutsideWorkdir"] } },
+    });
+  });
+
+  it("turning outside-workdir access off releases a held process that had it — a new process opens without it", async () => {
+    const fake = createFakeSdk();
+    const { start } = runner(fake);
+    fake.script(script.init(), ...shellStarted(), ...script.textTurn("msg_1", ["첫째"]), { waitInput: true });
+    fake.script(script.init(), ...script.textTurn("msg_2", ["좁힌 뒤"]));
+    await start(runSpec({ allowOutsideWorkdir: true })).done;
+    expect(fake.calls[0]!.options.additionalDirectories).toEqual(["/"]);
+    const second = start(spec2());
+    await second.done;
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[0]!.finished).toBe(true);
+    expect(fake.calls[1]!.options).not.toHaveProperty("additionalDirectories");
+    expect(finals(second.emitted)).toMatchObject([{ final: { text: "좁힌 뒤" } }]);
+  });
+
   it("a reset session (new session id) releases the held process and opens a new one", async () => {
     const fake = createFakeSdk();
     const { start } = runner(fake);

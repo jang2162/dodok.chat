@@ -153,6 +153,22 @@ describe("buildQueryOptions", () => {
     expect(o.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
   });
 
+  it("작업 디렉터리 밖 허용 — 켜면 additionalDirectories 에 작업 디렉터리의 파일 시스템 루트 하나, 끄거나 없으면 키가 없다", () => {
+    const on = buildQueryOptions(runSpec({ allowOutsideWorkdir: true }), deps(false));
+    expect(on.additionalDirectories).toEqual(["/"]);
+    // 권한 모드·도구 목록은 그대로다
+    const off = buildQueryOptions(runSpec(), deps(false));
+    expect({ ...on, additionalDirectories: undefined, hooks: undefined }).toEqual({
+      ...off,
+      additionalDirectories: undefined,
+      hooks: undefined,
+    });
+    expect(buildQueryOptions(runSpec({ allowOutsideWorkdir: false }), deps(false))).not.toHaveProperty(
+      "additionalDirectories",
+    );
+    expect(off).not.toHaveProperty("additionalDirectories");
+  });
+
   it("effort — 값이면 SDK 옵션 effort, null·없음이면 키가 없다 [세션 설정 스펙 5.6]", () => {
     expect(buildQueryOptions(runSpec({ effort: "high" }), deps(false)).effort).toBe("high");
     expect(buildQueryOptions(runSpec({ effort: null }), deps(false))).not.toHaveProperty("effort");
