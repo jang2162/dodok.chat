@@ -66,6 +66,28 @@ export const nodeSpawner: Spawner = (file, args, opts) => {
   child.unref();
 };
 
+/** 서비스 관리자의 다시 시작 명령 — 0 으로 끝나면 풀리고, 띄우지 못했거나 0 이 아니게 끝나면 거절한다 */
+export type ServiceRestarter = (
+  file: string,
+  args: string[],
+  opts: { env: NodeJS.ProcessEnv },
+) => Promise<void>;
+
+/** 다시 시작 명령 뒤 이 러너가 끝나기를 기다리는 상한 — 넘으면 지금 판으로 다시 붙는다 */
+export const SERVICE_RESTART_TIMEOUT_MS = 60_000;
+
+/** 분리된 자식으로 띄운다 — 관리자가 이 프로세스를 끝내도 명령은 남는다 */
+export const nodeServiceRestarter: ServiceRestarter = (file, args, opts) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(file, args, { env: opts.env, detached: true, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new RunFailure(code, signal ? `signal ${signal}` : ""));
+    });
+    child.unref();
+  });
+
 /** npm 에 넘기지 않는 env — 러너 토큰과 모델 자격 증명(npm 의 설치 스크립트가 읽을 까닭이 없다) */
 export function npmEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(
@@ -148,6 +170,8 @@ export type SelfUpdateOptions = {
   exit?: (code: number) => void;
   /** 서비스 모드의 launchd 도메인(gui/<uid>) — 시험이 바꾼다(기본 process.getuid()) */
   uid?: number;
+  /** 서비스 모드의 다시 시작 명령 실행 — 시험이 바꾼다(기본 nodeServiceRestarter) */
+  serviceRestart?: ServiceRestarter;
 };
 
 /**
@@ -155,7 +179,8 @@ export type SelfUpdateOptions = {
  * `--check-config` 로 돌려 보고(설정 거절·Node 하한 등으로 새 판이 못 뜨면 러너가 내려간 채로 남는다 — 리뷰 M1), 0 이 아니면 옛 판으로
  * 되돌려 깔고 failed. 통과면 beforeRestart → 같은 argv 로 분리된 자식 → exit(0) 를 차례로 부르고 ok 를 돌려준다. env
  * DODOK_RUNNER_SERVICE(launchd·systemd)면 분리된 자식 대신 서비스 관리자의 다시 시작 명령을 분리해 띄우고 끝내지 않는다(관리자가
- * SIGTERM 으로 끝낸다). spawn 이 던지면 그대로 던진다 — 부르는 쪽(connection)이 연결을 되살린다
+ * SIGTERM 으로 끝낸다). 그 명령이 곧바로 실패하거나 SERVICE_RESTART_TIMEOUT_MS 안에 끝나지 않으면 던진다. spawn 이 던지면 그대로
+ * 던진다 — 둘 다 부르는 쪽(connection)이 연결을 되살린다
  */
 export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateResult> {
   if (!opts.enabled) return { ok: false, reason: "disabled", message: DISABLED_MESSAGE };
@@ -239,11 +264,41 @@ export async function selfUpdate(opts: SelfUpdateOptions): Promise<RunnerUpdateR
   // 서비스 밖에서 돈다. 관리자가 이 프로세스에 SIGTERM 을 보내 끝내고 같은 서비스로 새 판을 띄우므로 여기서 끝내지 않는다(exit 0 이면
   // 관리자가 다시 띄우지 않는다)
   const restart = serviceRestartCommand(opts.env.DODOK_RUNNER_SERVICE, opts.uid ?? process.getuid?.());
-  if (restart) {
-    (opts.spawn ?? nodeSpawner)(restart.file, restart.args, { env: opts.env });
-    return { ok: true };
-  }
+  if (restart) await restartByService(opts, restart, `${restart.file} ${restart.args.join(" ")}`);
   (opts.spawn ?? nodeSpawner)(opts.execPath, entryArgs, { env: opts.env });
   (opts.exit ?? ((code: number) => process.exit(code)))(0);
   return { ok: true };
+}
+
+/**
+ * 서비스 관리자에게 다시 시작을 맡기고 이 프로세스가 끝나기를 기다린다 — 정상이면 기다리는 중에 관리자의 SIGTERM 으로 끝나므로 풀리지
+ * 않는다. 명령이 곧바로 실패하거나 SERVICE_RESTART_TIMEOUT_MS 안에 끝나지 않으면(손으로 쓴 서비스 파일의 라벨·유닛 이름이 다름,
+ * SSH 세션이라 gui 도메인이 다름 등) 던진다 — 부르는 쪽(connection)이 spawn 이 던졌을 때처럼 지금 판으로 다시 붙는다
+ */
+async function restartByService(
+  opts: SelfUpdateOptions,
+  restart: { file: string; args: string[] },
+  shown: string,
+): Promise<never> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), SERVICE_RESTART_TIMEOUT_MS);
+  });
+  const failed = (opts.serviceRestart ?? nodeServiceRestarter)(restart.file, restart.args, {
+    env: opts.env,
+  }).then(
+    // 0 으로 끝났으면 관리자가 끝내 주기를 계속 기다린다
+    () => new Promise<never>(() => {}),
+    (error: unknown) => error,
+  );
+  const outcome = await Promise.race([timedOut, failed]);
+  clearTimeout(timer);
+  const why =
+    outcome === "timeout"
+      ? `서비스 다시 시작(${shown})이 ${SERVICE_RESTART_TIMEOUT_MS / 1000}초 안에 이 러너를 끝내지 않았습니다`
+      : `서비스 다시 시작(${shown})에 실패했습니다(${outcome instanceof Error ? outcome.message : String(outcome)})`;
+  throw new Error(
+    `${why} — 새 판(${opts.version})은 깔렸으니 다음 다시 시작 때 새 판으로 뜹니다. ` +
+      "지금 바꾸려면 그 머신에서 dodok-runner service restart 를 돌려 보세요",
+  );
 }

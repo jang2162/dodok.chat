@@ -132,6 +132,7 @@ describe("생성 파일 — docker-deploy.md 「백그라운드로 띄우기」�
       path: "/opt/node/bin:/usr/bin",
     });
     expect(text.split("\n")).toEqual([
+      "# dodok-runner service install 이 만든 파일 — 손으로 고치면 다음 install 이 .bak 으로 남기고 덮는다",
       "[Unit]",
       "Description=dodok runner",
       "After=network-online.target",
@@ -259,7 +260,28 @@ describe("runServiceCommand — launchd", () => {
       `launchctl bootstrap gui/501 ${PLIST}`,
     ]);
     expect(h.files.get(PLIST)).not.toBe("old");
-    expect(h.out[0]).toContain("다시 등록하고");
+    expect(h.out.some((l) => l.includes("다시 등록하고"))).toBe(true);
+  });
+
+  it("install — 표지 없는 기존 plist 는 .bak 으로 남기고 알린다", async () => {
+    const hand =
+      '<plist version="1.0"><dict><key>Label</key><string>chat.dodok.runner</string></dict></plist>';
+    const h = harness({ files: { [PLIST]: hand }, respond: launchd(RUNNING) });
+    expect(await h.run("install")).toBe(0);
+    expect(h.files.get(`${PLIST}.bak`)).toBe(hand);
+    expect(h.out[0]).toBe(`손으로 쓴 서비스 파일을 덮습니다 — 옛 파일은 ${PLIST}.bak`);
+    expect(h.files.get(PLIST)).toContain("dodok-runner service install 이 만든 파일");
+  });
+
+  it("install — 이 명령이 만든 파일은 알림 없이 다시 쓴다", async () => {
+    const h = harness({
+      files: { [PLIST]: renderPlistAt("/old/logs/runner.log") },
+      respond: launchd(RUNNING),
+    });
+    expect(await h.run("install")).toBe(0);
+    expect(h.files.has(`${PLIST}.bak`)).toBe(false);
+    expect(h.out.join("\n")).not.toContain("손으로 쓴");
+    expect(logPathFromPlist(h.files.get(PLIST)!)).toBe(`${HOME}/.dodok-runner/logs/runner.log`);
   });
 
   it("install — 설정 검사가 실패하면 아무것도 쓰지 않고 1", async () => {
@@ -381,6 +403,18 @@ describe("runServiceCommand — systemd", () => {
     const h = harness({ platform: "linux", files: { [UNIT]: "old" } });
     expect(await h.run("install")).toBe(0);
     expect(h.calls).toContain("systemctl --user restart dodok-runner");
+  });
+
+  it("install — 표지 없는 기존 unit 은 .bak 으로 남기고 알리고, 이 명령이 만든 unit 은 알림 없이 다시 쓴다", async () => {
+    const h = harness({ platform: "linux", files: { [UNIT]: "[Service]\nExecStart=/x\n" } });
+    expect(await h.run("install")).toBe(0);
+    expect(h.files.get(`${UNIT}.bak`)).toBe("[Service]\nExecStart=/x\n");
+    expect(h.out[0]).toBe(`손으로 쓴 서비스 파일을 덮습니다 — 옛 파일은 ${UNIT}.bak`);
+
+    const again = harness({ platform: "linux", files: { [UNIT]: h.files.get(UNIT)! } });
+    expect(await again.run("install")).toBe(0);
+    expect(again.files.has(`${UNIT}.bak`)).toBe(false);
+    expect(again.out.join("\n")).not.toContain("손으로 쓴");
   });
 
   it("uninstall·start·stop·restart·logs", async () => {

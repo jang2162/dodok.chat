@@ -9,11 +9,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MESSAGE,
   DISABLED_MESSAGE,
   nodeRunner,
+  nodeServiceRestarter,
   npmBesideNode,
   npmEnv,
   RunFailure,
@@ -21,6 +22,7 @@ import {
   type Runner,
   selfUpdate,
   type SelfUpdateOptions,
+  SERVICE_RESTART_TIMEOUT_MS,
   UNSUPPORTED_MESSAGE,
 } from "../src/self-update";
 
@@ -69,6 +71,10 @@ function harness(over: Partial<SelfUpdateOptions> = {}, npm?: Runner) {
       calls.spawn.push(args);
       calls.order.push("spawn");
     },
+    serviceRestart: async (...args) => {
+      calls.spawn.push(args);
+      calls.order.push("restart");
+    },
     exit: (code) => {
       calls.exit.push(code);
       calls.order.push("exit");
@@ -82,6 +88,10 @@ function harness(over: Partial<SelfUpdateOptions> = {}, npm?: Runner) {
 }
 
 describe("selfUpdate", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("성공 — 정확한 판을 전역 설치하고, 연결을 닫은 뒤 같은 argv·env 로 분리된 자식을 띄우고 끝난다", async () => {
     const { opts, calls } = harness();
     expect(await selfUpdate(opts)).toEqual({ ok: true });
@@ -146,22 +156,60 @@ describe("selfUpdate", () => {
     expect(calls.npm).toEqual([]);
   });
 
-  // Review Focus 2 — 끈 머신은 서버가 보내도 하지 않는다
   it.each([
     ["launchd", "launchctl", ["kickstart", "-k", "gui/501/chat.dodok.runner"]],
     ["systemd", "systemctl", ["--user", "--no-block", "restart", "dodok-runner"]],
   ] as const)(
     "서비스 모드(%s) — 분리된 러너 대신 서비스 관리자의 다시 시작을 띄우고 스스로 끝내지 않는다",
     async (service, file, args) => {
+      vi.useFakeTimers();
       const env = { PATH: "/usr/bin", DODOK_RUNNER_SERVICE: service };
       const { opts, calls } = harness({ env, uid: 501 });
-      expect(await selfUpdate(opts)).toEqual({ ok: true });
-      expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "spawn"]);
+      let settled = false;
+      const pending = selfUpdate(opts).finally(() => {
+        settled = true;
+      });
+      pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(SERVICE_RESTART_TIMEOUT_MS - 1);
+      // 관리자의 SIGTERM 을 기다린다 — 끝내지도, 풀리지도 않는다
+      expect(settled).toBe(false);
+      expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "restart"]);
       expect(calls.spawn).toEqual([[file, args, { env }]]);
       expect(calls.exit).toEqual([]);
     },
   );
 
+  it("서비스 모드 — 다시 시작 명령 뒤 60초 안에 끝나지 않으면 지금 판으로 다시 붙는다", async () => {
+    vi.useFakeTimers();
+    const { opts, calls } = harness({ env: { DODOK_RUNNER_SERVICE: "launchd" }, uid: 501 });
+    const pending = selfUpdate(opts);
+    const result = expect(pending).rejects.toThrow(
+      /60초 안에 이 러너를 끝내지 않았습니다 — 새 판\(0\.9\.0\)은 깔렸으니 다음 다시 시작 때 새 판으로 뜹니다.*dodok-runner service restart/,
+    );
+    await vi.advanceTimersByTimeAsync(SERVICE_RESTART_TIMEOUT_MS);
+    await result;
+    expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "restart"]);
+    expect(calls.exit).toEqual([]);
+  });
+
+  it("서비스 모드 — 다시 시작 명령이 곧바로 실패하면 기다리지 않고 다시 붙는다", async () => {
+    vi.useFakeTimers();
+    const { opts, calls } = harness({
+      env: { DODOK_RUNNER_SERVICE: "systemd" },
+      serviceRestart: async () => {
+        calls.order.push("restart");
+        throw new RunFailure(5, "");
+      },
+    });
+    // 시계를 돌리지 않는다 — 60초를 기다리면 이 await 가 풀리지 않는다
+    await expect(selfUpdate(opts)).rejects.toThrow(
+      /restart dodok-runner\)에 실패했습니다\(exit 5\).*다음 다시 시작 때 새 판으로 뜹니다.*dodok-runner service restart/,
+    );
+    expect(calls.order).toEqual(["npm install", "check", "beforeRestart", "restart"]);
+    expect(calls.exit).toEqual([]);
+  });
+
+  // Review Focus 2 — 끈 머신은 서버가 보내도 하지 않는다
   it("remoteUpdate: false 면 disabled — npm 도 다시 띄우기도 없다", async () => {
     const { opts, calls } = harness({ enabled: false });
     expect(await selfUpdate(opts)).toEqual({ ok: false, reason: "disabled", message: DISABLED_MESSAGE });
@@ -325,6 +373,17 @@ describe("도우미", () => {
   it("npmBesideNode — node 옆에 npm 이 있으면 그것, 없으면 PATH 의 npm", () => {
     expect(npmBesideNode("/opt/node/bin/node", (p) => p === "/opt/node/bin/npm")).toBe("/opt/node/bin/npm");
     expect(npmBesideNode("/opt/node/bin/node", () => false)).toBe("npm");
+  });
+});
+
+describe("nodeServiceRestarter — 실제 프로세스", () => {
+  const env = { PATH: process.env.PATH ?? "/usr/bin" };
+  it("0 으로 끝나면 풀린다", async () => {
+    await expect(nodeServiceRestarter("true", [], { env })).resolves.toBeUndefined();
+  });
+  it("0 이 아니게 끝나면·띄우지 못하면 거절한다", async () => {
+    await expect(nodeServiceRestarter("false", [], { env })).rejects.toThrow("exit 1");
+    await expect(nodeServiceRestarter("/nonexistent/dodok-x", [], { env })).rejects.toThrow(/ENOENT/);
   });
 });
 

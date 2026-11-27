@@ -32,6 +32,8 @@ export const NO_CONFIG_MESSAGE =
   "설정 파일이 없습니다 — 먼저 터미널에서 dodok-runner 를 띄워 설정을 만드세요(서비스로 뜬 러너는 설정을 묻지 못합니다)";
 export const ENV_TOKEN_MESSAGE =
   "서비스에는 env DODOK_RUNNER_TOKEN 을 넘기지 않습니다 — 설정에 tokenFile 을 적고 토큰을 그 파일(0600)에 두세요(dodok-runner setup 이 그렇게 만듭니다)";
+/** install 이 만든 파일의 표지 — 없으면 손으로 쓴 파일이라 덮기 전에 .bak 으로 남긴다 */
+export const GENERATED_MARK = "dodok-runner service install 이 만든 파일";
 export const EXIT_2_HINT = "토큰이나 판본 문제 — 로그 마지막 줄을 보세요";
 
 export function serviceKindFor(platform: NodeJS.Platform): ServiceKind | null {
@@ -67,6 +69,7 @@ export function renderLaunchdPlist(o: { programArguments: string[]; path: string
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
+    `  <!-- ${GENERATED_MARK} — 손으로 고치면 다음 install 이 .bak 으로 남기고 덮는다 -->`,
     `  <key>Label</key><string>${LAUNCHD_LABEL}</string>`,
     "  <key>ProgramArguments</key>",
     "  <array>",
@@ -105,6 +108,7 @@ const systemdArg = (s: string) =>
 
 export function renderSystemdUnit(o: { execStart: string[]; path: string }): string {
   return [
+    `# ${GENERATED_MARK} — 손으로 고치면 다음 install 이 .bak 으로 남기고 덮는다`,
     "[Unit]",
     "Description=dodok runner",
     "After=network-online.target",
@@ -214,6 +218,15 @@ function preflight(opts: ServiceOptions, deps: ServiceDeps): boolean {
 const TERMINAL_NOTE =
   "터미널에서 같은 설정의 러너가 돌고 있으면 끄세요 — 같은 토큰이면 서비스 쪽이 붙고 터미널 쪽은 코드 2 로 끝납니다";
 
+/** 손으로 쓴(표지 없는) 서비스 파일은 덮기 전에 <경로>.bak 으로 남기고 알린다 */
+function backupHandWritten(deps: ServiceDeps, path: string): void {
+  if (!deps.exists(path)) return;
+  const text = deps.readFile(path);
+  if (text.includes(GENERATED_MARK)) return;
+  deps.writeFile(`${path}.bak`, text);
+  deps.out(`손으로 쓴 서비스 파일을 덮습니다 — 옛 파일은 ${path}.bak`);
+}
+
 function fail(deps: ServiceDeps, what: string, r: CmdResult): number {
   const detail = (r.stderr || r.stdout).trim().split("\n").slice(-1)[0] ?? "";
   deps.err(`dodok-runner: ${what}에 실패했습니다(코드 ${r.code})${detail ? ` — ${detail}` : ""}`);
@@ -269,6 +282,7 @@ async function launchd(action: ServiceAction, opts: ServiceOptions, deps: Servic
         const out = await deps.run("launchctl", ["bootout", target]);
         if (out.code !== 0) return fail(deps, "기존 서비스 내리기(launchctl bootout)", out);
       }
+      backupHandWritten(deps, plistPath);
       deps.writeFile(
         plistPath,
         renderLaunchdPlist({
@@ -403,6 +417,7 @@ async function systemd(action: ServiceAction, opts: ServiceOptions, deps: Servic
     case "install": {
       if (!preflight(opts, deps)) return 1;
       deps.mkdir(dirname(unitPath));
+      backupHandWritten(deps, unitPath);
       deps.writeFile(
         unitPath,
         renderSystemdUnit({
