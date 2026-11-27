@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findConversationLinks,
   findMessageLinks,
   formatLinkedMessages,
   MESSAGE_LINKS_MAX,
@@ -62,6 +63,40 @@ describe("findMessageLinks", () => {
 
   it("id 는 소문자로 돌려준다", () => {
     expect(findMessageLinks(link(0, { query: `?m=${ID(10).toUpperCase()}` }), ORIGIN)).toEqual([ID(10)]);
+  });
+});
+
+describe("findConversationLinks", () => {
+  const session = (c: number, tail = "") => `${ORIGIN}/c/${ID(1)}/s/${ID(c)}${tail}`;
+
+  it("메시지 링크·스레드 링크·세션 링크 모두 그 대화 id", () => {
+    expect(findConversationLinks(link(10), ORIGIN)).toEqual([ID(2)]);
+    expect(findConversationLinks(link(10, { thread: 5 }), ORIGIN)).toEqual([ID(2)]);
+    expect(findConversationLinks(session(20), ORIGIN)).toEqual([ID(20)]);
+    expect(findConversationLinks(`${session(20, "/")} ${session(21, "?x=1")}`, ORIGIN)).toEqual([
+      ID(20),
+      ID(21),
+    ]);
+  });
+
+  it("다른 오리진·채널만 가리키는 주소·꼴이 틀린 id 는 아니다", () => {
+    expect(findConversationLinks(`https://other.example.com/c/${ID(1)}/s/${ID(2)}`, ORIGIN)).toEqual([]);
+    expect(findConversationLinks(`${ORIGIN}/c/${ID(1)}`, ORIGIN)).toEqual([]);
+    expect(findConversationLinks(`${ORIGIN}/c/${ID(1)}/s/${ID(2)}abc`, ORIGIN)).toEqual([]);
+    expect(findConversationLinks(`${ORIGIN}/c/${ID(1)}/s/nope`, ORIGIN)).toEqual([]);
+  });
+
+  it("마크다운 링크 안과 끝 구두점", () => {
+    expect(findConversationLinks(`[대화](${session(20)}). ${session(21)},`, ORIGIN)).toEqual([
+      ID(20),
+      ID(21),
+    ]);
+  });
+
+  it(`같은 id 는 한 번, 앞의 ${MESSAGE_LINKS_MAX} 개, 소문자`, () => {
+    const text = [20, 20, 21, 22, 23].map((c) => session(c)).join(" ");
+    expect(findConversationLinks(text, ORIGIN)).toEqual([ID(20), ID(21), ID(22)]);
+    expect(findConversationLinks(`${ORIGIN}/c/${ID(1)}/s/${ID(20).toUpperCase()}`, ORIGIN)).toEqual([ID(20)]);
   });
 });
 

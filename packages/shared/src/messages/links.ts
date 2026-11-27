@@ -52,6 +52,29 @@ export function findMessageLinks(text: string, origin: string): string[] {
   return found;
 }
 
+// 대화 주소 — 세션(`/c/<채널>/s/<대화>`)·스레드·메시지 링크 모두. 대화 id 뒤에 id 글자가 이어지면 다른 주소다
+const CONVERSATION_TAIL = new RegExp(`^/c/${UUID}/s/(${UUID})(?![0-9a-zA-Z-])`);
+
+/**
+ * 본문에서 같은 오리진의 대화 주소(세션·스레드·메시지 링크)를 찾아 대화 id(소문자)를 나온 순서대로, 같은 id 는 한 번, 최대
+ * MESSAGE_LINKS_MAX 개 돌려준다. 사람이 그 런의 트리거 글에 붙인 DM 대화를 그 런에서만 읽게 하는 판정(서버 auth/channel-access.ts
+ * linkedConversationIds)이 쓴다
+ */
+export function findConversationLinks(text: string, origin: string): string[] {
+  const base = origin.replace(/\/+$/, "");
+  if (base === "") return [];
+  const found: string[] = [];
+  const starts = new RegExp(escapeRegExp(base), "gi");
+  for (const hit of text.matchAll(starts)) {
+    const tail = CONVERSATION_TAIL.exec(text.slice(hit.index + hit[0].length));
+    if (!tail) continue;
+    const id = tail[1]!.toLowerCase();
+    if (!found.includes(id)) found.push(id);
+    if (found.length >= MESSAGE_LINKS_MAX) break;
+  }
+  return found;
+}
+
 const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/;
 
 /**

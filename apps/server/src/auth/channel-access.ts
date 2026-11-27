@@ -1,6 +1,7 @@
-import { and, eq, or, type SQL, sql } from "drizzle-orm";
+import { findConversationLinks, type RunTriggerKind } from "@dodok/shared";
+import { and, eq, inArray, or, type SQL, sql } from "drizzle-orm";
 import type { DbOrTx } from "../db/client";
-import { channelMembers, channels, runs } from "../db/schema.sqlite";
+import { channelMembers, channels, conversations, messages, runs } from "../db/schema.sqlite";
 import { apiError, type HttpError } from "../http/errors";
 import { roleOf } from "./roles";
 
@@ -68,7 +69,8 @@ export function readableChannelSql(userId: string): SQL {
  * (개인 토큰)는 사람과 같은 범위(일반 채널 + 주인의 DM 전부). 채널 안 에이전트는 일반 채널 + 그 런의 채널이 시킨 사람의 DM 이면 그 DM
  * 하나 — 시킨 사람의 다른 DM 은 없는 채널과 같다. 프롬프트 주입·모델 오판으로 DM 이 채널 답에 옮겨지는 길을 dodok 이 막는다(에이전트
  * DM 계획 판정 PD3). 그 런의 채널이 direct 면 시킨 사람이 그 대화의 사람 참여자일 때만 그 direct 하나(사람 간 DM 스펙 4.4). 런이 없는
- * 에이전트 주체는 일반 채널만
+ * 에이전트 주체는 일반 채널만. 사람이 트리거 글에 붙인 DM 대화 링크는 채널이 아니라 대화 하나라 여기서 넓히지 않는다 —
+ * readableConversationSqlFor
  */
 export function readableChannelSqlFor(principal: {
   userId: string | null;
@@ -87,9 +89,61 @@ export function readableChannelSqlFor(principal: {
   )!;
 }
 
+/** 트리거 글이 사람의 새 글인 런 — 릴레이(에이전트 글)·명령·상호작용·이어가기·추가 응답은 사람이 그 글에 링크를 붙인 것이 아니다 */
+const LINK_GRANT_RUNS: ReadonlySet<RunTriggerKind> = new Set<RunTriggerKind>(["mention", "auto_respond"]);
+
+/**
+ * 그 런에서 더 읽을 수 있는 대화 — 런의 트리거 글이 사람(authorType user)의 글이고 그 글쓴이가 시킨 사람 본인일 때만, 그 글 본문의
+ * 같은 오리진 대화 주소(세션·스레드·메시지 링크, shared findConversationLinks)가 가리키는 대화 id. 다음 런은 트리거 글이 달라 다시
+ * 막힌다. 런이 시작된 뒤 고친 트리거 글(editedAt > runs.createdAt)과 활성 멤버가 아닌 시킨 사람(roleOf)은 넓히지 않는다. 시킨 사람이 그 대화를 읽을 수 있는지는 여기서 보지 않는다 — readableConversationSqlFor 가 readableChannelSql 로 함께 건다.
+ * 사람이 고른 「링크를 공유했을 때만 일시 허용」(에이전트 DM 스펙 「구현과 맞춘 것」 — PD3 을 좁힌 판정)
+ */
+export function linkedConversationIds(db: DbOrTx, runId: string, origin: string | undefined): string[] {
+  if (origin === undefined) return [];
+  const row = db
+    .select({
+      triggerKind: runs.triggerKind,
+      requestedBy: runs.requestedBy,
+      authorType: messages.authorType,
+      authorId: messages.authorId,
+      bodyMd: messages.bodyMd,
+      editedAt: messages.editedAt,
+      runCreatedAt: runs.createdAt,
+      workspaceId: channels.workspaceId,
+    })
+    .from(runs)
+    .innerJoin(messages, eq(messages.id, runs.triggerMessageId))
+    .innerJoin(channels, eq(channels.id, runs.channelId))
+    .where(eq(runs.id, runId))
+    .get();
+  if (!row || row.requestedBy === null) return [];
+  if (!LINK_GRANT_RUNS.has(row.triggerKind as RunTriggerKind)) return [];
+  if (row.authorType !== "user" || row.authorId !== row.requestedBy) return [];
+  // 런이 시작된 뒤 고친 트리거 글은 넓히지 않는다 — 런 도중 링크를 더해 범위를 늘리는 길을 닫는다
+  if (row.editedAt !== null && row.editedAt > row.runCreatedAt) return [];
+  // 비활성 시킨 사람 — DM 이 있다는 것도 알리지 않는다(unreadableError 와 같은 판정)
+  if (roleOf(db, row.workspaceId, row.requestedBy) === undefined) return [];
+  return findConversationLinks(row.bodyMd, origin);
+}
+
+/**
+ * 대화 한 행(또는 그 대화의 메시지)을 읽는 범위 — readableChannelSqlFor 에, 채널 안 에이전트 런이면 트리거 글이 링크한 대화(linked —
+ * linkedConversationIds)를 시킨 사람이 읽을 수 있을 때만 더한다. 그 대화 하나만이다: 같은 DM 의 다른 세션·채널 단위 도구(get_channel·
+ * list_conversations·list_channels·search_messages·get_run)는 넓히지 않는다. conversations 를 조인한 조회에만 쓴다(conversations.id 를 본다)
+ */
+export function readableConversationSqlFor(
+  principal: { userId: string | null; via: "pat" | "agent"; runId?: string },
+  linked: readonly string[],
+): SQL {
+  const base = readableChannelSqlFor(principal);
+  if (principal.via !== "agent" || principal.runId === undefined || principal.userId === null) return base;
+  if (linked.length === 0) return base;
+  return or(base, and(inArray(conversations.id, [...linked]), readableChannelSql(principal.userId)))!;
+}
+
 /** 범위 밖(OUT_OF_SCOPE)의 문구 — 에이전트가 「채널 멤버가 아니라서」로 오판하지 않게 원인과 읽는 범위를 같이 말한다 */
 export const OUT_OF_SCOPE_MESSAGE =
-  "이 대화는 시킨 사람의 다른 DM 이라 이 런에서는 읽거나 바꿀 수 없습니다 — 채널 안 에이전트는 일반 채널과 지금 런의 DM 하나만 다룹니다";
+  "이 대화는 시킨 사람의 다른 DM 이라 이 런에서는 읽거나 바꿀 수 없습니다 — 채널 안 에이전트는 일반 채널과 지금 런의 DM 하나만 다룹니다. 사람이 이 글에 그 대화 링크를 붙이면 이 런에서 읽을 수 있습니다";
 
 /**
  * 주체가 못 읽은 채널의 오류 — 채널 안 에이전트(런 있음)이고 시킨 사람 본인은 그 채널을 읽을 수 있을 때만 OUT_OF_SCOPE(범위를 좁힌 것은
