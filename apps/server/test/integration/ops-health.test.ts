@@ -1,9 +1,9 @@
-import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 /**
  * Phase 3 ③ 계획 태스크 4 — 운영 안정성 사건의 배선. 실제 서버 + 가짜 Gateway·플러그인 + wire 클라이언트.
  * 60초 임계 자체(깜빡임 0줄·61초 한 줄)는 가짜 타이머 단위 테스트(ops.health.test.ts)가 잰다 — 여기서는 실제 시계로
  * 잴 수 있게 임계를 줄여(disconnectEventMs) 어댑터 상태 → 사건 → owner 소켓 → 복구 닫힘이 이어지는지를 본다
  */
+import { OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents } from "../../src/db/schema.sqlite";

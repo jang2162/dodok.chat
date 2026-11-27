@@ -1,4 +1,4 @@
-// channel.ts 는 SDK 를 import 한다 — 여기서는 핀 SDK(openclaw 2026.9.4)의 실제 route 빌더를 그대로 부른다
+// channel.ts 는 SDK 를 import 한다 — 여기서는 핀 SDK(openclaw)의 실제 route 빌더를 그대로 부른다
 import { CONVERSATION_ONLY_REASON, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
