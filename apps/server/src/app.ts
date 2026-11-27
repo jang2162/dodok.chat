@@ -938,6 +938,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       opsStatus: () => buildOpsStatus(opsStatusContext),
       // 「이 러너 설정 제어」 도구(러너 봇 2부 스펙 T8) — 러너 REST 와 같은 함수·같은 대기열
       runner: runnerOps,
+      appOrigin: config.APP_ORIGIN,
       ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
     });
     services.bindControl(control);

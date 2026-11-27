@@ -23,6 +23,7 @@ import {
   channels,
   memberships,
   messageReactions,
+  messages,
   runs,
   users,
 } from "../src/db/schema.sqlite";
@@ -2319,6 +2320,112 @@ describe("역할 매트릭스(스펙 2장)", () => {
         expect(hitChannels(await as("search_messages", { q: word }))).toEqual([]);
       },
     );
+
+    // ── 사람이 이 글에 붙인 DM 대화 링크 — 그 대화 하나를 그 런에서만 읽는다(에이전트 DM 스펙 「구현과 맞춘 것」 PD3 좁힘) ──
+    describe("트리거 글의 DM 대화 링크", () => {
+      const ORIGIN = "http://localhost:5173";
+      const sessionLink = (channelId: string, conversationId: string) =>
+        `${ORIGIN}/c/${channelId}/s/${conversationId}`;
+      /** 일반 채널에 author 가 쓴 글(본문 body)을 트리거로 requestedBy 가 시킨 열린 런 */
+      const linkRun = (requestedBy: string, body: string, author: string = requestedBy) => {
+        const channel = newChannel();
+        const conversationId = channelConversation(app.db, channel.id);
+        const trigger = createUserMessage(app.db, app.bus, {
+          conversationId,
+          authorId: author,
+          bodyMd: body,
+          clientMsgId: `dm-link-${++n}`,
+        });
+        return {
+          trigger,
+          ...openControlRun(app, requestedBy, { channel, conversationId, triggerMessageId: trigger.id }),
+        };
+      };
+      const read = (p: Principal, conversationId: string) =>
+        app.control.call(p, "read_messages", { conversationId });
+
+      it("① 시킨 사람 mia 가 자기 DM 대화 링크를 붙인 런은 그 대화를 읽는다(메시지 링크·세션 링크)", async () => {
+        const fx = dmFixture();
+        const bySession = linkRun(mia.id, `@dev 이 대화 봐 ${sessionLink(fx.channelId, fx.conversationId)}`);
+        const got = expectOk(await read(bySession.principal, fx.conversationId)) as { messages: Message[] };
+        expect(got.messages.map((m) => m.id)).toContain(fx.rootId);
+        const byMessage = linkRun(
+          mia.id,
+          `[이 글](${ORIGIN}/c/${fx.channelId}/s/${fx.conversationId}?m=${fx.rootId}) 봐`,
+        );
+        expectOk(await read(byMessage.principal, fx.conversationId));
+      });
+
+      it("② 같은 DM 의 다른 대화·채널 단위 도구·목록·검색은 넓히지 않는다", async () => {
+        const fx = dmFixture();
+        const word = secretIn(fx);
+        const otherConv = seedConversation(app.db, fx.channelId, { createdBy: mia.id });
+        const { principal } = linkRun(mia.id, sessionLink(fx.channelId, fx.conversationId));
+        const as = (tool: string, args: object) => app.control.call(principal, tool, args);
+        expect(await read(principal, otherConv)).toMatchObject({
+          ok: false,
+          error: { code: "OUT_OF_SCOPE" },
+        });
+        for (const [tool, args] of [
+          ["get_channel", { channelId: fx.channelId }],
+          ["list_conversations", { channelId: fx.channelId }],
+          ["get_run", { runId: fx.runId }],
+        ] as const)
+          expect(await as(tool, args), tool).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
+        expect(channelIds(await as("list_channels", {}))).not.toContain(fx.channelId);
+        expect(hitChannels(await as("search_messages", { q: word }))).toEqual([]);
+      });
+
+      it("③ 다음 런(링크 없는 글)은 다시 OUT_OF_SCOPE — 문구가 링크를 붙이는 길을 말한다", async () => {
+        const fx = dmFixture();
+        expectOk(
+          await read(
+            linkRun(mia.id, sessionLink(fx.channelId, fx.conversationId)).principal,
+            fx.conversationId,
+          ),
+        );
+        const next = await read(linkRun(mia.id, "@dev 아까 거 이어서").principal, fx.conversationId);
+        expect(next).toMatchObject({ ok: false, error: { code: "OUT_OF_SCOPE" } });
+        expect(next.ok ? "" : next.error.message).toContain("그 대화 링크를 붙이면");
+      });
+
+      it("④ 남의 DM 링크(admin 이 시킨 런에 mia 의 DM)는 NOT_FOUND", async () => {
+        const fx = dmFixture();
+        const { principal } = linkRun(ids.admin, sessionLink(fx.channelId, fx.conversationId));
+        expect(await read(principal, fx.conversationId)).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+      });
+
+      it("⑤ 에이전트·자동화 글, 시킨 사람이 아닌 사람의 글에 붙은 링크는 넓히지 않는다", async () => {
+        const fx = dmFixture();
+        const link = sessionLink(fx.channelId, fx.conversationId);
+        // 시킨 사람(mia)과 글쓴이(admin)가 다르다 — 사슬을 시작한 사람이 붙인 링크가 아니다
+        const byOther = linkRun(mia.id, link, ids.admin);
+        expect(await read(byOther.principal, fx.conversationId)).toMatchObject({
+          ok: false,
+          error: { code: "OUT_OF_SCOPE" },
+        });
+        // 같은 글을 자동화·에이전트 글로 바꾼다 — 작성자 종류가 사람이 아니면 넓히지 않는다
+        for (const authorType of ["automation", "agent"] as const) {
+          const run = linkRun(mia.id, link);
+          app.db.update(messages).set({ authorType }).where(eq(messages.id, run.trigger.id)).run();
+          expect(await read(run.principal, fx.conversationId), authorType).toMatchObject({
+            ok: false,
+            error: { code: "OUT_OF_SCOPE" },
+          });
+        }
+      });
+
+      it("⑥ 바깥 PAT 는 그대로 — 주인 mia 는 읽고 남은 NOT_FOUND", async () => {
+        const fx = dmFixture();
+        expectOk(await app.control.call(pat(mia.id), "read_messages", { conversationId: fx.conversationId }));
+        expect(
+          await app.control.call(pat(ids.admin), "read_messages", { conversationId: fx.conversationId }),
+        ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      });
+    });
 
     // ── 남의 direct — DIRECT_CASES(사람 간 DM 스펙 4장) ──
     // 에이전트 DM 의 경로·wire·제어 목록(DM_CASES·WIRE_CASES·CONTROL_CASES)을 그대로 direct 에 친다 — 참여하지 않은 owner·admin·member 는

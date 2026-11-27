@@ -13,7 +13,12 @@ import {
 import { and, eq } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
-import { readableChannelSqlFor, unreadableError } from "../../auth/channel-access";
+import {
+  linkedConversationIds,
+  readableChannelSqlFor,
+  readableConversationSqlFor,
+  unreadableError,
+} from "../../auth/channel-access";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
@@ -104,6 +109,8 @@ export type HandlerContext = {
   now(): Date;
   /** 「이 러너 설정 제어」(러너 봇 2부 스펙 T8) — 러너 REST 와 같은 문맥. 없으면(러너 어댑터 없는 시험 앱) ADAPTER_UNAVAILABLE */
   runner?: RunnerOpsContext;
+  /** 웹 오리진(APP_ORIGIN) — 런의 트리거 글이 링크한 대화를 찾는다(read_messages, conversationReaderOf). 없으면 넓히지 않는다 */
+  appOrigin?: string;
 };
 
 type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { name: N }>["input"]>;
@@ -188,6 +195,16 @@ function channelOf(ctx: HandlerContext, channelId: string): ChannelRecord {
  * 없는 자동화 사슬은 DM 을 읽지 못한다
  */
 const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
+
+/**
+ * 대화 한 행을 읽는 범위 — readerOf 에 더해, 채널 안 에이전트 런이면 시킨 사람이 그 런의 트리거 글에 링크한 대화 하나(그 런 동안만,
+ * auth/channel-access.ts readableConversationSqlFor). read_messages 만 쓴다 — 채널 단위 도구는 그 DM 을 넓히지 않는다
+ */
+function conversationReaderOf(ctx: HandlerContext, p: Principal): SQL {
+  const linked =
+    p.via === "agent" && p.runId !== undefined ? linkedConversationIds(ctx.db, p.runId, ctx.appOrigin) : [];
+  return readableConversationSqlFor(p, linked);
+}
 
 /**
  * 주체가 읽는 채널 한 행 — 못 읽으면 NOT_FOUND, 시킨 사람은 읽는데 이 런의 범위 밖이면 OUT_OF_SCOPE(auth/channel-access.ts
@@ -363,7 +380,14 @@ export const HANDLERS: Handlers = {
   },
   read_messages: {
     access: (ctx, input, principal) => {
-      if (!getReadableConversation(ctx.db, input.conversationId, ctx.workspaceId, readerOf(principal)))
+      if (
+        !getReadableConversation(
+          ctx.db,
+          input.conversationId,
+          ctx.workspaceId,
+          conversationReaderOf(ctx, principal),
+        )
+      )
         throw unreadableError(
           ctx.db,
           principal,

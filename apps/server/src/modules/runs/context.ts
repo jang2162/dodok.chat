@@ -15,7 +15,7 @@ import {
 } from "@dodok/shared";
 import { and, desc, eq, inArray, isNull, lt, lte } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
-import { readableChannelSqlFor } from "../../auth/channel-access";
+import { linkedConversationIds, readableConversationSqlFor } from "../../auth/channel-access";
 import type { DbOrTx } from "../../db/client";
 import {
   agents,
@@ -277,10 +277,12 @@ const LINK_EXPANDING_RUNS: ReadonlySet<RunTriggerKind> = new Set<RunTriggerKind>
 ]);
 
 /**
- * 트리거 글이 링크한 같은 앱의 메시지를 그 런의 주체가 읽을 수 있는 것만 펼친다(메시지 링크 스펙). 읽기 판정은 제어 도구와 같은
- * readableChannelSqlFor — 시킨 사람(릴레이는 사슬을 시작한 사람, 사람 없는 자동화는 null)으로 보되 DM·그룹 DM 은 그 런이 도는 바로 그
- * DM 일 때만. 그래서 자기 DM 의 링크를 일반 채널에 붙여도 채널의 에이전트에게는 펼치지 않는다(에이전트 DM 계획 PD3). 못 읽거나 없는
- * 메시지·시스템 글은 조용히 뺀다. 런 행이 있어야 DM 판정이 선다(runs 를 읽는다)
+ * 트리거 글이 링크한 같은 앱의 메시지를 그 런의 주체가 읽을 수 있는 것만 펼친다(메시지 링크 스펙). 읽기 판정은 제어 도구
+ * read_messages 와 같은 readableConversationSqlFor — 시킨 사람(릴레이는 사슬을 시작한 사람, 사람 없는 자동화는 null)으로 보되 DM·그룹
+ * DM 은 그 런이 도는 바로 그 DM 이거나, 시킨 사람 본인이 쓴 트리거 글이 링크한 그 대화일 때만(linkedConversationIds — 에이전트 DM
+ * 계획 PD3 을 좁힌 판정: 사람이 링크를 공유했을 때만 그 런에서 일시 허용). 그래서 사람이 자기 DM 링크를 일반 채널에 붙이면 그 대화의
+ * 글은 펼치고, 자동화·에이전트 글이나 남이 쓴 글에 붙은 DM 링크는 펼치지 않는다. 못 읽거나 없는 메시지·시스템 글은 조용히 뺀다. 런
+ * 행이 있어야 DM 판정이 선다(runs 를 읽는다)
  */
 export function linkedMessagesFor(
   db: DbOrTx,
@@ -292,11 +294,10 @@ export function linkedMessagesFor(
   if (ids.length === 0) return [];
   const workspaceId = getChannel(db, run.channelId)?.workspaceId;
   if (workspaceId === undefined) return [];
-  const reader = readableChannelSqlFor({
-    userId: store.getRunRequestedBy(db, run.id),
-    via: "agent",
-    runId: run.id,
-  });
+  const reader = readableConversationSqlFor(
+    { userId: store.getRunRequestedBy(db, run.id), via: "agent", runId: run.id },
+    linkedConversationIds(db, run.id, input.origin),
+  );
   const out: LinkedMessage[] = [];
   for (const id of ids) {
     const found = getReadableMessage(db, id, workspaceId, reader);
