@@ -19,7 +19,14 @@ import { randomBytes } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channelMembers, gateways, runnerProjects, runnerTokens } from "../../db/schema.sqlite";
+import {
+  agentSessions,
+  agents,
+  channelMembers,
+  gateways,
+  runnerProjects,
+  runnerTokens,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
@@ -572,7 +579,9 @@ function createRunnerBot(
 /**
  * OpenClaw 에이전트를 다른 Gateway 로 옮긴다(멀티 Gateway 스펙 「에이전트 API」 절, owner). 대상에 같은 id 가 있으면 409, 러너 에이전트는 400.
  * 도는 런은 맡은 연결(runs.connection_id)에서 끝까지 가고, 아직 보내지 않은 런은 디스패치 때 닫힌다(runs/orchestrator.ts dispatch).
- * previousGatewayId 는 채널 프롬프트 동기화가 새로 들어온 Gateway 를 가를 때 쓴다
+ * previousGatewayId 는 채널 프롬프트 동기화가 새로 들어온 Gateway 를 가를 때 쓴다.
+ * 그 에이전트 세션 행들의 전달 커서(delivered_up_to)는 비운다 — 커서는 옛 Gateway 에서의 턴까지 올라 있고, 새(또는 되돌아온) Gateway 의
+ * 전사에는 그 턴들이 없을 수 있다. 다음 런은 최근 대화를 전부 싣는다
  */
 export function moveAgentGateway(
   db: Db,
@@ -603,6 +612,7 @@ export function moveAgentGateway(
       .returning()
       .get();
     if (!row) throw apiError("NOT_FOUND", "agent not found");
+    tx.update(agentSessions).set({ deliveredUpTo: null }).where(eq(agentSessions.agentId, current.id)).run();
     return { agent: apiAgent(tx, row), previousGatewayId: current.gatewayId };
   });
 }

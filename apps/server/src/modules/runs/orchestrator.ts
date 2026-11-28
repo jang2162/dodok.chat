@@ -340,6 +340,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const pending = new Map<string, Pending>(); // 이 프로세스가 enqueue 한 미종료 런
   const inflight = new Set<string>();
   const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
+  // 전달 커서 후보 — 보내기 전에 적어 두고 런이 시작될 때(queued → STARTED, applySignal) 올린다. ack 는 「받았다」일 뿐이다 — 러너는
+  // 천장·형식 거절·대기열 중지도 ack 하고 그 프롬프트는 Claude 세션에 들어가지 않는다. 시작 없이 끝나면 버린다(다음 런은 그 글을 다시 싣는다)
+  const deliveredCandidates = new Map<string, { sessionRowId: string; at: Date }>();
   const buffers = new Map<string, DeltaBuffer[]>(); // 런별, 줄(Lane)마다 하나까지 — 먼저 모이기 시작한 것이 앞
   const reasoningChars = new Map<string, number>(); // 런별 저장한 추론 글자 수
   const reasoningTruncated = new Set<string>(); // reasoning_truncated 를 남긴 런
@@ -795,6 +798,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     const info = pending.get(runId);
     pending.delete(runId);
     inflight.delete(runId);
+    deliveredCandidates.delete(runId);
     timers.clear(runId);
     buffers.delete(runId);
     reasoningChars.delete(runId);
@@ -887,6 +891,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         ...(started ? { startedAt: ts } : {}),
         ...(terminal ? { endedAt: ts } : {}),
       });
+      const delivered = started ? deliveredCandidates.get(runId) : undefined;
+      if (delivered !== undefined) {
+        deliveredCandidates.delete(runId);
+        advanceDeliveredCursor(tx, delivered.sessionRowId, delivered.at);
+      }
       const bodies: RunEventBody[] = [];
       if (started) {
         bodies.push({
@@ -1107,6 +1116,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           : undefined;
       // ack 전 상한 — 어댑터는 플러그인이 없으면 120s, ack 가 없으면 재시도로 더 기다린다. 그동안에도 런은 queued 이므로
       // queuedMs 안에 전달되지 않으면 닫는다(스펙 8장 「브리지 단절·ack 없음 → ADAPTER_UNAVAILABLE」). ack 뒤에는 아래에서 다시 건다.
+      // 전달 커서는 ack 가 아니라 런 시작에서 올린다(deliveredCandidates) — 시작 신호가 ack 보다 먼저 올 수 있어 보내기 전에 적는다
+      const deliveredCursor = deliveredCursorOf(run, inbound);
+      if (deliveredCursor !== undefined)
+        deliveredCandidates.set(runId, { sessionRowId: session.id, at: deliveredCursor });
       awaitingAck.add(runId);
       timers.set(runId, "queued", timeouts.queuedMs, () => {
         undelivered(runId);
@@ -1149,9 +1162,6 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           threadUpdates.latestAt ?? (threadUpdatesSince.since === null ? now() : undefined);
         if (threadCursor !== undefined) advanceThreadRepliesCursor(db, session.id, threadCursor);
       }
-      // 전달 커서도 받아들여진 경로에서만 — 실은 마지막 글의 시각. 다음 런의 받는 쪽이 세션을 이어 가면 그 시각까지의 글과 자기 글을 뺀다
-      const deliveredCursor = deliveredCursorOf(run, inbound);
-      if (deliveredCursor !== undefined) advanceDeliveredCursor(db, session.id, deliveredCursor);
       // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다.
       // 보낸 연결(저장값 ?? 에이전트의 지금 연결)이 아니라 저장값과 견준다 — 기다리는 사이 에이전트가 묶이면 둘이 같아도 저장값은 비어 있다
       const patch: store.RunRowPatch = {};

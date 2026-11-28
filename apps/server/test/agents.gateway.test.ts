@@ -5,10 +5,11 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import type { Agent, ConnectionId } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
-import { workspaces } from "../src/db/schema.sqlite";
+import { agentSessions, workspaces } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, runErrorMessages } from "../src/modules/messages/service";
@@ -227,6 +228,24 @@ describe("Gateway 옮기기 — PUT /api/v1/agents/:id/gateway", () => {
     const retried = runs()[1];
     expect(retried?.parentRunId).toBe(failed?.id);
     expect(retried?.status).not.toBe("error");
+  });
+
+  it("옮기면 그 에이전트 세션 행들의 전달 커서를 비운다 — 되돌아온 Gateway 의 전사에는 옮겨 있던 사이 턴이 없다", async () => {
+    const { app, adapter, main, say, move } = await withChannel();
+    await say("@main-office 안녕");
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(1));
+    const rows = () => app.db.select().from(agentSessions).where(eq(agentSessions.agentId, main.id)).all();
+    expect(rows()).toHaveLength(1);
+    app.db
+      .update(agentSessions)
+      .set({ deliveredUpTo: new Date("2026-11-27T00:00:00.000Z") })
+      .where(eq(agentSessions.agentId, main.id))
+      .run();
+    // 같은 Gateway 로의 「옮기기」는 아무것도 바꾸지 않는다
+    expect((await move(FAKE_GATEWAY_ID)).statusCode).toBe(200);
+    expect(rows()[0]?.deliveredUpTo?.toISOString()).toBe("2026-11-27T00:00:00.000Z");
+    expect((await move(HOME_ID)).statusCode).toBe(200);
+    expect(rows().map((r) => r.deliveredUpTo)).toEqual([null]);
   });
 
   it("대상 Gateway 에 같은 id 가 있으면 409, 러너 에이전트는 400, 없는 Gateway 는 400, 없는 에이전트는 404", async () => {

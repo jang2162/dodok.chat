@@ -445,6 +445,11 @@ export type RunContext = {
   cliVersion?: string;
   /** 세션별 마지막 total_cost_usd(세션 누적값 — ADR 0007 5.9). 러너 프로세스 메모리에만 있다 */
   costs: Map<string, number>;
+  /**
+   * 컴팩션(SDK `system`/`compact_boundary`·`/compact` 명령 런)을 본 세션 id — 그 세션의 다음 프롬프트 턴은 이어 가도 앞 턴이 요약으로만
+   * 남았으므로 최근 대화를 전부 싣는다(continuing:false). 러너 프로세스 메모리에만 있다
+   */
+  compacted: Set<string>;
   signal: AbortSignal;
   now?: () => number;
   closeGraceMs?: number;
@@ -1116,6 +1121,8 @@ async function runTurn(
   let sawMessage = false;
   /** 이 턴의 프롬프트에 붙인 「사람이 끈 작업」 — 프롬프트가 닿지 않은 재시도면 돌려놓는다 */
   let stoppedTaken: string[] | undefined;
+  /** 이 턴이 컴팩션 표지를 거뒀다(전부 실었다) — 프롬프트가 닿지 않은 재시도면 돌려놓는다 */
+  let compactionTaken = false;
   let costKind: RunnerRunFinal["costKind"] = opened?.costKind ?? "subscription_estimate";
   const end = () => {
     ended = true;
@@ -1160,9 +1167,14 @@ async function runTurn(
     } else if (o.prompt !== false) {
       // 명령 런은 글을 바꾸지 않으므로 꺼내지 않는다 — 다음 프롬프트 런에 붙는다
       if (command === undefined) stoppedTaken = takeStoppedByPerson(ctx.background, start.deliver.sessionKey);
+      // 컴팩션 뒤 첫 프롬프트 턴은 이어 가도 전부 싣는다 — 명령 런은 대화 블록을 싣지 않으므로 표지를 거두지 않는다
+      if (command === undefined) compactionTaken = ctx.compacted.delete(sessionId);
+      const continuing = o.continuing && !compactionTaken;
+      // `/compact` 명령 런은 compact_boundary 를 못 받아도(CLI 판 차이) 컴팩션으로 본다 — 틀려도 다음 턴이 전부 실을 뿐이다
+      if (command?.name === "compact") ctx.compacted.add(sessionId);
       sp.send({
         type: "user",
-        message: { role: "user", content: promptContent(start, images, stoppedTaken, o.continuing) },
+        message: { role: "user", content: promptContent(start, images, stoppedTaken, continuing) },
         parent_tool_use_id: null,
       });
     }
@@ -1174,6 +1186,7 @@ async function runTurn(
         costKind = API_KEY_SOURCES.has(raw.apiKeySource) ? "api" : "subscription_estimate";
         if (opened) opened.costKind = costKind;
       }
+      if (raw.type === "system" && raw.subtype === "compact_boundary") ctx.compacted.add(sessionId);
       for (const item of mapper.map(m)) {
         if (ended) break;
         if (item.event) {
@@ -1211,6 +1224,7 @@ async function runTurn(
         // 그 프롬프트는 닿지 않았다 — resume 으로 다시 여는 같은 런이 다시 붙이게 돌려놓는다
         if (stoppedTaken !== undefined)
           restoreStoppedByPerson(ctx.background, start.deliver.sessionKey, stoppedTaken);
+        if (compactionTaken) ctx.compacted.add(sessionId);
         return "session-in-use";
       } else failedRun(sink, error, opened?.stderrTail());
     }

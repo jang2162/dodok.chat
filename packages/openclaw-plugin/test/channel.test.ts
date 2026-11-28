@@ -441,11 +441,13 @@ describe("이어 감 판정 — 런 시작 때 적은 세대와 다음 전달(se
       },
       options: {},
     }) as InboundDeliver;
-  let current: { sessionId: string; updatedAt: number; compactionCount?: number } | undefined;
+  let current:
+    | { sessionId: string; lifecycleRevision?: string; updatedAt: number; compactionCount?: number }
+    | undefined;
   const read = vi.fn(async () => current);
   beforeEach(() => {
     sessionGenerations.forget(key);
-    current = { sessionId: "s1", updatedAt: Date.now() };
+    current = { sessionId: "s1", lifecycleRevision: "r1", updatedAt: Date.now(), compactionCount: 0 };
     read.mockClear();
     logger.warn.mockClear();
   });
@@ -464,9 +466,18 @@ describe("이어 감 판정 — 런 시작 때 적은 세대와 다음 전달(se
     expect(read).not.toHaveBeenCalled();
   });
 
-  it("런 시작 뒤 sessionId 가 바뀌었으면(/new) 전부", async () => {
+  it("런 시작 뒤 OpenClaw /new·control UI 리셋 — 같은 sessionId·새 lifecycleRevision·compactionCount 0 이면 전부", async () => {
     await rememberSessionGeneration("main", key, logger, read);
-    current = { sessionId: "s2", updatedAt: Date.now() };
+    current = { sessionId: "s1", lifecycleRevision: "r2", updatedAt: Date.now(), compactionCount: 0 };
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(false);
+  });
+
+  it("인바운드로 생긴 세션(lifecycleRevision 없음)을 처음 리셋하면(값이 생김) 전부, 리셋 전에는 이어 간다", async () => {
+    current = { sessionId: "s1", updatedAt: Date.now(), compactionCount: 0 };
+    await rememberSessionGeneration("main", key, logger, read);
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(true);
+    await rememberSessionGeneration("main", key, logger, read);
+    current = { sessionId: "s1", lifecycleRevision: "r9", updatedAt: Date.now(), compactionCount: 0 };
     expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(false);
   });
 

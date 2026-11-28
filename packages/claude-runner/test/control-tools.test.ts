@@ -48,6 +48,7 @@ function harness(fake: FakeSdk, bridge: FakeBridge): RunContext {
     }),
     baseEnv: { PATH: "/usr/bin" },
     costs: new Map(),
+    compacted: new Set(),
     signal: new AbortController().signal,
     closeGraceMs: 30,
   };

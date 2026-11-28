@@ -3054,12 +3054,15 @@ describe("전달 커서 — 다음 런의 context.deliveredUpTo(이어 가는 �
       .all()
       .find((r) => r.threadRootId === threadRootId);
 
-  it("첫 런은 필드가 없고, 둘째 런은 첫 런의 트리거 글 시각을 싣는다", async () => {
+  it("첫 런은 필드가 없고, 둘째 런은 첫 런의 트리거 글 시각을 싣는다 — 커서는 ack 가 아니라 런 시작에서 오른다", async () => {
     const t = setup();
     const m1 = t.say("@dev 첫째");
     const first = await t.enqueue(m1);
     await t.flush();
     expect(t.adapter.calls.send[0]?.context.deliveredUpTo).toBeUndefined();
+    // ack(dispatch) 만으로는 오르지 않는다 — 프롬프트가 세션에 들어갔다는 신호(started 전이)를 기다린다
+    expect(sessionRow(t)?.deliveredUpTo).toBeNull();
+    await t.orch.signal(first.id, { kind: "gateway_started" });
     expect(sessionRow(t)?.deliveredUpTo?.toISOString()).toBe(m1.createdAt);
     await finish(t, first.id);
     vi.setSystemTime(new Date("2026-11-27T00:01:00.000Z"));
@@ -3067,6 +3070,47 @@ describe("전달 커서 — 다음 런의 context.deliveredUpTo(이어 가는 �
     await t.flush();
     expect(t.adapter.calls.send[1]?.context.deliveredUpTo).toBe(m1.createdAt);
     await finish(t, second.id);
+    t.orch.stop();
+  });
+
+  const startedRun = async (t: ReturnType<typeof setup>, text: string) => {
+    const m = t.say(text);
+    const run = await t.enqueue(m);
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "gateway_started" });
+    await finish(t, run.id);
+    return m;
+  };
+
+  it("러너가 받고 거절하면(ack 뒤 RUNNER_CEILING 등 — 시작 없이 닫힘) 커서는 앞 값 그대로", async () => {
+    const t = setup();
+    const m1 = await startedRun(t, "@dev 첫째");
+    vi.setSystemTime(new Date("2026-11-27T00:01:00.000Z"));
+    const rejected = await t.enqueue(t.say("@dev 천장에 걸림"));
+    await t.flush();
+    await t.orch.signal(rejected.id, { kind: "gateway_error", code: "RUNNER_CEILING", message: "x" });
+    expect(sessionRow(t)?.deliveredUpTo?.toISOString()).toBe(m1.createdAt);
+    vi.setSystemTime(new Date("2026-11-27T00:02:00.000Z"));
+    await t.enqueue(t.say("@dev 다시 해 줘"));
+    await t.flush();
+    expect(t.adapter.calls.send.at(-1)?.context.deliveredUpTo).toBe(m1.createdAt);
+    t.orch.stop();
+  });
+
+  it("러너 대기열에 섰다가(queued: true) 시작 전에 중지되면 커서는 앞 값 그대로", async () => {
+    const t = setup();
+    const m1 = await startedRun(t, "@dev 첫째");
+    vi.setSystemTime(new Date("2026-11-27T00:01:00.000Z"));
+    t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
+    const waiting = await t.enqueue(t.say("@dev 기다림"));
+    await t.flush();
+    await t.orch.abort(waiting.id);
+    expect(sessionRow(t)?.deliveredUpTo?.toISOString()).toBe(m1.createdAt);
+    t.adapter.script(() => ({ admission: "dispatch" }));
+    vi.setSystemTime(new Date("2026-11-27T00:02:00.000Z"));
+    await t.enqueue(t.say("@dev 다음"));
+    await t.flush();
+    expect(t.adapter.calls.send.at(-1)?.context.deliveredUpTo).toBe(m1.createdAt);
     t.orch.stop();
   });
 
@@ -3095,10 +3139,11 @@ describe("전달 커서 — 다음 런의 context.deliveredUpTo(이어 가는 �
     await t.flush();
     await finish(t, first.id);
     const reply = t.say("@dev 스레드", undefined, root.id);
-    await t.enqueue(reply, { threadRootId: root.id, rootMessageId: root.id });
+    const threadRun = await t.enqueue(reply, { threadRootId: root.id, rootMessageId: root.id });
     await t.flush();
     expect(t.adapter.calls.send[1]?.threadId).toBe(root.id);
     expect(t.adapter.calls.send[1]?.context.deliveredUpTo).toBeUndefined();
+    await t.orch.signal(threadRun.id, { kind: "gateway_started" });
     expect(sessionRow(t, root.id)?.deliveredUpTo?.toISOString()).toBe(reply.createdAt);
     t.orch.stop();
   });

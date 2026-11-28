@@ -296,7 +296,8 @@ export function moveProject(
       .map((r) => r.id);
     if (agentIds.length > 0)
       tx.update(agentSessions)
-        .set({ providerSessionId: null })
+        // 다른 러너는 그 전사가 없다 — 새 세션으로 열고 전달 커서도 비워 다음 런이 최근 대화를 전부 싣는다
+        .set({ providerSessionId: null, deliveredUpTo: null })
         .where(inArray(agentSessions.agentId, agentIds))
         .run();
     return { project: moved, agentIds };

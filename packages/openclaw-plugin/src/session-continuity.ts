@@ -3,9 +3,18 @@
  * formatConversationBlock). 앞 턴의 헤더와 에이전트 자신의 답은 그 세션 전사에 이미 있다.
  *
  * 리셋은 서버가 다 알지 못한다(OpenClaw 쪽 `/new`·`/reset`·일일·유휴 리셋·컴팩션). 그래서 플러그인이 판정한다:
- * - 런이 시작될 때(onAgentRunStart — 코어가 세션을 이미 골랐다) 그 세션 항목의 `sessionId`·`compactionCount` 를 기억한다.
- * - 다음 전달에서 지금 항목의 둘이 기억과 같고, 코어의 리셋 정책(evaluateSessionFreshness)으로 이번 턴에 리셋되지 않을 때만 이어 간다.
- *   `/new`·`/reset` 은 `sessionId` 를, 컴팩션은 `compactionCount` 를 바꾼다. 리셋 정책은 코어가 인바운드 때 보는 것과 같은 함수다.
+ * - 런이 시작될 때(onAgentRunStart — 코어가 세션을 이미 골랐다) 그 세션 항목의 `sessionId`·`lifecycleRevision`·`compactionCount` 를 기억한다.
+ * - 다음 전달에서 지금 항목의 셋이 기억과 같고, 코어의 리셋 정책(evaluateSessionFreshness)으로 이번 턴에 리셋되지 않을 때만 이어 간다.
+ *   OpenClaw `/new`·`/reset`·control UI 리셋(`sessions.reset`)은 `sessionId` 를 그대로 두고 `lifecycleRevision` 만 새로 뽑는다(설치본
+ *   `dist/session-reset-service-*.mjs`·`dist/get-reply-*.mjs`) — 그래서 `sessionId` 만으로는 못 가른다. 컴팩션은 `compactionCount` 를 바꾼다.
+ *   보통 인바운드로 생긴 dodok 세션 항목에는 `lifecycleRevision` 이 없다(실연 2026-11-28) — 없음도 값으로 비교한다(없음 → 값·값 → 다른 값은
+ *   리셋이라 전부, 없음 → 없음·같은 값은 같음). 근거: 리셋하는 길은 모두 새 값을 뽑는다 — `dist/get-reply-C7sh3gUj.mjs:113`
+ *   (`he=!J … lifecycleRevision:he?crypto.randomUUID():J?.lifecycleRevision` — 명시 리셋·일일·유휴 stale·새 세션),
+ *   `dist/session-reset-service-DdP9xLmH.mjs:23`(`sessions.reset`), 그 밖 agent-turn-service·chat-send-handler·sessions-patch(새 `sessionId`).
+ *   이 전제가 깨지면(리셋이 값을 그대로 두거나 지우면) 문맥을 잃는다 — OpenClaw 핀을 올릴 때 다시 확인한다(plan.md 8장 「이월」). 리셋 정책은 코어가 인바운드 때 보는 것과 같은 함수다 — 정책이 `none` 이
+ *   아닌데 판정에 쓰는 시각(`sessionStartedAt`·`lastInteractionAt`)이 항목에 없으면 코어는 전사 헤더에서 읽고 플러그인은 못 읽으므로 전부 싣는다.
+ * - claude-cli 런타임의 CLI 세션 바인딩(`claudeCliSessionId`·`cliSessionBindings`)은 런 결과를 정산할 때 쓰여(`dist/run-entry-cli-*.mjs`
+ *   settleResult → persistCliSessionBindingResult) 런 시작 때는 앞 턴 값이라 세대에 넣지 않는다.
  * - 전달마다 먼저 기억을 지운다 — 런이 시작되지 않은 전달(drop·오류) 뒤에는 전사에 그 턴이 없으므로 다음 턴은 전부 싣는다.
  * - 플러그인이 다시 뜬 뒤 첫 턴은 기억이 없어 전부 싣는다.
  * 틀리는 방향은 늘 「전부 싣기」(중복)다 — 리셋을 놓쳐 새 세션에 글을 빼는 쪽으로는 틀리지 않게.
@@ -23,16 +32,31 @@ import type { DodokChatKind } from "./inbound";
 /** channel.ts 의 DODOK_CHANNEL_ID 와 같다 — 그 모듈을 부르면 순환이 생긴다 */
 const CHANNEL = "dodok";
 
-/** 기억하는 세션 세대 — 같은 세션 키에서 이 둘이 바뀌면 전사가 이어지지 않는다 */
-export type SessionGeneration = { sessionId: string; compactionCount: number };
+/** 기억하는 세션 세대 — 같은 세션 키에서 하나라도 바뀌면(`lifecycleRevision` 의 없음 ↔ 값 포함) 전사가 이어지지 않는다 */
+export type SessionGeneration = {
+  sessionId: string;
+  lifecycleRevision: string | undefined;
+  compactionCount: number;
+};
 
 type EntryFacts = Pick<
   SessionEntry,
-  "sessionId" | "updatedAt" | "sessionStartedAt" | "lastInteractionAt" | "compactionCount"
+  | "sessionId"
+  | "lifecycleRevision"
+  | "updatedAt"
+  | "sessionStartedAt"
+  | "lastInteractionAt"
+  | "compactionCount"
 >;
 
-export function generationOf(entry: Pick<SessionEntry, "sessionId" | "compactionCount">): SessionGeneration {
-  return { sessionId: entry.sessionId, compactionCount: entry.compactionCount ?? 0 };
+export function generationOf(
+  entry: Pick<SessionEntry, "sessionId" | "lifecycleRevision" | "compactionCount">,
+): SessionGeneration {
+  return {
+    sessionId: entry.sessionId,
+    lifecycleRevision: entry.lifecycleRevision,
+    compactionCount: entry.compactionCount ?? 0,
+  };
 }
 
 /**
@@ -52,7 +76,11 @@ export function isContinuing(input: {
   const { remembered, entry } = input;
   if (remembered === undefined || entry === undefined) return false;
   const now = generationOf(entry);
-  if (now.sessionId !== remembered.sessionId || now.compactionCount !== remembered.compactionCount)
+  if (
+    now.sessionId !== remembered.sessionId ||
+    now.lifecycleRevision !== remembered.lifecycleRevision ||
+    now.compactionCount !== remembered.compactionCount
+  )
     return false;
   const sessionCfg = input.cfg.session;
   const policy = resolveSessionResetPolicy({
@@ -64,6 +92,11 @@ export function isContinuing(input: {
     }),
     resetOverride: resolveChannelResetConfig({ sessionCfg, channel: CHANNEL }),
   });
+  if (
+    policy.mode !== "none" &&
+    (entry.sessionStartedAt === undefined || entry.lastInteractionAt === undefined)
+  )
+    return false;
   return evaluateSessionFreshness({
     updatedAt: entry.updatedAt,
     ...(entry.sessionStartedAt === undefined ? {} : { sessionStartedAt: entry.sessionStartedAt }),
