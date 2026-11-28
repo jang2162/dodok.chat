@@ -198,6 +198,11 @@ export const InboundDeliver = z.object({
     .optional(),
   /** 그룹 DM(direct) 런만 — 헤더 `그룹 DM:` 줄(formatGroupDmLine). 선택 필드라 옛 플러그인은 버리고 받는다(그 줄이 없을 뿐) */
   groupDm: z.literal(true).optional(),
+  /**
+   * 일반 채널 런만 — 채널 이름. 플러그인이 OpenClaw 대화 라벨(`#<이름> · <세션 제목>`, 모델이 보는 group_subject·conversation_label)에
+   * 쓴다. 사람이 쓴 글이라 받는 쪽이 foldHeaderText 로 접는다. 선택 필드라 옛 플러그인은 버리고 받는다(라벨이 세션 제목만일 뿐)
+   */
+  channelName: z.string().optional(),
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
   sessionKey: z.string(), // dodokSessionKey(agentId, conversationId, threadId)
   threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다

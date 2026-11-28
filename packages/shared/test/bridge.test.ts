@@ -257,6 +257,12 @@ describe("InboundDeliver.dm — 선택 필드", () => {
     expect(InboundDeliver.parse({ ...base, groupDm: true }).groupDm).toBe(true);
     expect(InboundDeliver.safeParse({ ...base, groupDm: false }).success).toBe(false);
   });
+
+  it("channelName 도 선택 필드 — 옛 서버는 싣지 않고, 옛 플러그인은 버리고 받는다", () => {
+    expect(InboundDeliver.parse(base).channelName).toBeUndefined();
+    expect(InboundDeliver.parse({ ...base, channelName: "ops" }).channelName).toBe("ops");
+    expect(InboundDeliver.safeParse({ ...base, channelName: 1 }).success).toBe(false);
+  });
 });
 
 describe("InboundContext.linkedMessages — 선택 필드", () => {

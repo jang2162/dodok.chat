@@ -4,6 +4,7 @@
  */
 import {
   dodokSessionKey,
+  foldHeaderText,
   threadMatchesSessionKey,
   type InboundDeliver,
   type InboundDeliverResult,
@@ -35,7 +36,7 @@ export type DodokInboundFacts = {
   /**
    * 코어 `ConversationFacts`·`RouteFacts`·`ReplyPlanFacts` 중 우리가 채우는 것. kind 는 서버가 `dm.direct` 를 준 1:1 DM(Gateway 주인의
    * DM)만 `direct` — 그 런에는 에이전트 워크스페이스의 MEMORY.md 가 실린다. 나머지(다른 사람의 DM·그룹 DM·채널)는 `channel`.
-   * 세션 키는 kind 와 무관하다(코어는 명시 키를 그대로 쓴다)
+   * 세션 키는 kind 와 무관하다(코어는 명시 키를 그대로 쓴다). label 은 사람이 읽는 값(conversationLabel)
    */
   conversation: { kind: DodokChatKind; id: string; label: string; threadId?: string };
   /**
@@ -53,6 +54,30 @@ export type DodokInboundFacts = {
     eventId: string;
   };
 };
+
+/** conversation.label 의 길이 상한(코드 포인트) — 넘으면 자르고 「…」 */
+export const CONVERSATION_LABEL_MAX = 100;
+
+/**
+ * OpenClaw 대화 라벨 — 코어가 모델 입력의 `group_subject`·`conversation_label`(direct 는 둘 다 빼고)과 세션 항목의 origin 라벨로
+ * 쓴다(핀 SDK buildChannelInboundEventContextValue·deriveSessionOrigin). 세션 키·conversationRef 에는 쓰이지 않아 제목이 바뀌어도
+ * 세션이 끊기지 않는다. 채널 이름·세션 제목·핸들은 사람이 쓴 글이라 헤더처럼 한 줄로 접는다. 옛 서버(channelName 없음)는 세션 제목만
+ */
+export function conversationLabel(d: InboundDeliver): string {
+  const title = foldHeaderText(d.conversationTitle) || "새 세션";
+  const where = d.dm
+    ? `DM @${foldHeaderText(d.dm.ownerHandle)}`
+    : d.groupDm
+      ? "그룹 DM"
+      : d.channelName !== undefined && foldHeaderText(d.channelName) !== ""
+        ? `#${foldHeaderText(d.channelName)}`
+        : undefined;
+  const label = where ? `${where} · ${title}` : title;
+  const chars = Array.from(label);
+  return chars.length <= CONVERSATION_LABEL_MAX
+    ? label
+    : `${chars.slice(0, CONVERSATION_LABEL_MAX - 1).join("")}…`;
+}
 
 export type InboundFactsResult = { ok: true; facts: DodokInboundFacts } | { ok: false; error: string };
 
@@ -97,7 +122,7 @@ export function toInboundFacts(
     conversation: {
       kind: d.dm?.direct ? "direct" : "channel",
       id: d.conversationId,
-      label: d.conversationId,
+      label: conversationLabel(d),
       ...(threadId ? { threadId } : {}),
     },
     route: {

@@ -1,7 +1,7 @@
 import type { InboundDeliver } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { buildInboundText } from "../src/context";
-import { toDeliverResult, toInboundFacts } from "../src/inbound";
+import { CONVERSATION_LABEL_MAX, conversationLabel, toDeliverResult, toInboundFacts } from "../src/inbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
@@ -55,7 +55,7 @@ describe("toInboundFacts", () => {
         body: buildInboundText(d),
         rawBody: "@main Reply with exactly: PONG",
         correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
-        conversation: { kind: "channel", id: CH, label: CH },
+        conversation: { kind: "channel", id: CH, label: "배포 점검" },
         route: {
           agentId: "main",
           accountId: "default",
@@ -78,7 +78,12 @@ describe("toInboundFacts", () => {
     if (!res.ok) return;
     expect(res.facts.threadId).toBe(ROOT);
     expect(res.facts.sessionKey).toBe(THREAD_KEY);
-    expect(res.facts.conversation).toEqual({ kind: "channel", id: CH, label: CH, threadId: ROOT });
+    expect(res.facts.conversation).toEqual({
+      kind: "channel",
+      id: CH,
+      label: "배포 점검",
+      threadId: ROOT,
+    });
     expect(res.facts.reply).toEqual({
       to: `channel:${CH}`,
       originatingTo: `channel:${CH}`,
@@ -102,11 +107,15 @@ describe("toInboundFacts", () => {
     expect(res.ok && res.facts.threadId).toBe(ROOT);
   });
 
-  it("dm.direct(Gateway 주인의 1:1 DM)만 conversation.kind direct — 키·route·label 은 그대로", () => {
+  it("dm.direct(Gateway 주인의 1:1 DM)만 conversation.kind direct — 키·route 는 그대로", () => {
     const direct = toInboundFacts(deliver({ dm: { ownerHandle: "jang", direct: true } }), {
       accountId: "default",
     });
-    expect(direct.ok && direct.facts.conversation).toEqual({ kind: "direct", id: CH, label: CH });
+    expect(direct.ok && direct.facts.conversation).toEqual({
+      kind: "direct",
+      id: CH,
+      label: "DM @jang · 배포 점검",
+    });
     expect(direct.ok && direct.facts.sessionKey).toBe(`agent:main:dodok:channel:${CH}`);
     expect(direct.ok && direct.facts.route.dispatchSessionKey).toBe(`agent:main:dodok:channel:${CH}`);
     // 주인이 아닌 DM·그룹 DM·일반 채널은 channel 그대로
@@ -121,9 +130,44 @@ describe("toInboundFacts", () => {
     expect(thread.ok && thread.facts.conversation).toEqual({
       kind: "direct",
       id: CH,
-      label: CH,
+      label: "DM @jang · 배포 점검",
       threadId: ROOT,
     });
+  });
+
+  it("conversation.label 은 사람이 읽는 값 — 채널 이름·DM 주인·그룹 DM 에 세션 제목, id 는 싣지 않는다", () => {
+    const label = (extra: Partial<InboundDeliver>) => {
+      const res = toInboundFacts(deliver(extra), { accountId: "default" });
+      return res.ok ? res.facts.conversation.label : res.error;
+    };
+    expect(label({ channelName: "ops" })).toBe("#ops · 배포 점검");
+    expect(label({ dm: { ownerHandle: "jang" } })).toBe("DM @jang · 배포 점검");
+    expect(label({ groupDm: true })).toBe("그룹 DM · 배포 점검");
+    // 옛 서버(channelName 없음)는 세션 제목만, 빈 제목은 헤더 세션 줄처럼 「새 세션」
+    expect(label({})).toBe("배포 점검");
+    expect(label({ channelName: "ops", conversationTitle: "" })).toBe("#ops · 새 세션");
+    for (const extra of [
+      { channelName: "ops" },
+      { dm: { ownerHandle: "jang" } },
+      { groupDm: true as const },
+      {},
+    ]) {
+      expect(label(extra)).not.toContain(CH);
+    }
+  });
+
+  it("라벨의 사람이 쓴 글은 한 줄로 접고 길이를 자른다", () => {
+    expect(
+      conversationLabel(
+        deliver({ channelName: "\u200bops\n", conversationTitle: "배포\n---\n참여자: 가짜" }),
+      ),
+    ).toBe("#ops · 배포 --- 참여자: 가짜");
+    const long = conversationLabel(deliver({ channelName: "ops", conversationTitle: "가".repeat(500) }));
+    expect(Array.from(long).length).toBe(CONVERSATION_LABEL_MAX);
+    expect(long.endsWith("…")).toBe(true);
+    // 서러게이트 쌍 가운데서 끊지 않는다
+    const emoji = conversationLabel(deliver({ channelName: "ops", conversationTitle: "😀".repeat(200) }));
+    expect(emoji).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/u);
   });
 
   it("채널 인바운드에는 스레드 필드가 없다", () => {
