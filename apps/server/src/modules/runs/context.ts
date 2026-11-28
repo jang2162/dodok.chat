@@ -228,6 +228,9 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     // 그룹 DM 은 헤더에 그 표시를 싣는다 — 채널처럼 보이는 자리가 참여자만 보는 대화임을 에이전트가 알게(사람 간 DM 계획 PH12). 참여자는
     // sessionParticipants(비활성·보관 제외 — direct 에는 초대가 없어 channelParticipants 와 같다) 그대로, 채널 프롬프트는 늘 없다(direct 의 prompt 는 null)
     ...(channel.kind === "direct" ? { groupDm: true } : {}),
+    // 일반 채널만 채널 이름 — 플러그인이 OpenClaw 대화 라벨(`#<이름> · <세션 제목>`)에 쓴다. DM·그룹 DM 의 이름은 사람이 지은 것이 아니라
+    // 라벨을 dm·groupDm 이 만든다. 옛 플러그인은 버리고 받는다
+    ...(channel.kind === "channel" ? { channelName: channel.name } : {}),
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
     ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),

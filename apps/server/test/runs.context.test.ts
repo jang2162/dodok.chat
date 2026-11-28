@@ -196,6 +196,8 @@ describe("buildInboundDeliver", () => {
       channelId,
       conversationId: trigger.conversationId,
       conversationTitle: "테스트 세션",
+      // 일반 채널 런만 채널 이름 — 플러그인이 OpenClaw 대화 라벨에 쓴다
+      channelName: "general",
       agentId: "dev-main",
       sessionKey: `agent:dev-main:dodok:channel:${trigger.conversationId}`,
       runId: run.id,
@@ -825,6 +827,8 @@ describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
     const inbound = deliver(dm.id, conversationId, "안녕 @dev");
     expect(InboundDeliver.safeParse(inbound).success).toBe(true);
     expect(inbound.dm).toEqual({ ownerHandle: "mia" });
+    // DM 의 채널 이름은 사람이 지은 것이 아니다 — 라벨은 dm 이 만든다
+    expect(inbound).not.toHaveProperty("channelName");
     expect(inbound.context.participants).toEqual([
       { type: "user", handle: "mia", displayName: "owner", isSelf: false },
       { type: "agent", handle: "dev", displayName: "dev", isSelf: true },
@@ -832,6 +836,32 @@ describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
 
     const general = deliver(generalId, channelConversation(db, generalId), "@dev 안녕");
     expect(general).not.toHaveProperty("dm");
+    expect(general.channelName).toEqual(expect.any(String));
+  });
+
+  it("그룹 DM 런에는 channelName 이 없다 — 라벨은 groupDm 이 만든다", () => {
+    const { db, workspaceId, userId, agentId, deliver } = dmSetup();
+    const otherId = uuid();
+    db.insert(users)
+      .values({
+        id: otherId,
+        workspaceId,
+        handle: "kai",
+        displayName: "kai",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: otherId, role: "member" }).run();
+    const direct = createDirectChannelForTest(db, {
+      workspaceId,
+      createdBy: userId,
+      userIds: [otherId],
+      agentIds: [agentId],
+    });
+    const inbound = deliver(direct.id, channelConversation(db, direct.id), "@dev 안녕");
+    expect(inbound.groupDm).toBe(true);
+    expect(inbound).not.toHaveProperty("channelName");
   });
 
   it("DM 주인이 그 에이전트 Gateway 의 주인일 때만 dm.direct — 주인이 없거나(옛 Gateway) 다른 사람이면 싣지 않는다", () => {
