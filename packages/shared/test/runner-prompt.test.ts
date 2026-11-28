@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildChannelRulesAppend,
   buildTurnFacts,
+  formatConversationBlock,
+  NO_NEW_MESSAGES_NOTE,
   RUNNER_BOT_SOUL_HEADER,
   renderBotSoul,
   formatReactionFacts,
@@ -856,5 +858,92 @@ describe("링크한 메시지 — 러너는 사용자 메시지 본문에만(메
     } as Parameters<typeof buildTurnFacts>[0]);
     expect(facts).not.toContain("링크한 메시지");
     expect(facts).not.toContain("변경안");
+  });
+});
+
+describe("formatConversationBlock — 이어 가는 세션은 지난 턴 뒤 새 글만", () => {
+  const line = (m: { author: { handle: string }; text: string }) => `@${m.author.handle}: ${m.text}`;
+  const msg = (handle: string, type: "user" | "agent", text: string, ts: string) => ({
+    author: { type, handle, displayName: handle },
+    text,
+    ts,
+  });
+  const recent = [
+    msg("mia", "user", "앞 질문", "2026-09-27T09:00:00.000Z"),
+    msg("coder", "agent", "앞 답", "2026-09-27T09:00:30.000Z"),
+    msg("mia", "user", "그사이 글", "2026-09-27T09:02:00.000Z"),
+    msg("fin", "agent", "fin 의 글", "2026-09-27T09:03:00.000Z"),
+    msg("coder", "agent", "내 다른 글", "2026-09-27T09:04:00.000Z"),
+  ];
+  const base = { recentMessages: recent, participants: PARTICIPANTS };
+  const UP_TO = "2026-09-27T09:00:00.000Z";
+
+  it("이어 감 + 커서 — 커서까지의 글과 자기 글을 빼고 제목에 「(지난 턴 뒤)」", () => {
+    expect(formatConversationBlock({ ...base, deliveredUpTo: UP_TO }, { continuing: true, line })).toEqual([
+      "최근 대화(지난 턴 뒤):",
+      "@mia: 그사이 글",
+      "@fin: fin 의 글",
+    ]);
+  });
+
+  it("커서와 같은 시각의 글도 뺀다(그 글이 지난 턴의 트리거)", () => {
+    const only = { ...base, recentMessages: [recent[0]!], deliveredUpTo: UP_TO };
+    expect(formatConversationBlock(only, { continuing: true, line })).toEqual([
+      `최근 대화: ${NO_NEW_MESSAGES_NOTE}`,
+    ]);
+  });
+
+  it("빼서 남는 게 없으면 블록을 빼지 않고 「새 글 없음」 한 줄", () => {
+    const selfOnly = { ...base, recentMessages: [recent[1]!, recent[4]!], deliveredUpTo: UP_TO };
+    expect(formatConversationBlock(selfOnly, { continuing: true, line })).toEqual([
+      "최근 대화: (지난 턴 뒤 새 글 없음)",
+    ]);
+  });
+
+  it("이어 가지 않으면(새 세션·리셋 뒤) 커서가 있어도 전부 — 자기 글 포함", () => {
+    expect(formatConversationBlock({ ...base, deliveredUpTo: UP_TO }, { continuing: false, line })).toEqual([
+      "최근 대화:",
+      ...recent.map(line),
+    ]);
+  });
+
+  it("커서가 없으면(옛 서버·처음) 이어 가도 전부, 빈 대화는 블록이 없다", () => {
+    expect(formatConversationBlock(base, { continuing: true, line })).toEqual([
+      "최근 대화:",
+      ...recent.map(line),
+    ]);
+    expect(formatConversationBlock({ ...base, recentMessages: [] }, { continuing: true, line })).toEqual([]);
+  });
+
+  it("스레드 — 이어 가면 루트를 빼고 「스레드 최근(지난 턴 뒤)」, 처음이면 루트와 전부, 채널 최근 대화는 늘 안 싣는다", () => {
+    const thread = {
+      ...base,
+      thread: { root: msg("fin", "agent", "루트", "2026-09-27T08:00:00.000Z"), recentMessages: recent },
+    };
+    expect(formatConversationBlock({ ...thread, deliveredUpTo: UP_TO }, { continuing: true, line })).toEqual([
+      "스레드 최근(지난 턴 뒤):",
+      "@mia: 그사이 글",
+      "@fin: fin 의 글",
+    ]);
+    expect(
+      formatConversationBlock(
+        { ...thread, thread: { ...thread.thread, recentMessages: [] }, deliveredUpTo: UP_TO },
+        { continuing: true, line },
+      ),
+    ).toEqual(["스레드 최근: (지난 턴 뒤 새 글 없음)"]);
+    expect(formatConversationBlock({ ...thread, deliveredUpTo: UP_TO }, { continuing: false, line })).toEqual(
+      ["스레드 루트: @fin: 루트", "스레드 최근:", ...recent.map(line)],
+    );
+  });
+});
+
+describe("renderRunnerPrompt — 이어 가는 세션", () => {
+  it("continuing + deliveredUpTo — 지난 턴 뒤 새 글만, 아니면 지금처럼 전부", () => {
+    const base = deliver();
+    const d = { ...base, context: { ...base.context, deliveredUpTo: "2026-09-27T09:00:00.000Z" } };
+    const continued = renderRunnerPrompt(d, { continuing: true });
+    expect(continued).toContain("최근 대화(지난 턴 뒤):\n[09:01] @fin: 네\n---");
+    expect(continued).not.toContain("@mia: 안녕");
+    expect(renderRunnerPrompt(d)).toContain("최근 대화:\n[09:00] @mia: 안녕\n[09:01] @fin: 네");
   });
 });

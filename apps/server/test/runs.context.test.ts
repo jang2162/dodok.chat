@@ -34,7 +34,9 @@ import {
   type InboundTrigger,
   attachmentPlaceholder,
   buildInboundDeliver,
+  deliveredCursorOf,
   linkedMessagesFor,
+  withDeliveredUpTo,
 } from "../src/modules/runs/context";
 import { patchOpsSettings } from "../src/modules/ops/settings";
 import { insertRun } from "../src/modules/runs/store";
@@ -1135,5 +1137,54 @@ describe("buildInboundDeliver — 링크한 메시지(메시지 링크 스펙 �
     expect(
       linkedMessagesFor(db, { run: owned, text: trigger.bodyMd, origin: ORIGIN }).map((m) => m.messageId),
     ).toEqual([open.id]);
+  });
+});
+
+describe("전달 커서 — deliveredCursorOf·withDeliveredUpTo", () => {
+  const author = { type: "user" as const, handle: "owner", displayName: "owner" };
+  const ctxMsg = (ts: string) => ({ author, text: "글", ts });
+  const inbound = (over: Partial<InboundDeliver> = {}): InboundDeliver =>
+    InboundDeliver.parse({
+      deliveryId: uuid(),
+      kind: "message",
+      channelId: uuid(),
+      conversationId: uuid(),
+      conversationTitle: "세션",
+      agentId: "dev",
+      sessionKey: "agent:dev:dodok:channel:x",
+      runId: uuid(),
+      message: { id: uuid(), author, text: "@dev 안녕", attachments: [], ts: "2026-11-27T00:05:00.000Z" },
+      context: {
+        recentMessages: [ctxMsg("2026-11-27T00:01:00.000Z"), ctxMsg("2026-11-27T00:02:00.000Z")],
+        participants: [],
+        relayRules: "규칙",
+      },
+      ...over,
+    });
+  const run = (triggerKind: RunTriggerKind) => ({ triggerKind }) as Run;
+
+  it("메시지 트리거는 그 글의 시각 — 최근 대화는 모두 그 앞이다", () => {
+    expect(deliveredCursorOf(run("mention"), inbound())?.toISOString()).toBe("2026-11-27T00:05:00.000Z");
+  });
+
+  it("상호작용·이어가기는 대화 블록의 마지막 글(카드가 달린 글) — 누른 시각이 아니다", () => {
+    const d = inbound({ kind: "interaction" });
+    expect(deliveredCursorOf(run("interaction"), d)?.toISOString()).toBe("2026-11-27T00:02:00.000Z");
+    expect(deliveredCursorOf(run("continue"), { ...d, kind: "continue" })?.toISOString()).toBe(
+      "2026-11-27T00:02:00.000Z",
+    );
+  });
+
+  it("명령 런·추가 응답 런은 대화 블록을 싣지 않으니 undefined", () => {
+    expect(deliveredCursorOf(run("command"), inbound())).toBeUndefined();
+    expect(deliveredCursorOf(run("background"), inbound())).toBeUndefined();
+  });
+
+  it("withDeliveredUpTo — null 이면 그대로(필드 없음), 값이면 ISO 로", () => {
+    const d = inbound();
+    expect(withDeliveredUpTo(d, null).context.deliveredUpTo).toBeUndefined();
+    expect(withDeliveredUpTo(d, new Date("2026-11-27T00:00:00.000Z")).context.deliveredUpTo).toBe(
+      "2026-11-27T00:00:00.000Z",
+    );
   });
 });

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { agentSessions } from "../src/db/schema.sqlite";
 import { updateAgent } from "../src/modules/agents/service";
 import {
+  advanceDeliveredCursor,
   ensureProviderSessionId,
   ensureSession,
   getSessionRow,
@@ -50,6 +51,26 @@ describe("renewSessionOnPromptChange — 지시 리비전", () => {
     });
     expect(renewSessionOnPromptChange(db, sessionId)).toBe(false);
     expect(ensureProviderSessionId(db, sessionId)).not.toBe(old);
+  });
+
+  it("새로 열면 전달 커서를 비운다 — 다음 런은 최근 대화를 전부 싣는다, 바뀐 것이 없으면 그대로", () => {
+    const { db, agentId, sessionId } = setup();
+    const at = new Date("2026-11-27T00:00:00.000Z");
+    advanceDeliveredCursor(db, sessionId, at);
+    expect(renewSessionOnPromptChange(db, sessionId)).toBe(false);
+    expect(getSessionRow(db, sessionId)?.deliveredUpTo).toEqual(at);
+    updateAgent(db, agentId, { basePrompt: "커밋 전에 테스트를 돌린다" });
+    renewSessionOnPromptChange(db, sessionId);
+    expect(getSessionRow(db, sessionId)?.deliveredUpTo).toBeNull();
+  });
+
+  it("전달 커서는 뒤로 가지 않는다 — null 이면 채운다", () => {
+    const { db, sessionId } = setup();
+    expect(getSessionRow(db, sessionId)?.deliveredUpTo).toBeNull();
+    const later = new Date("2026-11-27T00:01:00.000Z");
+    advanceDeliveredCursor(db, sessionId, later);
+    advanceDeliveredCursor(db, sessionId, new Date("2026-11-27T00:00:00.000Z"));
+    expect(getSessionRow(db, sessionId)?.deliveredUpTo).toEqual(later);
   });
 
   it("이름만 바꾸면 세션은 그대로", () => {

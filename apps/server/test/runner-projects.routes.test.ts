@@ -782,7 +782,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
         seedAgentSession(app.db, { conversationId, agentId: who.id });
         app.db
           .update(agentSessions)
-          .set({ providerSessionId: uuid() })
+          .set({ providerSessionId: uuid(), deliveredUpTo: new Date("2026-11-27T00:00:00.000Z") })
           .where(eq(agentSessions.agentId, who.id))
           .run();
       }
@@ -803,6 +803,11 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
           ?.providerSessionId;
       expect(sessionOf(agent.id)).toBeNull();
       expect(sessionOf(bystander.id)).not.toBeNull();
+      // 전달 커서도 비운다 — 다음 런은 최근 대화를 전부 싣는다
+      const cursorOf = (agentId: string) =>
+        app.db.select().from(agentSessions).where(eq(agentSessions.agentId, agentId)).get()?.deliveredUpTo;
+      expect(cursorOf(agent.id)).toBeNull();
+      expect(cursorOf(bystander.id)).not.toBeNull();
       expect(
         runnerAgentDefinition(app.db, app.workspaceId, agent.providerAgentId, to.id)?.agent.project,
       ).toEqual({

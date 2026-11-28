@@ -1,4 +1,5 @@
 import {
+  formatConversationBlock,
   formatDmLine,
   formatGroupDmLine,
   formatParticipantLabel,
@@ -259,9 +260,10 @@ const AUTHOR_KIND = { user: "사람", agent: "에이전트", system: "시스템"
 /**
  * 러너가 사용자 메시지로 보낼 본문 — 플러그인의 `packages/openclaw-plugin/src/context.ts` 가 만드는 dodok 헤더·최근 대화 꼴과
  * 같은 뜻이다. 참여자·릴레이 규칙은 여기가 아니라 `buildTurnFacts`·`buildChannelRulesAppend` 에 있다.
- * 첨부는 이름만 적는다 — 이미지 바이트는 러너가 이미지 블록으로 넣고, URL·경로는 어떤 글에도 싣지 않는다
+ * 첨부는 이름만 적는다 — 이미지 바이트는 러너가 이미지 블록으로 넣고, URL·경로는 어떤 글에도 싣지 않는다.
+ * `continuing` — 러너가 이 턴을 앞 턴의 Claude 세션에 이어 넣을 때(resume·붙든 프로세스)만 true — 대화 블록이 지난 턴 뒤 새 글만 싣는다
  */
-export function renderRunnerPrompt(deliver: InboundDeliver): string {
+export function renderRunnerPrompt(deliver: InboundDeliver, opts: { continuing?: boolean } = {}): string {
   const self = deliver.context.participants.find((p) => p.isSelf);
   const threadPart = deliver.threadId ? ` thread=${deliver.threadId}` : "";
   const author = deliver.message.author;
@@ -276,18 +278,8 @@ export function renderRunnerPrompt(deliver: InboundDeliver): string {
   ];
   const line = (m: { author: { handle: string }; text: string; ts: string }) =>
     `[${hhmm(m.ts)}] @${m.author.handle}: ${m.text}`;
-  const thread = deliver.context.thread;
-  if (thread) {
-    // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스레드 스펙 2.3) — 플러그인과 같이 여기서 한 번 더 막는다
-    lines.push(`스레드 루트: ${line(thread.root)}`);
-    if (thread.recentMessages.length > 0) {
-      lines.push("스레드 최근:");
-      for (const m of thread.recentMessages) lines.push(line(m));
-    }
-  } else if (deliver.context.recentMessages.length > 0) {
-    lines.push("최근 대화:");
-    for (const m of deliver.context.recentMessages) lines.push(line(m));
-  }
+  // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스레드 스펙 2.3) — 플러그인과 같은 formatConversationBlock 이 한 번 더 막는다
+  lines.push(...formatConversationBlock(deliver.context, { continuing: opts.continuing === true, line }));
   // 링크한 메시지(메시지 링크 스펙)는 남이 쓴 글이라 「대화 상대가 쓴 글이 아닙니다」로 시작하는 buildTurnFacts 가 아니라 여기에 싣는다
   const linked = formatLinkedMessages(deliver.context.linkedMessages ?? [], hhmm);
   if (linked !== null) lines.push(linked);

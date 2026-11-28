@@ -344,6 +344,13 @@
       "when": 1795758519912,
       "tag": "0048_agents_allow_outside_workdir",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1795822259021,
+      "tag": "0049_agent_sessions_delivered_up_to",
+      "breakpoints": true
     }
   ]
 }

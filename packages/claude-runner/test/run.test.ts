@@ -53,7 +53,7 @@ import { createRunSink } from "../src/sink";
 import { alwaysAllowKey } from "../src/drivers/claude/approvals";
 import { toAgentCommands } from "../src/drivers/claude";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
-import { createFakeSdk, FAKE_CONTEXT_USAGE, script, type FakeSdk } from "./helpers/fake-query";
+import { createFakeSdk, FAKE_CONTEXT_USAGE, script, sdkMsg, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runSpec, runStart, SESSION_ID } from "./helpers/fixtures";
 
 const BASE_ENV = {
@@ -338,6 +338,7 @@ function harness(
     }),
     baseEnv: BASE_ENV,
     costs: new Map(),
+    compacted: new Set(),
     signal: controller.signal,
     closeGraceMs: 30,
     ...rest,
@@ -443,6 +444,110 @@ describe("runOnce", () => {
       `dodok-runner: 런 ${runId} 세션 resume`,
       `dodok-runner: 런 ${runId} 세션 새로 열기(전사 확인 실패)`,
     ]);
+  });
+
+  it("resume 한 세션만 최근 대화를 지난 턴 뒤 새 글로 — 새로 연 세션은 전부(서버 deliveredUpTo)", async () => {
+    const base = runStart();
+    const msg = (handle: string, type: "user" | "agent", text: string, ts: string) => ({
+      author: { type, handle, displayName: handle },
+      text,
+      ts,
+    });
+    const start = {
+      ...base,
+      deliver: {
+        ...base.deliver,
+        context: {
+          ...base.deliver.context,
+          recentMessages: [
+            msg("mia", "user", "앞 질문", "2026-09-27T01:00:00.000Z"),
+            msg("coder", "agent", "앞 답", "2026-09-27T01:00:30.000Z"),
+            msg("mia", "user", "새 글", "2026-09-27T01:01:00.000Z"),
+          ],
+          deliveredUpTo: "2026-09-27T01:00:00.000Z",
+        },
+      },
+    };
+    const fresh = harness();
+    fresh.fake.script(script.init(), ...script.textTurn("msg_1", ["x"]));
+    await runOnce(specOf(start), fresh.ctx);
+    const freshPrompt = fresh.fake.calls[0]!.prompt?.message.content;
+    expect(freshPrompt).toBe(renderRunnerPrompt(start.deliver));
+    expect(freshPrompt).toContain("@coder: 앞 답");
+
+    const resumed = harness();
+    resumed.fake.sessions.add(SESSION_ID);
+    resumed.fake.script(...script.textTurn("msg_1", ["x"]));
+    await runOnce(specOf(start), resumed.ctx);
+    const resumedPrompt = resumed.fake.calls[0]!.prompt?.message.content;
+    expect(resumedPrompt).toBe(renderRunnerPrompt(start.deliver, { continuing: true }));
+    expect(resumedPrompt).toContain("최근 대화(지난 턴 뒤):");
+    expect(resumedPrompt).toContain("@mia: 새 글");
+    expect(resumedPrompt).not.toContain("앞 질문");
+    expect(resumedPrompt).not.toContain("앞 답");
+  });
+
+  it("컴팩션을 본 세션은 resume 해도 다음 프롬프트 턴에 전부 싣고, 그 턴이 표지를 거둔다", async () => {
+    const base = runStart();
+    const start = {
+      ...base,
+      deliver: {
+        ...base.deliver,
+        context: {
+          ...base.deliver.context,
+          recentMessages: [
+            {
+              author: { type: "user" as const, handle: "mia", displayName: "mia" },
+              text: "앞 질문",
+              ts: "2026-09-27T01:00:00.000Z",
+            },
+            {
+              author: { type: "user" as const, handle: "mia", displayName: "mia" },
+              text: "새 글",
+              ts: "2026-09-27T01:01:00.000Z",
+            },
+          ],
+          deliveredUpTo: "2026-09-27T01:00:00.000Z",
+        },
+      },
+    };
+    // 앞 턴이 자동 컴팩션했다 — 스트림의 system/compact_boundary 로 표지가 선다
+    const compacting = harness();
+    compacting.fake.sessions.add(SESSION_ID);
+    compacting.fake.script(
+      sdkMsg({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 1 },
+      }),
+      ...script.textTurn("msg_1", ["x"]),
+    );
+    await runOnce(specOf(start), compacting.ctx);
+    expect(compacting.ctx.compacted.has(SESSION_ID)).toBe(true);
+
+    const after = harness();
+    after.ctx.compacted.add(SESSION_ID);
+    after.fake.sessions.add(SESSION_ID);
+    after.fake.script(...script.textTurn("msg_1", ["x"]));
+    await runOnce(specOf(start), after.ctx);
+    expect(after.fake.calls[0]!.prompt?.message.content).toBe(renderRunnerPrompt(start.deliver));
+    expect(after.fake.calls[0]!.prompt?.message.content).toContain("앞 질문");
+    expect(after.ctx.compacted.has(SESSION_ID)).toBe(false);
+  });
+
+  it("`/compact` 명령 런은 compact_boundary 없이도 그 세션에 컴팩션 표지를 세운다", async () => {
+    const { fake, ctx } = harness();
+    fake.sessions.add(SESSION_ID);
+    fake.script(...script.textTurn("msg_1", [""]));
+    const spec = runSpec();
+    await runOnce(
+      {
+        ...spec,
+        start: { ...spec.start, deliver: { ...spec.start.deliver, command: { name: "compact", args: "" } } },
+      },
+      ctx,
+    );
+    expect(ctx.compacted.has(SESSION_ID)).toBe(true);
   });
 
   it("resume 직후 num_turns 0 result 는 건너뛰고 프롬프트 턴의 result 로 끝낸다", async () => {

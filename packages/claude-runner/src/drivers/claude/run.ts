@@ -445,6 +445,11 @@ export type RunContext = {
   cliVersion?: string;
   /** 세션별 마지막 total_cost_usd(세션 누적값 — ADR 0007 5.9). 러너 프로세스 메모리에만 있다 */
   costs: Map<string, number>;
+  /**
+   * 컴팩션(SDK `system`/`compact_boundary`·`/compact` 명령 런)을 본 세션 id — 그 세션의 다음 프롬프트 턴은 이어 가도 앞 턴이 요약으로만
+   * 남았으므로 최근 대화를 전부 싣는다(continuing:false). 러너 프로세스 메모리에만 있다
+   */
+  compacted: Set<string>;
   signal: AbortSignal;
   now?: () => number;
   closeGraceMs?: number;
@@ -788,12 +793,14 @@ export function isSkillAlias(name: string, list: readonly SdkSlashCommand[]): bo
 function promptContent(
   start: ClaudeRunSpec["start"],
   images: { blocks: SdkImageBlock[]; failed: number },
-  stopped?: readonly string[],
+  stopped: readonly string[] | undefined,
+  continuing: boolean,
 ): SdkUserMessage["message"]["content"] {
   // 명령 런은 머리말 없이 `/<name>[ <args>]` 그대로 — CLI 가 명령으로 처리한다(에이전트 명령 C1). 턴 사실은 훅 문맥으로 그대로 붙는다
   if (start.deliver.command !== undefined) return formatCommandText(start.deliver.command);
   const text =
-    renderRunnerPrompt(start.deliver) +
+    // 앞 턴의 Claude 세션에 이어 넣는 턴만 지난 턴 뒤 새 글을 싣는다 — 앞 턴의 프롬프트·자기 답이 그 전사에 있다
+    renderRunnerPrompt(start.deliver, { continuing }) +
     (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "") +
     (stopped !== undefined ? `\n${stoppedByPersonNote(stopped)}` : "");
   return images.blocks.length > 0 ? [...images.blocks, { type: "text", text }] : text;
@@ -909,7 +916,11 @@ async function attempt(
     });
   }
   sp.attach(q);
-  const result = await runTurn(spec, ctx, sp, binding, images, { costDiff: resume, retryable });
+  const result = await runTurn(spec, ctx, sp, binding, images, {
+    costDiff: resume,
+    continuing: resume,
+    retryable,
+  });
   return { result, process: sp };
 }
 
@@ -944,7 +955,7 @@ async function runHeldTurn(
   if (opened) opened.last = { spec, ctx };
   if (fields.length > 0)
     ctx.sink.event({ type: "CUSTOM", runId: binding.runId, name: HELD_SETTINGS_EVENT, value: { fields } });
-  await runTurn(spec, ctx, sp, binding, images, { costDiff: true, retryable: () => false });
+  await runTurn(spec, ctx, sp, binding, images, { costDiff: true, continuing: true, retryable: () => false });
   return "done";
 }
 
@@ -974,6 +985,7 @@ async function runFollowupTurn(
     const binding = bindingFor(spec, ctx, new Set());
     await runTurn(spec, ctx, sp, binding, NO_IMAGES, {
       costDiff: true,
+      continuing: true,
       retryable: () => false,
       prompt: false,
     });
@@ -1073,6 +1085,11 @@ async function runTurn(
     retryable: (error: unknown) => boolean;
     /** false — CLI 가 스스로 연 턴(추가 응답)이라 넣을 프롬프트가 없다 */
     prompt?: boolean;
+    /**
+     * 이 턴이 앞 턴의 Claude 세션 전사를 이어 가는가 — resume 으로 연 프로세스·붙든 프로세스. 그때만 프롬프트가 최근 대화를 지난 턴 뒤
+     * 새 글만 싣는다(서버 deliveredUpTo — renderRunnerPrompt). 새로 연 세션이면 전부
+     */
+    continuing: boolean;
   },
 ): Promise<TurnResult> {
   const { start } = spec;
@@ -1104,6 +1121,8 @@ async function runTurn(
   let sawMessage = false;
   /** 이 턴의 프롬프트에 붙인 「사람이 끈 작업」 — 프롬프트가 닿지 않은 재시도면 돌려놓는다 */
   let stoppedTaken: string[] | undefined;
+  /** 이 턴이 컴팩션 표지를 거뒀다(전부 실었다) — 프롬프트가 닿지 않은 재시도면 돌려놓는다 */
+  let compactionTaken = false;
   let costKind: RunnerRunFinal["costKind"] = opened?.costKind ?? "subscription_estimate";
   const end = () => {
     ended = true;
@@ -1148,9 +1167,14 @@ async function runTurn(
     } else if (o.prompt !== false) {
       // 명령 런은 글을 바꾸지 않으므로 꺼내지 않는다 — 다음 프롬프트 런에 붙는다
       if (command === undefined) stoppedTaken = takeStoppedByPerson(ctx.background, start.deliver.sessionKey);
+      // 컴팩션 뒤 첫 프롬프트 턴은 이어 가도 전부 싣는다 — 명령 런은 대화 블록을 싣지 않으므로 표지를 거두지 않는다
+      if (command === undefined) compactionTaken = ctx.compacted.delete(sessionId);
+      const continuing = o.continuing && !compactionTaken;
+      // `/compact` 명령 런은 compact_boundary 를 못 받아도(CLI 판 차이) 컴팩션으로 본다 — 틀려도 다음 턴이 전부 실을 뿐이다
+      if (command?.name === "compact") ctx.compacted.add(sessionId);
       sp.send({
         type: "user",
-        message: { role: "user", content: promptContent(start, images, stoppedTaken) },
+        message: { role: "user", content: promptContent(start, images, stoppedTaken, continuing) },
         parent_tool_use_id: null,
       });
     }
@@ -1162,6 +1186,7 @@ async function runTurn(
         costKind = API_KEY_SOURCES.has(raw.apiKeySource) ? "api" : "subscription_estimate";
         if (opened) opened.costKind = costKind;
       }
+      if (raw.type === "system" && raw.subtype === "compact_boundary") ctx.compacted.add(sessionId);
       for (const item of mapper.map(m)) {
         if (ended) break;
         if (item.event) {
@@ -1199,6 +1224,7 @@ async function runTurn(
         // 그 프롬프트는 닿지 않았다 — resume 으로 다시 여는 같은 런이 다시 붙이게 돌려놓는다
         if (stoppedTaken !== undefined)
           restoreStoppedByPerson(ctx.background, start.deliver.sessionKey, stoppedTaken);
+        if (compactionTaken) ctx.compacted.add(sessionId);
         return "session-in-use";
       } else failedRun(sink, error, opened?.stderrTail());
     }

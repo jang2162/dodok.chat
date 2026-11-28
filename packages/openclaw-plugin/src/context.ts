@@ -1,4 +1,5 @@
 import {
+  formatConversationBlock,
   formatDmLine,
   formatGroupDmLine,
   formatHeaderTime,
@@ -14,9 +15,11 @@ import {
 
 /**
  * 스펙 8.3: 인바운드 앞에 붙는 컨텍스트 헤더. 채널 프롬프트·오버라이드는 여기가 아니라 `channelPromptContext` 로.
- * 시각은 서버가 실은 워크스페이스 시간대(`context.timeZone`, 없으면 UTC)로 찍고, 릴레이 규칙 줄 다음에 그 시간대를 밝힌다
+ * 시각은 서버가 실은 워크스페이스 시간대(`context.timeZone`, 없으면 UTC)로 찍고, 릴레이 규칙 줄 다음에 그 시간대를 밝힌다.
+ * `continuing` — 이 턴이 앞 턴을 실은 OpenClaw 세션을 그대로 이어 간다고 확신할 때만(session-continuity.ts) — 대화 블록이 지난 턴 뒤
+ * 새 글만 싣는다(formatConversationBlock)
  */
-export function formatInboundContext(d: InboundDeliver): string {
+export function formatInboundContext(d: InboundDeliver, opts: { continuing?: boolean } = {}): string {
   const tz = d.context.timeZone;
   const hhmm = (iso: string) => formatHeaderTime(iso, tz);
   const self = d.context.participants.find((p) => p.isSelf);
@@ -37,18 +40,9 @@ export function formatInboundContext(d: InboundDeliver): string {
   lines.push(formatTimeZoneLine(tz, d.message.ts));
   const line = (m: { author: { handle: string }; text: string; ts: string }) =>
     `[${hhmm(m.ts)}] @${m.author.handle}: ${m.text}`;
-  if (thread) {
-    // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스펙 2.3) — 서버가 비워 보내도 여기서 한 번 더 막는다
-    lines.push(`스레드 루트: ${line(thread.root)}`);
-    if (thread.recentMessages.length > 0) {
-      lines.push("스레드 최근:");
-      for (const m of thread.recentMessages) lines.push(line(m));
-    }
-  } else {
-    if (d.context.recentMessages.length > 0) {
-      lines.push("최근 대화:");
-      for (const m of d.context.recentMessages) lines.push(line(m));
-    }
+  // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스펙 2.3) — 서버가 비워 보내도 formatConversationBlock 이 한 번 더 막는다
+  lines.push(...formatConversationBlock(d.context, { continuing: opts.continuing === true, line }));
+  if (!thread) {
     // 스레드 소식은 대화 세션 런만 — 스레드 세션에는 서버가 싣지 않고, 실려 와도 여기서 한 번 더 막는다
     const threadUpdates = formatThreadUpdates(
       d.context.threadUpdates ?? [],
@@ -78,6 +72,6 @@ export function channelPromptContext(d: InboundDeliver): string[] | undefined {
 }
 
 /** 컨텍스트 헤더 + 인바운드 본문. 플러그인이 Gateway 인바운드로 넣는 최종 텍스트 */
-export function buildInboundText(d: InboundDeliver): string {
-  return `${formatInboundContext(d)}\n${d.message.text}`;
+export function buildInboundText(d: InboundDeliver, opts: { continuing?: boolean } = {}): string {
+  return `${formatInboundContext(d, opts)}\n${d.message.text}`;
 }

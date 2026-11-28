@@ -11,13 +11,16 @@ import {
 } from "../src/bridge-registry";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import {
+  continuingSession,
   DODOK_BRIDGE_CAPABILITIES,
   DODOK_COMMAND_INGRESS,
   dodokChannelPlugin,
   dodokIngressConversation,
   inboundTurnParts,
+  rememberSessionGeneration,
   routeInboundConversation,
 } from "../src/channel";
+import { sessionGenerations } from "../src/session-continuity";
 import { THREAD_ONLY_REASON } from "../src/outbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
@@ -406,5 +409,84 @@ describe("명령 갈래(에이전트 명령 스펙 5.4·C12)", () => {
     expect(withCommand.commandAccess).toMatchObject({ requested: true, authorized: true });
     const plain = await resolveStableChannelMessageIngress(base);
     expect(plain.commandAccess.authorized).toBe(false);
+  });
+});
+
+describe("이어 감 판정 — 런 시작 때 적은 세대와 다음 전달(session-continuity.ts)", () => {
+  const cfg = {} as Parameters<typeof continuingSession>[1];
+  const logger = { warn: vi.fn() };
+  const key = CHANNEL_KEY;
+  const delivery = (deliveredUpTo?: string): InboundDeliver =>
+    ({
+      deliveryId: "0192f000-0000-7000-8000-00000000d002",
+      kind: "message",
+      channelId: CH,
+      conversationId: CH,
+      conversationTitle: "대화",
+      agentId: "main",
+      sessionKey: key,
+      runId: "0192f000-0000-7000-8000-00000000a002",
+      message: {
+        id: "0192f000-0000-7000-8000-00000000b002",
+        author: { type: "user", handle: "mia", displayName: "Mia" },
+        text: "@main 안녕",
+        attachments: [],
+        ts: "2026-11-27T00:05:00.000Z",
+      },
+      context: {
+        recentMessages: [],
+        participants: [],
+        relayRules: "",
+        ...(deliveredUpTo ? { deliveredUpTo } : {}),
+      },
+      options: {},
+    }) as InboundDeliver;
+  let current:
+    | { sessionId: string; lifecycleRevision?: string; updatedAt: number; compactionCount?: number }
+    | undefined;
+  const read = vi.fn(async () => current);
+  beforeEach(() => {
+    sessionGenerations.forget(key);
+    current = { sessionId: "s1", lifecycleRevision: "r1", updatedAt: Date.now(), compactionCount: 0 };
+    read.mockClear();
+    logger.warn.mockClear();
+  });
+
+  it("런 시작 때 적은 세대가 지금 항목과 같고 서버 커서가 있으면 이어 간다 — 판정은 기억을 지운다", async () => {
+    await rememberSessionGeneration("main", key, logger, read);
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(true);
+    // 이 전달의 런이 시작되지 않았으면(drop·오류) 다음 전달은 전부 싣는다
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(false);
+  });
+
+  it("서버 커서가 없으면(옛 서버·새 세션) 세션을 읽지 않고 전부", async () => {
+    await rememberSessionGeneration("main", key, logger, read);
+    read.mockClear();
+    expect(await continuingSession(delivery(), cfg, logger, read)).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("런 시작 뒤 OpenClaw /new·control UI 리셋 — 같은 sessionId·새 lifecycleRevision·compactionCount 0 이면 전부", async () => {
+    await rememberSessionGeneration("main", key, logger, read);
+    current = { sessionId: "s1", lifecycleRevision: "r2", updatedAt: Date.now(), compactionCount: 0 };
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(false);
+  });
+
+  it("인바운드로 생긴 세션(lifecycleRevision 없음)을 처음 리셋하면(값이 생김) 전부, 리셋 전에는 이어 간다", async () => {
+    current = { sessionId: "s1", updatedAt: Date.now(), compactionCount: 0 };
+    await rememberSessionGeneration("main", key, logger, read);
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(true);
+    await rememberSessionGeneration("main", key, logger, read);
+    current = { sessionId: "s1", lifecycleRevision: "r9", updatedAt: Date.now(), compactionCount: 0 };
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, read)).toBe(false);
+  });
+
+  it("세션을 못 읽으면 전부 — 경고 한 줄", async () => {
+    await rememberSessionGeneration("main", key, logger, read);
+    const failing = vi.fn(async () => {
+      throw new Error("store busy");
+    });
+    expect(await continuingSession(delivery("2026-11-27T00:00:00.000Z"), cfg, logger, failing)).toBe(false);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 });

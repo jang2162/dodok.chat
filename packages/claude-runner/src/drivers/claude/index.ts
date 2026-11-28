@@ -160,6 +160,7 @@ function durationText(ms: number): string {
 export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
   // 세션별 마지막 누적 비용 — 드라이버(러너 프로세스) 메모리에만 있다
   const costs = new Map<string, number>();
+  const compacted = new Set<string>();
   // 세션 키 → 도는·붙든 CLI 프로세스(run.ts 가 넣고 프로세스가 끝나면 뺀다)
   const sessions = new Map<string, SessionProcess>();
   // 세션 키 → 사람이 화면의 「종료」로 끈 작업의 설명(가린 값) — 그 세션의 다음 사람 런 프롬프트에 한 줄로 붙고 지워진다(run.ts
@@ -333,6 +334,7 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
         ...(exe.cli === "installed" ? { executable: exe.path } : {}),
         ...(cliVersion === undefined ? {} : { cliVersion }),
         costs,
+        compacted,
         signal,
         ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
         ...(opts.logger ? { log: (line: string) => opts.logger?.info(line) } : {}),
